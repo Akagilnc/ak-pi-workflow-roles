@@ -1,8 +1,8 @@
 /**
- * 起居郎 volume commit — ADR 0075 `diarist-is-role` / #901.
- * LLM submits bounds; mechanical layer reprojects the
- * unique records.jsonl from session volumes. No human view. No lifecycle here
- * (ADR 0018): the seat prepares, the role envelope commits.
+ * 起居郎 volume commit — ADR 0075 `diarist-is-role` / #901 / #1090.
+ * LLM submits bounds; mechanical layer appends a projection commit from
+ * session volumes (pure append, no cross-submit dedupe). No human view.
+ * No lifecycle here (ADR 0018): the seat prepares, the role envelope commits.
  */
 import { reprojectTicketProvenance } from "./ticket-provenance.ts";
 import type { TicketProvenanceSession } from "./ticket-provenance-contracts.ts";
@@ -19,7 +19,7 @@ export type DiaristCommitFacts = {
 };
 
 /**
- * Reproject the unique diary from LLM-submitted bounds.
+ * Append a diary projection from LLM-submitted bounds (#1090).
  * Shape projection of sessions is the caller's job (accept hook);
  * this seam only copies source facts into the volume.
  */

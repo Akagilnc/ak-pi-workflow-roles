@@ -2716,7 +2716,15 @@ test("public resume failures point to their recorded diagnostics", async () => {
       assert.equal(dispatchedParentIo.stderr.join("").includes(errorRecord(dispatchedParent.runDirectory)), true);
       await readError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
 
-      await assertRecordedFailurePointer(deletedWorkspace.runDirectory, "1058-no-workspace");
+      const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
+      assert.notEqual(deletedResult.exitCode, 0);
+      const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
+      const relocatedError = errorRecord(relocatedDirectory);
+      assert.equal(deletedResult.stderr.includes(relocatedError), true);
+      const deletedRecord = await readError(relocatedDirectory, "1058-no-workspace");
+      assert.equal(typeof deletedRecord.diagnostic, "string");
+      assert.equal(deletedRecord.diagnostic, "zeta-unique-host-diagnostic");
+      assert.equal((deletedRecord as { details?: { exitCode?: unknown } }).details?.exitCode, 1);
 
       const callsBeforeSubject = seen.length;
       await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);

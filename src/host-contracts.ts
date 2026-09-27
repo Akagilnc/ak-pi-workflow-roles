@@ -158,19 +158,6 @@ export type RoleTurnModelConfig = {
   readonly thinking?: string;
 };
 
-/**
- * Typed cross-host resume handoff (#617 DK-4).
- * Present only when post-admission projects a real host switch.
- * priorNativeKind names the record family the paths belong to — Pi's own
- * session file, or sitian run records (ADR 0077) — so a consuming adapter
- * reads the handoff without knowing which host wrote it.
- * Target host reads those files itself; projector never copies bytes.
- */
-export type RoleTurnHostTransition = {
-  readonly priorNativeKind: "pi-native" | "sitian";
-  readonly priorNativePaths: readonly string[];
-};
-
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
@@ -193,8 +180,6 @@ export type RoleTurnRequest = {
    * has no parent to observe and leaves it absent.
    */
   readonly signal?: AbortSignal;
-  /** Set by post-admission only on a real host switch; never on same-host resume. */
-  readonly hostTransition?: RoleTurnHostTransition;
   /**
    * Court-turn attempt (#637 / #833): sole-final per attempt. Open court, summons,
    * and resume-with-message set this; bare resume without an open court omits it.
@@ -385,108 +370,8 @@ export interface RoleHost {
   getCommands?(): Array<{ name: string }>;
 }
 
-/** Institutional sub-session seats (#518 §1). */
-export type InstitutionalSeat =
-  | "gatekeeper"
-  | "inspector"
-  | "notary"
-  | "auditor"
-  | (string & {});
-
 /** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */
 export type HostInstitutionalModelSelection = RoleTurnModelConfig;
-
-/** Usage statistics for institutional sub-session events and turns. */
-export type HostSessionUsage = {
-  readonly input: number;
-  readonly output: number;
-  readonly cacheRead: number;
-  readonly cacheWrite: number;
-  readonly totalTokens: number;
-  readonly cost: {
-    readonly input: number;
-    readonly output: number;
-    readonly cacheRead: number;
-    readonly cacheWrite: number;
-    readonly total: number;
-  };
-};
-
-/** Closed stream event union consumed by institutional callers (#518 §1③). */
-export type HostInstitutionalSessionEvent =
-  | {
-      readonly type: "message_end";
-      readonly role: "assistant" | "user" | string;
-      readonly message?: unknown;
-      readonly usage?: HostSessionUsage;
-    }
-  | {
-      readonly type: "turn_end";
-      readonly stopReason?: string;
-    }
-  | {
-      readonly type: "tool_call";
-      readonly toolCallId: string;
-      readonly toolName: string;
-      readonly args?: unknown;
-    }
-  | {
-      readonly type: "tool_result";
-      readonly toolCallId: string;
-      readonly toolName: string;
-      readonly isError?: boolean;
-      readonly details?: unknown;
-    };
-
-/** Terminal result of an institutional assistant turn (#518 §1③). */
-export type HostAssistantTurnResult = {
-  readonly text: string;
-  readonly stopReason?: string;
-  readonly errorMessage?: string;
-  readonly usage?: HostSessionUsage;
-  readonly messages?: readonly unknown[];
-};
-
-/**
- * Handle to an active institutional sub-session (#518 §1②).
- * Does not leak AgentSession, ModelRuntime, or Provider objects out of the adapter.
- */
-export interface HostInstitutionalSessionHandle {
-  readonly sessionFile?: string;
-  readonly sessionId?: string;
-  prompt(text: string): Promise<HostAssistantTurnResult>;
-  subscribe(listener: (event: HostInstitutionalSessionEvent) => void): () => void;
-  abort(): void;
-  close(): Promise<void>;
-}
-
-/** Open options for an institutional sub-session (#518 §1①). */
-export type HostInstitutionalSessionOptions = {
-  readonly cwd: string;
-  readonly selection: HostInstitutionalModelSelection;
-  readonly systemPrompt: string;
-  readonly tools?: readonly HostToolDefinition[];
-  readonly customTools?: readonly unknown[];
-  readonly noTools?: "all" | "builtin";
-  readonly toolsAllowlist?: readonly string[];
-  readonly agentDir?: string;
-  readonly credentialScratchParent?: string;
-  readonly signal?: AbortSignal;
-  readonly idleRetry?: boolean;
-  readonly sessionIdentity?: {
-    readonly kind: string;
-    readonly subject?: string;
-    readonly parent?: { getSessionFile(): string | undefined };
-  };
-  readonly sessionManager?: unknown;
-};
-
-/** Host-neutral institutional sub-session open seam. */
-export interface InstitutionalSessionHost {
-  openInstitutionalSession(
-    options: HostInstitutionalSessionOptions,
-  ): Promise<HostInstitutionalSessionHandle>;
-}
 
 /** Host-owned durable record session used by AK ledger placement. */
 export interface HostRecordSession {

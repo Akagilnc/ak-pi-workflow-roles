@@ -134,24 +134,10 @@ test("public Collector accepts PR/repository without an observer declaration", (
   });
 });
 
-test("#678 public Collector --wait-ms is caller-configurable without code change", () => {
-  assert.deepEqual(
-    parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets", "--wait-ms", "120000"]),
-    {
-      prNumber: 1168,
-      repo: "acme/widgets",
-      waitWindowMs: 120_000,
-      instruction: "",
-      attachmentPaths: [],
-    },
-  );
+test("#1088 public Collector --wait-ms is retired with code collection", () => {
   assert.throws(
-    () => parsePublicSeatArgv("collector", ["--wait-ms", "0"]),
-    (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("collector", ["--wait-ms", "1.5"]),
-    (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
+    () => parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets", "--wait-ms", "120000"]),
+    (error: unknown) => error instanceof CliUsageError,
   );
 });
 

@@ -796,8 +796,7 @@ export async function summonGateOfficer(options: {
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
-  // Officer host is seat-owned only (#821). Parent invocation.json.host stays a
-  // hostTransition consumer in post-admission — not an officer override channel.
+  // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
   let gateReviewInstruction: string | undefined;

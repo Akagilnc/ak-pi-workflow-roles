@@ -14,7 +14,6 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
-import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
@@ -25,12 +24,6 @@ import {
 import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
-  createToolExecutionObservationFace,
-  systemToolExecutionObservationMonoNow,
-  writeToolExecutionObservationRecord,
-  type ToolExecutionObservationWriter,
-} from "./tool-execution-observation.ts";
-import {
   ENGINE_DETOUR_TOOL_NAME,
   ENGINE_MODEL_FLAG_NAME,
   resolveEngineModel,
@@ -39,9 +32,8 @@ import {
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
-import type { CollectorClock } from "./collector-evidence.ts";
-import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
+  COLLECTOR_CONSTRUCTION_TOOLS,
   COLLECTOR_REQUIRED_TOOLS,
   COLLECTOR_TRANSPORT_FLAGS,
   createCollectorRoleRuntime,
@@ -286,17 +278,6 @@ export type {
   ActivationSessionManager,
   ActivationSessionPointer,
 } from "./activation-ledger.ts";
-export {
-  TOOL_EXECUTION_UPDATE_HEARTBEAT,
-  TOOL_EXECUTION_UPDATE_THROTTLE_MS,
-  createToolExecutionObservationFace,
-  isProducingToolUpdate,
-  systemToolExecutionObservationMonoNow,
-  toolExecutionObservationRecordSchema,
-  validateToolExecutionObservationRecord,
-  writeToolExecutionObservationRecord,
-} from "./tool-execution-observation.ts";
-export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -355,16 +336,8 @@ export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
-export {
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_OUTPUT_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL,
-} from "./collector-role.ts";
+export { COLLECTOR_OUTPUT_TOOL } from "./collector-role.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
-export type { CollectorGitHubTransport } from "./collector-github.ts";
-export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
 export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
@@ -466,22 +439,13 @@ export type RoleRuntimeDependencies = {
   loadRoleSoul(role: PackagedRole): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
-  /** #677: optional packaged seed for first-use general bot handbook. */
-  loadCollectorHandbookSeed?(): Promise<string>;
-  createCollectorTransport?(): CollectorGitHubTransport;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
-  /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
-  toolExecutionObservationClock?(): string;
-  /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
-  toolExecutionObservationMonoNow?(): number;
-  toolExecutionObservationWriter?: ToolExecutionObservationWriter;
 };
 
 function abortContext(ctx: { abort(): void }): void {
@@ -559,7 +523,7 @@ export async function projectClosedSubmissionLifecycle(
   context: HostContext,
   phase: NavigatorPhase,
   recordAccepted: () => void,
-  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
+  settle: (settlement: NavigatorSettlement | undefined) => Promise<NavigatorEvent | undefined>,
 ): Promise<void> {
   recordAccepted();
   const closure = {
@@ -567,8 +531,17 @@ export async function projectClosedSubmissionLifecycle(
     isError: false,
     details: closed.accepted,
   };
-  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-  await settle(publicNavigatorSettlement(closed.role, phase, closure));
+  let navigator: NavigatorEvent | undefined;
+  try {
+    navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
+  } finally {
+    // A Navigator failure cannot erase an already accepted role closure.
+    // Missing attendance remains a typed unavailable at public settlement.
+    context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
+      ...closure,
+      ...(navigator === undefined ? {} : { navigator }),
+    });
+  }
 }
 
 /**
@@ -1068,6 +1041,8 @@ export function createRoleRuntimeExtension(
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
+    let navigatorActivation = 0;
+    let navigatorDeliveryClosed = false;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     let navigatorSessionParent: string | undefined;
@@ -1081,7 +1056,7 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    // Public-run fetch observation (in-process-session statusAwareFetch face).
+    // Public-run fetch observation.
     let priorFetch: typeof globalThis.fetch | undefined;
     let fetchWrapped = false;
     /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
@@ -1121,7 +1096,7 @@ export function createRoleRuntimeExtension(
       }
       void Promise.resolve(pending).then(undefined, recordDisposeFailure);
     };
-    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined): Promise<NavigatorEvent | undefined> => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
       const workContext = navigatorWorkContext;
@@ -1135,6 +1110,7 @@ export function createRoleRuntimeExtension(
         void settlePromise.catch(() => undefined);
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
+        navigatorDeliveryClosed = true;
         if (pendingNavigatorPresentation === undefined) {
           const report: NavigatorReport = {
             disposition: "unavailable",
@@ -1160,6 +1136,7 @@ export function createRoleRuntimeExtension(
       })();
       pendingNavigatorSettlement = pending;
       await pending;
+      return pendingNavigatorPresentation?.event;
     };
     projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
       closed,
@@ -1233,12 +1210,8 @@ export function createRoleRuntimeExtension(
           }),
         };
       }
-      // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
+      // #676 E / J1: collector materials share this envelope hook (no parallel register).
       if (activeCollector !== undefined && selectedRole === role) {
-        if (!collectorFirstDispatchDone) {
-          collectorFirstDispatchDone = true;
-          activeCollector.ledger.recordActivation(activeCollector.clock);
-        }
         return {
           systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
         };
@@ -1278,27 +1251,9 @@ export function createRoleRuntimeExtension(
         },
       };
     });
-    // #879: single shared owner of station-child 0081 case-dossier → readingMaterial fold.
-    // post-admission freezes under run/attachments/case-dossier/; this handler alone
-    // projects it onto the existing agent-start materials face (Pi + envelope collect).
-    // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
-    roleHost.on("before_agent_start", async (_event, ctx) => {
-      const runDir = runDirectoryFromHostContext(ctx);
-      if (runDir === undefined) return;
-      const { loadCaseDossierReadingMaterial } = await import(
-        "./public-cli/case-dossier-delivery.ts"
-      );
-      const caseDossier = await loadCaseDossierReadingMaterial(runDir);
-      if (caseDossier === undefined) return;
-      return { readingMaterial: caseDossier };
-    });
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
-      // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
-      if (activeCollector !== undefined && selectedRole === roleHost.getFlag(ROLE_FLAG.name)) {
-        collectorBusiness.onToolResult(activeCollector, event);
-      }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
       const isRoleInfrastructureFailure = pendingInfra !== undefined;
       if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
@@ -1468,12 +1423,6 @@ export function createRoleRuntimeExtension(
         priorFetch = undefined;
         fetchWrapped = false;
       }
-      // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
-      if (activeCollector !== undefined && activeCollector.ledger.fatal) {
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-      }
       // Flush any still-pending affirmative attendance before teardown.
       // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1498,7 +1447,6 @@ export function createRoleRuntimeExtension(
       disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      observationFace.reset();
     });
 
     const hostActions = {
@@ -1605,64 +1553,20 @@ export function createRoleRuntimeExtension(
       loadSoul: () => requireRoleSoul("merger"),
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
     });
-    // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
-    // event gates). Role module supplies business activate/tools/materials only.
+    // #676 E / #1088: shared envelope owns collector lifecycle (mode/fork, host
+    // tool surface). Role supplies soul/materials + submission tool only; code
+    // no longer observes or merges GitHub findings.
     let activeCollector: CollectorActivation | undefined;
-    let collectorFirstDispatchDone = false;
     const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("collector"),
-        createTransport() {
-          if (dependencies.createCollectorTransport === undefined) {
-            throw new Error("Collector GitHub transport is not configured");
-          }
-          return dependencies.createCollectorTransport();
-        },
-        createLedger(config, collectorClock, context) {
-          const append = context.sessionManager?.appendCustomEntry;
-          return createCollectorLedger(config, {
-            clock: collectorClock,
-            ...(append === undefined
-              ? {}
-              : {
-                journal: {
-                  append(customType, data) {
-                    context.sessionManager?.appendCustomEntry?.(customType, data);
-                  },
-                },
-              }),
-            dossierEntries: context.sessionManager?.getEntries?.() ?? [],
-          });
-        },
-        ...(dependencies.createCollectorClock === undefined
-          ? {}
-          : { createClock: dependencies.createCollectorClock }),
-        ...(dependencies.loadCollectorHandbookSeed === undefined
-          ? {}
-          : { loadHandbookSeed: dependencies.loadCollectorHandbookSeed }),
       },
-      hostActions,
     );
-    // #676 J1: business tools + tool_call gate register only behind admission/activation.
-    // before_agent_start / tool_result collector branches live on the shared envelope hooks above.
-    //
-    // #676 J4 dispositions for guards removed from the role-private collector module:
-    // - skills/contextFiles/appendSystemPrompt fail-closed → shared before_agent_start (above).
-    // - ambient skill/prompt/template commands → activate (below).
-    // - session_shutdown fatal exitCode → shared session_shutdown (above).
-    // - subsequent-input latchFatal + fixed-kickoff rewrite → intentionally not migrated:
-    //   #676 materials-first multi-turn abolished the single-shot fixed kickoff; multi-turn
-    //   observe/request/wait requires later inputs. Judge r1: fixed-kickoff equality delete is authorized.
-    // - tool sourceInfo path override check → intentionally not migrated: depended on
-    //   packageExtensionPath deleted under ADR 0018 / #676 E envelope ownership; uniqueness
-    //   + setActiveTools inventory checks remain on activate.
     let collectorToolCallRegistered = false;
     const collector = {
       async activate(context: HostContext, event: { reason: string }) {
         activeCollector = undefined;
-        collectorFirstDispatchDone = false;
-        // Envelope-owned mode / fork-reload gates (not role-private lifecycle).
         if (context.mode !== "print" && context.mode !== "json") {
           throw new Error(
             `Collector supports only print or json mode (got ${context.mode})`,
@@ -1673,9 +1577,6 @@ export function createRoleRuntimeExtension(
             `Collector does not support session_start reason ${event.reason}`,
           );
         }
-        // Business tools behind admission barrier (inert-without-role invariant).
-        // First activation: fail closed if a required name is already occupied.
-        // Later activations reuse the once-registered tools (registerBusinessTools is idempotent).
         const preExisting = roleHost.getAllTools();
         const alreadyRegistered = COLLECTOR_REQUIRED_TOOLS.every((required) =>
           preExisting.some((tool) => tool.name === required),
@@ -1699,75 +1600,40 @@ export function createRoleRuntimeExtension(
             throw new Error(`Collector required tool name collision: ${required}`);
           }
         }
-        roleHost.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
+        // #1088: keep host CLI surface for self-collect; drop construction write/edit (ADR 0064).
+        const priorActive = roleHost.getActiveTools();
+        const hostSurface = (priorActive.length > 0 ? priorActive : allTools.map((tool) => tool.name))
+          .filter((name) => !(COLLECTOR_CONSTRUCTION_TOOLS as readonly string[]).includes(name));
+        const nextActive = [...new Set([...hostSurface, ...COLLECTOR_REQUIRED_TOOLS])];
+        roleHost.setActiveTools(nextActive);
         const active = new Set(roleHost.getActiveTools());
         for (const required of COLLECTOR_REQUIRED_TOOLS) {
           if (!active.has(required)) {
             throw new Error(`Collector failed to activate required tool ${required}`);
           }
         }
-        for (const name of active) {
-          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
-            throw new Error(`Collector active tool surface includes unexpected ${name}`);
+        for (const name of COLLECTOR_CONSTRUCTION_TOOLS) {
+          if (active.has(name)) {
+            throw new Error(`Collector must not activate construction tool ${name}`);
           }
         }
-        // Seat-scoped tool_call gate — registered only after collector admission (no install-time tool_call).
         if (!collectorToolCallRegistered) {
           collectorToolCallRegistered = true;
           roleHost.on("tool_call", (toolEvent) => {
             const liveRole = roleHost.getFlag(ROLE_FLAG.name);
             if (activeCollector === undefined || selectedRole === undefined || selectedRole !== liveRole) return;
-            if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
-              return {
-                block: true,
-                reason: `通进司禁用工具 ${toolEvent.toolName}`,
-              };
-            }
             return collectorBusiness.onToolCall(activeCollector, toolEvent);
           });
         }
-        const activation = await collectorBusiness.activate(context);
-        if (activation.ledger.activationRecorded) {
-          collectorFirstDispatchDone = true;
-        }
-        activeCollector = activation;
+        activeCollector = await collectorBusiness.activate(context);
       },
     };
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
-    const observationFace = createToolExecutionObservationFace({
-      role: () => selectedRole,
-      admitted: () => admitted,
-      clock: dependencies.toolExecutionObservationClock ?? clock,
-      monoNow: dependencies.toolExecutionObservationMonoNow ?? systemToolExecutionObservationMonoNow,
-      write: dependencies.toolExecutionObservationWriter ?? writeToolExecutionObservationRecord,
-    });
-    // ExtensionRunner.emit catches ordinary handler throws, emits extension error, and continues.
-    // Observation plane failures must still hit the shared infrastructure termination path
-    // (abort + nonzero print/json exit) with the original cause before that swallow.
-    const observe = async (
-      run: () => void | Promise<void>,
-      ctx: HostContext,
-    ): Promise<void> => {
-      try {
-        await run();
-      } catch (error) {
-        failInfrastructure(error, ctx);
-      }
-    };
-    roleHost.on("tool_execution_start", async (event, ctx) => {
-      await observe(() => observationFace.onStart(event), ctx);
-    });
-    roleHost.on("tool_execution_update", async (event, ctx) => {
-      await observe(() => observationFace.onUpdate(event), ctx);
-    });
-    roleHost.on("tool_execution_end", async (event, ctx) => {
-      await observe(() => observationFace.onEnd(event), ctx);
-    });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // Same observation owner as in-process-session statusAwareFetch → typed-provider-http
+    // Same observation owner → typed-provider-http
     // sidecar (settlement already merges observation.httpStatus into knownFailure).
     // after_provider_response covers the success-path onResponse face; fetch wrap covers
     // non-2xx Responses where openai-completions throws before onResponse (#675).
@@ -1805,7 +1671,7 @@ export function createRoleRuntimeExtension(
     });
 
     roleHost.on("session_start", async (event, ctx) => {
-      // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
+      // Scope fetch observation to this public run.
       if (!fetchWrapped && typeof globalThis.fetch === "function") {
         priorFetch = globalThis.fetch.bind(globalThis);
         const underlying = priorFetch;
@@ -1827,7 +1693,7 @@ export function createRoleRuntimeExtension(
                 provider,
               });
             } catch {
-              // Observation must not break the provider stream (same as in-process-session).
+              // Observation must not break the provider stream.
             }
           }
           return response;
@@ -1839,11 +1705,11 @@ export function createRoleRuntimeExtension(
       roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       activeCollector = undefined;
-      collectorFirstDispatchDone = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
-      observationFace.reset();
       pendingNavigatorPresentation = undefined;
+      navigatorActivation += 1;
+      navigatorDeliveryClosed = false;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
@@ -1960,6 +1826,7 @@ export function createRoleRuntimeExtension(
               });
             } catch {}
           }
+          const activation = navigatorActivation;
           navigatorAttendance = await dependencies.createNavigatorAttendance({
             context: ctx,
             role: entry.role,
@@ -1970,7 +1837,9 @@ export function createRoleRuntimeExtension(
             invocationId,
             ...(contextError === undefined ? {} : { contextError }),
             onEvent: (navigatorEvent, report) => {
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
+              if (activation === navigatorActivation && !navigatorDeliveryClosed) {
+                pendingNavigatorPresentation = { event: navigatorEvent, report };
+              }
             },
           });
           // Concrete work context starts standby attendance (record only, no model).

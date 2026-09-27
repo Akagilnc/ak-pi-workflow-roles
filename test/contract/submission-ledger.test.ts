@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -502,5 +502,51 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
         recorded,
       );
     }
+  });
+});
+
+test("legacy records with priorEventId are readable and new records omit priorEventId", async () => {
+  await withLedgerFixture(async (f) => {
+    await f.start("call-1");
+    await f.tool().execute("call-1", { status: "first-accepted" }, undefined, undefined, f.context);
+
+    // Locate the exact ledger jsonl file
+    const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
+    const ledgerRel = files.find((file) => file.endsWith(".jsonl") && !file.includes("session.jsonl"));
+    assert.ok(ledgerRel);
+    const ledgerFile = `${f.root}/.ak-roles/books/${ledgerRel}`;
+
+    // Append a raw line simulating a legacy record that carried priorEventId
+    const legacyRecord = {
+      level: "event",
+      kind: "candidate",
+      identity: "legacy-evt-2",
+      subject: { runId: "run-ledger", attemptId: "run-ledger:attempt" },
+      priorEventId: "call-1",
+      timestamp: new Date().toISOString(),
+      host: "pi",
+      payload: {
+        type: "candidate",
+        role: "judge",
+        toolCallId: "call-legacy",
+        params: { status: "legacy-accepted" },
+      },
+    };
+    await appendFile(ledgerFile, `${JSON.stringify(legacyRecord)}\n`);
+
+    // Verify readRecordedSubmissions reads both without error
+    const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+    assert.deepEqual(recorded, [
+      { status: "first-accepted" },
+      { status: "legacy-accepted" },
+    ]);
+
+    // Verify newly written records do not carry priorEventId
+    const rawContent = await readFile(ledgerFile, "utf8");
+    const lines = rawContent.trim().split("\n").map((line) => JSON.parse(line));
+    const firstCandidate = lines.find((l: Record<string, unknown>) => (l.payload as { toolCallId?: string })?.toolCallId === "call-1");
+    assert.ok(firstCandidate);
+    assert.equal(firstCandidate.priorEventId, undefined);
+    assert.equal("priorEventId" in firstCandidate, false);
   });
 });

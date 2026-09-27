@@ -42,8 +42,6 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
-import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
-
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
   if (error instanceof Error) {
@@ -55,8 +53,8 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
 
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only (#879). ADR 0081 case dossier still hangs via the existing
- * attachments freeze seam — never into the peer body, never RoleTurnRequest.materials.
+ * peer words only (#879). Never RoleTurnRequest.materials; #1092 drops code-side
+ * 起居录 path pointer freeze — roles locate records by ticket number.
  */
 function isStationChildOfficerDialogue(
   role: string,
@@ -66,10 +64,8 @@ function isStationChildOfficerDialogue(
 }
 import {
   mintEngineDetourInvocationScope,
-  readInvocationSelectedHost,
   withEngineDetourInvocationScope,
 } from "../engine-detour-usage.ts";
-import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   clearCurrentCourt,
@@ -89,6 +85,7 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import { recordRunStart } from "../host-session-record.ts";
 import {
   attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
@@ -799,53 +796,11 @@ export async function dispatchPostAdmissionTurn<
   try {
     // #987: do not pre-block or classify host dispatch from AK credential
     // catalog facts. Per-invocation runner/host evidence owns provider identity.
-    // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
-    // Single authority projectHostTransitionPriorNative classifies the prior native volume.
-    // Same-run resume (#637) keeps host identity on the run's invocation page.
-    let previousHost: string | undefined;
-    const liveHost = env.host;
-    const principalCoordinates =
-      admitted.principal === undefined
-        ? undefined
-        : env.principalAuthority.decode(admitted.principal);
-    let hostTransition: RoleTurnRequest["hostTransition"];
-    try {
-      previousHost = readInvocationSelectedHost(admitted.runDirectory);
-      hostTransition =
-        previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
-          ? await projectHostTransitionPriorNative({
-              previousHost,
-              liveHost,
-              piSessionFile: principalCoordinates.sessionFile,
-            })
-          : undefined;
-    } catch (error) {
-      // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
-      return {
-        ...(await presentControlledFailure(
-          admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-        )) as { exitCode: number; admitted: A; terminal: T },
-        ...deferredPersist,
-      };
-    }
-
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // The authoritative host write (markRunRunning) is delayed to just before
     // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
-    // pre-turn retry (beforeDispatch, dossier projection, continuation
-    // assembly) must still see the prior invocation host on its next attempt;
-    // committing env.host earlier would make readInvocationSelectedHost read back the
-    // new host on the retry and silently drop hostTransition.
+    // pre-turn retry (beforeDispatch, continuation assembly) must not commit a host
+    // identity until the turn is ready.
     // Failures settle the run (presentControlledFailure); they must not leave it
     // permanently running. Call-local auto-resume retries this hook until it
     // succeeds; only an exhausted nested station child skips the parent loop
@@ -879,10 +834,8 @@ export async function dispatchPostAdmissionTurn<
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
-    // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
-    // for every public entry on the existing attachments → readingMaterial face
-    // (station-child and ordinary share one seam). Dialogue continuation stays
-    // caller/peer opaque — never splice system path sections into user dialogue.
+    // writes (#742). Dialogue continuation stays caller/peer opaque. #1092: no
+    // code-side 起居录 path freeze or readingMaterial inject — roles read by ticket.
     // No package-resume parallel face or typed resume identity.
     // #990: one-shot / auto-resume may freeze principal+runDirectory before
     // relocate; always take durable identity from the live admitted object.
@@ -894,24 +847,11 @@ export async function dispatchPostAdmissionTurn<
     if (env.stationChild !== undefined) {
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
-    if (hostTransition !== undefined) {
-      turnRequest = { ...turnRequest, hostTransition };
-    }
     // Selected host axis rides the shared Host envelope for in-turn tools
     // (detour usage ledger) — never a pre-spawn invocation.json reread.
-    if (typeof liveHost === "string" && liveHost.trim() !== "") {
-      turnRequest = { ...turnRequest, host: liveHost.trim() };
+    if (typeof env.host === "string" && env.host.trim() !== "") {
+      turnRequest = { ...turnRequest, host: env.host.trim() };
     }
-    // 0081 non-dialogue face: freeze pointer section under run/attachments/.
-    // Seat consumes via loadCaseDossierReadingMaterial → existing agent-start
-    // readingMaterial / systemPrompt.materials fold. Caller instruction, empty
-    // request, and resume --message stay verbatim.
-    await deliverCaseDossierAsAttachment({
-      ticketNumber: admitted.ticketNumber,
-      projectRoot: admitted.projectRoot,
-      home: env.home,
-      runDirectory: admitted.runDirectory,
-    });
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
@@ -930,6 +870,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
+      recordRunStart(admitted.runDirectory);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);

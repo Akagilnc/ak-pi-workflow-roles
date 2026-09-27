@@ -42,13 +42,8 @@ import {
 // COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
 // interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
-  COLLECTOR_BIND_TARGET_TOOL,
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL,
-} from "../collector-ledger.ts";
-import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
+  ENGINE_DETOUR_TOOL_NAME,
+} from "../engine-detour.ts";
 import {
   projectEngineDetourToolUsageForPublicTerminal,
   readEngineDetourToolUsage,
@@ -61,9 +56,6 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
-import {
-  COLLECTOR_OUTPUT_TOOL,
-} from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -80,7 +72,6 @@ import {
 import {
   packagedAuditToolName,
   packagedDurableOfficerEntry,
-  packagedProjectsTargetBindRejection,
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   packagedSkipsGateOnInfrastructureStage,
@@ -97,11 +88,7 @@ import {
   findLatestDurablePackagedRoleTerminal,
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
-  isReceiptSettlementBindingClear,
-  NAVIGATOR_INVOCATION_ENTRY,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
-  parseInvocationMarkerIdentity,
-  type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -1504,34 +1491,6 @@ function toolResultText(message: SessionMessage): string {
     .trim();
 }
 
-/**
- * #676 D1/J3: durable bind-target rejection on the current attempt → public no_receipt facts.
- * Callers must learn they need explicit --pr without opening the session 正本.
- * Authority is the latest bind-target toolResult only — a later success clears an earlier failure.
- */
-function extractCollectorTargetBindRejection(
-  entries: readonly SessionEntry[],
-): { readonly diagnostic: string; readonly code?: string } | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COLLECTOR_BIND_TARGET_TOOL) continue;
-    // Latest bind result wins: success means the attempt is no longer rejected.
-    if (message.isError !== true) return undefined;
-    const diagnostic = toolResultText(message);
-    if (diagnostic.length === 0) return undefined;
-    const details = message.details;
-    const code =
-      isRecord(details) && typeof details.code === "string" && details.code.trim() !== ""
-        ? details.code
-        : undefined;
-    return code === undefined ? { diagnostic } : { diagnostic, code };
-  }
-  return undefined;
-}
-
 type BoundErroredToolCandidate = {
   candidate: unknown;
   diagnostic: string;
@@ -1552,14 +1511,6 @@ function boundErroredToolCandidate(
     : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
 }
 
-/** Collector operational tools that fail closed via host infrastructure abort. */
-const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL,
-]);
-
 /** Shared match/cause/identity knobs for session-principal infrastructure failures. */
 type InfrastructureFailureSpec = Readonly<{
   matchTool: (toolName: string) => boolean;
@@ -1567,21 +1518,10 @@ type InfrastructureFailureSpec = Readonly<{
   identityName: string;
   /**
    * Errored results only count as infrastructure when the durable details carry
-   * the typed navigator fact. ak_collector_read also rejects known correctable
-   * misuses (CollectorUnknownEvidenceError pointer bounces) as errored tool
-   * results — those must not surface as CollectorInfrastructureError.
+   * the typed navigator fact.
    */
   requireInfrastructureFact?: (toolName: string) => boolean;
 }>;
-
-const COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
-  matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
-  cause: "activation",
-  identityName: "CollectorInfrastructureError",
-  // read alone has a correctable rejection mode (unknown/non-openable pointers);
-  // only its typed infrastructure-failure fact counts as a real host failure.
-  requireInfrastructureFact: (toolName) => toolName === COLLECTOR_READ_TOOL,
-};
 
 const ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
   matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
@@ -1646,33 +1586,6 @@ async function readInfrastructureToolFailure(
 }
 
 /**
- * Prefer a real Collector infrastructure tool failure already on the session
- * principal over a later secondary provider-stop (failure-honesty).
- * Observe/request/wait host failures keep their diagnostic identity (e.g. HTTP 404).
- */
-export function extractCollectorInfrastructureFailure(
-  entries: readonly SessionEntry[],
-): ControlledFailure | undefined {
-  return extractInfrastructureToolFailure(
-    entries,
-    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
-  );
-}
-
-/** Read the bound session principal for a Collector infrastructure tool failure. */
-export async function readCollectorInfrastructureFailure(
-  sessionFile: string,
-): Promise<ControlledFailure | undefined> {
-  return readInfrastructureToolFailure(
-    sessionFile,
-    COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
-    // Multi-attempt resume: only a current-attempt infrastructure failure
-    // may preempt the current failure cause (#633).
-    { currentAttemptOnly: true },
-  );
-}
-
-/**
  * Prefer a real engine-detour infrastructure tool failure already on the session
  * principal over a later secondary provider-stop (failure-honesty / #357 T2).
  * Cause stays `output` — labor leg failed before accepted typed Receipt.
@@ -1712,10 +1625,6 @@ const RUNNER_FAILURE_POLICY = {
   "engine-detour-record-first": {
     read: readEngineDetourInfrastructureFailure,
     rank: "record-first",
-  },
-  "collector-known-first": {
-    read: readCollectorInfrastructureFailure,
-    rank: "known-first",
   },
 } as const;
 
@@ -2008,23 +1917,6 @@ export async function appendRunAttemptHistory(
   } catch {}
 }
 
-/**
- * Minimal attendance provenance against the bound marker (ADR 0043).
- * Keep only invocationId + post-terminal ordering. Runtime-self-produced
- * role/phase/subject/version are not re-reconciled here (ADR 0042).
- */
-function navigatorAttendanceCorrelatedWithBoundMarker(
-  details: Record<string, unknown>,
-  attendanceIndex: number,
-  terminalIndex: number,
-  marker: InvocationMarkerIdentity,
-): boolean {
-  if (attendanceIndex <= terminalIndex) return false;
-  // Exact current invocation token is the bound marker principal.
-  if (details.invocationId !== marker.invocationId) return false;
-  return true;
-}
-
 function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
@@ -2303,10 +2195,9 @@ export function extractNavigatorFact(
 function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
-  // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  // Minimal provenance: latest durable terminal + nearest preceding marker +
-  // invocationId + post-terminal order. Marker↔terminal cardinality belongs to
-  // receipt settlement (isReceiptSettlementBindingClear), not attendance extraction.
+  // Affirmative attendance only. Missing / unparseable is never no-advice.
+  // The shared lifecycle places the settled event on this submission's closure;
+  // an unrelated attendance message cannot supply another call's result.
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
   if (terminal === undefined) {
     return {
@@ -2316,57 +2207,12 @@ function extractNavigatorAttendanceFact(
     };
   }
 
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+  for (let i = terminal.index; i < entries.length; i += 1) {
     const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === undefined) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
-      const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is unparseable",
-        };
-      }
-      if (
-        !navigatorAttendanceCorrelatedWithBoundMarker(
-          details,
-          i,
-          terminal.index,
-          marker,
-        )
-      ) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is uncorrelated with session invocation facts",
-        };
-      }
-      return parseNavigatorAttendanceDetails(details);
-    }
+    if (entry?.type !== "custom" || entry.customType !== "ak-role-submission-closure") continue;
+    const details = isRecord(entry.data) ? entry.data.navigator : undefined;
+    if (!isRecord(details)) break;
+    return parseNavigatorAttendanceDetails(details);
   }
   // Absence is not successful no-advice — require affirmative typed attendance.
   return {
@@ -3391,18 +3237,6 @@ export async function settleFailureTerminalResult(
           facts.attemptPointer === `current:${admitted.runDirectory}`
         ) {
           let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
-          // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
-          if (packagedProjectsTargetBindRejection(admitted.role)) {
-            const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
-            if (bindRejection !== undefined) {
-              decisiveFacts = {
-                ...facts,
-                targetBindRejected: true,
-                targetBindDiagnostic: bindRejection.diagnostic,
-                ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
-              };
-            }
-          }
           // #478: no_receipt is still a public Terminal — project accepted gate facts.
           // #953: empty public terminal face — clear every reader-adoptable prior face.
           await clearOppositeTerminalArtifactFace(admitted.runDirectory);

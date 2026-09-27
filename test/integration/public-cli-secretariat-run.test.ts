@@ -45,7 +45,7 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
-import { readTicketProvenance } from "../../src/ticket-provenance.ts";
+import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { connect } from "node:net";
 import {

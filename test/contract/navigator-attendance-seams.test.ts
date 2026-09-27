@@ -7,12 +7,12 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
+import { extractNavigatorFact, NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
@@ -27,7 +27,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
-import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
+import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
@@ -46,6 +46,82 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+
+test("shared accepted submission binds settled attendance before public extraction; prior activation cannot deliver late", async () => {
+  await withTempRoot("navigator-bound-closure-", async (home) => {
+    const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+    const runDir = join(home, ".ak-roles", "books", "fixture", "unbound", "runs", "bound@judge");
+    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = runDir;
+    try {
+      const handlers = new Map<string, (event: any, ctx: any) => any>();
+      const tools = new Map<string, any>();
+      const sent: unknown[] = [];
+      const callbacks: Array<(event: any, report: any) => void | Promise<void>> = [];
+      const host = {
+        registerFlag() {}, getFlag(name: string) { return name === "ak-role" ? "judge" : undefined; },
+        on(name: string, handler: (event: any, ctx: any) => any) { handlers.set(name, handler); },
+        registerTool(tool: any) { tools.set(tool.name, tool); },
+        getAllTools() { return [...tools.values()]; },
+        setActiveTools() {}, getActiveTools() { return [...tools.keys()]; },
+        appendEntry() {},
+      };
+      createRoleRuntimeExtension({
+        loadRoleSoul: async () => "JUDGE LAW",
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: `${runDir}/work`, subject: "work", authority: "authority",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: (options) => {
+          callbacks.push(options.onEvent);
+          return {
+            prepare() {}, setWorkContext() {}, warmHelp() {}, isPreparing: () => false,
+            async settle() {
+              await options.onEvent({
+                version: 1, disposition: "no-advice", invocationId: options.invocationId,
+                role: options.role, phase: options.phase, subjectKey: options.subjectKey,
+              }, { disposition: "no-advice" });
+            },
+            dispose() {},
+          };
+        },
+      })({
+        host: host as RoleHost, appendEntry: host.appendEntry,
+        sendMessage(message) { sent.push(message); },
+        startKeepalive() {}, stopKeepalive() {},
+      });
+      const sessionManager = SessionManager.create(home, join(runDir, "session"));
+      const ctx = { cwd: home, sessionManager, runDirectory: runDir, abort() {} };
+      await handlers.get("session_start")?.({}, ctx);
+      const tool = tools.get(JUDGE_OUTPUT_TOOL_NAME);
+      assert.ok(tool);
+      await tool.execute("bound-output", { status: "converged" }, undefined, undefined, ctx);
+      const entries = sessionManager.getEntries();
+      const closure = entries.find((entry: any) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+      assert.equal((closure as any)?.data?.navigator?.disposition, "no-advice");
+      assert.equal(extractNavigatorFact(entries).disposition, "no-advice");
+      await handlers.get("session_start")?.({}, ctx);
+      await callbacks[0]?.({ version: 1, disposition: "advice", prose: "late", invocationId: "old", role: "judge", phase: null, subjectKey: "old" }, { disposition: "advice", prose: "late" });
+      await handlers.get("agent_settled")?.({}, ctx);
+      assert.deepEqual(sent, []);
+    } finally {
+      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    }
+  });
+});
+
+test("settlement rejection still records an accepted closure with unavailable attendance", async () => {
+  const entries: Array<{ customType: string; data: unknown }> = [];
+  const ctx = { sessionManager: { appendCustomEntry(customType: string, data: unknown) { entries.push({ customType, data }); } } } as never;
+  await assert.rejects(projectClosedSubmissionLifecycle(
+    { role: "judge", kind: "accepted", accepted: { status: "converged" } },
+    ctx, null, () => {}, async () => { throw new Error("navigator write failed"); },
+  ), /navigator write failed/);
+  assert.equal(entries.length, 1);
+  assert.equal((entries[0]?.data as { navigator?: unknown }).navigator, undefined);
+  assert.equal(extractNavigatorFact([{ type: "custom", ...entries[0]! }] as never).disposition, "unavailable");
+});
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
