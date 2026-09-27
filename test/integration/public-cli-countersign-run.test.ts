@@ -76,8 +76,8 @@ import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
-  readTicketProvenance,
-} from "../../src/ticket-provenance.ts";
+  readTicketProvenanceRecords as readTicketProvenance,
+} from "../helpers/ticket-provenance-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-countersign-", async (home) => {

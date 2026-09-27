@@ -1,10 +1,9 @@
 /**
- * 起居录（ticket-provenance）typed 形状 —— ADR 0075「2026-09-14 修订」/ #901 / #918。
+ * 起居录（ticket-provenance）typed 形状 —— ADR 0075 / ADR 0081 / #1090。
  *
- * 一册＝一个追加式 records.jsonl；逻辑册子头与对话由读取时折叠不可变投影提交得到。
- * 既有「首行册子头＋裸对话行」snapshot 向后可读，后续提交不回写旧行。
- * sessions 为 prior ∪ 各轮累计并集（遗漏不删除），已结转正文不因历史源重读而改。
- * 交卷 `sessions` 输入语义仍是「本轮对话边界」；累计并集是机械合并，不是角色交什么。
+ * 一册＝一个追加式 records.jsonl。每轮交卷的 `sessions`＝本轮对话边界；
+ * 成录接缝按该边界从宿主卷投影并追加，不回读已成录历史去重或折叠。
+ * 既有「首行册子头＋裸对话行」snapshot 仍可读；后续提交不回写旧行。
  */
 
 /** Sitian kind for per-ticket court diary volumes. */
@@ -30,14 +29,14 @@ export type TicketProvenanceRange = {
 
 /**
  * 一卷：会话卷路径 + 区间声明。
- * 交卷时＝本轮边界；写入册子头后＝累计并集（#918），二者同型。
+ * 交卷与每条追加提交的 payload.sessions 同型＝该次边界。
  */
 export type TicketProvenanceSession = {
   readonly path: string;
   readonly ranges: readonly TicketProvenanceRange[];
 };
 
-/** 读取时折叠出的逻辑册子头。sessions 为累计区间；reopen 与跨宿主并入，不新建册。 */
+/** 旧 snapshot 册子头形状（存量可读；#1090 后新提交不再维护折叠头）。 */
 export type TicketProvenanceHeader = {
   readonly repo: string;
   readonly ticket: number | null;
@@ -48,15 +47,15 @@ export type TicketProvenanceHeader = {
 
 /**
  * 一条对话（存于不可变投影提交；旧 snapshot 中也可为裸行）。
- * `id` 按源事实存在则记、不存在不编；`s` 保留卷定位。
+ * `id` 按源事实存在则记、不存在不编；`s` 为本轮 sessions 下标。
  */
 export type TicketProvenanceLine = {
   readonly speaker: TicketProvenanceSpeaker;
-  /** 卷下标（册子头 `sessions` 的位置）。 */
+  /** 本轮 sessions 下标。 */
   readonly s: number;
-  /** Logical source order for display. */
+  /** Logical source order within the source volume at projection time. */
   readonly sourcePosition?: number;
-  /** Replay-invariant structural identity used for id-less cumulative coverage. */
+  /** Replay-invariant structural identity for id-less source rows. */
   readonly sourceIdentity?: string;
   readonly id?: string;
   readonly text: string;

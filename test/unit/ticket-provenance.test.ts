@@ -10,16 +10,10 @@ import {
   projectTicketProvenanceLine,
   projectTicketProvenanceSessions,
 } from "../../src/ticket-provenance-contracts.ts";
-import { ticketProvenanceSubject } from "../../src/ticket-provenance.ts";
 import {
   projectDiaristSessions,
 } from "../../src/diarist-contracts.ts";
 
-test("ticket-provenance subject is the ticket number string", () => {
-  assert.equal(ticketProvenanceSubject(582), "582");
-  assert.throws(() => ticketProvenanceSubject(0));
-  assert.throws(() => ticketProvenanceSubject(-1));
-});
 
 test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", () => {
   assert.deepEqual(projectTicketProvenanceSessions([]), []);

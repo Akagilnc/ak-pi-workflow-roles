@@ -27,7 +27,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
-import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
+import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";

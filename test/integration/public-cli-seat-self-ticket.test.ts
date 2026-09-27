@@ -38,7 +38,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
+import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
