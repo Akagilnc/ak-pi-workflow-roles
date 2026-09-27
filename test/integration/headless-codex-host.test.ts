@@ -25,7 +25,7 @@ function nonNullBranch(schema: unknown): unknown {
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
-test("codex headless host binds and resumes a structured turn", async () => {
+test("codex headless host binds and resumes a structured turn", { timeout: 10000 }, async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
   const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
@@ -33,7 +33,7 @@ test("codex headless host binds and resumes a structured turn", async () => {
   const fakeBin = join(root, "fake-codex");
   const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
@@ -49,10 +49,20 @@ const events = [
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
 process.stdout.write(JSON.stringify(events[0]) + "\\n");
-setTimeout(() => {
+const pointerFile = ${JSON.stringify(join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl"))};
+const hasPointer = () => existsSync(pointerFile) && readFileSync(pointerFile, "utf8")
+  .split("\\n").filter(Boolean).some(line => {
+    try { return JSON.parse(line).payload?.type === "native-session-pointer"; }
+    catch { return false; }
+  });
+const finish = () => {
+  if (!hasPointer()) return;
+  watcher.close();
   writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
   process.stdout.write(events.slice(1).map(JSON.stringify).join("\\n") + "\\n");
-}, 100);
+};
+const watcher = watch(${JSON.stringify(join(root, "session"))}, finish);
+finish();
 `, "utf8");
   await chmod(fakeBin, 0o755);
 
