@@ -179,6 +179,8 @@ export async function buildMigrateBookTopology(
 }
 
 export async function buildPackageArtifacts() {
+  // Remove stale artifacts from previous builds before assembling the publishable tree.
+  await rm("dist", { recursive: true, force: true });
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
     outdir: "dist",
