@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. Public callable roles and their institutional sub-legs (soul audit, doctor audit) share the in-process institutional session seam.
+**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. Public callable roles and their institutional sub-legs (soul audit, doctor audit) use the selected host's CLI seam.
 
 **Recommended hosts (token saving, [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)):** long legs are capped by each host's own auto-compaction; the threshold lives in that host's own config. This package neither writes those files nor adds a compaction mechanism of its own.
 

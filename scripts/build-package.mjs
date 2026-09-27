@@ -69,7 +69,6 @@ const entries = [
   "sitian-contracts",
   "sitian-facade",
   "sitian-reader",
-  "stream-idle-guard",
   "typed-provider-http",
   "upstream-error-testimony",
 ];

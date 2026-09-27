@@ -593,7 +593,7 @@ export function createSubmissionLedgerHost(
     states.set(runId, pending);
     return pending;
   })();
-  const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
+  const appendFor = (context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
     const home = resolveHomeFromContext(context);
     const sessionParent = sessionParentFromHostContext(context);
     return sitianReport({
@@ -612,10 +612,10 @@ export function createSubmissionLedgerHost(
     try {
       const runId = runIdentity(context);
       const attemptId = attemptIdentity(context, runId);
-      const state = await stateFor(context, runId);
       const calls = event.calls.map(({ toolCallId: id, toolName: name }) => ({ id, name }));
       if (calls.length > 0) {
-        appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls });
+        await stateFor(context, runId);
+        appendFor(context, runId, attemptId, { type: "roundContext", attemptId, calls });
       }
     } catch (error) {
       failInfrastructure(error, context);
@@ -642,7 +642,7 @@ export function createSubmissionLedgerHost(
           const runId = runIdentity(context);
           const attemptId = attemptIdentity(context, runId);
           const state = await stateFor(context, runId);
-          const append = (event: SubmissionLedgerEvent) => appendFor(state, context, runId, attemptId, event);
+          const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
           // #541 / #575: shared infra-declaration fail lives on the ledger seam.
           // #641 chain②: seats may bounce a misdeclared infrastructure failure
           // as correctable (2.1/2.2/2.3 keep paths).
