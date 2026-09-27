@@ -536,7 +536,7 @@ test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", as
       const calls = { n: 0 };
       // Each stand-in host persists its OWN real resumable-session binding
       // shape (#840 r8 判词 class 3) — never a shared fake. pi's binding is
-      // the transcript session.jsonl (DurablePrincipalAuthority#isAvailable);
+      // the transcript session.jsonl;
       // ACP/headless hosts persist a native session id under their own
       // session-identity binding file (host-descriptions.ts) instead and
       // never touch session.jsonl. Writing the same file for every host would

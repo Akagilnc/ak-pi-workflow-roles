@@ -78,8 +78,8 @@ export async function prepareRoleEnvelope(options: {
   readonly listTerminatingToolOnMcp?: boolean;
   /**
    * Durable principal session path (header layout only).
-   * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
-   * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
+   * Production passes DurablePrincipalAuthority.decode(principal).sessionFile.
+   * Tests may omit → runDirectory default.
    */
   readonly sessionFile?: string;
 }): Promise<PreparedRoleTurn> {
@@ -113,7 +113,7 @@ export async function prepareRoleEnvelope(options: {
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
 
-  // Durable principal file for isAvailable / resumable settlement (public-cli).
+  // Durable principal file for package-owned session entries.
   // #617 DK-4: never host conversation/tool writeback into Pi JSONL.
   // #959: package-owned custom entries (invocation marker, submission-closure,
   // navigator attendance, no-receipt) MUST flush so parent settlement can read

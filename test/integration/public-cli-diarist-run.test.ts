@@ -110,11 +110,6 @@ const immutablePrincipalAuthority: DurablePrincipalAuthority = {
     const wire = principal as { coordinates?: unknown };
     return piDurablePrincipalAuthority.decode(wire.coordinates ?? principal);
   },
-  async isAvailable(principal) {
-    return piDurablePrincipalAuthority.isAvailable(
-      piDurablePrincipalAuthority.seal(this.decode(principal)),
-    );
-  },
 };
 
 async function withTempHome<T>(

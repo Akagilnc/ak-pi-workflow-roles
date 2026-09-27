@@ -81,13 +81,7 @@ const hangingHost = {
   },
 };
 
-/** Always-available principal so auto-resume would retry without cancel skip. */
-const principalAuthority = {
-  ...piDurablePrincipalAuthority,
-  async isAvailable() {
-    return true;
-  },
-};
+const principalAuthority = piDurablePrincipalAuthority;
 
 let exitCode = 1;
 let diagnostic;

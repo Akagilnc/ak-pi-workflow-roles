@@ -1994,16 +1994,6 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
         const coords = piDurablePrincipalAuthority.decode(value);
         return Object.assign({}, coords, { __durableCoords: true });
       },
-      async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
-        if (
-          principal !== null &&
-          typeof principal === "object" &&
-          "__durableCoords" in (principal as Record<string, unknown>)
-        ) {
-          return false;
-        }
-        return piDurablePrincipalAuthority.isAvailable(principal);
-      },
     };
 
     {
@@ -2067,7 +2057,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     assert.equal(durable.state, "resumable");
 
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
-    // #1091: package no longer gates resume on principalAuthority.isAvailable.
+    // #1091: package no longer gates resume on local session files.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
