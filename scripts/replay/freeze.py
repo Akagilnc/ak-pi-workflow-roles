@@ -76,8 +76,21 @@ def issue_at(repo_slug, num, cut):
     else:
         body, body_at = data["body"], data["createdAt"]
     comments = [c for c in data["comments"]["nodes"] if iso(c["createdAt"]) <= cut]
-    return {"number": num, "title": data["title"], "url": data["url"], "state": "OPEN", "updatedAt": body_at,
-            "body": body, "comments": comments}, warn
+    return {"number": num, "title": title_at(repo_slug, num, cut, data["title"]), "url": data["url"], "state": "OPEN",
+            "updatedAt": body_at, "body": body, "comments": comments}, warn
+
+def title_at(repo_slug, num, cut, current_title):
+    # The GraphQL issue node carries only the live title; renames live in the timeline.
+    # Title at the cut = the last rename before the cut, else the `from` of the first rename after it.
+    events = json.loads(sh("gh", "api", f"repos/{repo_slug}/issues/{num}/timeline", "--paginate", "--jq",
+                           '[.[] | select(.event=="renamed") | {at: .created_at, from: .rename.from, to: .rename.to}]'))
+    events = sorted(events, key=lambda e: e["at"])
+    before = [e for e in events if iso(e["at"]) <= cut]
+    if before:
+        return before[-1]["to"]
+    if events:
+        return events[0]["from"]
+    return current_title
 
 def book_root(run, book_key):
     # <...>/books/<bookKey>/... — independent of where the run sits (ticket, unbound, legacy).
