@@ -42,6 +42,11 @@ export type DiaristOutput =
        * Malformed endpoints → accept hook reasks (`reask-not-explode`).
        */
       readonly sessions?: readonly TicketProvenanceSession[];
+      /** Per-ticket dialogue bounds for a single multi-ticket summons (#1107). */
+      readonly ticketSessions?: readonly {
+        readonly ticketNumber: number;
+        readonly sessions: readonly TicketProvenanceSession[];
+      }[];
     }
   | {
       /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
@@ -178,4 +183,22 @@ export function projectDiaristSessions(
   const raw = (value as { sessions?: unknown } | null)?.sessions;
   if (raw === undefined) return [];
   return projectTicketProvenanceSessions(raw);
+}
+
+/** Present multi-ticket bounds take precedence over the legacy single-ticket sessions. */
+export function projectDiaristTicketSessions(
+  value: Record<string, unknown>,
+): readonly { readonly ticketNumber: number; readonly sessions: readonly TicketProvenanceSession[] }[] | undefined {
+  const raw = value.ticketSessions;
+  if (!Array.isArray(raw)) return undefined;
+  const perTicket = new Map<number, TicketProvenanceSession[]>();
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+    const { ticketNumber, sessions: rawSessions } = entry as Record<string, unknown>;
+    if (!isSafePositiveTicketNumber(ticketNumber)) return undefined;
+    const sessions = projectTicketProvenanceSessions(rawSessions);
+    if (sessions === undefined) return undefined;
+    perTicket.set(ticketNumber, [...(perTicket.get(ticketNumber) ?? []), ...sessions]);
+  }
+  return Array.from(perTicket, ([ticketNumber, sessions]) => ({ ticketNumber, sessions }));
 }

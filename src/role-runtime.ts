@@ -73,6 +73,7 @@ import {
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import {
   projectDiaristSessions,
+  projectDiaristTicketSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
 import { TicketProvenanceInputError } from "./ticket-provenance.ts";
@@ -870,18 +871,23 @@ export function createDiaristRoleRuntime(
             await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
         }
-        const sessions = projectDiaristSessions(parameters);
-        if (sessions === undefined) {
+        const singleSessions = submitted && !Object.hasOwn(submitted, "ticketSessions")
+          ? projectDiaristSessions(parameters)
+          : undefined;
+        const ticketSessions = submitted && Object.hasOwn(submitted, "ticketSessions")
+          ? projectDiaristTicketSessions(submitted)
+          : singleSessions === undefined
+            ? undefined
+            : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
+        if (ticketSessions === undefined) {
           throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
         }
-        let facts;
         try {
-          facts = await commitDiaristProjection({
-            ticketNumber: ticketNumber ?? null,
+          await commitDiaristProjection({
             cwd: coords.projectRoot,
             home: coords.home,
             runDirectory: coords.runDirectory,
-            sessions,
+            tickets: ticketSessions,
           });
         } catch (error) {
           // Bound/session input failures → reask via typed identity (not message prefix).

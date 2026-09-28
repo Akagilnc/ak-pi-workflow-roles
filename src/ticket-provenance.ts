@@ -338,42 +338,54 @@ export async function reprojectTicketProvenance(input: {
   readonly runDirectory?: string;
   readonly sessions: readonly TicketProvenanceSession[];
 }): Promise<ReprojectTicketProvenanceResult> {
-  const recordInput = ticketProvenanceRecordInput(
-    input.ticketNumber,
-    input.cwd,
-    input.home,
-    input.runDirectory,
-  );
-  const resolved = resolveSitianRecordPath(recordInput);
-  if (input.sessions.length === 0) {
-    return {
-      recordFile: resolved.recordFile,
-      lines: [],
-    };
-  }
-
-  const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
-  for (let s = 0; s < input.sessions.length; s += 1) {
-    const session = input.sessions[s]!;
-    const projected = await projectSessionRanges({
-      s,
-      session,
-      ...(input.home === undefined ? {} : { home: input.home }),
-    });
-    entries.push(...projected.entries);
-  }
-
-  const pointer = appendSitianRecord({
-    ...recordInput,
-    payload: {
-      type: "ticket-provenance-append",
-      sessions: input.sessions,
-      lines: entries,
-    },
+  const [result] = await reprojectTicketProvenanceBatch({
+    ...input,
+    tickets: [{ ticketNumber: input.ticketNumber, sessions: input.sessions }],
   });
+  return result!;
+}
 
-  return {
-    recordFile: pointer.recordFile,
-    lines: entries.filter((entry): entry is TicketProvenanceLine => "speaker" in entry),
-  };
+/** Project every submitted boundary before appending any ticket's record. */
+export async function reprojectTicketProvenanceBatch(input: {
+  readonly cwd: string;
+  readonly home?: string;
+  readonly runDirectory?: string;
+  readonly tickets: readonly {
+    readonly ticketNumber: number | null;
+    readonly sessions: readonly TicketProvenanceSession[];
+  }[];
+}): Promise<readonly ReprojectTicketProvenanceResult[]> {
+  const projections = [];
+  for (const ticket of input.tickets) {
+    const recordInput = ticketProvenanceRecordInput(
+      ticket.ticketNumber, input.cwd, input.home, input.runDirectory,
+    );
+    const resolved = resolveSitianRecordPath(recordInput);
+    const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
+    for (let s = 0; s < ticket.sessions.length; s += 1) {
+      const projected = await projectSessionRanges({
+        s,
+        session: ticket.sessions[s]!,
+        ...(input.home === undefined ? {} : { home: input.home }),
+      });
+      entries.push(...projected.entries);
+    }
+    projections.push({ ticket, recordInput, resolved, entries });
+  }
+
+  return projections.map(({ ticket, recordInput, resolved, entries }) => {
+    if (ticket.sessions.length === 0) return { recordFile: resolved.recordFile, lines: [] };
+    const pointer = appendSitianRecord({
+      ...recordInput,
+      payload: {
+        type: "ticket-provenance-append",
+        sessions: ticket.sessions,
+        lines: entries,
+      },
+    });
+    return {
+      recordFile: pointer.recordFile,
+      lines: entries.filter((entry): entry is TicketProvenanceLine => "speaker" in entry),
+    };
+  });
 }
