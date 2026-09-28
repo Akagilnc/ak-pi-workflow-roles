@@ -82,9 +82,10 @@ def issue_at(repo_slug, num, cut):
 def title_at(repo_slug, num, cut, current_title):
     # The GraphQL issue node carries only the live title; renames live in the timeline.
     # Title at the cut = the last rename before the cut, else the `from` of the first rename after it.
-    events = json.loads(sh("gh", "api", f"repos/{repo_slug}/issues/{num}/timeline", "--paginate", "--jq",
-                           '[.[] | select(.event=="renamed") | {at: .created_at, from: .rename.from, to: .rename.to}]'))
-    events = sorted(events, key=lambda e: e["at"])
+    # --paginate --slurp yields one outer array of pages; flatten before filtering.
+    pages = json.loads(sh("gh", "api", f"repos/{repo_slug}/issues/{num}/timeline", "--paginate", "--slurp"))
+    events = sorted(({"at": e["created_at"], "from": e["rename"]["from"], "to": e["rename"]["to"]}
+                     for page in pages for e in page if e.get("event") == "renamed"), key=lambda e: e["at"])
     before = [e for e in events if iso(e["at"]) <= cut]
     if before:
         return before[-1]["to"]
