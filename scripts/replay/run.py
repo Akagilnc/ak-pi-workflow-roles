@@ -16,6 +16,7 @@ def main():
     ap.add_argument("--instr", help="instruction text instead of <kit>/instr.txt")
     ap.add_argument("--effort", help="codex reasoning effort (default: run's thinking)")
     ap.add_argument("--model", help="model id (default: run's model)")
+    ap.add_argument("--provider", help="pi provider (default: run's provider)")
     ap.add_argument("--thinking", help="pi thinking level (default: run's thinking)")
     ap.add_argument("--host", choices=["codex", "pi"], help="override host (default: run's host)")
     ap.add_argument("--allow-issue-writes", action="store_true", help="let `gh issue create/edit` land in a per-leg store (secretariat replays)")
@@ -61,7 +62,7 @@ def main():
     else:
         sess = f"{kit}/pisess-{tag}"
         shutil.rmtree(sess, ignore_errors=True); os.makedirs(sess)
-        model = f"{meta['provider']}/{a.model or meta['model']}"
+        model = f"{a.provider or meta['provider']}/{a.model or meta['model']}"
         thinking = a.thinking or meta.get("thinking")
         if thinking:
             model += f":{thinking}"

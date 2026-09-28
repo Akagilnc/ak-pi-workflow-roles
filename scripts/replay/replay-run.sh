@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Frozen replay of one recorded seat run. Caller-side tool; not part of the public CLI.
 #   replay-run.sh freeze <run-dir> [--cut <ISO>] [--head <sha>] [--kit <dir>]
-#   replay-run.sh run    <kit> <arm> <n> [--sys <file>] [--instr <text>] [--effort <e>] [--model <m>] [--thinking <t>]
+#   replay-run.sh run    <kit> <arm> <n> [--sys <file>] [--instr <text>] [--effort <e>] [--model <m>] [--provider <p>] [--thinking <t>]
 #   replay-run.sh show   <kit> [<arm>]
 #   replay-run.sh clean  <kit>
 set -e
