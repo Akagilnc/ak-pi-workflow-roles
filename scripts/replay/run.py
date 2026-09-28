@@ -61,7 +61,8 @@ def main():
     else:
         sess = f"{kit}/pisess-{tag}"
         shutil.rmtree(sess, ignore_errors=True); os.makedirs(sess)
-        model = f"{meta['provider']}/{a.model or meta['model']}"
+        # --model with a slash is a full provider/model id (cross-provider experiments).
+        model = a.model if (a.model and "/" in a.model) else f"{meta['provider']}/{a.model or meta['model']}"
         thinking = a.thinking or meta.get("thinking")
         if thinking:
             model += f":{thinking}"
