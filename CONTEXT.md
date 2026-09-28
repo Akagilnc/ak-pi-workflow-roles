@@ -33,7 +33,7 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 - **台院(Inspector)**:纠举推鞫官；审**复杂度**与**测试质量**。机器键 `inspector`。见 ADR 0074。
 - **符宝郎(Document-fidelity auditor)**:门下省下独立文书核验角色。首责：**核实实际授权出处**。见 ADR 0067、0074、0075、0079。
 - **起居录(ticket-provenance)**:每票一份的共同案卷。不同于一次运行的卷宗。见 ADR 0075、0081。
-- **起居郎(diarist)**:判断本庭对象是哪张票、本票对话起止于何处的记录者。见 ADR 0075、0081。
+- **起居郎(diarist)**:为本票起居录记下本票对话的角色。见 ADR 0075、0081。
 - **通进司(Collector)**:门下省下的收证衙门；不评审、不裁决、不修复、不路由。canonical 键 `collector`。见 ADR 0067。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:completeness／correctness 普通单轴 Reviewer run 之一。见 ADR 0010、0082。
