@@ -12,7 +12,7 @@ import {
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
-import { fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { PARTIALLY_COMPLETED_DEFINITION, fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -44,7 +44,7 @@ export type { WorkerOutput };
 // One shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
-  "planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。" as const;
+  `planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。${PARTIALLY_COMPLETED_DEFINITION}` as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
