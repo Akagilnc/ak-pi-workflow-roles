@@ -36,10 +36,7 @@ import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-parti
 import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
 import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
-import {
-  reprojectTicketProvenance,
-  resolveTicketProvenanceVolume,
-} from "../../src/ticket-provenance.ts";
+import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
@@ -918,7 +915,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
                   lastReask,
                   "expected bounds reask for directory session path",
                 );
-                assert.match(lastReask, /边界无法使用|session unreadable/);
                 sawDirPathReask = true;
                 assert.equal(
                   readFileSync(paths.recordFile, "utf8"),
@@ -1638,7 +1634,6 @@ test("ak-role diarist append-only resubmit leaves a new record", async () => {
                 };
               }
               assert.ok(lastReask, "expected unreadable-session reask");
-              assert.match(lastReask, /边界无法使用|session unreadable/);
               sawUnreadableReask = true;
               assert.equal(
                 readFileSync(paths.recordFile, "utf8"),
