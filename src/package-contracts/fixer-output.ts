@@ -37,11 +37,14 @@ const refusedClassResultSchema = Type.Object({
 const classResultSchema = Type.Union([completedClassResultSchema, refusedClassResultSchema]);
 const completedClassResultsSchema = Type.Array(completedClassResultSchema);
 
+/** Owner 2026-09-28: partially_completed only when a lawful refusal exists; never otherwise (ADR 0015). */
+export const PARTIALLY_COMPLETED_DEFINITION =
+  "partially_completed 只能在有合法拒绝项（完成项与合法拒绝项并存）时用，别的情况不准用。" as const;
 // #836 (ADR 0003 Amendment): status kept open like countersignStatus
 // (src/countersign-role.ts) — one shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const FIXER_STATUS_DESCRIPTION =
-  "planned | completed | refused | unfinished | partially_completed。unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
+  `planned | completed | refused | unfinished | partially_completed。unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。${PARTIALLY_COMPLETED_DEFINITION}` as const;
 const fixerOutputVariants = Type.Union([
   Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }) }),
   Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), remainingScope: Type.String({ description: "依法不能完成的工作范围" }), blocker: Type.Unsafe({ ...blockerSchema, description: "合法阻断完成的 blocker" }) }),
