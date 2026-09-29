@@ -34,7 +34,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  settleSeatTerminalResult,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -304,7 +304,8 @@ test("lawful merger Terminal settlement publishes report/evidence with derived e
       toolCallId: "m1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
+    const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+    assert.ok(terminal);
     assert.equal(terminal.roleOutcome.role, "merger");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(
@@ -403,7 +404,8 @@ test("lawful merger Terminal settlement publishes report/evidence with derived e
       details: escalateReceiptBound,
       toolCallId: "m2",
     });
-    const escalateTerminal = await settleSeatTerminalResult(escalateAdmitted, piDurablePrincipalAuthority);
+    const escalateTerminal = await trySettlePublicSeat(escalateAdmitted, piDurablePrincipalAuthority, undefined);
+    assert.ok(escalateTerminal);
     assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
     assert.deepEqual(
       escalateTerminal.roleOutcome.kind === "accepted"

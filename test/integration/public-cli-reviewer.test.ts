@@ -41,7 +41,7 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   formatTerminalResult,
-  settleSeatTerminalResult,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
@@ -598,7 +598,8 @@ test("lawful reviewer Terminal preserves review evidence", async () => {
       toolCallId: "r1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
+    const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+    assert.ok(terminal);
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);

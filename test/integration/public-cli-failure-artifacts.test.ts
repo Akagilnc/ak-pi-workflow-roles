@@ -15,12 +15,13 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   formatFailureStderrDiagnostic,
   publishFailureArtifacts,
-  publishSeatAcceptedArtifacts,
   settleHostEndedNoReceipt,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   withTempHome,
@@ -747,15 +748,15 @@ test("#953 reader adopts current failure after success; success after failure", 
       `${JSON.stringify({ kind: "error", role: "judge", runId, diagnostic: "old boom" })}\n`,
       "utf8",
     );
-    await publishSeatAcceptedArtifacts(
-      admitted,
-      {
-        kind: "accepted",
-        role: "judge",
-        payloads: [{ judgeStatus: "pass" }],
-      },
-      authority.decode(admitted.principal),
-    );
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await sealAcceptedSubmission({
+      cwd: project, home, runId, runDirectory, role: "judge",
+      details: { judgeStatus: "pass" },
+    });
+    const settled = await trySettlePublicSeat(admitted, authority, undefined);
+    assert.equal(settled?.roleOutcome.kind, "accepted");
     const afterSuccess = await readRunTerminalArtifact(runDirectory);
     assert.equal(afterSuccess.status, "present");
     if (afterSuccess.status === "present") {
@@ -1032,17 +1033,10 @@ test("#953 no_receipt clears owned reader face; sibling and non-terminal retaine
       projectRoot: join(home, "proj"),
       bookKey: "proj",
     });
-    await publishSeatAcceptedArtifacts(
-      admitted,
-      {
-        kind: "accepted",
-        role: "judge",
-        payloads: [{ judgeStatus: "pass" }],
-      },
-      piDurablePrincipalAuthority.decode(admitted.principal),
-    );
-    // Non-terminal evidence must survive no_receipt clear — write after publish
-    // so the retention assert is against settleHostEndedNoReceipt, not publish.
+    await writeFile(join(artifactsDir, "report.json"), `${JSON.stringify({
+      role: "judge", runId, outcome: { kind: "accepted", role: "judge" },
+    })}\n`, "utf8");
+    // Non-terminal evidence must survive no_receipt clear.
     await writeFile(
       evidencePath,
       `${JSON.stringify({ runId, role: "judge", note: "keep-me" })}\n`,

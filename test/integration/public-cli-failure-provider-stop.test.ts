@@ -14,7 +14,7 @@ import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
-import { classifyPostAdmissionFailure, extractSessionProviderStop, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { classifyPostAdmissionFailure, extractSessionProviderStop, readSessionProviderStop, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -396,14 +396,14 @@ test("bound auditor provider failure outranks the parent abort it caused", async
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
     assert.deepEqual(
-      await resolveAuditedRunnerKnownFailure({
+      (await resolveAuditedRunnerFailureResolution({
         runner: undefined,
         sessionFile,
         credential: {
           cause: "provider",
           identity: { name: "MissingProviderCredential", code: "openai-codex" },
         },
-      }),
+      })).knownFailure,
       {
         cause: "provider",
         diagnostic: "WebSocket error",
@@ -456,11 +456,11 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.deepEqual(
-      await resolveAuditedRunnerKnownFailure({
+      (await resolveAuditedRunnerFailureResolution({
         runner: undefined,
         sessionFile,
         credential: undefined,
-      }),
+      })).knownFailure,
       {
         diagnostic: "WebSocket error",
         details: {
@@ -482,11 +482,11 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
     await mkdir(childDir, { recursive: true });
     await writeFile(sessionFile, JSON.stringify({ type: "session", id: "parent-session" }) + "\n");
     await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
-    const malformed = await resolveAuditedRunnerKnownFailure({
+    const malformed = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
-    });
+    })).knownFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
   });
@@ -496,11 +496,11 @@ test("bound auditor ENOTDIR evidence outranks credential in shared settlement", 
   await withTempHome(async (home) => {
     const pathComponent = join(home, "not-a-directory");
     await writeFile(pathComponent, "file");
-    const failure = await resolveAuditedRunnerKnownFailure({
+    const failure = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile: join(pathComponent, "parent.jsonl"),
       credential: { cause: "activation", diagnostic: "credential fallback" },
-    });
+    })).knownFailure;
     assert.equal(failure?.cause, "session");
     assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
     assert.ok(failure?.diagnostic);
@@ -523,11 +523,11 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
       } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
-    assert.equal(await resolveAuditedRunnerKnownFailure({
+    assert.equal((await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
-    }), undefined);
+    })).knownFailure, undefined);
   });
 });
 // Session provider-stop causal matrix (#420 整改并一)：三条同根「session stop
@@ -777,44 +777,44 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
 
     // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
     assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
-    assert.equal(await resolveAuditedRunnerKnownFailure({
+    assert.equal((await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
       runDirectory,
-    }), undefined);
+    })).knownFailure, undefined);
 
     // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
     await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
-    const badShape = await resolveAuditedRunnerKnownFailure({
+    const badShape = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
       runDirectory,
-    });
+    })).knownFailure;
     assert.equal(badShape?.cause, "session");
     assert.equal(badShape?.identity?.name, "Error");
 
     // Non-absence: malformed JSON keeps SyntaxError identity (not laundered as absence).
     await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
-    const malformed = await resolveAuditedRunnerKnownFailure({
+    const malformed = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
       runDirectory,
-    });
+    })).knownFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
 
     // Non-absence: EISDIR on the observation path keeps real errno cause.
     await rm(join(runDirectory, "typed-provider-http.json"), { force: true });
     await mkdir(join(runDirectory, "typed-provider-http.json"));
-    const eisdir = await resolveAuditedRunnerKnownFailure({
+    const eisdir = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
       runDirectory,
-    });
+    })).knownFailure;
     assert.equal(eisdir?.cause, "session");
     assert.equal(eisdir?.identity?.code, "EISDIR");
   });
@@ -923,12 +923,12 @@ async function settleDiskSessionStopToErrorJson(input: {
     `${input.runId}@judge`,
   );
   await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-  const known = await resolveAuditedRunnerKnownFailure({
+  const known = (await resolveAuditedRunnerFailureResolution({
     runner: undefined,
     sessionFile: input.sessionFile,
     credential: undefined,
     runDirectory,
-  });
+  })).knownFailure;
   assert.ok(known, "disk session must yield a knownFailure");
   const failure = classifyPostAdmissionFailure({
     timedOut: false,
@@ -950,7 +950,7 @@ async function settleDiskSessionStopToErrorJson(input: {
     sessionFile: input.sessionFile,
   });
   await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-  const terminal = await settleJudgeFailureTerminalResult(admitted, failure, piDurablePrincipalAuthority);
+  const terminal = await settleFailureTerminalResult(admitted, failure, piDurablePrincipalAuthority);
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
   assert.ok(errorRef, "settlement must publish error artifact");
   const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;

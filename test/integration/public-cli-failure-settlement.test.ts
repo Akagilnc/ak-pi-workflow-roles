@@ -25,7 +25,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -366,7 +366,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     });
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
 
-    const terminal = await settleJudgeFailureTerminalResult(admitted, {
+    const terminal = await settleFailureTerminalResult(admitted, {
       cause: "activation",
       diagnostic: "role infrastructure failed",
     }, piDurablePrincipalAuthority);
@@ -790,7 +790,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         runDirectory,
       });
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-      const terminal = await settleJudgeFailureTerminalResult(admitted, {
+      const terminal = await settleFailureTerminalResult(admitted, {
         ...(cause === undefined ? {} : { cause }),
         diagnostic: `diagnostic for ${causeKey}`,
         identity: { name: "CauseProbeError", code: causeKey },

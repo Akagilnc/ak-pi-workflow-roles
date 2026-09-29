@@ -92,7 +92,7 @@ import {
   extractNavigatorFact,
   formatTerminalResult,
   NAVIGATOR_POST_ROLE_GRACE_MS,
-  settleJudgeFailureTerminalResult,
+  settleFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
@@ -490,7 +490,7 @@ test("after_provider_response production handler writes typed 429 into resumable
       provider: "openai-codex",
     });
 
-    const terminal = await settleJudgeFailureTerminalResult(
+    const terminal = await settleFailureTerminalResult(
       {
         role: "judge",
         runId,

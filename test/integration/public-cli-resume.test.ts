@@ -2,7 +2,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
- * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
+ * Seams: run-lifecycle / settleFailureTerminalResult / runAkRole(judge|resume)
  * with injectable Pi runner. Assert typed regions, resume command identity,
  * exact-session reopen, temporary overrides, reject-without-replay — never
  * table labels/layout/prose classification. #987: public manual resume does
@@ -36,7 +36,7 @@ import {
   renderResumeCommand,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
@@ -1896,7 +1896,7 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
   });
 });
 
-test("settleJudgeFailureTerminalResult attaches resume only for typed 429", async () => {
+test("failure settlement attaches resume only for typed 429", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1934,7 +1934,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       provider: "xai",
     });
 
-    const withResume = await settleJudgeFailureTerminalResult(
+    const withResume = await settleFailureTerminalResult(
       admitted,
       { cause: "provider", diagnostic: "upstream declined" },
       piDurablePrincipalAuthority,
@@ -1948,7 +1948,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     assert.equal(withResume.artifacts.length, 0);
 
     await markRunTerminal(runDirectory);
-    const without = await settleJudgeFailureTerminalResult(admitted, {
+    const without = await settleFailureTerminalResult(admitted, {
       cause: "activation",
       diagnostic: "boom",
     }, piDurablePrincipalAuthority);

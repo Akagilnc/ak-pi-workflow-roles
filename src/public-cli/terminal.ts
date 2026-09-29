@@ -170,20 +170,6 @@ export function currentReplyRows(terminal: TerminalResult | undefined): readonly
 }
 
 /**
- * Prefer non-empty current-result payloads; an empty array must not shadow
- * top-level submissions (#953 / #836). Callers that need failure history must
- * read TerminalResult.submissions directly — do not coalesce into failure.payloads.
- */
-export function coalesceSubmissionRows(
-  payloads: readonly unknown[] | undefined,
-  submissions: readonly unknown[] | undefined,
-): readonly unknown[] {
-  if (payloads !== undefined && payloads.length > 0) return payloads;
-  if (submissions !== undefined && submissions.length > 0) return submissions;
-  return payloads ?? submissions ?? [];
-}
-
-/**
  * One admitted Role run's typed Terminal aggregate. Resumable failures disclose
  * the run ID only inside resume.command. autoResumeCount is call-local (#416).
  */
@@ -334,28 +320,21 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   // Role-result block: original payloads, newest first for humans (#961).
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
-  // #953: failure history is the top-level submissions carrier (#836) — present
-  // as recorded-submission, never as this-turn submission/receipt.
-  if (result.roleOutcome.kind === "failure") {
-    const recorded = result.submissions ?? [];
-    for (let i = recorded.length - 1; i >= 0; i -= 1) {
-      const payload = recorded[i]!;
-      const rendered =
-        typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
-    }
-  } else {
-    const payloads =
-      result.roleOutcome.kind === "accepted" ||
-      result.roleOutcome.kind === "audit_escalation"
-        ? coalesceSubmissionRows(result.roleOutcome.payloads, result.submissions)
-        : result.submissions ?? [];
-    for (let i = payloads.length - 1; i >= 0; i -= 1) {
-      const payload = payloads[i]!;
-      const rendered =
-        typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`submission\t${encodeTerminalField(rendered)}`);
-    }
+  // Present the current result and the run history on distinct faces (#879 / #836).
+  // Neither a prior court's submission nor a failed turn's history is this reply.
+  const current = result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation" || result.roleOutcome.kind === "failure"
+    ? result.roleOutcome.payloads ?? []
+    : [];
+  for (let i = current.length - 1; i >= 0; i -= 1) {
+    const payload = current[i]!;
+    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+    lines.push(`submission\t${encodeTerminalField(rendered)}`);
+  }
+  const recorded = result.submissions ?? [];
+  for (let i = recorded.length - 1; i >= 0; i -= 1) {
+    const payload = recorded[i]!;
+    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+    lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
   }
   return `${lines.join("\n")}\n`;
 }

@@ -325,7 +325,6 @@ function coordinatesFromAdmitted(
   return authority.decode(admitted.principal);
 }
 import {
-  coalesceSubmissionRows,
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
@@ -1300,17 +1299,6 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   );
 }
 
-/** Sole evidence-priority owner for public runners with Soul auditors. */
-export async function resolveAuditedRunnerKnownFailure(input: {
-  runner: RoleTurnKnownFailure | undefined;
-  sessionFile: string;
-  credential: RoleTurnKnownFailure | undefined;
-  /** Optional run directory for typed provider HTTP observation (resume/429). */
-  runDirectory?: string;
-}): Promise<RoleTurnKnownFailure | undefined> {
-  return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
-}
-
 /**
  * v1 resume observation for controlled-failure settlement — at most one sidecar read.
  * Prefer the pre-resolved outcome from resolveAuditedRunnerFailureResolution.
@@ -2234,16 +2222,6 @@ async function publishAcceptedTerminalArtifacts(
   ];
 }
 
-/** Publish one accepted seat's report/evidence face from the shared leaf table. */
-export async function publishSeatAcceptedArtifacts(
-  admitted: AdmittedRoleInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  entries: readonly SessionEntry[] = [],
-): Promise<TerminalArtifactRef[]> {
-  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
-}
-
 /**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
  * Malformed JSONL / other read failures throw with knownCause=session.
@@ -2310,18 +2288,24 @@ async function settleSealedSeat(
   }
   if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) return undefined;
   const entries = priorEntries ?? await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  return finishLawfulSeat(admitted, coordinates, entries, roleOutcome, scope);
+}
+
+async function finishLawfulSeat(
+  admitted: AdmittedRoleInvocation,
+  coordinates: DurablePrincipalCoordinates,
+  entries: readonly SessionEntry[],
+  roleOutcome: TerminalRoleOutcome,
+  scope: SettlementCourtScope | undefined,
+): Promise<TerminalResult> {
   const artifacts = await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
-  const terminal = await withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator: extractNavigatorFact(entries),
-      artifacts,
-      runId: admitted.runId,
-    },
-    coordinates.sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
-  return options.residual === undefined ? terminal : attachRecordedSubmissions(admitted, terminal, scope);
+  const terminal = await withOptionalGateProjection({
+    roleOutcome,
+    navigator: extractNavigatorFact(entries),
+    artifacts,
+    runId: admitted.runId,
+  }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
+  return attachRecordedSubmissions(admitted, terminal, scope);
 }
 
 /**
@@ -2347,37 +2331,6 @@ async function settleSeat(
       ? { residual: { tool: record.residualTool, scan: record.residualScan } }
       : {}),
   });
-}
-
-/**
- * Try to settle any registered seat. Undefined only for genuine absence.
- * Session malformation and publication exceptions keep their typed identity.
- */
-export async function trySettleSeatTerminalResult(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleSeat(admitted, authority, scope);
-}
-
-/**
- * Settle any registered seat. Throws when no lawful outcome is present.
- * Session-read and publication failures retain their typed identity.
- */
-export async function settleSeatTerminalResult(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleSeat(admitted, authority, scope);
-  if (settled === undefined) {
-    const label = admitted.role.charAt(0).toUpperCase() + admitted.role.slice(1);
-    throw new Error(
-      `${label} Role run completed without a lawful typed terminal result`,
-    );
-  }
-  return settled;
 }
 
 /**
@@ -2512,9 +2465,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const submissions = await recordedSubmissionPayloads(admitted, scope);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   // #843: collector shape (ledger closed first) plus current user-turn freshness.
   // Only the ledger-owned closure establishes this turn's success. A non-error
   // toolResult may be a candidate whose nested gate continued the conversation.
@@ -2550,36 +2501,17 @@ async function settleLawfulSeatAcceptedTerminalResult(
   if (roleOutcome !== undefined && (
     thisAttemptHasSeatSuccess || residual === undefined || (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0)
   )) {
-    const navigator = extractNavigatorFact(entries);
-    const artifacts = await publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-    );
-    return withSubmissions(
-      await withOptionalGateProjection(
-        {
-          roleOutcome,
-          navigator,
-          artifacts,
-          runId: admitted.runId,
-        },
-        sessionDirectory,
-        detourGateContext(admitted, scope),
-      ),
-      submissions,
-    );
+    return finishLawfulSeat(admitted, coordinates, entries, roleOutcome, scope);
   }
   if (residual !== undefined) {
     const failed = await settleResidualOutputFailure(admitted, authority, scope, residual);
-    return withSubmissions(failed, submissions);
+    return attachRecordedSubmissions(admitted, failed, scope);
   }
   return undefined;
 }
 
 /** Accepted-tool seats: one scan, tool name from the composition-root record. */
-export async function trySettleAcceptedSeatTerminalResult(
+async function trySettleAcceptedSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
@@ -3049,31 +2981,6 @@ export async function settleFailureTerminalResult(
   if (failure.details !== undefined) {
     decisiveFacts.secondaryEvidence = failure.details;
   }
-  // Resumable failures: durable artifacts still land under the run directory, but
-  // the public Terminal must not re-disclose the run ID via top-level runId,
-  // path components, or untrusted free text — only resume.command may carry it
-  // (AC2 / #108).
-  if (options.resume !== undefined) {
-    const roleOutcome: TerminalRoleOutcome = {
-      kind: "failure",
-      role: admitted.role,
-      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-      diagnostic: failure.diagnostic,
-      decisiveFacts,
-    };
-    const terminal = await withOptionalGateProjection(
-      {
-        roleOutcome,
-        navigator,
-        artifacts: [],
-        resume: options.resume,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, options),
-    );
-    if (errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
-    return terminal;
-  }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
     role: admitted.role,
@@ -3081,29 +2988,16 @@ export async function settleFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
-  // #478: ordinary controlled failure still surfaces accepted gate facts.
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
+  // Resumable failures disclose the run ID only through resume.command (#108).
+  const terminal = await withOptionalGateProjection(
+    options.resume === undefined
+      ? { roleOutcome, navigator, artifacts, runId: admitted.runId }
+      : { roleOutcome, navigator, artifacts: [], resume: options.resume },
     sessionDirectory,
     detourGateContext(admitted, options),
   );
-}
-
-/** Judge-named alias retained for #107 call sites. */
-export async function settleJudgeFailureTerminalResult(
-  admitted: AdmittedJudgeInvocation,
-  failure: ControlledFailure,
-  authority: DurablePrincipalAuthority,
-  options: SettlementCourtScope & {
-    readonly resume?: TerminalResume;
-  } = {},
-): Promise<TerminalResult> {
-  return settleFailureTerminalResult(admitted, failure, authority, options);
+  if (options.resume !== undefined && errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
+  return terminal;
 }
 
 /**

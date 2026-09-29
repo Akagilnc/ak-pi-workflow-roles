@@ -38,8 +38,7 @@ import {
   admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
 import {
-  settleSeatTerminalResult,
-  trySettleSeatTerminalResult,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -519,7 +518,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       caseRunsPath: string;
       caseIdentity: { issueNumber: number; runsPath: string };
     };
-    const settled = await settleSeatTerminalResult(
+    const settled = await trySettlePublicSeat(
       fixtureDoctorAdmitted({
         runId: "run-doctor-settle",
         bookKey,
@@ -532,7 +531,9 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         caseIdentity: admittedSnap.caseIdentity,
       }),
       piDurablePrincipalAuthority,
+      undefined,
     );
+    assert.ok(settled);
     assert.equal(settled.roleOutcome.kind, "accepted");
 
     // #836: candidate cost and auditNoReceipt stay on the current attempt.
@@ -555,7 +556,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       })}\n`,
       "utf8",
     );
-    const settledNextAttempt = await settleSeatTerminalResult(
+    const settledNextAttempt = await trySettlePublicSeat(
       fixtureDoctorAdmitted({
         runId: "run-doctor-settle",
         bookKey,
@@ -568,7 +569,9 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         caseIdentity: admittedSnap.caseIdentity,
       }),
       piDurablePrincipalAuthority,
+      undefined,
     );
+    assert.ok(settledNextAttempt);
     assert.equal(settledNextAttempt.roleOutcome.kind, "accepted");
     const reportPathNextAttempt = settledNextAttempt.artifacts.find((a) => a.kind === "report")?.path;
     assert.ok(reportPathNextAttempt);
@@ -587,7 +590,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     );
 
     assert.equal(
-      await trySettleSeatTerminalResult(
+      await trySettlePublicSeat(
         fixtureDoctorAdmitted({
           runId: "missing",
           bookKey,
@@ -600,6 +603,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           caseIdentity: admittedSnap.caseIdentity,
         }),
         piDurablePrincipalAuthority,
+        undefined,
       ),
       undefined,
     );

@@ -33,7 +33,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  settleSeatTerminalResult,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import {
   exitCodeForTerminalOutcome,
@@ -236,7 +236,8 @@ test("lawful fixer Terminal accepts a receipt without Skill expansion", async ()
       toolCallId: "f1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
+    const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+    assert.ok(terminal);
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -279,7 +280,8 @@ test("lawful fixer Terminal accepts a receipt without Skill expansion", async ()
       details: receipt,
       toolCallId: "f2",
     });
-    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority);
+    const terminalNoDiag = await trySettlePublicSeat(noDiag, piDurablePrincipalAuthority, undefined);
+    assert.ok(terminalNoDiag);
     assert.equal(terminalNoDiag.roleOutcome.kind, "accepted");
   });
 });
@@ -593,7 +595,9 @@ async function settleFixerSession(
     details,
     toolCallId: "f-out",
   });
-  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
+  const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+  assert.ok(terminal);
+  return terminal;
 }
 
 test("public CLI retains declared prerequisite_unmet judgment as accepted Terminal (not usage/failure)", async () => {
