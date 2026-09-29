@@ -200,7 +200,9 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
     assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
 
-    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)), /not a git repository/);
+    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)),
+      (error: unknown) => typeof error === "object" && error !== null &&
+        "status" in error && error.status === 128);
 
     await withTempGit(async (unborn, unbornHome) => {
       const g = gateWithHome(unbornHome);
@@ -398,7 +400,8 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(unreadable.hookPath, 0o000);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)),
+            (error: unknown) => (error as NodeJS.ErrnoException)?.code === "EACCES");
           assert.equal(
             hooksPathOf(root),
             unreadable.hooksDir,
@@ -415,7 +418,8 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(undeletable.hooksDir, 0o555);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)),
+            (error: unknown) => (error as NodeJS.ErrnoException)?.code === "EACCES");
         },
         async () => {
           await scrubPlanted(root, undeletable);

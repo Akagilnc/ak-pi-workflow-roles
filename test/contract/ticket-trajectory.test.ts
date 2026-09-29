@@ -27,23 +27,10 @@ import {
   type TicketSnapshot,
 } from "../../src/ticket-trajectory.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
+import { elementsWith } from "../helpers/factory-board-shared.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
-
-/** Collect elements that carry a given data attribute; return attr maps. */
-function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
-  const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
-  const out: Record<string, string>[] = [];
-  for (const tag of html.match(re) ?? []) {
-    const attrs: Record<string, string> = {};
-    for (const m of tag.matchAll(/\b(data-[a-z0-9-]+|href)="([^"]*)"/g)) {
-      attrs[m[1]!] = m[2]!;
-    }
-    out.push(attrs);
-  }
-  return out;
-}
 
 function runById(html: string, runId: string): Record<string, string> {
   const hit = elementsWith(html, "data-run-id").find((el) => el["data-run-id"] === runId);
@@ -69,10 +56,10 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal(await treeFingerprint(fixtureLedger), before, "ledger fixture must stay byte-identical");
 
   // Generation time + one-shot lifecycle (unique seam does not advertise refresh).
-  assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
+  assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], now.toISOString());
   assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
   assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
-  assert.match(html, /data-issue="127"/);
+  assert.equal(elementsWith(html, "data-issue")[0]?.["data-issue"], "127");
 
   // Morph A: plan-court — 5 terminating attempts, only final accepted counts as result.
   const planCourt = runById(html, "plan-court-001@ak-roles-127");
@@ -236,7 +223,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
 
     assert.equal(written.outputPath, await realpath(outputPath));
     const html = await readFile(outputPath, "utf8");
-    assert.match(html, /data-generated-at="2026-08-05T15:30:00\.000Z"/);
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], now.toISOString());
     // One-shot write path does not declare a refresh bound.
     assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
     assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
@@ -261,7 +248,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
     });
     assert.equal(hardWritten.outputPath, await realpath(hardOut));
     const externalHtml = await readFile(hardOut, "utf8");
-    assert.match(externalHtml, /data-issue="127"/);
+    assert.equal(elementsWith(externalHtml, "data-issue")[0]?.["data-issue"], "127");
     assert.notEqual(externalHtml, beforeTwin);
     // Ledger twin keeps original bytes and inode; external dirent is a new inode.
     assert.equal(await readFile(ledgerTwin, "utf8"), beforeTwin);
@@ -331,8 +318,8 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
       /outside|ledger|output/i,
     );
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
-    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), /ENOENT/);
-    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), /ENOENT/);
+    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), { code: "ENOENT" });
+    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), { code: "ENOENT" });
     });
 });
 
@@ -380,7 +367,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     await new Promise((r) => setTimeout(r, 50));
     for (let i = 0; i < 20; i += 1) {
       html = await readFile(outputPath, "utf8");
-      if (html.includes('data-generated-at="2026-08-05T16:00:10.000Z"')) break;
+      if (elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z") break;
       await new Promise((r) => setTimeout(r, 20));
     }
     assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:10.000Z");

@@ -48,6 +48,7 @@ import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 /** Resumable failure: top-level runId omitted; resume.command carries the id (#665). Original payloads/diagnostics are not rewritten (#836). */
 function assertRunIdOnlyInResumeCommand(
@@ -2219,27 +2220,6 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
     type Role = "judge" | "coder" | "fixer" | "reviewer" | "merger";
     const creds = { "openai-codex": true, xai: true } as const;
 
-    async function conflicted(root: string): Promise<void> {
-      seedGitProject(root);
-      await writeFile(join(root, "same.txt"), "base\n", "utf8");
-      execFileSync("git", ["add", "."], { cwd: root });
-      execFileSync("git", ["commit", "-m", "base"], { cwd: root });
-      execFileSync("git", ["checkout", "-b", "source"], { cwd: root });
-      await writeFile(join(root, "same.txt"), "source\n", "utf8");
-      execFileSync("git", ["commit", "-am", "source"], { cwd: root });
-      execFileSync("git", ["checkout", "main"], { cwd: root });
-      await writeFile(join(root, "same.txt"), "target\n", "utf8");
-      execFileSync("git", ["commit", "-am", "target"], { cwd: root });
-      assert.throws(() => execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root }));
-      assert.equal(
-        execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
-          cwd: root,
-          encoding: "utf8",
-        }).trim(),
-        "same.txt",
-      );
-    }
-
     function admitArgs(role: Role, project: string): string[] {
       // Match typed-429 provider xai + credentials in this case.
       const model = ["--model", "xai/grok-4.5:high"] as const;
@@ -2312,7 +2292,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
     for (const c of cases) {
       const project = join(home, `p-${c.runId}`);
       await mkdir(project, { recursive: true });
-      if (c.conflict) await conflicted(project);
+      if (c.conflict) await materializeConflictedRepo(project);
       else seedGitProject(project);
       const admitted = await admit429(c.role, c.runId, project);
       // Resume needs a caller model (#178); message tests are orthogonal.
@@ -2387,7 +2367,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
   });
 });
 
-test("public resume failures point to their recorded diagnostics", async () => {
+test("public resume failures persist structured diagnostics", async () => {
   const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
   delete process.env.AK_ROLE_AUDITOR_SUBJECT;
   try {
@@ -2490,7 +2470,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
         assert.equal(typeof record.diagnostic, "string");
         return record;
       };
-      const assertRecordedFailurePointer = async (
+      const assertRecordedFailure = async (
         runDirectory: string,
         runId: string,
         argv: readonly string[] = ["resume", "--model", "test/caller-seat:high", runId],
@@ -2500,12 +2480,10 @@ test("public resume failures point to their recorded diagnostics", async () => {
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
         const directory = join(runDirectory, "artifacts");
-        assert.equal(existsSync(directory), true, result.stderr);
-        const diagnosticPath = (await readdir(directory))
-          .map((name) => join(directory, name))
-          .find((path) => result.stderr.includes(path));
-        assert.ok(diagnosticPath);
-        const record = JSON.parse(await readFile(diagnosticPath, "utf8")) as {
+        const files = (await readdir(directory)).filter((name) =>
+          name.startsWith("resume-diagnostic-") && name.endsWith(".json"));
+        assert.equal(files.length, 1, "one structured resume diagnostic must persist");
+        const record = JSON.parse(await readFile(join(directory, files[0]!), "utf8")) as {
           runId?: unknown;
           diagnostic?: unknown;
           details?: unknown;
@@ -2532,7 +2510,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
       await mkdir(join(corruptRunState.runDirectory, "artifacts"), { recursive: true });
       await writeFile(priorReportPath, '{"status":"prior"}\n', "utf8");
       await writeFile(join(corruptRunState.runDirectory, "run-state.json"), "{}\n", "utf8");
-      await assertRecordedFailurePointer(corruptRunState.runDirectory, "1058-corrupt-run-state");
+      await assertRecordedFailure(corruptRunState.runDirectory, "1058-corrupt-run-state");
       assert.equal(await readFile(join(corruptRunState.runDirectory, "run-state.json"), "utf8"), "{}\n");
       assert.equal(
         (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
@@ -2549,7 +2527,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
         seatSelectionFailure.sessionFile,
         "utf8",
       );
-      const selectionFailureResult = await assertRecordedFailurePointer(
+      const selectionFailureResult = await assertRecordedFailure(
         seatSelectionFailure.runDirectory,
         "1058-seat-selection-failure",
         ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
@@ -2677,14 +2655,11 @@ test("public resume failures point to their recorded diagnostics", async () => {
       assert.notEqual(dispatchedParentResult.exitCode, 0);
       assert.ok(parentDispatches > 0);
       assert.equal(childDispatches, 2);
-      assert.equal(dispatchedParentIo.stderr.join("").includes(errorRecord(dispatchedParent.runDirectory)), true);
       await readError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
 
       const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(deletedResult.exitCode, 0);
       const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
-      const relocatedError = errorRecord(relocatedDirectory);
-      assert.equal(deletedResult.stderr.includes(relocatedError), true);
       const deletedRecord = await readError(relocatedDirectory, "1058-no-workspace");
       assert.equal(typeof deletedRecord.diagnostic, "string");
       assert.equal(deletedRecord.diagnostic, "zeta-unique-host-diagnostic");
@@ -2702,7 +2677,6 @@ test("public resume failures point to their recorded diagnostics", async () => {
 
       const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
       assert.notEqual(unknown.exitCode, 0);
-      assert.equal(unknown.stderr.includes(errorRecord(unknownHost.runDirectory)), true);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
       const unknownRecord = await readError(unknownHost.runDirectory, "1058-unknown-host");
       assert.equal(

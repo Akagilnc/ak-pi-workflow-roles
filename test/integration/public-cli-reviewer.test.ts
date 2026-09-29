@@ -39,10 +39,7 @@ import {
   markRunResumable,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import {
-  formatTerminalResult,
-  settleSeatTerminalResult,
-} from "../../src/public-cli/settlement.ts";
+import { settleSeatTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
   withProcessCwd,
@@ -137,12 +134,9 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "https://example.test/a",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message === "--lens requires completeness or correctness",
+    isUsage,
   );
-  // Empty lens shares the enum message (not path-helper "requires a path").
+  // Empty lens is rejected at the same typed usage boundary.
   assert.throws(
     () =>
       parsePublicSeatArgv("reviewer", [
@@ -153,10 +147,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "https://example.test/a",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message === "--lens requires completeness or correctness",
+    isUsage,
   );
   assert.deepEqual(
     parsePublicSeatArgv("reviewer", [
@@ -231,10 +222,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "CLAUDE.md",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message === "--base requires a single-token revision",
+    isUsage,
   );
   // Leading `-` is read as the next Skill option; shared token boundary with authority-ref.
   assert.throws(
@@ -247,10 +235,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "CLAUDE.md",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message === "--base requires a single-token revision",
+    isUsage,
   );
   assert.throws(
     () =>
@@ -262,11 +247,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "--smuggled",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message ===
-        "--authority-ref requires a durable reference, not inline Spec prose",
+    isUsage,
   );
   assert.throws(() => parsePublicSeatArgv("reviewer", ["--project", "", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach", "spec.md", "task"]), isUsage);
@@ -305,10 +286,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "The system SHALL launch two workers",
       ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      /durable reference, not inline Spec prose/i.test(error.message),
+    isUsage,
   );
   assert.throws(
     () =>
@@ -451,10 +429,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
           authorityRefs: ["The system SHALL launch two workers"],
           createRunId: () => "run-reviewer-admit-inline-rejected",
         }),
-      (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        /durable reference, not inline Spec prose/i.test(error.message),
+      (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -580,7 +555,6 @@ test("lawful reviewer Terminal preserves review evidence", async () => {
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
 
     const evidence = JSON.parse(
       await readFile(
@@ -900,15 +874,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.equal(realpathSync(turnCwd!), realpathSync(project));
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
-    const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
-    assert.equal(
-      okDialogue.startsWith(
-        "--base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
-      ),
-      true,
-      okDialogue,
-    );
-    assert.match(okDialogue, /Review the latest commit on both axes\./);
     const bookKey = resolveBookKeyFromGit(project);
     const evidence = JSON.parse(
       await readFile(

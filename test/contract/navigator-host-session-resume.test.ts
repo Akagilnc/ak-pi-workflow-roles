@@ -199,7 +199,6 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
       () => session.prompt("second"),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        assert.match(error.message, /auth|provider/i);
         return true;
       },
     );

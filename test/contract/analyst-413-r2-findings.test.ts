@@ -54,7 +54,13 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
       await writeFile(indexPath, `${JSON.stringify(shape)}\n`, "utf8");
       await assert.rejects(
         () => readAnalystLibraryIndexPage(join(home, ".ak-roles")),
-        (error: unknown) => error instanceof Error,
+        (error: unknown) => {
+          // The read boundary owns the rejection; a downstream TypeError from
+          // consuming malformed rows is not an acceptable substitute.
+          assert.ok(error instanceof Error);
+          assert.equal(Object.getPrototypeOf(error), Error.prototype);
+          return true;
+        },
         `pre-fix passthrough returned ${JSON.stringify(shape)} to consumers`,
       );
     }

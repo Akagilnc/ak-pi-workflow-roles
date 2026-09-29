@@ -1,6 +1,7 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -62,19 +63,7 @@ function seedGitProject(root: string): void {
 }
 
 async function conflictedRepository(root: string) {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n");
-  git(root, ["add", "."]);
-  git(root, ["commit", "-m", "base"]);
-  git(root, ["checkout", "-b", "source"]);
-  await writeFile(join(root, "same.txt"), "source\n");
-  git(root, ["commit", "-am", "source"]);
-  const source = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["checkout", "main"]);
-  await writeFile(join(root, "same.txt"), "target\n");
-  git(root, ["commit", "-am", "target"]);
-  const target = git(root, ["rev-parse", "HEAD"]);
-  assert.throws(() => git(root, ["merge", "--no-edit", "source"]));
+  const { source, target } = await materializeConflictedRepo(root);
   const blob = git(root, ["hash-object", "-w", "--stdin"], "resolved\n");
   const index = join(root, "expected-index");
   const indexEnv = { ...process.env, GIT_INDEX_FILE: index };

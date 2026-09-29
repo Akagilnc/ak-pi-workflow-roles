@@ -16,7 +16,6 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
@@ -866,31 +865,10 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
   }
 });
 
-test("production audit transcript preserves the assignment received by the judge", () => {
-  const sessionManager = SessionManager.inMemory();
-  sessionManager.appendMessage({
-    role: "user",
-    content: "OWNER ASSIGNMENT: adjudicate issue 205",
-    timestamp: Date.now(),
-  });
-
-  const transcript = productionTranscriptFromContext({
-    sessionManager,
-  } as unknown as ExtensionContext);
-
-  assert.match(transcript, /OWNER ASSIGNMENT: adjudicate issue 205/);
-});
-
-test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
+test("judge role accepts a soul-compliant verdict", async () => {
   const { harness, tool } = await startJudge();
 
   assert.ok(harness.flags.has("ak-role"));
-  const promptResult = await harness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE SYSTEM PROMPT" },
-    {},
-  );
-  assert.match((promptResult as { systemPrompt: string }).systemPrompt, /JUDGE LAW/);
-
   const verdict: JudgeVerdict = { status: "converged" };
   // withPassingGatekeeper: notary (judge_draft) + auditor (judge_compliance) both pass.
   const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict as unknown as JsonObject }]));

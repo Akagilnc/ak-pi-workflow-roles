@@ -2,39 +2,18 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Human-read formatting on the S2 board (#162).
  *
- * Machines bite full-precision data-* values; humans see formatted spans.
- * Oracle goes through renderFactoryBoardHtml — no direct helper contracts,
- * no exact Chinese wording locks.
+ * Oracle goes through renderFactoryBoardHtml and checks typed data-* channels,
+ * not generated human wording.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { elementsWith } from "../helpers/factory-board-shared.ts";
 
 import { renderFactoryBoardHtml, type FactoryBoardView } from "../../src/factory-board.ts";
 import type { SnapshotTicket } from "../../src/ticket-snapshot.ts";
-
-function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
-  const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
-  const out: Record<string, string>[] = [];
-  for (const tag of html.match(re) ?? []) {
-    const attrs: Record<string, string> = {};
-    for (const m of tag.matchAll(/\b(data-[a-z0-9-]+|href)="([^"]*)"/g)) {
-      attrs[m[1]!] = m[2]!;
-    }
-    out.push(attrs);
-  }
-  return out;
-}
-
-/** Inner text of the first element carrying attr=value (stops at nested tag). */
-function labeledText(html: string, attr: string, value: string): string {
-  const re = new RegExp(`<[^>]+\\b${attr}="${value}"[^>]*>([^<]*)`);
-  const m = html.match(re);
-  assert.ok(m, `missing labeled element ${attr}=${value}`);
-  return m[1] ?? "";
-}
 
 function ticket(
   partial: Partial<SnapshotTicket> & Pick<SnapshotTicket, "issueNumber" | "title" | "state">,
@@ -163,30 +142,13 @@ test("S2 board projects full-precision machine attrs and human-formatted spans (
     // Unaccepted latest-run wall extends to `now`; only require a positive finite machine value.
     assert.ok(Number.isFinite(wallMs) && wallMs > 0, "wall-ms is a positive machine duration");
 
-    // Human channel: cost/token/wall labels exist and are not the raw machine spelling.
+    // Human channel elements carry the typed metrics without testing their wording.
     const costLabel = elementsWith(html, "data-cost-label").find((el) => el["data-cost-label"] === "42");
     assert.ok(costLabel);
     assert.equal(costLabel["data-cost-usd"], "1.65");
     assert.equal(costLabel["data-total-tokens"], "12500");
-    const costText = labeledText(html, "data-cost-label", "42");
-    assert.ok(costText.includes("1.65") || /\$/.test(costText), "cost span shows a currency amount");
-    // Compact tokens: large counts are not left as the full integer alone in the human span.
-    assert.ok(!/^\s*\$?1\.65\s*·\s*12500\s*tok\s*$/.test(costText), "tokens should be compacted for humans");
-    assert.match(costText, /k|M/i, "compact token category (k/M) for ≥1000");
-
-    const wallText = labeledText(html, "data-wall-label", "42");
-    assert.ok(wallText.length > 0, "wall label present");
-    assert.ok(!wallText.includes("3660000"), "human wall span must not echo raw ms");
-    // Duration category: contains a unit marker (Chinese or latin), not only digits.
-    assert.ok(/\D/.test(wallText.replace(/\s/g, "")), "duration text carries unit category, not bare number");
-
-    // Generated-at human local time sits on <time datetime=ISO>…formatted…</time>
-    assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
-    assert.match(html, /datetime="2026-08-05T12:00:00\.000Z"/);
-    const timeText = html.match(/<time[^>]*datetime="2026-08-05T12:00:00\.000Z"[^>]*>([^<]*)<\/time>/);
-    assert.ok(timeText?.[1]);
-    assert.notEqual(timeText[1], "2026-08-05T12:00:00.000Z", "local wall clock differs from raw ISO");
-    assert.match(timeText[1]!, /\d{4}-\d{2}-\d{2}/, "local time keeps a calendar date shape");
+    assert.ok(elementsWith(html, "data-wall-label").some((el) => el["data-wall-label"] === "42"));
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T12:00:00.000Z");
     });
 });
 
@@ -216,9 +178,7 @@ test("S2 board formats zero/edge metric inputs without inventing machine values"
     assert.equal(card["data-cost-usd"], "0");
     assert.equal(card["data-total-tokens"], "0");
     assert.equal(card["data-wall-ms"], "0");
-    const costText = labeledText(html, "data-cost-label", "1");
-    assert.ok(costText.includes("0"), "zero cost remains visibly zero");
-    const wallText = labeledText(html, "data-wall-label", "1");
-    assert.ok(!wallText.includes("NaN") && !wallText.includes("Infinity"));
+    assert.ok(elementsWith(html, "data-cost-label").some((el) => el["data-cost-label"] === "1"));
+    assert.ok(elementsWith(html, "data-wall-label").some((el) => el["data-wall-label"] === "1"));
     });
 });

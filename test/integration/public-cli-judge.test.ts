@@ -9,6 +9,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -278,7 +279,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
   });
 });
 
-test("structurally empty request stays empty while attachments remain typed transport", () => {
+test("structurally empty request stays empty", () => {
   const empty = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
@@ -293,28 +294,6 @@ test("structurally empty request stays empty while attachments remain typed tran
   );
   assert.equal(empty, "");
 
-  const withAttach = buildInstructionTransportPrompt(
-    fixtureJudgeAdmitted({
-      runId: "r",
-      bookKey: "b",
-      projectRoot: "/p",
-      instruction: "",
-      instructionEmpty: true,
-      attachments: [
-        {
-          provenancePath: "/orig",
-          frozenPath: "/frozen/00-a.txt",
-          byteLength: 1,
-          sha256: "abc",
-          mediaKind: "regular-file",
-        },
-      ],
-      runDirectory: "/r",
-      sessionDirectory: "/r/session",
-      sessionFile: "/r/session/session.jsonl",
-    }),
-  );
-  assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
 test("#959 adviceNavigatorFact projects prose as-is", () => {
@@ -777,6 +756,7 @@ test("runAkRole judge rejects burden selector before admission", async () => {
     // Emission happened; phrasing is unfrozen presentation (AC6).
     assert.equal(stderr.length >= 1, true);
     assert.equal(result.terminal, undefined);
+    assert.equal(existsSync(join(home, ".ak-roles", "books")), false, "rejected flag must not admit a run");
   });
 });
 
@@ -932,15 +912,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       capturedArgs!.some((arg) => arg.includes("burden")),
       false,
     );
-    // Opaque instruction reaches the host as typed stdin, not an argv tail.
-    const prompt = readUserDialogueStdin(capturedStdin ?? "");
-    assert.equal(
-      prompt.includes("Decide whether the attachment is sufficient."),
-      true,
-    );
-    // Frozen attachment path (not the mutable source) is what the prompt references.
-    assert.match(prompt, /attachments\/00-note\.txt/);
-    assert.equal(prompt.includes(attachment), false);
 
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&

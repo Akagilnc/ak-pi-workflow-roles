@@ -30,6 +30,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
@@ -176,7 +177,8 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
 test("block1: unknown runId still rejects", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    await assert.rejects(()=>loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),/unknown role run id/);
+    await assert.rejects(() => loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),
+      (err: unknown) => err instanceof CliUsageError && err.code === "AK_ROLE_USAGE");
     const {io}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high","missing-416"],{packageRoot,home,cwd:project,io,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                           packageRoot,

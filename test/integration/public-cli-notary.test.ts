@@ -5,6 +5,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -49,6 +50,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { treeFingerprint } from "../helpers/factory-board-shared.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-notary-", scenario);
@@ -156,6 +158,8 @@ test("notary public entry rejects caller prompt, attachment and ticket override"
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    const before = await treeFingerprint(bookPath);
     const { io } = captureIo();
     const withPrompt = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath, "caller framing must not admit"],
       { home, packageRoot, cwd: project, io },
@@ -174,6 +178,7 @@ test("notary public entry rejects caller prompt, attachment and ticket override"
     );
     assert.equal(withTicket.exitCode, 2);
     assert.equal(withTicket.terminal, undefined);
+    assert.equal(await treeFingerprint(bookPath), before, "rejected inputs must not admit a run");
   });
 });
 
@@ -182,6 +187,8 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    assert.equal(existsSync(bookPath), false);
     const { io } = captureIo();
 
     const missing = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", join(project, "no-such-run@judge")],
@@ -213,6 +220,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     );
     assert.equal(projected.exitCode, 2);
     assert.equal(projected.terminal, undefined);
+    assert.equal(existsSync(bookPath), false, "rejected locators must not admit a run");
 
     // Unit seam: same failures surface as NotarySourceRunError before CLI wrap.
     await assert.rejects(
@@ -231,9 +239,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
           sourceRun: projection,
           home,
         }),
-      (error: unknown) =>
-        error instanceof NotarySourceRunError &&
-        error.message.includes("machine-ledger book"),
+      (error: unknown) => error instanceof NotarySourceRunError,
     );
   });
 });
@@ -289,6 +295,8 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       TypeError,
     );
 
+    const bookPath = join(home, ".ak-roles", "books", bookKey);
+    const before = await treeFingerprint(bookPath);
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;
     const rejectedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", bare], {
@@ -305,6 +313,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     );
     assert.equal(rejectedPath.exitCode, 2);
     assert.equal(rejectedPath.terminal, undefined);
+    assert.equal(await treeFingerprint(bookPath), before, "invalid retained identity must not admit a run");
 
     await assert.rejects(
       () =>
@@ -313,9 +322,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
           sourceRun: bare,
           home,
         }),
-      (error: unknown) =>
-        error instanceof NotarySourceRunError &&
-        error.message.includes("retained run-state identity"),
+      (error: unknown) => error instanceof NotarySourceRunError,
     );
   });
 });
@@ -364,12 +371,14 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     assert.equal(admittedBare.exitCode, 0);
     assert.ok(admittedBare.terminal);
     assert.equal(admittedBare.terminal.roleOutcome.kind, "accepted");
+    const beforeProjection = await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project)));
 
     const rejectedProjection = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", projection],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejectedProjection.exitCode, 2);
     assert.equal(rejectedProjection.terminal, undefined);
+    assert.equal(await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), beforeProjection);
 
     // Locator consumes retained identity, not the full resumable run record.
     const statePath = join(sourceRunPath, "run-state.json");

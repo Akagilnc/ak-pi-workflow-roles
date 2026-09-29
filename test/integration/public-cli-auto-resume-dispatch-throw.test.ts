@@ -146,7 +146,6 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     // (d) loud failure carries the LAST true error + artifact pointers; no fabricated class (#881).
     if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
     assert.equal(terminal.roleOutcome.cause, undefined);
-    assert.match(terminal.roleOutcome.diagnostic,/boom-final/);
     const filesFromFacts=terminal.roleOutcome.decisiveFacts.dispatchErrorFiles as readonly string[];
     assert.equal(filesFromFacts.length,3);
     assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());

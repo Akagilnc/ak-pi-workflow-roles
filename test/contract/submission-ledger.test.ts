@@ -266,7 +266,7 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
     }, coderTool, "coder");
     await assert.rejects(
       host.tool().execute("coder-infra", params, undefined, undefined, host.context),
-      (error: unknown) => error instanceof Error && error.message === "disk full",
+      (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
     );
     assert.equal(ran, 0);
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");

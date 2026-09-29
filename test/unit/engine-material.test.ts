@@ -33,8 +33,10 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
     () => assertLegalEngineName("has\0nul"),
     /illegal engine name/,
   );
-  assert.throws(() => assertLegalEngineName("."), /illegal engine name/);
-  assert.throws(() => assertLegalEngineName(".."), /illegal engine name/);
+  for (const name of [".", ".."]) {
+    assert.throws(() => assertLegalEngineName(name), (err: unknown) =>
+      err instanceof Error && Object.getPrototypeOf(err) === Error.prototype);
+  }
   assert.throws(
     () => assertLegalEngineName(""),
     /illegal engine name/,

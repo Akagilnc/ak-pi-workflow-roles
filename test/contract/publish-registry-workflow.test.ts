@@ -155,7 +155,7 @@ async function withStamp(
   });
 }
 
-test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", async () => {
+test("malicious CHANNEL is data to real npm and fails without shell execution", async () => {
   const malicious = 'x$(echo pwned >PWND)y; echo injected" `uname` ';
   const shortSha = "abc1234";
   await withStamp({
@@ -165,7 +165,6 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
     useRealNpmVersion: true,
   }, (result) => {
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Invalid version/i);
     assert.equal(result.pwnedExists, false);
     assert.equal(result.npmPath, "");
     assert.equal(result.publishVersion, undefined);

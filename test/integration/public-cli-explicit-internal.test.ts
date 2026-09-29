@@ -128,8 +128,7 @@ test("default runner preserves unexpected executable filesystem failures", async
       (error: unknown) =>
         error instanceof ExplicitInternalActivationError &&
         error.knownCause === "activation" &&
-        (error.cause as NodeJS.ErrnoException | undefined)?.code === "ELOOP" &&
-        !error.message.includes("Pi executable not found"),
+        (error.cause as NodeJS.ErrnoException | undefined)?.code === "ELOOP",
     );
   });
 });
@@ -181,7 +180,6 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
         }),
       });
       assert.equal(result.code, 0, "missing PATH uses Node's platform default");
-      assert.match(lastIdentity()?.version ?? "", /bash/i);
     }
   });
 });
@@ -500,7 +498,7 @@ process.exit(0);
     assert.equal(result.code, 0);
     assert.equal(await readFile(invocation, "utf8"), "parent-identity");
     assert.equal(Object.hasOwn(result, "stdout"), false);
-    assert.ok(result.stderr.includes("stderr-ok"));
+    assert.equal(result.stderr, "stderr-ok");
   });
 });
 

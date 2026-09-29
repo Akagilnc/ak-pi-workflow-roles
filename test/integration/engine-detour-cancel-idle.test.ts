@@ -73,7 +73,8 @@ test("detour spawn failure stops through the cause-bearing failure seam", async 
   await withTempRoot("ak-detour-spawn-miss-", async (cwd) => {
     await assert.rejects(
       tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),
-      (error: unknown) => error instanceof Error && error.message.includes("ak-engine-definitely-missing-binary-xyz"),
+      (error: unknown) => error instanceof Error &&
+        (error as NodeJS.ErrnoException).code === "ENOENT",
     );
     });
 });

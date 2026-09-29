@@ -40,6 +40,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-merger-", scenario);
@@ -59,32 +60,6 @@ function seedGitProject(root: string): void {
   git(root, ["config", "user.email", "merger@test.local"]);
   git(root, ["config", "user.name", "Merger Test"]);
   git(root, ["commit", "--allow-empty", "-m", "seed"]);
-}
-
-async function materializeConflictedRepo(root: string): Promise<{
-  target: string;
-  source: string;
-  conflictPath: string;
-}> {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n", "utf8");
-  git(root, ["add", "."]);
-  git(root, ["commit", "-m", "base"]);
-  git(root, ["checkout", "-b", "source"]);
-  await writeFile(join(root, "same.txt"), "source\n", "utf8");
-  git(root, ["commit", "-am", "source"]);
-  const source = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["checkout", "main"]);
-  await writeFile(join(root, "same.txt"), "target\n", "utf8");
-  git(root, ["commit", "-am", "target"]);
-  const target = git(root, ["rev-parse", "HEAD"]);
-  try {
-    git(root, ["merge", "--no-edit", "source"]);
-    throw new Error("expected conflicting merge");
-  } catch {
-    // conflicted
-  }
-  return { target, source, conflictPath: "same.txt" };
 }
 
 function admitMergerInvocation(options: AdmitMergerInvocationOptions) {

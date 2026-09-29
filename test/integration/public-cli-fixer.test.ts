@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
@@ -106,10 +107,8 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
           attachmentPaths: [],
           prerequisitesPath: badPrereq,
         }),
-      (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        /prerequisite/i.test(error.message),
+      (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE" &&
+        error.cause instanceof FixerPacketValidationError,
     );
 
     const goodPrereq = join(home, "good-prereq.json");

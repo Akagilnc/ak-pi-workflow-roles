@@ -265,10 +265,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
             piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
           }),
       },io,"judge",PUBLIC_ROLE_ARGV.judge.parse),
-      (error:unknown)=>error instanceof Error &&
-        /non-negative integer/.test(error.message) &&
-        // NaN serializes as null in the diagnostic (JSON.stringify) — still loud, not silent.
-        error.message.includes("null"),
+      (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
     );
     assert.equal(calls,0,"role entry with NaN ceiling must terminate the whole call before the first dispatch");
     assert.deepEqual(stderr,[]);

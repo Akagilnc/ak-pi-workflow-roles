@@ -7,6 +7,7 @@ import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -83,6 +84,8 @@ test("malformed CLI structure and empty --project= reject structurally before ad
       assert.equal(stderr.length >= 1, true, row.label);
       // Typed admission oracle: structural reject never produces a Terminal.
       assert.equal(result.terminal, undefined, row.label);
+      assert.equal(existsSync(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), false,
+        `${row.label}: no run is admitted`);
     });
   }
 });

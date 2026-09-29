@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -460,24 +461,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "cli@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "CLI Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
-    await writeFile(join(project, "conflict.txt"), "base\n", "utf8");
-    execFileSync("git", ["add", "conflict.txt"], { cwd: project });
-    execFileSync("git", ["commit", "-m", "base conflict fixture"], { cwd: project });
-    execFileSync("git", ["checkout", "-b", "ledger-side"], { cwd: project });
-    await writeFile(join(project, "conflict.txt"), "side\n", "utf8");
-    execFileSync("git", ["commit", "-am", "side conflict fixture"], { cwd: project });
-    execFileSync("git", ["checkout", "main"], { cwd: project });
-    await writeFile(join(project, "conflict.txt"), "main\n", "utf8");
-    execFileSync("git", ["commit", "-am", "main conflict fixture"], { cwd: project });
-    try {
-      execFileSync("git", ["merge", "ledger-side"], { cwd: project, stdio: "ignore" });
-    } catch {
-      // The unresolved conflict is the real production prerequisite for Merger admission.
-    }
+    await materializeConflictedRepo(project);
 
     const bookKey = resolveBookKeyFromGit(project);
     const ledgerHome = resolveActivationLedgerHome(home);

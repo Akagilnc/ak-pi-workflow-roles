@@ -44,6 +44,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -888,26 +889,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
 });
 
 // --- #391 E4: table-driven full PUBLIC_CALLABLE_ROLES + negative table ------------
-
-async function materializeConflictedRepo(root: string): Promise<void> {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n", "utf8");
-  execFileSync("git", ["add", "."], { cwd: root });
-  execFileSync("git", ["commit", "-m", "base"], { cwd: root });
-  execFileSync("git", ["checkout", "-b", "source"], { cwd: root });
-  await writeFile(join(root, "same.txt"), "source\n", "utf8");
-  execFileSync("git", ["commit", "-am", "source"], { cwd: root });
-  execFileSync("git", ["checkout", "main"], { cwd: root });
-  await writeFile(join(root, "same.txt"), "target\n", "utf8");
-  execFileSync("git", ["commit", "-am", "target"], { cwd: root });
-  try {
-    execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root });
-    throw new Error("expected conflicting merge");
-  } catch (error) {
-    if (error instanceof Error && error.message === "expected conflicting merge") throw error;
-    // conflicted
-  }
-}
 
 /**
  * Minimal argv per callable role so the run reaches piRunner (shared fixture).

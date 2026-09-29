@@ -220,12 +220,15 @@ test("countersign public entry rejects --ticket before admitting a run", async (
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    assert.equal(existsSync(bookPath), false);
     const { io } = captureIo();
     const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--ticket", "582", "裁"],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejected.exitCode, 2);
     assert.equal(rejected.terminal, undefined);
+    assert.equal(existsSync(bookPath), false, "rejected call must not admit a run");
   });
 });
 

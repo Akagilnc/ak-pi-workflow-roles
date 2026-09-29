@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sha256Hex } from "../../src/sha256.ts";
-import { validateMergerInput, validateMergerOutput } from "../../src/merger-contracts.ts";
+import { MergerInputContractError, validateMergerInput, validateMergerOutput } from "../../src/merger-contracts.ts";
 
 const material = (text: string) => ({ bytesBase64: Buffer.from(text).toString("base64"), sha256: sha256Hex(text) });
 const oid = (c: string) => c.repeat(40);
@@ -12,7 +12,7 @@ test("Merger input is deeply immutable and keeps attemptId for accounting", () =
   assert.equal(Object.isFrozen(accepted), true);
   assert.equal(Object.isFrozen(accepted.materials.task), true);
   assert.equal(accepted.attemptId, "attempt-22-a");
-  assert.throws(() => validateMergerInput({ ...valid(), attemptId: "  " }), /attemptId/);
+  assert.throws(() => validateMergerInput({ ...valid(), attemptId: "  " }), MergerInputContractError);
 });
 
 test("Merger input admits empty path materials and does not gate on OID/digest/scope", () => {
