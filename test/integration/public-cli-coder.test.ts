@@ -290,6 +290,7 @@ test("lawful coder Terminal settlement publishes report and evidence", async () 
     assert.equal(terminal.roleOutcome.role, "coder");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
+    assert.deepEqual(terminal.submissions, [receipt]);
     assert.equal(terminal.runId, "run-coder-settle-001");
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
