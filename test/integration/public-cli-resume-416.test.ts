@@ -51,7 +51,7 @@ const roleTurnHostFromLegacyPiRunner = (options: Parameters<typeof rawLegacyPiRu
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-416-", async (home) => {
-    // Nested court diarist resolves from the live table (#178).
+    // Diarist resolves from the live table (#178).
     const { runAkRole } = await import("../../src/public-cli/cli.ts");
     const { packageRoot } = await import("../helpers/pi-test-harness.ts");
     await runAkRole(

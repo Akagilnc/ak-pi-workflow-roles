@@ -54,7 +54,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       cwd: project,
       io: quiet,
     });
-    // Nested court diarist does not inherit the parent argv model.
+    // Diarist uses its own seat model, not another role's argv model.
     await runAkRole(["config", "set", "diarist", "openai-codex/gpt-5.6-sol:high"], {
       home,
       packageRoot,

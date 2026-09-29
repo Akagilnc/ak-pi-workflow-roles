@@ -1042,7 +1042,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
         await mkdir(mergerProject, { recursive: true });
         await materializeConflictedRepo(mergerProject);
 
-        // Nested court seats (countersign→diarist) need a caller-set model (#178).
+        // Any independently summoned diarist needs a caller-set model (#178).
         {
           const nest = captureIo();
           const setNest = await runAkRole(

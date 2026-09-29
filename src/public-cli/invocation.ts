@@ -60,7 +60,6 @@ import {
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
-import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   emptyCollectorManifest,
@@ -156,17 +155,6 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
   readonly role: "countersign";
-  /**
-   * #871 typed co-review set for this countersign run (durable run fact).
-   * Main ticket remains `ticketNumber`; this set drives per-ticket court diarist refresh.
-   * Whole-set replace on new typed submission — never union with history.
-   */
-  courtTicketNumbers?: readonly number[];
-  /**
-   * Load-time durable set damage diagnostic (#871 B7). Resume must settle as
-   * countersign controlled failure with this text — never structural exit 2 or main-only.
-   */
-  courtTicketNumbersDamage?: string;
   /**
    * Parent run directory (#747 / #987 gate same-parent resume). Persisted on first
    * mint when gate supplies parentRunPath; independent of ticket-number lookup.
@@ -338,7 +326,7 @@ export function issueAdmissionPlacement(
     readonly cwd: string;
     readonly runId: string;
     readonly role: AdmittedRoleInvocation["role"];
-    /** Identity already asserted by 起居郎; never derive this from CLI parameters. */
+    /** Typed identity, when supplied; never derive it from CLI prose. */
     readonly subject: RoleRunSubject;
     readonly home?: string;
     /** Placement may be computed before a same-ticket lookup without touching disk. */
@@ -592,56 +580,6 @@ export async function recordAdmittedCorrelation(
   };
   mutable.correlationId = correlationId;
   mutable.correlationIds = correlationIds;
-}
-
-/**
- * #871: persist the typed co-review set as a countersign run fact (admitted-request +
- * invocation.json). Whole-set replace — never union with a prior set. Main ticket
- * binding stays on `ticketNumber` alone. Projection reuses the sole contract helper;
- * principal membership is mandatory.
- */
-export async function bindCourtTicketNumbersOnAdmitted(
-  admitted: AdmittedCountersignInvocation,
-  courtTicketNumbers: readonly number[],
-): Promise<void> {
-  if (admitted.ticketNumber === undefined) {
-    throw new Error(
-      "bindCourtTicketNumbersOnAdmitted requires a bound principal ticketNumber",
-    );
-  }
-  const principal = requireSafePositiveTicketNumber(
-    admitted.ticketNumber,
-    "bindCourtTicketNumbersOnAdmitted principal ticketNumber",
-  );
-  // Strict write path: every member must already be a lawful number (no soft filter).
-  for (const item of courtTicketNumbers) {
-    if (!isSafePositiveTicketNumber(item)) {
-      throw new Error(
-        `bindCourtTicketNumbersOnAdmitted requires safe positive integers, got ${String(item)}`,
-      );
-    }
-  }
-  const projected = projectCourtTicketNumbers(courtTicketNumbers, {
-    principalTicket: principal,
-  });
-  if (projected === null || projected.length === 0) {
-    throw new Error("bindCourtTicketNumbersOnAdmitted requires a non-empty ticket set");
-  }
-  const frozen = Object.freeze([...projected]);
-  const admittedPath = admitted.admittedRequestPath;
-  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...current, courtTicketNumbers: frozen }, null, 2)}\n`,
-    "utf8",
-  );
-  await mergeInvocationIdentityPage(admitted.runDirectory, {
-    courtTicketNumbers: frozen,
-  });
-  admitted.courtTicketNumbers = frozen;
 }
 
 /** File a role run under its latest typed ticket identity. */
@@ -1904,7 +1842,7 @@ export type AdmitJudgeInvocationOptions = {
 
 export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
   correlationId?: string;
-  /** Typed identity handed off by 起居郎 or inherited from an already-bound run. */
+  /** Typed identity from the caller or an already-bound run. */
   assertedTicketNumber?: number;
 };
 
