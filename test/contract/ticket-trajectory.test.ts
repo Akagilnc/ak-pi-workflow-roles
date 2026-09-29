@@ -15,6 +15,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { treeFingerprint } from "../helpers/factory-board-shared.ts";
+import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -48,6 +49,16 @@ function runById(html: string, runId: string): Record<string, string> {
   const hit = elementsWith(html, "data-run-id").find((el) => el["data-run-id"] === runId);
   assert.ok(hit, `missing run ${runId}`);
   return hit;
+}
+
+function hasJsonlFailure(path: string, line: number, prefixRows: number) {
+  return (err: unknown): boolean => {
+    assert.ok(err instanceof LedgerSessionJsonlError);
+    assert.equal(err.path, path);
+    assert.equal(err.line, line);
+    assert.equal(err.prefixRows.length, prefixRows);
+    return true;
+  };
 }
 
 function manualScheduler(): { scheduler: TrajectoryScheduler; ticks: Array<() => void> } {
@@ -439,7 +450,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(middle, `${row(1)}\nNOT-JSON\n${row(3)}\n`, "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(middle),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(middle, 2, 1),
     );
 
     // Completed-by-terminator final malformed line with nothing after — must throw.
@@ -447,12 +458,12 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(completedFinal, "NOT-JSON\n", "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(completedFinal),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(completedFinal, 1, 0),
     );
     await writeFile(completedFinal, `${row(1)}\nNOT-JSON\n`, "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(completedFinal),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(completedFinal, 2, 1),
     );
 
     // End-to-end: middle corruption must not render as a quiet attempts-only page.
@@ -469,7 +480,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
 
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(sessionPath, 2, 1),
     );
 
     // End-to-end: completed final malformed line (terminator, nothing after) must also
@@ -479,7 +490,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(sessionPath, withCompletedFinalJunk, "utf8");
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(sessionPath, originalLines.length + 1, originalLines.length),
     );
 
     // Complete non-object JSONL (null/array/primitive) must fail cause-preservingly
@@ -491,7 +502,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(sessionPath, withNonObject, "utf8");
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => err instanceof Error,
+      hasJsonlFailure(sessionPath, 2, 1),
     );
     });
 });
