@@ -72,6 +72,7 @@ import {
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
+  markRunReportPublished,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
@@ -890,6 +891,17 @@ export async function dispatchPostAdmissionTurn<
     const priorRunState = courtScope.courtAttemptId === undefined
       ? await readRoleRunState(admitted.runDirectory, env.principalAuthority)
       : undefined;
+    let beforeTurnSeals: number | undefined;
+    if (courtScope.courtAttemptId === undefined && priorRunState?.publishedSealedCount === undefined) {
+      const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
+      if (priorFace.status === "present" && priorFace.file === RUN_TERMINAL_REPORT_FILE) {
+        // Legacy runs had no watermark. Capture their still-visible published
+        // report before this turn can clear it; never infer publication from
+        // a seal or an attempt-history row after the face has disappeared.
+        beforeTurnSeals = await recordedSealedSubmissionCount(admitted);
+        await markRunReportPublished(admitted.runDirectory, beforeTurnSeals);
+      }
+    }
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
     // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
@@ -906,13 +918,12 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
-    let beforeTurnSeals: number | undefined;
     let mayRebuildUnpublishedSeal = false;
     let baselineReadFailure: { error: unknown } | undefined;
     try {
       if (courtScope.courtAttemptId === undefined) {
         try {
-          beforeTurnSeals = await recordedSealedSubmissionCount(admitted);
+          beforeTurnSeals ??= await recordedSealedSubmissionCount(admitted);
           if (beforeTurnSeals > 0) {
             const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
             mayRebuildUnpublishedSeal = priorRunState?.state === "resumable"

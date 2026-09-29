@@ -810,6 +810,14 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.deepEqual(await historyOutcomes(), [...failedPublicationHistory, "accepted"],
         "re-reading the latest seal must not append another attempt");
 
+      // Simulate a successful report published by an older package: the
+      // on-disk run-state predates the publication watermark field.
+      const statePath = join(runDirectory, "run-state.json");
+      const legacyState = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+      delete legacyState.publishedSealedCount;
+      await writeFile(statePath, `${JSON.stringify(legacyState)}\n`, "utf8");
+      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, undefined);
+
       // The report was successfully published on this resume. A later real
       // provider failure clears that face; a further no-seal turn must not
       // mistake the now-missing report for the original publication failure.
@@ -826,8 +834,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       });
       assert.equal(laterFailure.terminal?.roleOutcome.kind, "failure");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, dispatches(),
-        "a later failure must not erase the earlier publication fact");
       const noNewSeal = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot, home, cwd: project, io: captureIo().io,
         credentials: { "openai-codex": true, xai: true },
@@ -838,6 +844,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       });
       assert.equal(noNewSeal.terminal?.roleOutcome.kind, "no_receipt",
         "a previously published old seal cannot be rebuilt after a later real failure");
+      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, dispatches(),
+        "legacy published reports must acquire a seal watermark before any later failure clears the face");
 
       // A genuinely newer seal can still use #672 if its own report fails.
       const newSeal = sealedPublicationBlockedHost("later sealed version");
