@@ -26,6 +26,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -729,18 +730,19 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    const history = (await readFile(sessionFile, "utf8"))
-      .split("\n").filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as any)
-      .filter((row) => row.type === "custom" && row.customType === ATTEMPT_HISTORY_ENTRY_TYPE) as Array<{
-        data: { sequence?: number; outcome?: { kind?: string; diagnostic?: string } };
-      }>;
+    // Settlement must not append to the host's native session; both attempts
+    // remain readable in the package-owned append-only volume after resume.
+    const hostRows = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
+    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: sessionFile });
+    const history = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
+      type?: string; outcome?: { kind?: string; diagnostic?: string };
+    });
     assert.equal(history.length, 2);
-    assert.equal(history[0]!.data.outcome?.kind, "failure", "failed leg's complete result is retained");
-    assert.equal(typeof history[0]!.data.outcome?.diagnostic, "string");
-    assert.equal(history[1]!.data.outcome?.kind, "accepted");
-    assert.equal(history[0]!.data.sequence, 1);
-    assert.equal(history[1]!.data.sequence, 2);
+    assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
+    assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
+    assert.equal(typeof history[0]?.outcome?.diagnostic, "string");
+    assert.equal(history[1]?.outcome?.kind, "accepted");
 
     // report/evidence stay last-write-wins views of the final accepted attempt.
     const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");

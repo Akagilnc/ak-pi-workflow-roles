@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { appendFile, lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -1765,44 +1765,19 @@ type AttemptHistorySource = {
   readonly sessionFile: string;
 };
 
-/**
- * Append one attempt's complete result to the run's session principal.
- * Append failure throws — callers must not overwrite a pointer artifact when
- * the history entry backing the overwrite did not land (fail closed).
- */
+/** Append the complete attempt to the package ledger before overwriting pointer artifacts (#419). */
 export async function appendRunAttemptHistory(
   source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
-  const entries = await readBoundSessionEntries(source.sessionFile);
-  let parentId: string | null = null;
-  let priorEntries = 0;
-  for (const entry of entries) {
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    if (
-      entry.type === "custom" &&
-      entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE
-    ) {
-      priorEntries += 1;
-    }
-  }
-  const timestamp = new Date().toISOString();
-  const attemptData = {
-    sequence: priorEntries + 1,
-    role: source.role,
-    runId: source.runId,
-    recordedAt: timestamp,
-    outcome,
-  };
-  const line = `${JSON.stringify({
-    type: "custom",
-    customType: ATTEMPT_HISTORY_ENTRY_TYPE,
-    data: attemptData,
-    id: randomUUID(),
-    parentId,
-    timestamp,
-  })}\n`;
-  await appendFile(source.sessionFile, line, "utf8");
+  sitianReport({
+    level: "event",
+    kind: "attempt-history",
+    subject: { runId: source.runId },
+    sessionParent: source.sessionFile,
+    payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
+    source: "settlement",
+  });
 }
 
 function parseNavigatorAttendanceDetails(
