@@ -16,7 +16,7 @@
  */
 import type { SessionToolInterval } from "../ledger-session-read.ts";
 import { medianNumber } from "../analyst-median.ts";
-import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
+import { compareAnalystLegs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
 export type AnalystB2ToolAction = {
@@ -258,11 +258,7 @@ const b2FrameBucketsActionsFamily: AnalystMetricFamilyModule = {
     if (input.runs.length === 0) return undefined;
     const runs = [...input.runs]
       .map(computeAnalystB2RunMetrics)
-      .sort((a, b) => {
-        if (a.book !== b.book) return a.book.localeCompare(b.book);
-        if (a.role !== b.role) return a.role.localeCompare(b.role);
-        return a.runId.localeCompare(b.runId);
-      });
+      .sort(compareAnalystLegs);
     const section: AnalystB2FrameBucketsActionsSection = {
       kind: "analyst-b2-frame-buckets-actions",
       runs,

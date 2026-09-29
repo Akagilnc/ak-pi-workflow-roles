@@ -9,7 +9,7 @@
  * - success rate den = success-eligible accepted legs (no-receipt out; planned out)
  * - planned = plan-duty acceptance; never success numerator or denominator
  */
-import type { AnalystReadableRunFacts, AnalystRunTerminalFace } from "../analyst-ledger.ts";
+import { compareAnalystLegs, type AnalystReadableRunFacts, type AnalystRunTerminalFace } from "../analyst-ledger.ts";
 import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 import { packagedAnalystTerminal } from "../packaged-role-registry.ts";
@@ -243,11 +243,7 @@ function projectLegs(runs: readonly AnalystReadableRunFacts[]): AnalystAcceptanc
   }
 
   // Stable page order: book, role, runId (match A1 leg sort).
-  return legs.sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    if (a.role !== b.role) return a.role.localeCompare(b.role);
-    return a.runId.localeCompare(b.runId);
-  });
+  return legs.sort(compareAnalystLegs);
 }
 
 function aggregateByRole(legs: readonly AnalystAcceptanceLeg[]): AnalystRoleAcceptanceStats[] {

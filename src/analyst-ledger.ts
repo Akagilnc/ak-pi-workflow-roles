@@ -373,6 +373,16 @@ export type AnalystReadableRunFacts = {
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
 
+/** Shared identity order for readable legs and their page/metric projections. */
+export function compareAnalystLegs(
+  a: Pick<AnalystReadableRunFacts, "book" | "role" | "runId">,
+  b: Pick<AnalystReadableRunFacts, "book" | "role" | "runId">,
+): number {
+  if (a.book !== b.book) return a.book.localeCompare(b.book);
+  if (a.role !== b.role) return a.role.localeCompare(b.role);
+  return a.runId.localeCompare(b.runId);
+}
+
 export type AnalystScopedRunScan = {
   /** Readable in-scope runs with retained typed facts (A2). */
   readonly runs: readonly AnalystReadableRunFacts[];

@@ -6,7 +6,7 @@
  * Registers by file drop under analyst-metric-families/ (A2 discovery).
  */
 import { medianNumber } from "../analyst-median.ts";
-import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
+import { compareAnalystLegs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
 /** One readable leg's session-frame wall clock (first usable → last usable). */
@@ -45,9 +45,7 @@ function compareRankingDesc(
   b: AnalystLegWallClockEntry,
 ): number {
   if (b.wallMs !== a.wallMs) return b.wallMs - a.wallMs;
-  if (a.book !== b.book) return a.book.localeCompare(b.book);
-  if (a.role !== b.role) return a.role.localeCompare(b.role);
-  return a.runId.localeCompare(b.runId);
+  return compareAnalystLegs(a, b);
 }
 
 /** Discovered by analyst-metric-families loader (default export). */

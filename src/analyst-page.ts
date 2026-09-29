@@ -15,7 +15,7 @@ import {
   ensureRealDirectoryTree,
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
-import type { AnalystReadableRunFacts } from "./analyst-ledger.ts";
+import { compareAnalystLegs, type AnalystReadableRunFacts } from "./analyst-ledger.ts";
 import { loadAnalystIssueMetricFamilies } from "./analyst-metric-families.ts";
 import { composeAnalystMetricFamilySections } from "./analyst-metric-family.ts";
 
@@ -187,11 +187,7 @@ export function analystIssuePageAddressFromPage(
 }
 
 function sortLegs(legs: readonly AnalystLegEntry[]): AnalystLegEntry[] {
-  return [...legs].sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    if (a.role !== b.role) return a.role.localeCompare(b.role);
-    return a.runId.localeCompare(b.runId);
-  });
+  return [...legs].sort(compareAnalystLegs);
 }
 
 export function sortUnreadable(
