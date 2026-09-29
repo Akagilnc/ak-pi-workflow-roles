@@ -9,25 +9,11 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "./host-contracts.ts";
+import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
-export type ExternalPreparedTurn = Readonly<{
-  readonly prompt: string;
-  readonly abortSignal?: AbortSignal;
-  closeRound(): Promise<
-    | { readonly accepted: true }
-    | {
-      readonly accepted: false;
-      readonly retry: {
-        readonly code: string;
-        readonly toolCallIds: readonly string[];
-        readonly message: string;
-      };
-    }
-    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
-  >;
-}>;
+export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
 export type ExternalHostRoundOutcome =
   | { readonly status: "delivered"; readonly stderr?: string }
@@ -94,6 +80,40 @@ export function raceAgainstHostAbort<T>(
       },
     );
   });
+}
+
+export function externalHostFailure(
+  cause: NonNullable<RoleTurnKnownFailure["cause"]>,
+  name: string,
+  code: string,
+  details?: Readonly<Record<string, unknown>>,
+  diagnostic?: string,
+): RoleTurnResult {
+  return asFailure({
+    cause,
+    identity: { name, code },
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+    ...(details === undefined ? {} : { details }),
+  });
+}
+
+/** A dispose failure replaces success; a primary failure retains its cause. */
+export function withExternalHostCleanupFailure(
+  outcome: RoleTurnResult,
+  cleanupError: unknown,
+  name: string,
+): RoleTurnResult {
+  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  if (outcome.knownFailure === undefined) {
+    return externalHostFailure("session", name, "dispose-failed", { cleanupError: message }, message);
+  }
+  return {
+    ...outcome,
+    knownFailure: {
+      ...outcome.knownFailure,
+      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
+    },
+  };
 }
 
 function asFailure(knownFailure: RoleTurnKnownFailure, stderr = ""): RoleTurnResult {
