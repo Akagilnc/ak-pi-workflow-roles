@@ -131,16 +131,6 @@ export function latestPayloadEscalated(
   return isEscalatePayload(payloads[payloads.length - 1]);
 }
 
-/** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
-export function courtDiaristEscalated(
-  roleOutcome: TerminalRoleOutcome | undefined,
-): boolean {
-  if (roleOutcome === undefined) return false;
-  if (roleOutcome.kind === "audit_escalation") return true;
-  if (roleOutcome.kind !== "accepted") return false;
-  return (roleOutcome.payloads ?? []).some(isEscalatePayload);
-}
-
 /**
  * Invoke public 起居郎 under the court-pipeline quiet face.
  * Returns escalate or unbound; the secretariat needs no ticket handoff.
@@ -198,7 +188,7 @@ export async function invokeCourtDiarist(
   const submissions = result.terminal?.submissions;
   // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
-  if (courtDiaristEscalated(roleOutcome)) {
+  if (latestPayloadEscalated(roleOutcome)) {
     return {
       identity: {
         kind: "escalate",

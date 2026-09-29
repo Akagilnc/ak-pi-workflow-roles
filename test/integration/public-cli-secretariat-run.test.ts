@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -809,22 +809,16 @@ for (const preliminaryTicket of [null, 923] as const) {
   });
 }
 
-test("diarist escalation pauses Secretariat, whose final ticket does not rebind the child's ticket", async () => {
+test("diarist escalation pauses only the diarist; Secretariat proceeds and does not rebind the child's ticket", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const gateCalls: Array<{ kind: string }> = [];
-    let diaristTurns = 0;
     const parentRunId = "01a0sec1025-0000-7000-8000-000000000002";
     const host = secretariatHostDrivingRealTools({
       packageRoot, home, gateCalls, submissionGateHost: "codex",
-      parentDiaristRunner: async (args, options) => {
-        diaristTurns += 1;
-        return courtDiaristWithDetails(diaristTurns === 1
-          ? { status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }
-          : { status: "completed", ticketNumber: 923 })(args, options);
-      },
+      parentDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
@@ -834,27 +828,14 @@ test("diarist escalation pauses Secretariat, whose final ticket does not rebind 
         roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.role, "diarist");
-    assert.ok(result.terminal);
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
-    assert.equal(gateCalls.some((call) => call.kind === "secretariat_verdict"), false);
-    const childDirectory = await findRunDirectoryById(home, result.terminal.runId!);
-    assert.ok(childDirectory);
-    await writeFile(join(childDirectory, "session", "session.jsonl"), "", "utf8");
-    const resumeIo = captureIo();
-    const resumed = await runAkRole(
-      ["resume", result.terminal.runId!],
-      { home, packageRoot, cwd: project, io: resumeIo.io,
-        roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
-    );
-    assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
-    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");
+    assert.equal(result.terminal?.roleOutcome.role, "secretariat");
     assert.equal(gateCalls.some((call) => call.kind === "secretariat_verdict"), true);
-    const parentDirectory = await findRunDirectoryById(home, parentRunId, undefined, "secretariat");
     const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
-    assert.equal(parentDirectory, join(book, "924", "runs", `${parentRunId}@secretariat`));
-    assert.equal(await findRunDirectoryById(home, result.terminal.runId!, undefined, "diarist"),
-      join(book, "923", "runs", `${result.terminal.runId}@diarist`));
+    assert.equal(await findRunDirectoryById(home, parentRunId, undefined, "secretariat"),
+      join(book, "924", "runs", `${parentRunId}@secretariat`));
+    const diaristRuns = await readdir(join(book, "923", "runs"));
+    assert.equal(diaristRuns.filter((name) => name.endsWith("@diarist")).length, 1,
+      "the escalated diarist run stays under its own ticket");
   });
 });
 
