@@ -8,8 +8,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -30,10 +30,7 @@ import {
   type AnalystOptionalMetricNumber,
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
+import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Shared board (B-wave) — totalElapsedMs/lastActivityAt hand-known. */
 const ISSUE_DEMO = "/analyst-fixture/issue-demo";
@@ -84,37 +81,6 @@ const presentAt = (at: string): AnalystOptionalTimestamp => ({
   status: "present",
   at,
 });
-
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c1-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    const result = await fn(businessRepo);
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  });
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c1-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
-}
 
 function assertNoZeroOrInfinity(metric: AnalystOptionalMetricNumber): void {
   if (metric.status === "absent") return;

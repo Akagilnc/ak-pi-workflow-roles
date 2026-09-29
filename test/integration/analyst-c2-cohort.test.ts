@@ -17,11 +17,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * admits only invocation.ticketNumber-matching runs.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -30,10 +27,7 @@ import type {
   AnalystCohortOptionalMetric,
   AnalystCohortRoleStats,
 } from "../../src/analyst-cohort.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
+import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const ISSUE_201_ROOT = "/analyst-fixture/c2-issue-201";
 const ISSUE_202_ROOT = "/analyst-fixture/c2-issue-202";
@@ -111,37 +105,6 @@ const present = (value: number): AnalystCohortOptionalMetric => ({
   status: "present",
   value,
 });
-
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c2-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    const result = await fn(businessRepo);
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  });
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c2-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
-}
 
 function roleStats(
   group: AnalystCohortGroupResult,

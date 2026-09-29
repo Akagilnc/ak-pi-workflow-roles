@@ -26,15 +26,9 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const TICKET = 505;
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "placement@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Placement Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
 
 test("#505 known ticket places every active public seat under that ticket", async () => {
   await withTempRoot("ak-known-ticket-placement-", async (home) => {

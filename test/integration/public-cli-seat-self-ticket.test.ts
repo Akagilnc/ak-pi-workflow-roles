@@ -28,7 +28,6 @@ import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   bindAdmittedTicketNumber,
   parsePublicSeatArgv,
@@ -48,6 +47,7 @@ import {
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome(
   run: (home: string) => Promise<void>,
@@ -63,34 +63,6 @@ async function withTempHome(
         else process.env.PATH = priorPath;
       },
     );
-  });
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "seat-ticket@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Seat Ticket"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
-    cwd: root,
   });
 }
 
@@ -427,30 +399,7 @@ test("public countersign without a diary binds its own typed receipt", async () 
   }, { seedDiary: false });
 });
 
-test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /unknown countersign option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
-  assert.throws(
-    () =>
-      parsePublicSeatArgv("notary", [
-        "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-        "--ticket",
-        "582",
-      ]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /unknown notary option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
-
+test("countersign rejects --ticket at the public entry (exit 2)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });

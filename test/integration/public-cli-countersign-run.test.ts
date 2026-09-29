@@ -69,6 +69,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
@@ -113,34 +114,8 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   });
 }
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
   return { name, create: () => ({ ok: true as const, host }) };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "countersign@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Countersign Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 /** Gate child uses a lawful notary receipt; countersign does not summon diarist (#1111). */

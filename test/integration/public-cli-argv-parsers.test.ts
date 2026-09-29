@@ -24,18 +24,12 @@ import {
   setPersistentSeatEngine,
 } from "../../src/public-cli/config.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-parsers-", scenario);
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "parser@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Parser Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {

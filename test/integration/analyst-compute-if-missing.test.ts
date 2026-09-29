@@ -14,11 +14,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Fixture runId segment 6xxx (1-5xxx occupied by prior analyst family).
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
-  cp,
   mkdir,
-  mkdtemp,
   readdir,
   readFile,
   rm,
@@ -47,10 +44,10 @@ import {
 } from "../../src/analyst-page.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import type { AnalystModelGroupsPage } from "../../src/analyst-model-groups.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
 
 /** #338 exclusive projectRoots (runId 6xxx books). */
 const ISSUE_ROOT = "/analyst-fixture/c338-issue-a";
@@ -98,54 +95,6 @@ const COHORT_A_SIBLING_WALL_MS = 90_000;
 const COHORT_B_WALL_MS = 20_000;
 const MODELS_A_WALL_MS = 40_000;
 const MODELS_B_WALL_MS = 10_000;
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-338-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    const result = await fn(businessRepo);
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  });
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-338-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
-}
 
 /** Snapshot of issue page basenames under analyst/issues/. */
 async function listIssuePageNames(ledgerHome: string): Promise<string[]> {

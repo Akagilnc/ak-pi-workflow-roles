@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, writeFile } from "node:fs/promises";
+import { cp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,4 +49,37 @@ export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   });
+}
+
+/** Recursive analyst-dir snapshot for zero-write oracles (path → file bytes). */
+export async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {
+  const root = join(ledgerHome, "analyst");
+  const out = new Map<string, string>();
+  async function walk(dir: string, rel: string): Promise<void> {
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch (error) {
+      if (
+        error instanceof Error
+        && "code" in error
+        && (error.code === "ENOENT" || error.code === "ENOTDIR")
+      ) {
+        return;
+      }
+      throw error;
+    }
+    for (const name of names) {
+      const childRel = rel === "" ? name : `${rel}/${name}`;
+      const childPath = join(dir, name);
+      const info = await stat(childPath);
+      if (info.isDirectory()) {
+        await walk(childPath, childRel);
+        continue;
+      }
+      out.set(childRel, await readFile(childPath, "utf8"));
+    }
+  }
+  await walk(root, "");
+  return out;
 }

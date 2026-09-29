@@ -47,6 +47,7 @@ import { resolveActivationLedgerHome } from "../../src/activation-ledger-topolog
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 /** Resumable failure: top-level runId omitted; resume.command carries the id (#665). Original payloads/diagnostics are not rewritten (#836). */
 function assertRunIdOnlyInResumeCommand(
@@ -72,32 +73,6 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 
 const roleTurnHostFromLegacyPiRunner: typeof rawRoleTurnHostFromLegacyPiRunner =
   (options) => withPassingReviewHost(rawRoleTurnHostFromLegacyPiRunner(options));
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "resume@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Resume Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
 
 /**
  * Shared plant: seal accepted judge output, optionally block report publication.

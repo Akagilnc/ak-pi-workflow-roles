@@ -12,10 +12,8 @@ import {
   cp,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,6 +28,8 @@ import {
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { snapshotAnalystDir } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -46,23 +46,6 @@ const VALID_SWEEP_INPUT = {
     { projectRoot: ISSUE_BETA },
   ],
 };
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
 
 function gitPorcelain(cwd: string): string {
   return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
@@ -106,38 +89,6 @@ async function withSweepFixture<T>(
     async () => { await rm(home, { recursive: true, force: true }); },
     async () => { await rm(attachDir, { recursive: true, force: true }); },
   );
-}
-
-async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {
-  const root = join(ledgerHome, "analyst");
-  const out = new Map<string, string>();
-  async function walk(dir: string, rel: string): Promise<void> {
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch (error) {
-      if (
-        error instanceof Error
-        && "code" in error
-        && (error.code === "ENOENT" || error.code === "ENOTDIR")
-      ) {
-        return;
-      }
-      throw error;
-    }
-    for (const name of names) {
-      const childRel = rel === "" ? name : `${rel}/${name}`;
-      const childPath = join(dir, name);
-      const info = await stat(childPath);
-      if (info.isDirectory()) {
-        await walk(childPath, childRel);
-        continue;
-      }
-      out.set(childRel, await readFile(childPath, "utf8"));
-    }
-  }
-  await walk(root, "");
-  return out;
 }
 
 test("analyst public CLI sweep: one typed attach → pages+index match runAnalyst oracle", async () => {

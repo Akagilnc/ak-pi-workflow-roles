@@ -11,18 +11,11 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Assert only through sole entry runAnalyst — no second parse kernel.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
+import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Issue primary root — legacy path-narrow / display face. */
 const ISSUE_PRIMARY = "/analyst-fixture/c4-issue-primary";
@@ -63,37 +56,6 @@ const EXPECTED_TICKET_PATH_RUN_IDS = [
  *   4011 no ticket + alien    → OUT
  */
 const EXPECTED_FALLBACK_RUN_IDS = [RUN_FALLBACK_IN];
-
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c4-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    const result = await fn(businessRepo);
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  });
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c4-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
-}
 
 test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback", async () => {
   await withBusinessRepo(async () => {

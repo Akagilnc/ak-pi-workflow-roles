@@ -12,10 +12,8 @@ import {
   cp,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -33,6 +31,8 @@ import {
 } from "../../src/analyst-page.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { snapshotAnalystDir } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -66,23 +66,6 @@ const SESSION_JSONL = [
   }),
 ].join("\n") + "\n";
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
 function gitPorcelain(cwd: string): string {
   return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
     cwd,
@@ -112,39 +95,6 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   });
-}
-
-/** Recursive analyst-dir snapshot for zero-write oracle (path → file bytes). */
-async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {
-  const root = join(ledgerHome, "analyst");
-  const out = new Map<string, string>();
-  async function walk(dir: string, rel: string): Promise<void> {
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch (error) {
-      if (
-        error instanceof Error
-        && "code" in error
-        && (error.code === "ENOENT" || error.code === "ENOTDIR")
-      ) {
-        return;
-      }
-      throw error;
-    }
-    for (const name of names) {
-      const childRel = rel === "" ? name : `${rel}/${name}`;
-      const childPath = join(dir, name);
-      const info = await stat(childPath);
-      if (info.isDirectory()) {
-        await walk(childPath, childRel);
-        continue;
-      }
-      out.set(childRel, await readFile(childPath, "utf8"));
-    }
-  }
-  await walk(root, "");
-  return out;
 }
 
 function assertSnapshotsEqual(

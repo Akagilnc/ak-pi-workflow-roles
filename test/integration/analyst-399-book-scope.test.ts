@@ -27,6 +27,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -67,23 +68,6 @@ const SESSION_JSONL = [
     message: { role: "assistant", timestamp: "2026-08-21T00:00:10.000Z", content: [] },
   }),
 ].join("\n") + "\n";
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
 
 async function countAnalystFiles(home: string): Promise<number> {
   const root = join(home, ".ak-roles", "analyst");

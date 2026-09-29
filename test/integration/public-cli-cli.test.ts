@@ -4,6 +4,7 @@ import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -37,23 +38,6 @@ import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-cli-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
 }
 
 test("Inspector public runner preserves typed pass, bounce, escalate, and non-three-state reply", async () => {

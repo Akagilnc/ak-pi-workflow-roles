@@ -43,6 +43,7 @@ import {
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -79,23 +80,6 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-engine-axis-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
 }
 
 const credentials = { "openai-codex": true, xai: true } as const;
@@ -910,13 +894,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
 });
 
 // --- #391 E4: table-driven full PUBLIC_CALLABLE_ROLES + negative table ------------
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
 
 async function materializeConflictedRepo(root: string): Promise<void> {
   seedGitProject(root);
