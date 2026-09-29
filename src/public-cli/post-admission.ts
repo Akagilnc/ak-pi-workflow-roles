@@ -344,8 +344,8 @@ export type PostAdmissionAdapters<
   trySettle: (
     admitted: A,
     authority: DurablePrincipalAuthority,
-    /** Current court turn scope (#637); omit for run-scoped sealed reads. */
-    scope?: { readonly courtAttemptId?: string },
+    /** Current host attempt; only this invocation records history (#419). */
+    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -525,6 +525,7 @@ export async function presentControlledFailure<
   let terminal: TerminalResult;
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
+      recordAttemptHistory: true,
       ...(resumable
         ? { resume: { command: renderResumeCommand(admitted.runId) } }
         : {}),
@@ -936,19 +937,13 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    const courtScope =
-      (request.courtAttemptId === undefined || request.courtAttemptId.length === 0) &&
-      (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
-        ? undefined
-        : {
-            ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-            ...(request.invocationScopeId === undefined ||
-              request.invocationScopeId.length === 0
-              ? {}
-              : { invocationScopeId: request.invocationScopeId }),
-          };
+    const courtScope = {
+      recordAttemptHistory: true as const,
+      ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+        ? {} : { courtAttemptId: request.courtAttemptId }),
+      ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
+        ? {} : { invocationScopeId: request.invocationScopeId }),
+    };
 
     // Single complete boundary (#840 r9 判词 class 1): resolving the
     // host/runner failure facts, trySettle, its shouldPresent gate, and the

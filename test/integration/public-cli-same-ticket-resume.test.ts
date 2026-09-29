@@ -26,11 +26,15 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { runComplianceAudit } from "../../src/compliance-transport.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,
+  loadResumablePublicRole,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   installGhFixture,
@@ -829,6 +833,15 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     );
     assert.equal(first.exitCode, 0, "first sealed auditor must accept");
     assert.equal(first.terminal?.roleOutcome.kind, "accepted");
+    const settledChild = await loadResumablePublicRole(home, seen[0]!.runId, piDurablePrincipalAuthority);
+    // Re-projecting a settled child is a read, not a second host attempt.
+    await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
+    await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
+    const { recordFile: firstHistoryFile } = resolveSitianRecordPath({
+      level: "event", kind: "attempt-history",
+      sessionParent: piDurablePrincipalAuthority.decode(settledChild.admitted.principal).sessionFile,
+    });
+    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 1);
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -890,6 +903,14 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       }],
       "run-scoped submissions still present the first court's sealed pass",
     );
+    const parentDecision = await runComplianceAudit({
+      subject: "judge", context: { cwd: project } as never,
+      runDirectory: firstSourcePath,
+      summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
+    });
+    assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
+    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 2,
+      "the second real host turn adds exactly one no-receipt attempt");
     assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume", "same-parent auditor re-summons must resume");
@@ -953,7 +974,6 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       2,
       "same-ticket distinct parent must leave two auditor run directories",
     );
-    void firstSourcePath;
     void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });

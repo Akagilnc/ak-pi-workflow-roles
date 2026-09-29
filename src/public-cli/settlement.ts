@@ -131,6 +131,8 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
+  /** Only the dispatched host turn may record this attempt; later reads are projections. */
+  readonly recordAttemptHistory?: true;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -302,15 +304,19 @@ async function settleNoReceiptTerminal(
   facts: NoReceiptLifecycleFacts,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const roleOutcome: TerminalRoleOutcome = {
+    kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
+    ...facts, decisiveFacts: facts,
+  };
+  if (scope?.recordAttemptHistory === true) {
+    await appendRunAttemptHistory(
+      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+  }
   await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return withOptionalGateProjection({
-    roleOutcome: {
-      kind: "no_receipt",
-      role: admitted.role,
-      status: "no-accepted-receipt",
-      ...facts,
-      decisiveFacts: facts,
-    },
+    roleOutcome,
     navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
     artifacts: [],
     runId: admitted.runId,
@@ -2174,21 +2180,20 @@ async function publishAcceptedTerminalArtifacts(
   },
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  recordAttemptHistory: boolean,
   bodies: {
     readonly report: Record<string, unknown>;
     readonly evidence: Record<string, unknown>;
   },
 ): Promise<TerminalArtifactRef[]> {
-  // #419: history first — report/evidence stay last-write-wins views only
-  // because every attempt's complete result has already been appended.
-  await appendRunAttemptHistory(
-    {
-      role: admitted.role,
-      runId: admitted.runId,
-      sessionFile: coordinates.sessionFile,
-    },
-    roleOutcome,
-  );
+  // #419: a dispatched turn appends before rewriting last-write-wins views;
+  // a later projection may refresh views but must not invent another attempt.
+  if (recordAttemptHistory) {
+    await appendRunAttemptHistory(
+      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+  }
   const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, RUN_TERMINAL_REPORT_FILE);
   const evidencePath = join(artifactsDir, RUN_TERMINAL_EVIDENCE_FILE);
@@ -2284,7 +2289,7 @@ async function finishLawfulSeat(
   roleOutcome: TerminalRoleOutcome,
   scope: SettlementCourtScope | undefined,
 ): Promise<TerminalResult> {
-  const artifacts = await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
+  const artifacts = await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
   const terminal = await withOptionalGateProjection({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
@@ -2398,12 +2403,13 @@ async function publishDeclaredSeatArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
+  recordAttemptHistory: boolean,
 ): Promise<TerminalArtifactRef[]> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: readAdmittedPath(admitted, "phase") }
     : {};
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, recordAttemptHistory, {
     report: {
       role: admitted.role,
       runId: admitted.runId,
@@ -2526,7 +2532,7 @@ async function trySettleAcceptedSeatTerminalResult(
 export async function trySettlePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope: { readonly courtAttemptId?: string } | undefined,
+  scope: SettlementCourtScope | undefined,
 ): Promise<TerminalResult | undefined> {
   return settleSeat(admitted, authority, scope);
 }
@@ -2787,6 +2793,7 @@ export async function publishFailureArtifacts(
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
   onErrorPublished?: (path: string) => void,
+  recordAttemptHistory = false,
 ): Promise<TerminalArtifactRef[]> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
@@ -2809,18 +2816,17 @@ export async function publishFailureArtifacts(
       ),
     );
   }
-  // #419: each attempt's complete failure result joins the appended history
-  // before any fixed-name artifact view is rewritten. History failure must not
-  // strand the original controlled failure outside settlement — it rides
-  // publicationIssues instead of aborting durability.
-  try {
-    await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
-      kind: "failure",
-      role: admitted.role,
-      ...failure,
-    });
-  } catch (error) {
-    priorIssues.push(publicationAttemptFromError(sessionFile, error));
+  // #419: a dispatched failure joins history before fixed-name views change.
+  // Re-projecting an existing failure does not append. History write failure
+  // rides publicationIssues rather than stranding the controlled failure.
+  if (recordAttemptHistory) {
+    try {
+      await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
+        kind: "failure", role: admitted.role, ...failure,
+      });
+    } catch (error) {
+      priorIssues.push(publicationAttemptFromError(sessionFile, error));
+    }
   }
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
@@ -2940,7 +2946,7 @@ export async function settleFailureTerminalResult(
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished, options.recordAttemptHistory === true);
   const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
