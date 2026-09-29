@@ -18,15 +18,11 @@ import {
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_A1_RUN as PRD_RUN, ANALYST_LEG_E5_RUN as OVERLAP_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
-const ISSUE_PROJECT_ROOT = "/analyst-fixture/issue-demo";
-const BOOK = "fixture-book";
 
 /** PRD five-frame sample (existing a1 coder fixture). */
-const PRD_RUN = "019ff000-0001-7000-8000-0000000000a1";
 /** Minimal overlap scene (e5 coder fixture). */
-const OVERLAP_RUN = "019ff000-0005-7000-8000-0000000000e5";
 
 /**
  * PRD 逐帧演算例钉死值（秒→ms）：

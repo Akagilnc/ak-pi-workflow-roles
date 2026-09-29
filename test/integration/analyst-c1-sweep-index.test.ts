@@ -31,14 +31,10 @@ import {
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, fixtureHome, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, C1_ALPHA_RUN, fixtureHome, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
-/** Shared board (B-wave) — totalElapsedMs/lastActivityAt hand-known. */
-const ISSUE_DEMO = "/analyst-fixture/issue-demo";
-/** C1-owned fixture — runId 019ff000-1002, wall 10_000. */
-const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
 /**
  * C1-owned negative: readable earlier + newer terminal-unreadable with later end-frame.
  * runIds 019ff000-1003 / 019ff000-1004.
@@ -112,321 +108,313 @@ function expectedRow(input: {
 }
 
 test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present/absent, idempotent re-run", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-      const indexPath = analystLibraryIndexPath(ledgerHome);
+  await withTempHome(async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const indexPath = analystLibraryIndexPath(ledgerHome);
 
-      // LOC present on alpha: 500 lines → msPerK = 40000 / (500/1000) = 80000.
-      // LOC omitted on beta → typed 空缺 (not 0/∞).
-      // LOC=0 on demo → typed 空缺 (缺省或为 0).
-      const first = await runAnalyst({
-        mode: "sweep",
-        mergedPullRequests: [
-          { projectRoot: ISSUE_DEMO, changedLines: 0 },
-          { projectRoot: ISSUE_ALPHA, changedLines: 500 },
-          { projectRoot: ISSUE_BETA },
-        ],
-      }, { home });
+    // LOC present on alpha: 500 lines → msPerK = 40000 / (500/1000) = 80000.
+    // LOC omitted on beta → typed 空缺 (not 0/∞).
+    // LOC=0 on demo → typed 空缺 (缺省或为 0).
+    const first = await runAnalyst({
+      mode: "sweep",
+      mergedPullRequests: [
+        { projectRoot: ISSUE_DEMO, changedLines: 0 },
+        { projectRoot: ISSUE_ALPHA, changedLines: 500 },
+        { projectRoot: ISSUE_BETA },
+      ],
+    }, { home });
 
-      assert.equal(first.mode, "sweep");
-      assert.equal(first.indexPath, indexPath);
-      assert.equal(first.index.kind, "analyst-library-index");
-      assert.equal(first.issuePages.length, 3);
+    assert.equal(first.mode, "sweep");
+    assert.equal(first.indexPath, indexPath);
+    assert.equal(first.index.kind, "analyst-library-index");
+    assert.equal(first.issuePages.length, 3);
 
-      // Each issue → exactly one page path under analyst/issues/.
-      const issueDir = join(ledgerHome, "analyst", "issues");
-      const pageFiles = (await readdir(issueDir)).filter((n) => n.endsWith(".json")).sort();
-      assert.equal(pageFiles.length, 3, "sweep writes one page per issue");
+    // Each issue → exactly one page path under analyst/issues/.
+    const issueDir = join(ledgerHome, "analyst", "issues");
+    const pageFiles = (await readdir(issueDir)).filter((n) => n.endsWith(".json")).sort();
+    assert.equal(pageFiles.length, 3, "sweep writes one page per issue");
 
-      const demoPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_DEMO)}`, scopeRootIdentity: ISSUE_DEMO });
-      const alphaPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_ALPHA)}`, scopeRootIdentity: ISSUE_ALPHA });
-      const betaPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_BETA)}`, scopeRootIdentity: ISSUE_BETA });
-      // One canonical page file per issue key — no duplicates on disk.
-      assert.deepEqual(
-        new Set(pageFiles),
-        new Set([
-          basename(demoPath),
-          basename(alphaPath),
-          basename(betaPath),
-        ]),
-      );
+    const demoPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_DEMO)}`, scopeRootIdentity: ISSUE_DEMO });
+    const alphaPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_ALPHA)}`, scopeRootIdentity: ISSUE_ALPHA });
+    const betaPath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_BETA)}`, scopeRootIdentity: ISSUE_BETA });
+    // One canonical page file per issue key — no duplicates on disk.
+    assert.deepEqual(
+      new Set(pageFiles),
+      new Set([
+        basename(demoPath),
+        basename(alphaPath),
+        basename(betaPath),
+      ]),
+    );
 
-      const demoPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_DEMO)?.page;
-      const alphaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_ALPHA)?.page;
-      const betaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_BETA)?.page;
-      assert.ok(demoPage && alphaPage && betaPage);
+    const demoPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_DEMO)?.page;
+    const alphaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_ALPHA)?.page;
+    const betaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_BETA)?.page;
+    assert.ok(demoPage && alphaPage && betaPage);
 
-      assert.equal(demoPage.totalElapsedMs, DEMO_TOTAL_ELAPSED_MS);
-      assert.deepEqual(demoPage.changedLines, ABSENT);
-      assert.deepEqual(demoPage.msPerKLines, ABSENT);
-      assert.deepEqual(demoPage.lastActivityAt, presentAt(DEMO_LAST_ACTIVITY_AT));
-      assertNoZeroOrInfinity(demoPage.msPerKLines);
+    assert.equal(demoPage.totalElapsedMs, DEMO_TOTAL_ELAPSED_MS);
+    assert.deepEqual(demoPage.changedLines, ABSENT);
+    assert.deepEqual(demoPage.msPerKLines, ABSENT);
+    assert.deepEqual(demoPage.lastActivityAt, presentAt(DEMO_LAST_ACTIVITY_AT));
+    assertNoZeroOrInfinity(demoPage.msPerKLines);
 
-      assert.equal(alphaPage.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
-      assert.deepEqual(alphaPage.changedLines, present(500));
-      assert.deepEqual(alphaPage.msPerKLines, present(80_000));
-      assert.deepEqual(alphaPage.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
-      assert.equal(alphaPage.legs[0]?.runId, C1_ALPHA_RUN);
-      assertNoZeroOrInfinity(alphaPage.msPerKLines);
+    assert.equal(alphaPage.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
+    assert.deepEqual(alphaPage.changedLines, present(500));
+    assert.deepEqual(alphaPage.msPerKLines, present(80_000));
+    assert.deepEqual(alphaPage.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
+    assert.equal(alphaPage.legs[0]?.runId, C1_ALPHA_RUN);
+    assertNoZeroOrInfinity(alphaPage.msPerKLines);
 
-      assert.equal(betaPage.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
-      assert.deepEqual(betaPage.changedLines, ABSENT);
-      assert.deepEqual(betaPage.msPerKLines, ABSENT);
-      assert.deepEqual(betaPage.lastActivityAt, presentAt(BETA_LAST_ACTIVITY_AT));
-      assert.equal(betaPage.legs[0]?.runId, C1_BETA_RUN);
-      assertNoZeroOrInfinity(betaPage.msPerKLines);
+    assert.equal(betaPage.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
+    assert.deepEqual(betaPage.changedLines, ABSENT);
+    assert.deepEqual(betaPage.msPerKLines, ABSENT);
+    assert.deepEqual(betaPage.lastActivityAt, presentAt(BETA_LAST_ACTIVITY_AT));
+    assert.equal(betaPage.legs[0]?.runId, C1_BETA_RUN);
+    assertNoZeroOrInfinity(betaPage.msPerKLines);
 
-      // Index rows: self-sufficient; stable sort by projectRoot identity.
-      const expectedRows: AnalystLibraryIndexRow[] = [
-        expectedRow({
-          projectRoot: ISSUE_ALPHA,
-          totalElapsedMs: ALPHA_TOTAL_ELAPSED_MS,
-          changedLines: present(500),
-          msPerKLines: present(80_000),
-          lastActivityAt: presentAt(ALPHA_LAST_ACTIVITY_AT),
-        }),
-        expectedRow({
-          projectRoot: ISSUE_BETA,
-          totalElapsedMs: BETA_TOTAL_ELAPSED_MS,
-          changedLines: ABSENT,
-          msPerKLines: ABSENT,
-          lastActivityAt: presentAt(BETA_LAST_ACTIVITY_AT),
-        }),
-        expectedRow({
-          projectRoot: ISSUE_DEMO,
-          totalElapsedMs: DEMO_TOTAL_ELAPSED_MS,
-          changedLines: ABSENT,
-          msPerKLines: ABSENT,
-          lastActivityAt: presentAt(DEMO_LAST_ACTIVITY_AT),
-        }),
-      ];
+    // Index rows: self-sufficient; stable sort by projectRoot identity.
+    const expectedRows: AnalystLibraryIndexRow[] = [
+      expectedRow({
+        projectRoot: ISSUE_ALPHA,
+        totalElapsedMs: ALPHA_TOTAL_ELAPSED_MS,
+        changedLines: present(500),
+        msPerKLines: present(80_000),
+        lastActivityAt: presentAt(ALPHA_LAST_ACTIVITY_AT),
+      }),
+      expectedRow({
+        projectRoot: ISSUE_BETA,
+        totalElapsedMs: BETA_TOTAL_ELAPSED_MS,
+        changedLines: ABSENT,
+        msPerKLines: ABSENT,
+        lastActivityAt: presentAt(BETA_LAST_ACTIVITY_AT),
+      }),
+      expectedRow({
+        projectRoot: ISSUE_DEMO,
+        totalElapsedMs: DEMO_TOTAL_ELAPSED_MS,
+        changedLines: ABSENT,
+        msPerKLines: ABSENT,
+        lastActivityAt: presentAt(DEMO_LAST_ACTIVITY_AT),
+      }),
+    ];
 
-      assert.equal(first.index.rows.length, 3);
-      for (const expected of expectedRows) {
-        const row = first.index.rows.find((r) => r.projectRoot === expected.projectRoot);
-        assert.ok(row, `row for ${expected.projectRoot} must exist`);
-        assert.deepEqual(row, expected);
-      }
-      for (const row of first.index.rows) {
-        assertNoZeroOrInfinity(row.msPerKLines);
-      }
+    assert.equal(first.index.rows.length, 3);
+    for (const expected of expectedRows) {
+      const row = first.index.rows.find((r) => r.projectRoot === expected.projectRoot);
+      assert.ok(row, `row for ${expected.projectRoot} must exist`);
+      assert.deepEqual(row, expected);
+    }
+    for (const row of first.index.rows) {
+      assertNoZeroOrInfinity(row.msPerKLines);
+    }
 
-      const indexOnDisk = JSON.parse(
-        await readFile(indexPath, "utf8"),
-      ) as AnalystLibraryIndexPage;
-      assert.deepEqual(indexOnDisk, first.index);
+    const indexOnDisk = JSON.parse(
+      await readFile(indexPath, "utf8"),
+    ) as AnalystLibraryIndexPage;
+    assert.deepEqual(indexOnDisk, first.index);
 
-      // Idempotent re-run: same issue still one page; content equivalent.
-      const firstDemoBytes = await readFile(demoPath, "utf8");
-      const firstAlphaBytes = await readFile(alphaPath, "utf8");
-      const firstBetaBytes = await readFile(betaPath, "utf8");
-      const firstIndexBytes = await readFile(indexPath, "utf8");
+    // Idempotent re-run: same issue still one page; content equivalent.
+    const firstDemoBytes = await readFile(demoPath, "utf8");
+    const firstAlphaBytes = await readFile(alphaPath, "utf8");
+    const firstBetaBytes = await readFile(betaPath, "utf8");
+    const firstIndexBytes = await readFile(indexPath, "utf8");
 
-      const second = await runAnalyst({
-        mode: "sweep",
-        mergedPullRequests: [
-          { projectRoot: ISSUE_DEMO, changedLines: 0 },
-          { projectRoot: ISSUE_ALPHA, changedLines: 500 },
-          { projectRoot: ISSUE_BETA },
-        ],
-      }, { home });
+    const second = await runAnalyst({
+      mode: "sweep",
+      mergedPullRequests: [
+        { projectRoot: ISSUE_DEMO, changedLines: 0 },
+        { projectRoot: ISSUE_ALPHA, changedLines: 500 },
+        { projectRoot: ISSUE_BETA },
+      ],
+    }, { home });
 
-      const pageFilesAgain = (await readdir(issueDir))
-        .filter((n) => n.endsWith(".json"))
-        .sort();
-      assert.equal(pageFilesAgain.length, 3, "re-sweep must not duplicate issue pages");
-      assert.deepEqual(pageFilesAgain, pageFiles);
+    const pageFilesAgain = (await readdir(issueDir))
+      .filter((n) => n.endsWith(".json"))
+      .sort();
+    assert.equal(pageFilesAgain.length, 3, "re-sweep must not duplicate issue pages");
+    assert.deepEqual(pageFilesAgain, pageFiles);
 
-      assert.deepEqual(second.index, first.index);
-      assert.deepEqual(second.issuePages.map((p) => p.page), first.issuePages.map((p) => p.page));
-      assert.equal(await readFile(demoPath, "utf8"), firstDemoBytes);
-      assert.equal(await readFile(alphaPath, "utf8"), firstAlphaBytes);
-      assert.equal(await readFile(betaPath, "utf8"), firstBetaBytes);
-      assert.equal(await readFile(indexPath, "utf8"), firstIndexBytes);
-    });
+    assert.deepEqual(second.index, first.index);
+    assert.deepEqual(second.issuePages.map((p) => p.page), first.issuePages.map((p) => p.page));
+    assert.equal(await readFile(demoPath, "utf8"), firstDemoBytes);
+    assert.equal(await readFile(alphaPath, "utf8"), firstAlphaBytes);
+    assert.equal(await readFile(betaPath, "utf8"), firstBetaBytes);
+    assert.equal(await readFile(indexPath, "utf8"), firstIndexBytes);
   });
 });
 
 test("analyst C1 issue-mode optional LOC: present yields msPerK; omit yields typed 空缺", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      // Present LOC on C1 alpha: 1000 lines → msPerK = 40000 / 1 = 40000.
-      const withLoc = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_ALPHA,
-        changedLines: 1000,
-      }, { home });
-      assert.equal(withLoc.mode, "issue");
-      assert.equal(withLoc.page.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
-      assert.deepEqual(withLoc.page.changedLines, present(1000));
-      assert.deepEqual(withLoc.page.msPerKLines, present(40_000));
-      assert.deepEqual(withLoc.page.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
-      assert.equal(withLoc.page.legs[0]?.runId, C1_ALPHA_RUN);
+  await withTempHome(async (home) => {
+    // Present LOC on C1 alpha: 1000 lines → msPerK = 40000 / 1 = 40000.
+    const withLoc = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_ALPHA,
+      changedLines: 1000,
+    }, { home });
+    assert.equal(withLoc.mode, "issue");
+    assert.equal(withLoc.page.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
+    assert.deepEqual(withLoc.page.changedLines, present(1000));
+    assert.deepEqual(withLoc.page.msPerKLines, present(40_000));
+    assert.deepEqual(withLoc.page.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
+    assert.equal(withLoc.page.legs[0]?.runId, C1_ALPHA_RUN);
 
-      // Omit LOC → typed 空缺 (never 0/∞ stand-in).
-      const withoutLoc = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_BETA,
-      }, { home });
-      assert.deepEqual(withoutLoc.page.changedLines, ABSENT);
-      assert.deepEqual(withoutLoc.page.msPerKLines, ABSENT);
-      assertNoZeroOrInfinity(withoutLoc.page.msPerKLines);
-      assert.equal(withoutLoc.page.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
-      // Issue mode does not maintain the library index.
-      assert.equal("index" in withoutLoc, false);
-    });
+    // Omit LOC → typed 空缺 (never 0/∞ stand-in).
+    const withoutLoc = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_BETA,
+    }, { home });
+    assert.deepEqual(withoutLoc.page.changedLines, ABSENT);
+    assert.deepEqual(withoutLoc.page.msPerKLines, ABSENT);
+    assertNoZeroOrInfinity(withoutLoc.page.msPerKLines);
+    assert.equal(withoutLoc.page.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
+    // Issue mode does not maintain the library index.
+    assert.equal("index" in withoutLoc, false);
   });
 });
 
 test("analyst C1 sweep: unreadable later end-frame still wins lastActivityAt; elapsed excludes it", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-      const indexPath = analystLibraryIndexPath(ledgerHome);
+  await withTempHome(async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const indexPath = analystLibraryIndexPath(ledgerHome);
 
-      const result = await runAnalyst({
-        mode: "sweep",
-        mergedPullRequests: [{ projectRoot: ISSUE_GAMMA, changedLines: 100 }],
-      }, { home });
+    const result = await runAnalyst({
+      mode: "sweep",
+      mergedPullRequests: [{ projectRoot: ISSUE_GAMMA, changedLines: 100 }],
+    }, { home });
 
-      assert.equal(result.mode, "sweep");
-      assert.equal(result.issuePages.length, 1);
-      const page = result.issuePages[0]!.page;
+    assert.equal(result.mode, "sweep");
+    assert.equal(result.issuePages.length, 1);
+    const page = result.issuePages[0]!.page;
 
-      // Readable-only elapsed; unreadable null-terminal excluded from legs/elapsed.
-      assert.equal(page.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
-      assert.deepEqual(page.legs.map((leg) => leg.runId), [C1_GAMMA_READABLE_RUN]);
-      assert.equal(page.unreadableCount, 1);
-      assert.equal(page.unreadable[0]?.runId, C1_GAMMA_UNREADABLE_RUN);
-      assert.deepEqual(page.unreadable[0]?.missingSources, ["terminal-artifact"]);
-      assert.deepEqual(page.unreadable[0]?.lastFrameAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+    // Readable-only elapsed; unreadable null-terminal excluded from legs/elapsed.
+    assert.equal(page.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
+    assert.deepEqual(page.legs.map((leg) => leg.runId), [C1_GAMMA_READABLE_RUN]);
+    assert.equal(page.unreadableCount, 1);
+    assert.equal(page.unreadable[0]?.runId, C1_GAMMA_UNREADABLE_RUN);
+    assert.deepEqual(page.unreadable[0]?.missingSources, ["terminal-artifact"]);
+    assert.deepEqual(page.unreadable[0]?.lastFrameAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
 
-      // PRD ②: lastActivityAt = max end-frame of ALL runs (unreadable available end wins).
-      assert.deepEqual(page.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
-      assert.deepEqual(page.changedLines, present(100));
-      assert.deepEqual(page.msPerKLines, present(200_000)); // 20000 / (100/1000)
+    // PRD ②: lastActivityAt = max end-frame of ALL runs (unreadable available end wins).
+    assert.deepEqual(page.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+    assert.deepEqual(page.changedLines, present(100));
+    assert.deepEqual(page.msPerKLines, present(200_000)); // 20000 / (100/1000)
 
-      const pagePath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_GAMMA)}`, scopeRootIdentity: ISSUE_GAMMA });
-      const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as AnalystIssueMetricsPage;
-      assert.deepEqual(onDisk.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
-      assert.equal(onDisk.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
+    const pagePath = analystIssuePagePath(ledgerHome, { bookKey: `root:${physicalPathIdentity(ISSUE_GAMMA)}`, scopeRootIdentity: ISSUE_GAMMA });
+    const onDisk = JSON.parse(await readFile(pagePath, "utf8")) as AnalystIssueMetricsPage;
+    assert.deepEqual(onDisk.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+    assert.equal(onDisk.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
 
-      // Index row projects the same lastActivityAt through sweep → disk.
-      assert.equal(result.indexPath, indexPath);
-      assert.equal(result.index.rows.length, 1);
-      assert.deepEqual(
-        result.index.rows[0],
-        expectedRow({
-          projectRoot: ISSUE_GAMMA,
-          totalElapsedMs: GAMMA_TOTAL_ELAPSED_MS,
-          changedLines: present(100),
-          msPerKLines: present(200_000),
-          lastActivityAt: presentAt(GAMMA_LAST_ACTIVITY_AT),
-        }),
-      );
-      const indexOnDisk = JSON.parse(
-        await readFile(indexPath, "utf8"),
-      ) as AnalystLibraryIndexPage;
-      assert.deepEqual(indexOnDisk.rows[0]?.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
-      assert.equal(indexOnDisk.rows[0]?.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
-    });
+    // Index row projects the same lastActivityAt through sweep → disk.
+    assert.equal(result.indexPath, indexPath);
+    assert.equal(result.index.rows.length, 1);
+    assert.deepEqual(
+      result.index.rows[0],
+      expectedRow({
+        projectRoot: ISSUE_GAMMA,
+        totalElapsedMs: GAMMA_TOTAL_ELAPSED_MS,
+        changedLines: present(100),
+        msPerKLines: present(200_000),
+        lastActivityAt: presentAt(GAMMA_LAST_ACTIVITY_AT),
+      }),
+    );
+    const indexOnDisk = JSON.parse(
+      await readFile(indexPath, "utf8"),
+    ) as AnalystLibraryIndexPage;
+    assert.deepEqual(indexOnDisk.rows[0]?.lastActivityAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
+    assert.equal(indexOnDisk.rows[0]?.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
   });
 });
 
 
 test("analyst library-index concurrent issue upserts retain both rows", async () => {
-  await withBusinessRepo(async () => {
-    await withTempRoot("analyst-c1-lock-home-", async (home) => {
-      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-      const ledgerHome = join(home, ".ak-roles");
-      // Shared old page both children will read before inserting their own row.
-      await writeAnalystLibraryIndexPage(
-        ledgerHome,
-        buildAnalystLibraryIndexPage([
-          {
-            bookKey: `root:${physicalPathIdentity("/analyst-fixture/c1-lock-seed")}`,
-            projectRoot: physicalPathIdentity("/analyst-fixture/c1-lock-seed"),
-            issueNumber: 9000,
-            totalElapsedMs: 1,
-            changedLines: { status: "absent" },
-            msPerKLines: { status: "absent" },
-            lastActivityAt: { status: "absent" },
-          },
-        ]),
-      );
+  await withTempRoot("analyst-c1-lock-home-", async (home) => {
+    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+    const ledgerHome = join(home, ".ak-roles");
+    // Shared old page both children will read before inserting their own row.
+    await writeAnalystLibraryIndexPage(
+      ledgerHome,
+      buildAnalystLibraryIndexPage([
+        {
+          bookKey: `root:${physicalPathIdentity("/analyst-fixture/c1-lock-seed")}`,
+          projectRoot: physicalPathIdentity("/analyst-fixture/c1-lock-seed"),
+          issueNumber: 9000,
+          totalElapsedMs: 1,
+          changedLines: { status: "absent" },
+          msPerKLines: { status: "absent" },
+          lastActivityAt: { status: "absent" },
+        },
+      ]),
+    );
 
-      const entryHref = JSON.stringify(
-        new URL("../../src/analyst-index.ts", import.meta.url).href,
-      );
-      const topologyHref = JSON.stringify(
-        new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
-      );
-      const childSource = `
+    const entryHref = JSON.stringify(
+      new URL("../../src/analyst-index.ts", import.meta.url).href,
+    );
+    const topologyHref = JSON.stringify(
+      new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
+    );
+    const childSource = `
 const { mergeAnalystLibraryIndexRows } = await import(${entryHref});
 const { physicalPathIdentity } = await import(${topologyHref});
 const ledgerHome = process.env.ANALYST_LEDGER_HOME;
 const issueNumber = Number(process.env.ANALYST_ISSUE_NUMBER);
 const projectRoot = process.env.ANALYST_PROJECT_ROOT;
 if (!ledgerHome || !Number.isFinite(issueNumber) || !projectRoot) {
-  throw new Error("missing child env");
+throw new Error("missing child env");
 }
 await new Promise((r) => setTimeout(r, 25));
 await mergeAnalystLibraryIndexRows(ledgerHome, [{
-  bookKey: "fixture-book-c1",
-  projectRoot: physicalPathIdentity(projectRoot),
-  issueNumber,
-  totalElapsedMs: issueNumber,
-  changedLines: { status: "absent" },
-  msPerKLines: { status: "absent" },
-  lastActivityAt: { status: "absent" },
+bookKey: "fixture-book-c1",
+projectRoot: physicalPathIdentity(projectRoot),
+issueNumber,
+totalElapsedMs: issueNumber,
+changedLines: { status: "absent" },
+msPerKLines: { status: "absent" },
+lastActivityAt: { status: "absent" },
 }]);
 `;
 
-      const runChild = (issueNumber: number, projectRoot: string) =>
-        new Promise<{ status: number | null; stderr: string }>((resolve, reject) => {
-          const child = spawn(
-            process.execPath,
-            ["--import", "tsx", "--input-type=module", "-e", childSource],
-            {
-              cwd: packageRoot,
-              env: {
-                ...process.env,
-                HOME: home,
-                ANALYST_LEDGER_HOME: ledgerHome,
-                ANALYST_ISSUE_NUMBER: String(issueNumber),
-                ANALYST_PROJECT_ROOT: projectRoot,
-              },
-              stdio: ["ignore", "pipe", "pipe"],
+    const runChild = (issueNumber: number, projectRoot: string) =>
+      new Promise<{ status: number | null; stderr: string }>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", childSource],
+          {
+            cwd: packageRoot,
+            env: {
+              ...process.env,
+              HOME: home,
+              ANALYST_LEDGER_HOME: ledgerHome,
+              ANALYST_ISSUE_NUMBER: String(issueNumber),
+              ANALYST_PROJECT_ROOT: projectRoot,
             },
-          );
-          let stderr = "";
-          child.stderr.setEncoding("utf8");
-          child.stderr.on("data", (chunk: string) => {
-            stderr += chunk;
-          });
-          child.on("error", reject);
-          child.on("close", (status) => resolve({ status, stderr }));
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        let stderr = "";
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          stderr += chunk;
         });
+        child.on("error", reject);
+        child.on("close", (status) => resolve({ status, stderr }));
+      });
 
-      const [a, b] = await Promise.all([
-        runChild(9001, "/analyst-fixture/c1-lock-a"),
-        runChild(9002, "/analyst-fixture/c1-lock-b"),
-      ]);
-      assert.equal(a.status, 0, a.stderr);
-      assert.equal(b.status, 0, b.stderr);
+    const [a, b] = await Promise.all([
+      runChild(9001, "/analyst-fixture/c1-lock-a"),
+      runChild(9002, "/analyst-fixture/c1-lock-b"),
+    ]);
+    assert.equal(a.status, 0, a.stderr);
+    assert.equal(b.status, 0, b.stderr);
 
-      const index = JSON.parse(
-        await readFile(analystLibraryIndexPath(ledgerHome), "utf8"),
-      ) as AnalystLibraryIndexPage;
-      const nums = index.rows
-        .map((row) => row.issueNumber)
-        .sort((x, y) => (x ?? 0) - (y ?? 0));
-      assert.deepEqual(nums, [9000, 9001, 9002]);
-      // merge helper remains callable in-process (single coordination seam).
-      await mergeAnalystLibraryIndexRows(ledgerHome, []);
-        });
-  });
+    const index = JSON.parse(
+      await readFile(analystLibraryIndexPath(ledgerHome), "utf8"),
+    ) as AnalystLibraryIndexPage;
+    const nums = index.rows
+      .map((row) => row.issueNumber)
+      .sort((x, y) => (x ?? 0) - (y ?? 0));
+    assert.deepEqual(nums, [9000, 9001, 9002]);
+    // merge helper remains callable in-process (single coordination seam).
+    await mergeAnalystLibraryIndexRows(ledgerHome, []);
+      });
 });
 
 

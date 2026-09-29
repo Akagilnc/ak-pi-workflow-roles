@@ -24,13 +24,9 @@ import {
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { snapshotAnalystDir, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, snapshotAnalystDir, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-
-const ISSUE_DEMO = "/analyst-fixture/issue-demo";
-const ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
-const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
 
 const VALID_SWEEP_INPUT = {
   mode: "sweep" as const,

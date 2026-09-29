@@ -15,7 +15,7 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Issue primary root — legacy path-narrow / display face. */
 const ISSUE_PRIMARY = "/analyst-fixture/c4-issue-primary";
@@ -58,56 +58,52 @@ const EXPECTED_TICKET_PATH_RUN_IDS = [
 const EXPECTED_FALLBACK_RUN_IDS = [RUN_FALLBACK_IN];
 
 test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const result = await runAnalyst({
-        mode: "issue",
-        bookKey: "fixture-book-c4",
-        projectRoot: ISSUE_PRIMARY,
-        ticketNumber: SCOPE_TICKET,
-        issueNumber: SCOPE_TICKET,
-      }, { home });
+  await withTempHome(async (home) => {
+    const result = await runAnalyst({
+      mode: "issue",
+      bookKey: "fixture-book-c4",
+      projectRoot: ISSUE_PRIMARY,
+      ticketNumber: SCOPE_TICKET,
+      issueNumber: SCOPE_TICKET,
+    }, { home });
 
-      assert.equal(result.mode, "issue");
-      assert.equal(result.page.bookKey, "fixture-book-c4");
-      assert.equal(result.page.issueNumber, SCOPE_TICKET);
+    assert.equal(result.mode, "issue");
+    assert.equal(result.page.bookKey, "fixture-book-c4");
+    assert.equal(result.page.issueNumber, SCOPE_TICKET);
 
-      // Exact runId set equality (hand oracle) — readable legs only.
-      const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
-      assert.deepEqual(actualRunIds, EXPECTED_TICKET_PATH_RUN_IDS);
+    // Exact runId set equality (hand oracle) — readable legs only.
+    const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
+    assert.deepEqual(actualRunIds, EXPECTED_TICKET_PATH_RUN_IDS);
 
-      // Unbound primary-root run must not enter via path fallback when ticket is set.
-      assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false);
-      // Decoy ticket on primary root and alien unbound must stay out.
-      assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false);
-      assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
-      // Book×ticket scope does not emit projectRoot dual-key conflicts.
-      assert.deepEqual(result.page.scopeConflicts, []);
-      void DECOY_TICKET;
-      void ISSUE_ALIEN;
-    });
+    // Unbound primary-root run must not enter via path fallback when ticket is set.
+    assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false);
+    // Decoy ticket on primary root and alien unbound must stay out.
+    assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false);
+    assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
+    // Book×ticket scope does not emit projectRoot dual-key conflicts.
+    assert.deepEqual(result.page.scopeConflicts, []);
+    void DECOY_TICKET;
+    void ISSUE_ALIEN;
   });
 });
 
 test("analyst C4 no-ticketNumber path: sweep/legacy projectRoot path-narrow", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const result = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_FALLBACK,
-      }, { home });
+  await withTempHome(async (home) => {
+    const result = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_FALLBACK,
+    }, { home });
 
-      assert.equal(result.mode, "issue");
+    assert.equal(result.mode, "issue");
 
-      const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
-      assert.deepEqual(actualRunIds, EXPECTED_FALLBACK_RUN_IDS);
+    const actualRunIds = result.page.legs.map((leg) => leg.runId).sort();
+    assert.deepEqual(actualRunIds, EXPECTED_FALLBACK_RUN_IDS);
 
-      // Alien-root unbound run must not enter via any other key.
-      assert.equal(actualRunIds.includes(RUN_FALLBACK_OUT), false);
-      // No ticketNumber on input → no typed/projectRoot conflict surface.
-      assert.deepEqual(result.page.scopeConflicts, []);
-      assert.equal(result.page.bookKey, `root:${physicalPathIdentity(ISSUE_FALLBACK)}`);
-      assert.equal(result.page.scopeRootIdentity !== undefined, true);
-    });
+    // Alien-root unbound run must not enter via any other key.
+    assert.equal(actualRunIds.includes(RUN_FALLBACK_OUT), false);
+    // No ticketNumber on input → no typed/projectRoot conflict surface.
+    assert.deepEqual(result.page.scopeConflicts, []);
+    assert.equal(result.page.bookKey, `root:${physicalPathIdentity(ISSUE_FALLBACK)}`);
+    assert.equal(result.page.scopeRootIdentity !== undefined, true);
   });
 });

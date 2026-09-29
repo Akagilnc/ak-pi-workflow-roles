@@ -19,12 +19,9 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_B2_RUN as GATE_JUDGE_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
-const ISSUE_PROJECT_ROOT = "/analyst-fixture/issue-demo";
-const BOOK = "fixture-book";
 /** Existing judge leg — inject auditor-roles here inside temp HOME. */
-const GATE_JUDGE_RUN = "019ff000-0002-7000-8000-0000000000b2";
 const GATE_JUDGE_DIR = `${GATE_JUDGE_RUN}@judge`;
 
 /**

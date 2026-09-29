@@ -194,38 +194,34 @@ test("analyst public CLI bare call: whole book from cwd git common-dir", async (
 });
 
 test("analyst public CLI --project-root: deleted, loud reject", async () => {
-  await withBusinessRepo(async (repo) => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-      await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-      const before = await snapshotAnalystDir(ledgerHome);
-      const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["analyst", "--project-root", repo],
-        { packageRoot, home, io },
-      );
-      assert.equal(result.exitCode, 2);
-      const after = await snapshotAnalystDir(ledgerHome);
-      assertSnapshotsEqual(before, after);
-    });
+  await withTempHome(async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    await mkdir(join(ledgerHome, "analyst"), { recursive: true });
+    const before = await snapshotAnalystDir(ledgerHome);
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["analyst", "--project-root", "/unused-project"],
+      { packageRoot, home, io },
+    );
+    assert.equal(result.exitCode, 2);
+    const after = await snapshotAnalystDir(ledgerHome);
+    assertSnapshotsEqual(before, after);
   });
 });
 
 test("analyst public CLI --model-groups: disabled, redesign message", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      const ledgerHome = join(home, ".ak-roles");
-      await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-      const before = await snapshotAnalystDir(ledgerHome);
-      const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["analyst", "--model-groups"],
-        { packageRoot, home, io },
-      );
-      assert.equal(result.exitCode, 2);
-      const after = await snapshotAnalystDir(ledgerHome);
-      assertSnapshotsEqual(before, after);
-    });
+  await withTempHome(async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    await mkdir(join(ledgerHome, "analyst"), { recursive: true });
+    const before = await snapshotAnalystDir(ledgerHome);
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["analyst", "--model-groups"],
+      { packageRoot, home, io },
+    );
+    assert.equal(result.exitCode, 2);
+    const after = await snapshotAnalystDir(ledgerHome);
+    assertSnapshotsEqual(before, after);
   });
 });
 
