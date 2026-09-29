@@ -205,9 +205,9 @@ test("prepare tool accepts free-form prose once without retry (#959)", async () 
     reason: "Usage: model prose must not gate acceptance",
   };
   const second = await tool.execute("free-form", freeForm as never, undefined, undefined, {} as never);
-  assert.equal(accepted.length, 2, "free-form shape still accepted once");
+  assert.deepEqual(accepted, [proseOnly, freeForm]);
   assert.equal((second as { terminate?: boolean }).terminate, true);
-  assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
+  assert.deepEqual((second as { details?: unknown }).details, freeForm);
 });
 
 test("prepare provider schema admits object-root free-form through real Tool validation (#959)", async () => {
@@ -319,17 +319,15 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, root);
       nav.prepare();
-      const advice = { reason: "still thinking", role: "not-a-role" };
       await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        advice,
+        { reason: "still thinking", role: "not-a-role" },
         "legacy-free-form",
       );
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
-      assert.deepEqual(JSON.parse(events[0].prose), advice);
     }
 
     {

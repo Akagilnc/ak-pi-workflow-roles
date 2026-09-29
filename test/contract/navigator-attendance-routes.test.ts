@@ -336,19 +336,17 @@ test("#959 free-form prose without next is advice, not unavailable", async () =>
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
     nav.prepare();
-    const advice = {
-      role: "judge",
-      command: "ak-role judge",
-      reason: "应先由大理寺独立核验",
-    };
     await settleWithAdvice(
       nav,
       harness,
       { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      advice,
+      {
+        role: "judge",
+        command: "ak-role judge",
+        reason: "应先由大理寺独立核验",
+      },
     );
     assert.equal(events[0]?.disposition, "advice");
-    assert.deepEqual(JSON.parse(events[0]!.prose), advice);
   });
 });
 

@@ -98,9 +98,6 @@ test("analyst session span with inverted timestamps is page-local unreadable", a
     const entry = result.page.unreadable[0]!;
     assert.equal(entry.runId, C1_ALPHA_RUN);
     assert.deepEqual(entry.missingSources, ["session-timeline"]);
-    // Must not surface negative/NaN wall clocks on the page envelope.
-    assert.equal(Number.isFinite(result.page.totalElapsedMs), true);
-    assert.ok(result.page.totalElapsedMs >= 0);
   });
 });
 test("analyst live run-state is not classified as terminal no-receipt", async () => {

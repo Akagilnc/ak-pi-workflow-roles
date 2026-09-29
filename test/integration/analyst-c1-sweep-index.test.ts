@@ -78,15 +78,6 @@ const presentAt = (at: string): AnalystOptionalTimestamp => ({
   at,
 });
 
-function assertNoZeroOrInfinity(metric: AnalystOptionalMetricNumber): void {
-  if (metric.status === "absent") return;
-  assert.equal(Number.isFinite(metric.value), true, "msPerKLines must be finite when present");
-  // Present LOC path never encodes the forbidden 0/∞ stand-ins for 空缺.
-  assert.notEqual(metric.value, 0);
-  assert.notEqual(metric.value, Number.POSITIVE_INFINITY);
-  assert.notEqual(metric.value, Number.NEGATIVE_INFINITY);
-}
-
 function expectedRow(input: {
   readonly projectRoot: string;
   readonly totalElapsedMs: number;
@@ -156,21 +147,18 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
     assert.deepEqual(demoPage.changedLines, ABSENT);
     assert.deepEqual(demoPage.msPerKLines, ABSENT);
     assert.deepEqual(demoPage.lastActivityAt, presentAt(DEMO_LAST_ACTIVITY_AT));
-    assertNoZeroOrInfinity(demoPage.msPerKLines);
 
     assert.equal(alphaPage.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
     assert.deepEqual(alphaPage.changedLines, present(500));
     assert.deepEqual(alphaPage.msPerKLines, present(80_000));
     assert.deepEqual(alphaPage.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
     assert.equal(alphaPage.legs[0]?.runId, C1_ALPHA_RUN);
-    assertNoZeroOrInfinity(alphaPage.msPerKLines);
 
     assert.equal(betaPage.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
     assert.deepEqual(betaPage.changedLines, ABSENT);
     assert.deepEqual(betaPage.msPerKLines, ABSENT);
     assert.deepEqual(betaPage.lastActivityAt, presentAt(BETA_LAST_ACTIVITY_AT));
     assert.equal(betaPage.legs[0]?.runId, C1_BETA_RUN);
-    assertNoZeroOrInfinity(betaPage.msPerKLines);
 
     // Index rows: self-sufficient; stable sort by projectRoot identity.
     const expectedRows: AnalystLibraryIndexRow[] = [
@@ -202,9 +190,6 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
       const row = first.index.rows.find((r) => r.projectRoot === expected.projectRoot);
       assert.ok(row, `row for ${expected.projectRoot} must exist`);
       assert.deepEqual(row, expected);
-    }
-    for (const row of first.index.rows) {
-      assertNoZeroOrInfinity(row.msPerKLines);
     }
 
     const indexOnDisk = JSON.parse(
@@ -264,7 +249,6 @@ test("analyst C1 issue-mode optional LOC: present yields msPerK; omit yields typ
     }, { home });
     assert.deepEqual(withoutLoc.page.changedLines, ABSENT);
     assert.deepEqual(withoutLoc.page.msPerKLines, ABSENT);
-    assertNoZeroOrInfinity(withoutLoc.page.msPerKLines);
     assert.equal(withoutLoc.page.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
     // Issue mode does not maintain the library index.
     assert.equal("index" in withoutLoc, false);

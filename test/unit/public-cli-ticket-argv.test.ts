@@ -42,6 +42,5 @@ test("parseNotaryArgv keeps required --source-run", () => {
 test("parseAnalystArgv still binds --ticket (query scope, not seat binding)", () => {
   const parsed = parseAnalystArgv(["--ticket", "125"]);
   assert.equal(parsed.query, "issue");
-  assert.ok(parsed.query === "issue");
   assert.equal(parsed.ticket, 125);
 });
