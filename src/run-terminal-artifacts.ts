@@ -6,6 +6,7 @@
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
+import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -34,9 +35,14 @@ export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
   RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
 ] as const;
 
-/** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */
-const UNIQUE_ERROR_FALLBACK_NAME =
-  /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+/** Publisher and reader share the open-ended error face stem. */
+export const UNIQUE_ERROR_FALLBACK_STEM = "error";
+export function uniqueErrorFallbackName(): string {
+  return `${UNIQUE_ERROR_FALLBACK_STEM}.${randomUUID()}.json`;
+}
+const UNIQUE_ERROR_FALLBACK_NAME = new RegExp(
+  `^${UNIQUE_ERROR_FALLBACK_STEM}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$`, "i",
+);
 
 export type RunTerminalArtifactRead =
   | { readonly status: "absent" }
@@ -283,9 +289,4 @@ export async function readRunTerminalArtifact(
     return unreadable[0]!;
   }
   return { status: "absent" };
-}
-
-/** Test/helper: basename face of a unique fallback path, if any. */
-export function isUniqueErrorFallbackName(name: string): boolean {
-  return UNIQUE_ERROR_FALLBACK_NAME.test(basename(name));
 }

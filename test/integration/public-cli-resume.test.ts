@@ -37,7 +37,7 @@ import {
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleFailureTerminalResult, trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { currentReplyRows, type TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -770,6 +770,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(rebuilt.exitCode, 0);
       assert.ok(rebuilt.terminal);
       assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
+      assert.deepEqual(currentReplyRows(rebuilt.terminal!), [], "report reconstruction is not a new reply from the host");
       if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
         assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
         assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
@@ -863,6 +864,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         credentials: { "openai-codex": true, xai: true }, roleTurnHost: passthroughHost,
       });
       assert.equal(rebuiltNewSeal.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(currentReplyRows(rebuiltNewSeal.terminal), [], "rebuilding the latest seal is not a new reply");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount,
         dispatches() + newSeal.dispatches());
     } finally {

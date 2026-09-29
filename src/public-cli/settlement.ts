@@ -109,6 +109,8 @@ import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
+  uniqueErrorFallbackName,
+  UNIQUE_ERROR_FALLBACK_STEM,
   RUN_TERMINAL_ARTIFACT_FILES,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
   RUN_TERMINAL_REPORT_FILE,
@@ -137,6 +139,8 @@ export type SettlementCourtScope = {
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
+  /** Host-turn row baseline; only the new rows are this bare turn's reply. */
+  readonly beforeTurnRowCount?: number;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -2306,7 +2310,16 @@ async function finishLawfulSeat(
     artifacts,
     runId: admitted.runId,
   }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
-  return attachRecordedSubmissions(admitted, terminal, scope);
+  const withCurrentReply = scope?.beforeTurnRowCount === undefined
+    ? terminal
+    : {
+        ...terminal,
+        currentReplyPayloads: (await readRecordedSubmissionRows(
+          admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
+        )).slice(scope.beforeTurnRowCount)
+          .filter((row) => row.role === admitted.role).map((row) => row.accepted),
+      };
+  return attachRecordedSubmissions(admitted, withCurrentReply, scope);
 }
 
 /**
@@ -2762,7 +2775,7 @@ async function writeFailureJsonRetainingCause(
   const candidates: string[] = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join(dir, `${stem}.${randomUUID()}.json`)),
+    ...uniqueFallbackDirs.map((dir) => join(dir, stem === UNIQUE_ERROR_FALLBACK_STEM ? uniqueErrorFallbackName() : `${stem}.${randomUUID()}.json`)),
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i]!;
@@ -2875,7 +2888,7 @@ export async function publishFailureArtifacts(
   const errorWrite = await writeFailureJsonRetainingCause(
     errorCandidates,
     uniqueFallbackDirs,
-    "error",
+    UNIQUE_ERROR_FALLBACK_STEM,
     errorPayloadBase,
     priorIssues,
   );

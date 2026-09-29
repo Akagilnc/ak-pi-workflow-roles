@@ -348,7 +348,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
+    scope?: { readonly courtAttemptId?: string; readonly beforeTurnRowCount?: number; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -687,6 +687,8 @@ export async function dispatchPostAdmissionTurn<
       ? {} : { invocationScopeId: request.invocationScopeId }),
   };
   let pendingSettlement: "sealed" | "no_receipt" | undefined;
+  let beforeTurnRowCount: number | undefined;
+
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
@@ -726,12 +728,11 @@ export async function dispatchPostAdmissionTurn<
     }
     // The last cancellation check precedes the one durable settlement. A preview
     // never publishes pointers or history; a superseding failure owns this turn.
-    if (pendingSettlement !== undefined && result.terminal !== undefined
-      && isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)) {
+    if (pendingSettlement !== undefined && result.terminal !== undefined) {
       try {
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
-              { ...courtScope, recordAttemptHistory: true })
+              { ...courtScope, ...(beforeTurnRowCount === undefined ? {} : { beforeTurnRowCount }), recordAttemptHistory: true })
           : await attachRecordedSubmissions(admitted,
               await settleHostEndedNoReceipt(admitted, env.principalAuthority,
                 { ...courtScope, recordAttemptHistory: true }) as T,
@@ -914,6 +915,9 @@ export async function dispatchPostAdmissionTurn<
       if (courtScope.courtAttemptId === undefined) {
         try {
           beforeTurnSeals = await recordedSealedSubmissionCount(admitted);
+          beforeTurnRowCount = (await readRecordedSubmissionRows(
+            admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
+          )).length;
           if (beforeTurnSeals > 0) {
             const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
             if (priorRunState?.publishedSealedCount === undefined
@@ -1065,9 +1069,9 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
-      // Settlement already attaches the full run history; do not read the ledger
-      // again on this normal path. Failure and no-receipt below attach separately.
-      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
+      // Settlement attaches full history and the turn-local reply separately.
+      // Failure and no-receipt below attach history on their own paths.
+      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, ...(beforeTurnRowCount === undefined ? {} : { beforeTurnRowCount }), previewOnly: true });
       if (baselineReadFailure !== undefined) throw baselineReadFailure.error;
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
@@ -1159,7 +1163,8 @@ export async function dispatchPostAdmissionTurn<
       }
       if (persistRunState) {
         try {
-          await persistReturnedRunState(admitted, { lawful: true });
+          await persistReturnedRunState(admitted,
+            isLawfulTypedTerminalOutcome(settledOutcome.terminal.roleOutcome) ? { lawful: true } : undefined);
         } catch (error) {
           await recordBestEffortPostDispatchDiagnostic(
             admitted,
@@ -1169,7 +1174,7 @@ export async function dispatchPostAdmissionTurn<
           );
         }
       }
-      // Lawful persist + present is the caller's stop seam (auto-resume loop /
+      // Persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
       // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
       pendingSettlement = "sealed";

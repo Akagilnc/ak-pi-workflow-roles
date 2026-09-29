@@ -990,6 +990,11 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           `${caseSpec.label} must stay failure`,
       );
       assert.equal(caseResumed.terminal?.roleOutcome.kind, "failure");
+      const errorArtifact = caseResumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+      assert.ok(errorArtifact, "presented residual failure must publish its error face");
+      const errorBody = JSON.parse(await readFile(errorArtifact.path, "utf8")) as { kind?: string; runId?: string };
+      assert.equal(errorBody.kind, "error");
+      assert.equal(errorBody.runId, runId);
       assert.equal(
         caseResumed.terminal?.roleOutcome.kind === "failure"
           ? caseResumed.terminal.roleOutcome.diagnostic

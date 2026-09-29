@@ -165,7 +165,7 @@ export type TerminalGateFact = {
 export function currentReplyRows(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
   return outcome?.kind === "accepted" || outcome?.kind === "audit_escalation"
-    ? outcome.payloads ?? []
+    ? terminal?.currentReplyPayloads ?? outcome.payloads ?? []
     : [];
 }
 
@@ -175,6 +175,8 @@ export function currentReplyRows(terminal: TerminalResult | undefined): readonly
  */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
+  /** Bare resume's turn-local reply; run history remains on submissions and published report. */
+  currentReplyPayloads?: readonly unknown[];
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
   reviewerChildren?: Readonly<{
     completeness?: TerminalResult;
@@ -322,9 +324,9 @@ export function formatTerminalResult(result: TerminalResult): string {
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
   // Present the current result and the run history on distinct faces (#879 / #836).
   // Neither a prior court's submission nor a failed turn's history is this reply.
-  const current = result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation" || result.roleOutcome.kind === "failure"
+  const current = result.roleOutcome.kind === "failure"
     ? result.roleOutcome.payloads ?? []
-    : [];
+    : currentReplyRows(result);
   for (const [label, rows] of [
     ["submission", current],
     ["recorded-submission", result.submissions ?? []],
