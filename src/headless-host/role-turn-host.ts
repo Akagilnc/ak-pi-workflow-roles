@@ -76,39 +76,18 @@ function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
 }
 
 /**
- * Parse Claude host stdout into the result envelope.
- * Production uses `--output-format stream-json` (#811 live records); last-result
- * line is the typed receipt. A single-document `json` body still parses so a
- * misconfigured description yields a typed miss rather than a silent empty parse.
- * Callers must not retain the full stream — only the rolling result candidate.
+ * Parse the rolling result-candidate line retained by spawnHeadlessTurn.
+ * The full stream is delivered live, not passed to this parser.
  */
 export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | undefined {
   const trimmed = stdout.trim();
   if (trimmed === "") return undefined;
   try {
-    const single = JSON.parse(trimmed) as unknown;
-    if (isHeadlessResultCandidate(single)) return single;
+    const value = JSON.parse(trimmed) as unknown;
+    return isHeadlessResultCandidate(value) ? value : undefined;
   } catch {
-    // fall through
+    return undefined;
   }
-  // stream-json: keep the last result line (structured_output / is_error live here).
-  let last: HeadlessCliResult | undefined;
-  for (const line of trimmed.split("\n")) {
-    const text = line.trim();
-    if (text === "") continue;
-    try {
-      const value = JSON.parse(text) as unknown;
-      if (!isPlainObject(value)) continue;
-      const record = value as HeadlessCliResult & { type?: unknown };
-      // Multi-line stream: only explicit result / structured_output lines (not bare objects).
-      if (record.type === "result" || record.structured_output !== undefined) {
-        last = record;
-      }
-    } catch {
-      // skip non-JSON noise lines
-    }
-  }
-  return last;
 }
 
 /**
