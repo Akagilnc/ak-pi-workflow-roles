@@ -465,8 +465,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       );
       assert.equal(dispatched, true);
       assert.equal(result.exitCode, 0, stdout.join(""));
-      assert.match(stdout.join(""), /merger\taccepted\t/);
-      assert.match(stdout.join(""), /escalate/);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
     }
 
     // Active merge → derives materials from active merge and settles completed leaf under mocked host.
@@ -517,8 +517,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
-      assert.match(stdout.join(""), /merger\taccepted\t/);
-      assert.match(stdout.join(""), /completed/);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
     }
   });
 });

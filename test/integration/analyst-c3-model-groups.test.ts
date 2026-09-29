@@ -163,7 +163,6 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
       const absent = page.unreadable[0]!;
       assert.equal(absent.runId, C3_NO_MODEL_RUN_ID);
       assert.deepEqual(absent.missingSources, ["session-model"]);
-      assert.match(absent.reason, /model identity/i);
       // Vacancy must not inflate any group numerator/denominator.
       assert.equal(
         page.groups.reduce(

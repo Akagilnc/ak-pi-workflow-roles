@@ -30,17 +30,7 @@ test("parseCountersignArgv preserves attachment and instruction", () => {
   assert.equal(parsed.instruction, "裁：开工？");
 });
 
-test("parseNotaryArgv rejects --ticket; keeps required --source-run", () => {
-  assert.throws(
-    () =>
-      parsePublicSeatArgv("notary", [
-        "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-        "--ticket",
-        "582",
-      ]),
-    CliUsageError,
-  );
+test("parseNotaryArgv keeps required --source-run", () => {
   const parsed = parsePublicSeatArgv("notary", [
     "--source-run",
     "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",

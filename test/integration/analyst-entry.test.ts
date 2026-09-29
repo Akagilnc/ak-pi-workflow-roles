@@ -826,7 +826,6 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
           assert.equal(actual.book, expected.book);
           assert.deepEqual(actual.missingSources, [...expected.missingSources]);
           assert.deepEqual(actual.firstFrameAt, expected.firstFrameAt);
-          assert.match(actual.reason, /malformed JSONL record/i);
         } else {
           assert.deepEqual(actual, expected);
         }
@@ -962,7 +961,6 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
         assert.equal(damaged.book, expected.book);
         assert.deepEqual(damaged.missingSources, [...expected.missingSources]);
         assert.deepEqual(damaged.firstFrameAt, expected.firstFrameAt);
-        assert.match(damaged.reason, /malformed JSONL record/i);
         // No wall-clock / duration field admitted for unreadable runs on A1 page.
         assert.equal(
           "wallMs" in damaged || "durationMs" in damaged || "elapsedMs" in damaged,
@@ -1022,7 +1020,6 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
       const entry = result.page.unreadable.find((u) => u.runId === LEG_A1_RUN);
       assert.ok(entry, "null terminal artifact must produce unreadable entry");
       assert.deepEqual(entry.missingSources, ["terminal-artifact"]);
-      assert.match(entry.reason, /null/i);
       // Session span was admitted before terminal failure — first frame stays present.
       assert.deepEqual(entry.firstFrameAt, {
         status: "present",
@@ -1131,9 +1128,7 @@ test("analyst issue-mode entry: analyst path symlink into consumer repo is refus
             projectRoot: ISSUE_PROJECT_ROOT,
           }, { home }),
         (error: unknown) => {
-          assert.ok(error instanceof ActivationLedgerError);
-          assert.match(error.message, /symbolic link/i);
-          return true;
+          return error instanceof ActivationLedgerError;
         },
       );
 

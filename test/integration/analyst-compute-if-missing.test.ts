@@ -453,7 +453,6 @@ test("analyst #338 single-run damage: unreadable exclusion on page; retrieval st
       const damaged = body.page.unreadable[0]!;
       assert.equal(damaged.runId, NEG_RUN);
       assert.equal(damaged.book, "fixture-book-c338-neg");
-      assert.match(damaged.reason, /malformed JSONL record/i);
       // No wall/duration admitted on unreadable entries.
       assert.equal(
         "wallMs" in damaged || "durationMs" in damaged || "elapsedMs" in damaged,

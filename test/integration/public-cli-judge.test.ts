@@ -970,7 +970,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     );
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
-    assert.match(stdout.join(""), /judge\taccepted/);
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);

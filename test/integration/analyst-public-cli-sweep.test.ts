@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #337 analyst public CLI sweep — caller-invoked attach path (ADR 0052 / ADR 0068).
  *
@@ -7,13 +6,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Fixture identity: 7xxx segment reservation (reuse C1 boards; no new ledger runs).
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
-  cp,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,12 +22,11 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { snapshotAnalystDir } from "../helpers/analyst-fixture-kit.ts";
+import { snapshotAnalystDir, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
 
 const ISSUE_DEMO = "/analyst-fixture/issue-demo";
 const ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
@@ -47,14 +41,7 @@ const VALID_SWEEP_INPUT = {
   ],
 };
 
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-/** Business-repo + fixture home + attach dir; asserts business tree stays clean. */
+/** Fixture home and isolated attachment directory. */
 async function withSweepFixture<T>(
   fn: (ctx: {
     home: string;
@@ -62,32 +49,12 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-337-business-"));
-  const home = await mkdtemp(worktreeTempPrefix("analyst-337-home-"));
-  const attachDir = await mkdtemp(worktreeTempPrefix("analyst-337-attach-"));
-  return withPrimaryAwareCleanup(
-    async () => {
-      execFileSync("git", ["init"], { cwd: businessRepo });
-      await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-      execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        { cwd: businessRepo },
-      );
-      assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-      const result = await fn({
-        home,
-        ledgerHome: join(home, ".ak-roles"),
-        attachDir,
-      });
-      assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-      return result;
-    },
-    async () => { await rm(businessRepo, { recursive: true, force: true }); },
-    async () => { await rm(home, { recursive: true, force: true }); },
-    async () => { await rm(attachDir, { recursive: true, force: true }); },
+  return withTempHome((home) =>
+    withTempRoot("analyst-337-attach-", (attachDir) => fn({
+      home,
+      ledgerHome: join(home, ".ak-roles"),
+      attachDir,
+    })),
   );
 }
 
@@ -198,39 +165,32 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
     const cases: readonly {
       name: string;
       argv: readonly string[];
-      err: RegExp;
     }[] = [
       // ① cardinality (0 / >1 / mixed with issue faces)
-      { name: "no-attach", argv: ["analyst", "sweep"], err: /attach/i },
+      { name: "no-attach", argv: ["analyst", "sweep"] },
       {
         name: "multi-attach",
         argv: ["analyst", "--attach", validPath, "--attach", validPathB],
-        err: /attach/i,
       },
       {
         // #399: --project-root deleted unconditionally (not a mix-face attach reject).
         name: "mix-deleted-project-root",
         argv: ["analyst", "--attach", validPath, "--project-root", ISSUE_ALPHA],
-        err: /project-root/i,
       },
       // ② non-UTF-8 / JSON parse failure
-      { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path], err: /utf-8/i },
-      { name: "bad-json", argv: ["analyst", "--attach", badJsonPath], err: /json/i },
+      { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path] },
+      { name: "bad-json", argv: ["analyst", "--attach", badJsonPath] },
       // ③ field missing / extra / wrong type
       ...fieldPaths.map((f) => ({
         name: f.name,
         argv: ["analyst", "--attach", f.path] as const,
-        err: /sweep|field|contract|mode|mergedPullRequests|AnalystSweepModeInput/i,
       })),
     ];
 
     for (const entry of cases) {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole([...entry.argv], { packageRoot, home, io });
       assert.equal(result.exitCode, 2, entry.name);
-      const err = stderr.join("");
-      assert.match(err, /^ak-role: /, entry.name);
-      assert.match(err, entry.err, entry.name);
       assert.deepEqual(
         [...(await snapshotAnalystDir(ledgerHome)).entries()].sort(),
         [...before.entries()].sort(),

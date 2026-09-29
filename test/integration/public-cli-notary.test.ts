@@ -136,7 +136,7 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
   });
 });
 
-test("notary argv rejects caller prompt and attachment projection", async () => {
+test("notary public entry rejects caller prompt, attachment and ticket override", async () => {
   assert.throws(
     () => parsePublicSeatArgv("notary", ["--source-run", "x@judge", "please bounce lightly"]),
     (error: unknown) => error instanceof CliUsageError,
@@ -168,6 +168,12 @@ test("notary argv rejects caller prompt and attachment projection", async () => 
     );
     assert.equal(withAttach.exitCode, 2);
     assert.equal(withAttach.terminal, undefined);
+
+    const withTicket = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath, "--ticket", "582"],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(withTicket.exitCode, 2);
+    assert.equal(withTicket.terminal, undefined);
   });
 });
 

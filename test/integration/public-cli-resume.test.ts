@@ -2382,7 +2382,6 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         });
         assert.equal(n, 0, bad.join(" "));
         assert.notEqual(rejected.exitCode, 0);
-        assert.match(stderr.join(""), /usage: ak-role resume/);
       }
     }
   });

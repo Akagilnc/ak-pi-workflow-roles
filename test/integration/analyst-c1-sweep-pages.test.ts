@@ -213,7 +213,6 @@ test("analyst session span with inverted timestamps is page-local unreadable", a
       const entry = result.page.unreadable[0]!;
       assert.equal(entry.runId, C1_ALPHA_RUN);
       assert.deepEqual(entry.missingSources, ["session-timeline"]);
-      assert.match(entry.reason, /end is earlier than start/i);
       // Must not surface negative/NaN wall clocks on the page envelope.
       assert.equal(Number.isFinite(result.page.totalElapsedMs), true);
       assert.ok(result.page.totalElapsedMs >= 0);

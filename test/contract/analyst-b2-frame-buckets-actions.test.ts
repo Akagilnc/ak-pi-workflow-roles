@@ -7,10 +7,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Family registers by drop-in module under analyst-metric-families/ only.
  */
 import assert from "node:assert/strict";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import {
@@ -19,10 +18,7 @@ import {
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
+import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const ISSUE_PROJECT_ROOT = "/analyst-fixture/issue-demo";
 const BOOK = "fixture-book";
@@ -159,13 +155,6 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
     "action durations must be descending hand values",
   );
   assert.deepEqual(actual.actions, expected.actions);
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-b2-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
 }
 
 /**
