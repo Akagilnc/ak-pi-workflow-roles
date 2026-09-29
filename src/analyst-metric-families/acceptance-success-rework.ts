@@ -99,10 +99,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function wallMsFromSpan(span: { readonly startedAt: string; readonly endedAt: string }): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
-}
-
 /** Locate collector groups array: receipt.groups or top-level groups. */
 function findCollectorGroups(body: Record<string, unknown>): unknown {
   if (Array.isArray(body.groups)) return body.groups;
@@ -235,7 +231,7 @@ function projectLegs(runs: readonly AnalystReadableRunFacts[]): AnalystAcceptanc
       book: run.book,
       role: run.role,
       startedAt: run.frameSpan.startedAt,
-      wallMs: wallMsFromSpan(run.frameSpan),
+      wallMs: run.frameSpan.wallMs,
       terminalLabel: mapped.terminalLabel,
       accepted: mapped.accepted,
       success: mapped.success,

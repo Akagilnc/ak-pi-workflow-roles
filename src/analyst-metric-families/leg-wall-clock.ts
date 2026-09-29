@@ -31,19 +31,12 @@ export type AnalystLegWallClockSection = {
   readonly totalElapsedMs: number;
 };
 
-function frameSpanWallMs(span: {
-  readonly startedAt: string;
-  readonly endedAt: string;
-}): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
-}
-
 function projectEntry(facts: AnalystReadableRunFacts): AnalystLegWallClockEntry {
   return {
     runId: facts.runId,
     book: facts.book,
     role: facts.role,
-    wallMs: frameSpanWallMs(facts.frameSpan),
+    wallMs: facts.frameSpan.wallMs,
   };
 }
 

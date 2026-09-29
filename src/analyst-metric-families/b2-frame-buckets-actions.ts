@@ -221,7 +221,7 @@ export function computeAnalystB2RunMetrics(
 ): AnalystB2RunMetrics {
   const frameStartMs = timestampMs(facts.frameSpan.startedAt);
   const frameEndMs = timestampMs(facts.frameSpan.endedAt);
-  const wallMs = Math.max(0, frameEndMs - frameStartMs);
+  const wallMs = facts.frameSpan.wallMs;
 
   // Single frame-bounded core: clip → union once → bucket/complement/actions.
   const tools = clipToolsToFrame(closedTools(facts.toolIntervals), frameStartMs, frameEndMs);

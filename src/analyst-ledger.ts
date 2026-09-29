@@ -319,7 +319,7 @@ function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
   }
   return {
     models,
-    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt },
+    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt, wallMs: endedMs - startedMs },
     partialFirstFrameAt: { status: "present", at: span.startedAt },
     partialLastFrameAt: { status: "present", at: span.endedAt },
   };
@@ -329,6 +329,8 @@ function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
 export type AnalystRunFrameSpan = {
   readonly startedAt: string;
   readonly endedAt: string;
+  /** Validated wall clock, computed once when the session span is admitted. */
+  readonly wallMs: number;
 };
 
 /**

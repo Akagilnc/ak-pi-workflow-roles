@@ -194,7 +194,7 @@ function sortLegs(legs: readonly AnalystLegEntry[]): AnalystLegEntry[] {
   });
 }
 
-function sortUnreadable(
+export function sortUnreadable(
   unreadable: readonly AnalystUnreadableRun[],
 ): AnalystUnreadableRun[] {
   return [...unreadable].sort((a, b) => {
@@ -260,13 +260,6 @@ export function computeAnalystMsPerKLines(
   };
 }
 
-function frameSpanWallMs(span: {
-  readonly startedAt: string;
-  readonly endedAt: string;
-}): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
-}
-
 /**
  * Σ readable wall clocks + max end-frame across ALL runs (C1 efficiency / index).
  * Unreadable runs never enter totalElapsedMs; their available lastFrameAt still
@@ -282,7 +275,7 @@ export function summarizeAnalystRunEfficiency(
   let totalElapsedMs = 0;
   let latestEndedAt: string | undefined;
   for (const run of runs) {
-    totalElapsedMs += frameSpanWallMs(run.frameSpan);
+    totalElapsedMs += run.frameSpan.wallMs;
     const endedAt = run.frameSpan.endedAt;
     if (latestEndedAt === undefined || endedAt > latestEndedAt) {
       latestEndedAt = endedAt;
