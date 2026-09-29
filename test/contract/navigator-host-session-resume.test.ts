@@ -143,6 +143,7 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
     await mkdir(join(parentRun, "session"), { recursive: true });
 
     let calls = 0;
+    const injectedDiagnostic = "provider auth down";
     const summon = async (options: {
       readonly role: "navigator";
       readonly argv: readonly string[];
@@ -154,11 +155,11 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
       if (options.resumeRunId !== undefined) {
         return {
           exitCode: 1,
-          stderr: "provider auth down",
+          stderr: injectedDiagnostic,
           terminal: {
             roleOutcome: {
               kind: "failure",
-              diagnostic: "provider auth down",
+              diagnostic: injectedDiagnostic,
               decisiveFacts: {},
             },
           } as never,
@@ -199,6 +200,7 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
       () => session.prompt("second"),
       (error: unknown) => {
         assert.ok(error instanceof Error);
+        assert.ok(error.message.includes(injectedDiagnostic));
         return true;
       },
     );
