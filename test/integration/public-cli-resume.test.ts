@@ -36,7 +36,7 @@ import {
   renderResumeCommand,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { settleFailureTerminalResult, trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
@@ -44,7 +44,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPath, resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -718,6 +718,17 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       );
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
+      const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
+      const { recordFile } = resolveSitianRecordPath({
+        level: "event", kind: "attempt-history",
+        sessionParent: piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
+      });
+      const historyOutcomes = async () => (await readSitianRecords(recordFile)).records.map((row) =>
+        (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
+      const failedPublicationHistory = Array.from({ length: dispatches() }, () =>
+        ["accepted", "failure"]).flat();
+      assert.deepEqual(await historyOutcomes(), failedPublicationHistory,
+        "each real seal then failed publication records both facts in order");
 
       // Publication never wrote a success report face under the locked artifacts/.
       const reportPath = join(runDirectory, "artifacts", "report.json");
@@ -789,6 +800,12 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
+      assert.deepEqual(await historyOutcomes(), [...failedPublicationHistory, "accepted"],
+        "the actual resume adds its own accepted attempt");
+      await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+      await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+      assert.deepEqual(await historyOutcomes(), [...failedPublicationHistory, "accepted"],
+        "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreArtifactsWritable();
     }
