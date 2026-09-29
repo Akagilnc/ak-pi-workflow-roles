@@ -982,15 +982,16 @@ async function readSitianRetainedAuditorProviderStop(
   return undefined;
 }
 
-/** Read retained auditor stop (Sitian) then native session assistant stop, if any. */
+/** Read retained auditor stop (Sitian), then cached native entries when already read. */
 export async function readSessionProviderStop(
   sessionFile: string,
+  parentEntries?: readonly SessionEntry[],
 ): Promise<SessionProviderStop | undefined> {
   const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
   if (retained !== undefined) return retained;
+  if (parentEntries !== undefined) return extractSessionProviderStop(parentEntries);
   try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractSessionProviderStop(entries);
+    return extractSessionProviderStop(await readBoundSessionEntries(sessionFile));
   } catch {
     return undefined;
   }
@@ -1238,8 +1239,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   const auditorStop = volumes === undefined ? undefined : providerStopFallbackFromAuditorVolumes(volumes);
   if (auditorStop !== undefined) return resolutionOf(auditorStop);
   // Parent session provider-stop is next; credential is last.
-  const parentStop = await readSitianRetainedAuditorProviderStop(input.sessionFile)
-    ?? (parentEntries === undefined ? undefined : extractSessionProviderStop(parentEntries));
+  const parentStop = await readSessionProviderStop(input.sessionFile, parentEntries ?? []);
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
   // This is the single sidecar read for both knownFailure projection and v1 resume.
   let httpObservation: TypedProviderHttpObservation | undefined;
