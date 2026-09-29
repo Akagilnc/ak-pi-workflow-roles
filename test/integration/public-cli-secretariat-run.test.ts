@@ -789,7 +789,6 @@ for (const preliminaryTicket of [null, 923] as const) {
     const countersignRequests: RoleTurnRequest[] = [];
     const diaristRunDirectories: string[] = [];
     let parentDiaristFirstTurn = true;
-    let nestedDiaristFirstTurn = true;
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
@@ -805,14 +804,7 @@ for (const preliminaryTicket of [null, 923] as const) {
             sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }] }
           : { status: "completed", ticketNumber: 923 })(args, options);
       },
-      nestedDiaristRunner: (args, options) => {
-        const first = nestedDiaristFirstTurn;
-        nestedDiaristFirstTurn = false;
-        return courtDiaristWithDetails(first
-          ? { status: "escalate", reason: "uncertain evidence" }
-          : { status: "completed", ticketNumber: 924, sessions: [] })(args, options);
-      },
-      countersignSequence: [{ details: { status: "converged", note: "署" } }],
+      countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924 } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
     const result = await runAkRole(
@@ -821,18 +813,10 @@ for (const preliminaryTicket of [null, 923] as const) {
         createRunId: () => "01a0sec1025-0000-7000-8000-000000000001",
         roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
-    assert.equal(result.terminal?.roleOutcome.role, "diarist");
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    const childId = result.terminal?.runId;
-    assert.ok(childId, "the escalation points at the nested diarist, not parked Countersign");
-    const resumed = await runAkRole(["resume", childId],
-      { home, packageRoot, cwd: project, io: captureIo().io, roleTurnHost: host, hostAdapters: [adapter("pi", host)] });
-    assert.equal(resumed.exitCode, 0);
-    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "resuming the diarist continues both waiting parents");
     assert.equal(result.exitCode, 0);
-    assert.ok(countersignRequests.length > 0, "an unbound gate summons must reach Countersign");
-    assert.ok(diaristRunDirectories.some((directory) => directory.includes(join("924", "runs"))),
-      "the court diarist receives the submitted issue identity before Countersign reads it");
+    assert.equal(result.terminal?.roleOutcome.role, "secretariat");
+    assert.ok(countersignRequests.length > 0, "the gate summons must reach Countersign");
+    assert.equal(diaristRunDirectories.length, 1, "only Secretariat summons the preliminary diarist");
     const book = join(home, ".ak-roles", "books", "project");
     const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
     assert.equal(

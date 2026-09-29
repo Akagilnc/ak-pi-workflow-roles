@@ -126,10 +126,6 @@ function baseEnv(input: {
   /** Gate/auditor escalation face; original `details` stay the ledger params. */
   outputDetails?: unknown;
   additionalDetails?: readonly unknown[];
-  /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
-  runCourtDiaristStation?: (
-    admitted: { ticketNumber?: number; runDirectory: string },
-  ) => Promise<void>;
 }) {
   const host = roleTurnHostFromLegacyPiRunner({
     packageRoot,
@@ -171,13 +167,6 @@ function baseEnv(input: {
     sessionAppender: appendPiSessionCustomEntry,
     roleTurnHost,
     createRunId: () => input.runId,
-    // #742: body-path tests stub the court diarist station (no real nested seat).
-    ...(input.role === "countersign"
-      ? {
-          runCourtDiaristStation:
-            input.runCourtDiaristStation ?? (async () => undefined),
-        }
-      : {}),
   };
 }
 
@@ -411,7 +400,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
   });
 });
 
-test("public countersign without --ticket: binds only via 起居郎 typed handoff", async () => {
+test("public countersign without --ticket: binds its own typed receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -421,22 +410,13 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
         runId: "01a063500-0000-7000-8000-00000000csign",
         role: "countersign",
         toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "署" },
-        // Court station face: 起居郎 asserted #582 (typed handoff, not prose match).
-        runCourtDiaristStation: async (admitted) => {
-          await bindAdmittedTicketNumber(
-            admitted as Parameters<typeof bindAdmittedTicketNumber>[0],
-            582,
-          );
-        },
+        details: { status: "converged", note: "署", ticketNumber: 582 },
       }),
       captureIo().io,
       "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
-    // Topology relocate for 起居郎 is owned by the #859 public-entry tracer;
-    // this seat file only proves typed bind from the diarist handoff.
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

@@ -1,40 +1,18 @@
 /**
- * Court diarist station for the shared countersign entry (#572 / ADR 0074 /
- * ADR 0075 / #742 / #771). The public seat itself admits and settles through
- * instruction-seat-run. This module only summons 起居郎 and refreshes a bound
- * court diary.
- *
- * Court admission auto-runs 起居郎 so the 起居郎 LLM asserts the court target;
- * mechanical layer only verifies; countersign reuses that typed identity for bind
- * (ADR 0075 / 0081). Code never matches instruction text against book-known
- * numbers. Who may call 起居郎 and in what order is not written into law
- * (ADR 0075 不规定谁调用起居郎、顺序归调用者). #1092: code no longer freezes or
- * delivers 起居录 paths — roles locate records by ticket. Bound refresh hands the
- * typed key to 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 /
- * typed handoff).
+ * Secretariat's pre-ticket diarist summons. Countersign no longer summons
+ * the diarist; callers refresh the diary before court when needed (ADR 0081).
  */
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import type { AdmittedCountersignInvocation } from "./invocation.ts";
-import {
-  type PostAdmissionEnv,
-  StationChildExhaustedError,
-} from "./post-admission.ts";
+import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalRoleOutcome } from "./terminal.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  /**
-   * Test seam: replace the court-pipeline 起居郎 station.
-   * Production leaves this unset and runs the public diarist seat.
-   */
-  runCourtDiaristStation?: (
-    admitted: AdmittedCountersignInvocation,
-  ) => Promise<void>;
   /**
    * #969 gate path: plain-language re-ask when prior 给事中 reply was not three-state.
    * Wins over gateReviewInstruction when both present (notary/inspector precedent).
@@ -63,12 +41,6 @@ export type CourtDiaristIdentity =
   | {
       readonly kind: "ticket";
       readonly ticketNumber: number;
-      /**
-       * #871 typed co-review set when the LLM explicitly submitted one.
-       * Absent means "no new set this turn" — resume must keep the stored run fact
-       * (never silently degrade a multi-ticket set to [main]).
-       */
-      readonly courtTicketNumbers?: readonly number[];
     }
   | { readonly kind: "unbound" }
   | {
@@ -152,53 +124,6 @@ export type CourtDiaristSummonEnv = Pick<
   | "signal"
   | "hostAdapters"
 >;
-
-/**
- * Read #871 set from preserved diarist payloads.
- * - Field absent / null / non-array → undefined (no new set; resume keeps store).
- * - Explicit [] → single-ticket [main] whole-set replace (signed empty-set contract).
- * - Non-empty array with zero lawful typed members after projection → not a new set
- *   (do not impersonate explicit empty and wipe a stored multi-ticket fact).
- * - Non-empty array with ≥1 lawful member → sole type/dedupe projection + principal guarantee.
- * - Multiple submissions: last qualifying set wins.
- * Live path never shape-rejects the role turn; durable damage is a separate seam.
- */
-export function courtTicketNumbersFromOutcome(
-  roleOutcome: TerminalRoleOutcome | undefined,
-  principalTicket: number,
-  submissions?: readonly unknown[],
-): readonly number[] | undefined {
-  if (roleOutcome === undefined) return undefined;
-  const payloads = courtDiaristPayloadRows(roleOutcome, submissions);
-  let latest: readonly number[] | undefined;
-  for (const payload of payloads) {
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      Array.isArray(payload)
-    ) {
-      continue;
-    }
-    const record = payload as Record<string, unknown>;
-    if (!Object.hasOwn(record, "courtTicketNumbers")) continue;
-    const raw = record.courtTicketNumbers;
-    // Only a real array is a candidate set. Non-array is not explicit empty.
-    if (!Array.isArray(raw)) continue;
-    // Members only — do not inject principal yet, or all-invalid non-empty becomes [main].
-    const members = projectCourtTicketNumbers(raw);
-    if (members === null) continue;
-    if (members.length === 0) {
-      // Literal [] is the intentional principal-only replace; non-empty garbage is not.
-      if (raw.length === 0) {
-        latest =
-          projectCourtTicketNumbers([], { principalTicket }) ?? undefined;
-      }
-      continue;
-    }
-    latest = projectCourtTicketNumbers(raw, { principalTicket }) ?? undefined;
-  }
-  return latest;
-}
 
 /** Latest payload only. An earlier escalate must not block a later non-escalate submission. */
 export function latestPayloadEscalated(
@@ -314,17 +239,8 @@ export async function invokeCourtDiarist(
   const asserted = (result.admitted as { ticketNumber?: number } | undefined)
     ?.ticketNumber;
   if (isSafePositiveTicketNumber(asserted)) {
-    const courtTicketNumbers = courtTicketNumbersFromOutcome(
-      roleOutcome,
-      asserted,
-      submissions,
-    );
     return {
-      identity: {
-        kind: "ticket",
-        ticketNumber: asserted,
-        ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
-      },
+      identity: { kind: "ticket", ticketNumber: asserted },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
     };
   }
@@ -332,76 +248,4 @@ export async function invokeCourtDiarist(
     identity: { kind: "unbound" },
     ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
   };
-}
-
-/**
- * Court-pipeline prior station: refresh this ticket's 起居录 before the
- * countersign body turn when already bound (ADR 0075 每次过庭都跑)。
- * Caller-invisible — no diarist argv on the countersign command line.
- *
- * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
- * station — no diary is minted for a true-unbound run. First-entry identity
- * lives on the shared countersign entry (typed 起居郎 key for bind). Bound refresh:
- * technical failure propagates; LLM escalation remains a recorded conclusion.
- * Path delivery onto materials is not this station's job — post-admission owns it.
- */
-export async function runCountersignCourtDiaristStation(
-  admitted: AdmittedCountersignInvocation,
-  env: CountersignRunEnv,
-  io: CliIo,
-  afterTicketNumber?: number,
-): Promise<{ readonly terminal: import("./terminal.ts").TerminalResult; readonly childRunId?: string } | undefined> {
-  if (env.runCourtDiaristStation !== undefined) {
-    await env.runCourtDiaristStation(admitted);
-    return;
-  }
-  // Production court refresh (ADR 0075: 每次过庭都跑是调用者用法) only under a known ticket identity.
-  // First-entry unbound identity is owned by the shared countersign entry.
-  if (admitted.ticketNumber === undefined) return;
-
-  // #871: refresh every member of the typed co-review set; single-ticket face
-  // is just the set [main]. Present-but-empty / missing-principal is damage —
-  // never silently fall back to main-only (legacy absent field still may).
-  let refreshTickets: readonly number[];
-  if (admitted.courtTicketNumbers !== undefined) {
-    if (
-      admitted.courtTicketNumbers.length === 0 ||
-      !admitted.courtTicketNumbers.includes(admitted.ticketNumber)
-    ) {
-      throw new StationChildExhaustedError(
-        `court diarist station: courtTicketNumbers is damaged (empty or missing principal #${admitted.ticketNumber})`,
-      );
-    }
-    refreshTickets = admitted.courtTicketNumbers;
-  } else {
-    refreshTickets = [admitted.ticketNumber];
-  }
-
-  const completedIndex = afterTicketNumber === undefined ? -1 : refreshTickets.indexOf(afterTicketNumber);
-  for (const ticketNumber of refreshTickets.slice(completedIndex + 1)) {
-    const outcome = await invokeCourtDiarist(
-      {
-        instruction: admitted.instruction,
-        projectRoot: admitted.projectRoot,
-        failureLabel: `ticket #${ticketNumber}`,
-        correlationId: admitted.runId,
-        // Refresh holds a typed key — hand it off so identity is bound before turn.
-        boundTicketNumber: ticketNumber,
-      },
-      env,
-      io,
-    );
-
-    if (outcome.failedWithoutEscalate !== undefined) {
-      throw new StationChildExhaustedError(
-        outcome.failedWithoutEscalate.diagnostic,
-      );
-    }
-    if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
-      return {
-        terminal: outcome.terminal,
-        ...(outcome.admitted === undefined ? {} : { childRunId: outcome.admitted.runId }),
-      };
-    }
-  }
 }

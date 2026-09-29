@@ -211,15 +211,6 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
   };
 }
 
-/**
- * Nested station-child role already finished its own call-local loop.
- * Parent records that failure once and must not auto-resume into a re-summon
- * (#840 父子不层叠). Other beforeDispatch failures keep the shared #416 budget.
- */
-export class StationChildExhaustedError extends Error {
-  override readonly name = "StationChildExhaustedError";
-}
-
 function withOnceSuccessfulBeforeDispatch<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -825,16 +816,12 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
-        if (error instanceof StationChildExhaustedError) {
-          return { ...settled, skipAutoResume: true as const, ...deferredPersist };
-        }
         return { ...settled, ...deferredPersist };
       }
     }
 
-    // Turn request is assembled after beforeDispatch so this turn sees whatever it
-    // settled — the seat's ticket bind re-projection and any court diarist station
-    // writes (#742). Dialogue continuation stays caller/peer opaque. #1092: no
+    // Turn request is assembled after beforeDispatch so this turn sees any
+    // seat-specific admission changes. Dialogue continuation stays caller/peer opaque. #1092: no
     // code-side 起居录 path freeze or readingMaterial inject — roles read by ticket.
     // No package-resume parallel face or typed resume identity.
     // #990: one-shot / auto-resume may freeze principal+runDirectory before

@@ -83,7 +83,7 @@ The examples below are usage sketches; option identity, aliases, requiredness, a
 #   ak-role config set <seat> <provider/model[:thinking]>
 # …or pass --model on the call (shown below). No package default model.
 
-# countersign — ticket-court review before work starts; admission runs the ticket's diarist first (#742, caller-transparent); resume continues the exact session
+# countersign — ticket-court review before work starts; does not summon the diarist; resume continues the exact session
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # secretariat — rewrite ticket per 票面法; submission routes converged verdicts through the shared countersign gate (#924, #1021)
@@ -130,10 +130,14 @@ ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.jso
 # navigator — direct free-form prose route advice; attends automatically on top-level public entry legs only
 ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
 
-# diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)
+# diarist — gather this case's decisions into per-ticket 起居录; secretariat summons it before drafting a new ticket
 ak-role diarist --model <provider/model[:thinking]> "整理 #708 的本案依据。"
 
-# countersign — ticket-court five questions; ticket recognition via instruction; admission runs the ticket's diarist first (#742)
+# before a countersign court, call the diarist only if the owner has said something new about the ticket since its last record; otherwise open or resume the court directly
+ak-role diarist --model <provider/model[:thinking]> "整理 #582 自上次成录以来的御话。"
+# for a multi-ticket court, summon once with all ticket numbers; the diarist records each ticket separately
+ak-role diarist --model <provider/model[:thinking]> "整理 #582、#583 自上次成录以来的御话，分别成录。"
+# countersign reports ticketNumber itself: use an existing diary's ticket number first; without a diary the officer identifies it
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # analyst — deterministic metrics; bare call = whole book (no model seat)

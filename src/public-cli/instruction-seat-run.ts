@@ -1,8 +1,7 @@
 /**
  * One public role run: admit → turn request → post-admission → settle.
  * Seat differences are composition-root fields. An omitted reviewer lens
- * starts two ordinary single-axis runs here. Countersign keeps deferred
- * identity on this entry; the court diarist station stays in countersign-run.
+ * starts two ordinary single-axis runs here.
  */
 import { dirname, resolve, sep } from "node:path";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
@@ -39,7 +38,6 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
-  bindCourtTicketNumbersOnAdmitted,
   buildInstructionTransportPrompt,
   materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
@@ -98,12 +96,11 @@ import {
 import {
   invokeCourtDiarist,
   latestPayloadEscalated,
-  runCountersignCourtDiaristStation,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
-  "reviewReask" | "gateReviewInstruction" | "parentRunPath" | "runCourtDiaristStation"
+  "reviewReask" | "gateReviewInstruction" | "parentRunPath"
 >;
 
 type SeatRunResult = {
@@ -460,8 +457,7 @@ async function runOmittedLensBatch(
 
 /**
  * Countersign on the shared entry: gate parent resume, deferred materialization,
- * 起居郎 identity, then the same one-shot settlement as every other seat.
- * Court refresh stays on runCountersignCourtDiaristStation.
+ * then the same one-shot settlement as every other seat.
  */
 async function runCountersignBody(
   parsed: PublicSeatParse,
@@ -516,88 +512,14 @@ async function runCountersignBody(
         });
       };
 
-      let typedTicket: number | undefined;
-      let typedCourtTicketNumbers: readonly number[] | undefined;
-      let identityDiaristRan = false;
-      let childDiaristRunId: string | undefined;
-      let pausedDiaristTerminal: TerminalResult | undefined;
-
-      if (gateParentRunPath === undefined && env.runCourtDiaristStation === undefined) {
-        let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
-        try {
-          outcome = await invokeCourtDiarist({
-            instruction: parsed.instruction ?? "",
-            projectRoot: admitted.projectRoot,
-            failureLabel: "unbound summons",
-            correlationId: admitted.runId,
-            ...(env.boundTicketNumber === undefined ? {} : { boundTicketNumber: env.boundTicketNumber }),
-          }, env, io);
-        } catch (error) {
-          await materializeAdmission(
-            isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
-          );
-          await markRunAdmitted(admitted, env.principalAuthority);
-          return await presentControlledFailure(admitted, {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-        }
-        identityDiaristRan = true;
-        if (outcome.identity.kind === "escalate") pausedDiaristTerminal = outcome.terminal;
-        if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
-          childDiaristRunId = outcome.admitted.runId;
-        }
-        if (outcome.failedWithoutEscalate !== undefined) {
-          const diagnostic = outcome.failedWithoutEscalate.diagnostic;
-          await materializeAdmission(
-            isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
-          );
-          if (childDiaristRunId !== undefined) await recordChildDiaristRun(admitted, childDiaristRunId);
-          await markRunAdmitted(admitted, env.principalAuthority);
-          return await presentControlledFailure(admitted, {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: new Error(diagnostic),
-          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-        }
-        if (outcome.identity.kind === "ticket") {
-          typedTicket = outcome.identity.ticketNumber;
-          typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
-        }
-      }
-
-      await materializeAdmission(typedTicket);
+      await materializeAdmission(
+        isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
+      );
       await markRunAdmitted(admitted, env.principalAuthority);
-      if (childDiaristRunId !== undefined) {
-        await recordChildDiaristRun(admitted, childDiaristRunId);
-      }
-      if (pausedDiaristTerminal !== undefined) {
-        // The child already submitted its own pause; no parent turn exists yet.
-        io.stdout(formatTerminalResult(pausedDiaristTerminal));
-        return { exitCode: 0, admitted, terminal: pausedDiaristTerminal };
-      }
       if (gateParentRunPath !== undefined) {
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
-      if (identityDiaristRan && typedTicket !== undefined) {
-        try {
-          await bindAdmittedTicketNumber(admitted, typedTicket);
-          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-          await bindCourtTicketNumbersOnAdmitted(admitted, typedCourtTicketNumbers ?? [typedTicket]);
-        } catch (error) {
-          return await presentControlledFailure(admitted, {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-        }
-      }
-
       const turnProjection: RoleTurnRequestProjectionOptions = {
         packageRoot: env.packageRoot,
         home: env.home,
@@ -630,13 +552,6 @@ async function runCountersignBody(
           ...seatAdapters(admitted, env),
           beforeDispatch: async (admittedSeat, lease) => {
             if (!packagedAdmitsCountersign(admittedSeat.role)) return;
-            if (!identityDiaristRan || typedTicket !== undefined) {
-              const refresh = await runCountersignCourtDiaristStation(admittedSeat, env, io);
-              if (refresh !== undefined) {
-                io.stdout(formatTerminalResult(refresh.terminal));
-                return refresh.terminal;
-              }
-            }
             await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
             Object.assign(turnRequest, buildInstructionSeatTurnRequest(admittedSeat, turnProjection));
           },
@@ -1019,16 +934,6 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
   }
   const admitted = loaded.admitted;
-  // Court diarist refresh advances only after a diarist child; gate officers
-  // (notary/auditor/…) resume straight into queueConclusionFromChild (#1057).
-  if (admitted.role === "countersign" && admitted.ticketNumber !== undefined
-    && child.role === "diarist") {
-    const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);
-    if (refresh !== undefined) {
-      io.stdout(formatTerminalResult(refresh.terminal));
-      return { exitCode: 0, admitted, terminal: refresh.terminal };
-    }
-  }
   const resolved = await queueConclusionFromChild(child, env, io);
   if (resolved !== undefined && "stop" in resolved) return resolved.stop;
   if (resolved !== undefined && resolved.status === "escalate") {
