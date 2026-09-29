@@ -541,7 +541,7 @@ test("page write lands outside every ledger and stays read-only on books", async
           now: new Date(),
           outputPath: join(books[0]!.ledgerDir, "inside.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     });
 });

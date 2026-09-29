@@ -299,6 +299,16 @@ export function seedGitRepository(cwd: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
 }
 
+/** Common origin for tests of the role repository's ticket binding. */
+export function addRoleRepoOrigin(cwd: string): void {
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"], { cwd });
+}
+
+export function seedRoleRepo(cwd: string): void {
+  seedGitRepository(cwd);
+  addRoleRepoOrigin(cwd);
+}
+
 /**
  * Opt-in activation-owned hermetic home: hermetic HOME plus explicit git substrate (ADR 0048).
  * Only callers that load the production role extension / exercise activation may use this.

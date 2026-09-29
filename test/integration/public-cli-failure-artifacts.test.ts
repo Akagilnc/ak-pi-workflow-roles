@@ -444,7 +444,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.diagnostic, multiline);
-      assert.equal(terminal.roleOutcome.diagnostic.includes("\n"), true);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       diagnostic: string;

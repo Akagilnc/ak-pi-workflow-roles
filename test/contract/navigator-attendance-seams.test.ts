@@ -1,7 +1,6 @@
 // #420 整改拆分：接缝与恢复家族
 // #178: restore prepare consumers with per-case seat fixture + explicit context.home.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -38,7 +37,7 @@ import {
   settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { flushEventLoopTurns, packageRoot, seedGitRepository, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { flushEventLoopTurns, packageRoot, seedGitRepository, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -112,10 +111,11 @@ test("shared accepted submission binds settled attendance before public extracti
 test("settlement rejection still records an accepted closure with unavailable attendance", async () => {
   const entries: Array<{ customType: string; data: unknown }> = [];
   const ctx = { sessionManager: { appendCustomEntry(customType: string, data: unknown) { entries.push({ customType, data }); } } } as never;
+  const writeFailure = new Error("navigator write failed");
   await assert.rejects(projectClosedSubmissionLifecycle(
     { role: "judge", kind: "accepted", accepted: { status: "converged" } },
-    ctx, null, () => {}, async () => { throw new Error("navigator write failed"); },
-  ), /navigator write failed/);
+    ctx, null, () => {}, async () => { throw writeFailure; },
+  ), (error: unknown) => error === writeFailure);
   assert.equal(entries.length, 1);
   assert.equal((entries[0]?.data as { navigator?: unknown }).navigator, undefined);
   assert.equal(extractNavigatorFact([{ type: "custom", ...entries[0]! }] as never).disposition, "unavailable");
@@ -697,12 +697,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
 
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
-      seedGitRepository(project);
-      execFileSync(
-        "git",
-        ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-        { cwd: project },
-      );
+      seedRoleRepo(project);
 
       const captured: RoleTurnRequest[] = [];
       const recordingHost = (scripted: ReturnType<typeof roleTurnHostFromLegacyPiRunner>) => ({

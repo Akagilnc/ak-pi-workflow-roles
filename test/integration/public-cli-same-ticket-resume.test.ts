@@ -45,7 +45,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import {
   packageRoot,
-  seedGitRepository,
+  seedRoleRepo as seedGitProject,
 } from "../helpers/pi-test-harness.ts";
 import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import {
@@ -72,15 +72,6 @@ type SeenTurn = {
   courtAttemptId?: string;
   prompt: string;
 };
-
-function seedGitProject(root: string): void {
-  seedGitRepository(root);
-  execFileSync(
-    "git",
-    ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-    { cwd: root },
-  );
-}
 
 function runIdFromDirectory(runDirectory: string): string {
   const base = runDirectory.split(/[\\/]/).pop() ?? "";

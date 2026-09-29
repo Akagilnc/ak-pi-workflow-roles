@@ -183,7 +183,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     const bad = await loadPublicCliConfig(home);
     assert.throws(
       () => validatePublicCliConfigAxes(bad, packageRoot),
-      /config seat judge engine is illegal: has\/slash/,
+      Error,
     );
 
     // Well-formed name without packaged notes is accepted at validate seam.

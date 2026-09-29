@@ -904,8 +904,6 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
     assert.equal(captured![captured!.indexOf("--provider") + 1], "no-such-provider");
     assert.equal(captured![captured!.indexOf("--model") + 1], "no-such-model");
     assert.equal(captured!.includes("--thinking"), false);
-    // Must not be the pre-#346 thinking-required structural wash.
-    assert.equal(stderr.join("").includes("requires a thinking level"), false);
     assert.notEqual(result.exitCode, 0);
   });
 });

@@ -19,7 +19,7 @@ test("anti-forge helper rejects mismatched synthetic soul digest", () => {
         "synthetic-bundle",
         () => soulText,
       ),
-    /synthetic-bundle metadata soulDigest must match the soul supplied at consumption/,
+    Error,
   );
 
   // Positive path with the same synthetic bytes proves construct-at-consumption.

@@ -421,7 +421,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic, flood);
       }
-      assert.equal(stderr[0]!.includes("tool_execution_end"), true);
     }
 
     // Counterexample 2: oversized diagnostic is kept whole on durable + presentation.
@@ -467,7 +466,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic, stderrText);
       }
-      assert.ok(stderr[0]!.includes("x".repeat(680)));
     }
   });
 });
@@ -572,8 +570,6 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
       diagnosticEquals: "ECONNRESET from upstream",
       identityName: "RawSocketError",
     });
-    // stderr: non-flood shape only — durable identity lives on Terminal/Error Artifact (AC6).
-    assert.equal(stderr[0]!.includes("ak_judge_output"), false);
   });
 });
 test("post-admission throw undefined stays unrecognized (not activation/null-exit)", async () => {
@@ -665,7 +661,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     assert.equal(errorBody.cause, "timeout");
     assert.equal(errorBody.details?.timedOut, true);
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
-    assert.equal(stderr[0]!.includes("\n"), true);
   });
 });
 

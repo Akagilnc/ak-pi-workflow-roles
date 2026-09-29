@@ -10,7 +10,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * when a typed source provided it.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -38,7 +37,7 @@ import {
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -74,11 +73,7 @@ async function withSeatProject(
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
+    addRoleRepoOrigin(project);
     await installGhFixture(join(home, "bin"), {
       issues: {
         582: { body: "issue 582 body", comments: [] },

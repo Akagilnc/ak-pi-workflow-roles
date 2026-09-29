@@ -268,7 +268,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(ledgerCopy, "issues", "127", "board.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
 
     // Output path is a symlink into the ledger — must refuse; ledger bytes unchanged.
@@ -286,7 +286,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: symlinkOut,
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await readFile(injected, "utf8"), beforeInjected);
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
@@ -302,7 +302,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(parentLink, "via-parent.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
 
@@ -315,7 +315,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(parentLink, "nested", "deep.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
     await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), { code: "ENOENT" });

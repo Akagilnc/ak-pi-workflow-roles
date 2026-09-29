@@ -837,9 +837,10 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const gateCalls: Array<{ kind: string }> = [];
+    const hostFailure = new Error("diarist host unavailable");
     const host = secretariatHostDrivingRealTools({
       packageRoot, home, gateCalls, submissionGateHost: "codex",
-      parentDiaristRunner: async () => { throw new Error("diarist host unavailable"); },
+      parentDiaristRunner: async () => { throw hostFailure; },
       countersignSequence: [], steps: [],
     });
     const result = await runAkRole(
@@ -851,7 +852,7 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure", "failure is settled in the admitted run");
     if (result.terminal?.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal.roleOutcome.diagnostic.includes("diarist host unavailable"), true,
+      assert.equal(result.terminal.roleOutcome.diagnostic.includes(hostFailure.message), true,
         "the original host failure remains visible in the structured terminal");
     }
     assert.equal(gateCalls.length, 0);

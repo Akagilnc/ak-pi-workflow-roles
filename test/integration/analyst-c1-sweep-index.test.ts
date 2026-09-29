@@ -31,14 +31,12 @@ import {
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { fixtureHome, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, fixtureHome, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /** Shared board (B-wave) — totalElapsedMs/lastActivityAt hand-known. */
 const ISSUE_DEMO = "/analyst-fixture/issue-demo";
-/** C1-owned fixture — runId 019ff000-1001, wall 40_000. */
-const ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
 /** C1-owned fixture — runId 019ff000-1002, wall 10_000. */
 const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
 /**
@@ -47,7 +45,6 @@ const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
  */
 const ISSUE_GAMMA = "/analyst-fixture/c1-issue-gamma";
 
-const C1_ALPHA_RUN = "019ff000-1001-7000-8000-0000000001a1";
 const C1_BETA_RUN = "019ff000-1002-7000-8000-0000000001b2";
 const C1_GAMMA_READABLE_RUN = "019ff000-1003-7000-8000-0000000001c3";
 const C1_GAMMA_UNREADABLE_RUN = "019ff000-1004-7000-8000-0000000001d4";

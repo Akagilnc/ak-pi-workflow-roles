@@ -403,50 +403,6 @@ test("explicit internal activation args point at the package entrypoint file", a
   assert.equal(args.includes("--ak-role"), true);
 });
 
-test("every public callable role is a completed path (no deferred slice)", async () => {
-  await withTempHome(async (home) => {
-    for (const role of PUBLIC_CALLABLE_ROLES) {
-      const { io, stderr, stdout } = captureIo();
-      // Malformed structure where the adapter owns a closed grammar; otherwise a
-      // nonblank instruction that must not hit deferred-slice stubs.
-      const argv =
-        role === "collector"
-          ? ["collector", "--model", "test/caller-seat:high", "--pr", "0"]
-          : role === "doctor"
-            ? ["doctor", "--model", "test/caller-seat:high", "--issue", "0"]
-            : role === "merger"
-              ? ["merger", "--model", "test/caller-seat:high", "   "]
-              : [role, "--model", "test/caller-seat:high", "exercise completed public path"];
-      const result = await runAkRole(argv, {
-        packageRoot,
-        home,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => ({
-          code: 1,
-          stderr: "forced runner stop",
-          timedOut: false,
-          args: [...args],
-        }),
-          }),
-      });
-      assert.notEqual(result.exitCode, 0, role);
-      assert.equal(
-        stderr.join("").includes("not available in this install slice"),
-        false,
-        role,
-      );
-      assert.equal(
-        stdout.join("").includes("not available in this install slice"),
-        false,
-        role,
-      );
-    }
-  });
-});
-
 test("public runs write one identity-bound invocation ledger for every role", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");

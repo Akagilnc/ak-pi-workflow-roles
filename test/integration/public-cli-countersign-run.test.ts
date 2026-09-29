@@ -10,7 +10,6 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
@@ -65,7 +64,7 @@ import {
   recordNonSealedSubmissionForSpawn,
   sealAcceptedSubmissionForSpawn,
 } from "../helpers/submission-ledger-fixture.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -1069,11 +1068,7 @@ async function withCountersignProject(
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
+    addRoleRepoOrigin(project);
     await installGhFixture(join(home, "bin"), {
       issues: {
         582: { body: "issue 582 body", comments: [] },

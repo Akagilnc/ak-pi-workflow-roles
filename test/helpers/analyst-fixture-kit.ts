@@ -10,6 +10,9 @@ import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export const C1_ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
+export const C1_ALPHA_RUN = "019ff000-1001-7000-8000-0000000001a1";
+
 export const fixtureHome = join(
   fileURLToPath(new URL("../..", import.meta.url)),
   "test/fixtures/analyst/home",

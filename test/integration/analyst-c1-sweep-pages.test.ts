@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #329 analyst-C1 — sweep mode + library index page tracer.
  *
@@ -8,139 +7,28 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import {
-  buildAnalystLibraryIndexPage,
-  mergeAnalystLibraryIndexRows,
-  analystLibraryIndexPath,
-  writeAnalystLibraryIndexPage,
-  type AnalystLibraryIndexPage,
-  type AnalystLibraryIndexRow,
-} from "../../src/analyst-index.ts";
-import {
-  analystIssuePagePath,
-  type AnalystIssueMetricsPage,
-  type AnalystOptionalMetricNumber,
-  type AnalystOptionalTimestamp,
-} from "../../src/analyst-page.ts";
-import { withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
-
-/** Shared board (B-wave) — totalElapsedMs/lastActivityAt hand-known. */
-const ISSUE_DEMO = "/analyst-fixture/issue-demo";
-/** C1-owned fixture — runId 019ff000-1001, wall 40_000. */
-const ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
-/** C1-owned fixture — runId 019ff000-1002, wall 10_000. */
-const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
-/**
- * C1-owned negative: readable earlier + newer terminal-unreadable with later end-frame.
- * runIds 019ff000-1003 / 019ff000-1004.
- */
-const ISSUE_GAMMA = "/analyst-fixture/c1-issue-gamma";
-
-const C1_ALPHA_RUN = "019ff000-1001-7000-8000-0000000001a1";
-const C1_BETA_RUN = "019ff000-1002-7000-8000-0000000001b2";
-const C1_GAMMA_READABLE_RUN = "019ff000-1003-7000-8000-0000000001c3";
-const C1_GAMMA_UNREADABLE_RUN = "019ff000-1004-7000-8000-0000000001d4";
-
-/**
- * Hand values from shared board (B1 total) + max available endedAt across ALL runs.
- * Σ wallMs = 302_000; latest endedAt = f1 @ 00:12:25.
- */
-const DEMO_TOTAL_ELAPSED_MS = 302_000;
-const DEMO_LAST_ACTIVITY_AT = "2026-08-01T00:12:25.000Z";
-
-/** Alpha: single leg wall 40s @ 2026-08-02T00:00:00→00:00:40. */
-const ALPHA_TOTAL_ELAPSED_MS = 40_000;
-const ALPHA_LAST_ACTIVITY_AT = "2026-08-02T00:00:40.000Z";
-
-/** Beta: single leg wall 10s @ 2026-08-02T01:00:00→01:00:10. */
-const BETA_TOTAL_ELAPSED_MS = 10_000;
-const BETA_LAST_ACTIVITY_AT = "2026-08-02T01:00:10.000Z";
-
-/**
- * Gamma hand values:
- * - readable 1003 wall 20s ends 02:00:20 → sole contributor to totalElapsedMs
- * - unreadable 1004 (null terminal) ends 02:01:00 → wins lastActivityAt, not elapsed
- */
-const GAMMA_TOTAL_ELAPSED_MS = 20_000;
-const GAMMA_LAST_ACTIVITY_AT = "2026-08-02T02:01:00.000Z";
-
-const ABSENT: AnalystOptionalMetricNumber = { status: "absent" };
-const present = (value: number): AnalystOptionalMetricNumber => ({
-  status: "present",
-  value,
-});
-const presentAt = (at: string): AnalystOptionalTimestamp => ({
-  status: "present",
-  at,
-});
-
-function assertNoZeroOrInfinity(metric: AnalystOptionalMetricNumber): void {
-  if (metric.status === "absent") return;
-  assert.equal(Number.isFinite(metric.value), true, "msPerKLines must be finite when present");
-  // Present LOC path never encodes the forbidden 0/∞ stand-ins for 空缺.
-  assert.notEqual(metric.value, 0);
-  assert.notEqual(metric.value, Number.POSITIVE_INFINITY);
-  assert.notEqual(metric.value, Number.NEGATIVE_INFINITY);
-}
-
-function expectedRow(input: {
-  readonly projectRoot: string;
-  readonly totalElapsedMs: number;
-  readonly changedLines: AnalystOptionalMetricNumber;
-  readonly msPerKLines: AnalystOptionalMetricNumber;
-  readonly lastActivityAt: AnalystOptionalTimestamp;
-  readonly issueNumber?: number;
-}): AnalystLibraryIndexRow {
-  const projectRoot = physicalPathIdentity(input.projectRoot);
-  return {
-    bookKey: `root:${projectRoot}`,
-    projectRoot,
-    totalElapsedMs: input.totalElapsedMs,
-    changedLines: input.changedLines,
-    msPerKLines: input.msPerKLines,
-    lastActivityAt: input.lastActivityAt,
-    ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
-  };
-}
+import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 // 太史 C1 sweep——页与索引写路径家族（#420 整改拆分第二片）。
 
 test("analyst changedLines rejects non-finite negatives at issue and sweep boundaries", async () => {
   await withBusinessRepo(async () => {
     await withTempHome(async (home) => {
+      for (const changedLines of [-3, Number.POSITIVE_INFINITY]) {
+        await assert.rejects(
+          () => runAnalyst({ mode: "issue", projectRoot: ISSUE_ALPHA, changedLines }, { home }),
+          (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
+        );
+      }
       await assert.rejects(
-        () =>
-          runAnalyst({
-            mode: "issue",
-            projectRoot: ISSUE_ALPHA,
-            changedLines: -3,
-          }, { home }),
-        /changedLines must be a finite non-negative number/,
-      );
-      await assert.rejects(
-        () =>
-          runAnalyst({
-            mode: "issue",
-            projectRoot: ISSUE_ALPHA,
-            changedLines: Number.POSITIVE_INFINITY,
-          }, { home }),
-        /changedLines must be a finite non-negative number/,
-      );
-      await assert.rejects(
-        () =>
-          runAnalyst({
-            mode: "sweep",
-            mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }],
-          }, { home }),
-        /changedLines must be a finite non-negative number/,
+        () => runAnalyst({ mode: "sweep", mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }] }, { home }),
+        (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
       );
       // 0 remains lawful typed 空缺.
       const zero = await runAnalyst({

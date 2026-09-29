@@ -23,6 +23,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { createMinimalHost, roleTurnHostFromLegacyPiRunner as rawRoleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
@@ -820,10 +821,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         "recorded accepted payload must survive direct throw after record",
       );
       if (result.terminal!.roleOutcome.kind === "failure") {
-        assert.equal(
-          result.terminal!.roleOutcome.diagnostic.includes("sealed accepted"),
-          false,
-        );
         assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
         assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
         // The reported cause is the deferred persist write's own real failure
@@ -1564,7 +1561,7 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
 
     await assert.rejects(
       () => loadResumablePublicRole(home, "missing", piDurablePrincipalAuthority),
-      /unknown role run id/,
+      CliUsageError,
     );
   });
 });

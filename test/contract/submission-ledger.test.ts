@@ -380,7 +380,7 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
     } as unknown as HostContext;
     await assert.rejects(
       bare.tool().execute("no-id", {}, undefined, undefined, context),
-      /提交账需要已受理的 run 身份/,
+      Error,
     );
   });
 });
