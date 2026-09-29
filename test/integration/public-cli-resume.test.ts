@@ -42,7 +42,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
+import { readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -717,7 +717,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         `${runId}@judge`,
       );
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-      assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
+      assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
 
       // Publication never wrote a success report face under the locked artifacts/.
       const reportPath = join(runDirectory, "artifacts", "report.json");
@@ -786,7 +786,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         "rebuilt terminal must reference the public report artifact",
       );
       assert.ok(
-        await hasRecordedSubmission(project, runId, home),
+        (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
     } finally {
@@ -840,7 +840,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(dispatches(), 1);
       assert.equal(result.terminal!.autoResumeCount, 0);
       assert.ok(
-        await hasRecordedSubmission(project, runId, home),
+        (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must survive direct throw after record",
       );
       if (result.terminal!.roleOutcome.kind === "failure") {

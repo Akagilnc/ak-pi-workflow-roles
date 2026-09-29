@@ -40,7 +40,6 @@ import {
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  formatTerminalResult,
   trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import {
@@ -606,7 +605,10 @@ test("lawful reviewer Terminal preserves review evidence", async () => {
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    if (terminal.roleOutcome.kind === "accepted") {
+      assert.deepEqual((terminal.roleOutcome.payloads?.[0] as { auditNoReceipt?: unknown })?.auditNoReceipt, receipt.auditNoReceipt);
+    }
 
     const evidence = JSON.parse(
       await readFile(

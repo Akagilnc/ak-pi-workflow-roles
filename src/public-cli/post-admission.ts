@@ -340,6 +340,7 @@ export type PostAdmissionAdapters<
   A extends AdmittedRoleInvocation = AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
 > = {
+  /** A present Terminal already carries run history from settlement. */
   trySettle: (
     admitted: A,
     authority: DurablePrincipalAuthority,
@@ -1003,14 +1004,13 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
+      // Settlement already attaches the full run history; do not read the ledger
+      // again on this normal path. Failure and no-receipt below attach separately.
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      if (settled !== undefined) {
-        settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
-      }
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
-      // recording tag, not a visibility gate — attachRecordedSubmissions
-      // above still surfaces that historical payload honestly either way).
+      // recording tag, not a visibility gate — settlement still surfaces
+      // that historical payload honestly either way).
       // Consume the ledger's own subject.attemptId (submission-ledger.ts)
       // only to learn whether *this* attempt itself produced a fresh seal —
       // never to filter what presents.

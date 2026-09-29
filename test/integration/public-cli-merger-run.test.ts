@@ -32,7 +32,6 @@ import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
-  hasRecordedSubmission,
   readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
@@ -622,7 +621,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       );
       assert.equal(result.exitCode, 1, JSON.stringify(result.terminal?.roleOutcome));
       assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      assert.ok(await hasRecordedSubmission(project, "run-table-infrastructure", home));
+      assert.ok((await readRecordedSubmissionRows(project, "run-table-infrastructure", home)).length > 0);
       assert.ok(result.terminal?.submissions?.some((row) =>
         typeof row === "object" && row !== null && (row as { report?: unknown }).report === "candidate before failure",
       ), JSON.stringify(result.terminal?.submissions));

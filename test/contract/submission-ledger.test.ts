@@ -18,7 +18,6 @@ import { Type } from "typebox";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import {
   createSubmissionLedgerHost,
-  hasRecordedSubmission,
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../../src/submission-ledger.ts";
@@ -294,7 +293,6 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       accepted: params,
     });
     // #881: original params stay projectable even when outcome is not sealed.
-    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", f.root), true);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       { role: "judge", kind: "infrastructure", accepted: params, toolCallId: "failure" },
     ]);
@@ -325,7 +323,6 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
       assert.ok(projected, anchor.label);
       assert.deepEqual(projected?.accepted, params, anchor.label);
     }
-    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", f.root), true);
   });
 });
 
@@ -463,7 +460,6 @@ test("unknown run read APIs return empty without ownership throw", async () => {
   await withLedgerFixture(async (f) => {
     const rows = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
     assert.deepEqual(rows, []);
-    assert.equal(await hasRecordedSubmission(f.root, "missing-run-id", { home: f.root }), false);
     assert.deepEqual(await readRecordedSubmissions(f.root, "missing-run-id", { home: f.root }), []);
   });
 });

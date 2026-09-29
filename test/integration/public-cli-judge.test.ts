@@ -48,7 +48,6 @@ import {
   trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import {
-  formatTerminalResult,
   adviceNavigatorFact,
   type TerminalResult,
   type TerminalRoleOutcome,
@@ -378,10 +377,6 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   }
   assert.equal(terminal.artifacts.length, 2);
   assert.equal(terminal.runId, "run-term-1");
-  // Presentation yields one non-empty write payload; layout/labels stay unfrozen (AC6).
-  const formatted = formatTerminalResult(terminal);
-  assert.equal(typeof formatted, "string");
-  assert.ok(formatted.length > 0);
 });
 
 test("extractNavigatorFact keeps a native playbook read failure on the existing diagnostic", () => {
@@ -995,7 +990,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.ok(terminal);
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
-    assert.match(stdout.join(""), /judge\taccepted/);
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);

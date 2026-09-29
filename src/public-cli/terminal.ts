@@ -325,16 +325,15 @@ export function formatTerminalResult(result: TerminalResult): string {
   const current = result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation" || result.roleOutcome.kind === "failure"
     ? result.roleOutcome.payloads ?? []
     : [];
-  for (let i = current.length - 1; i >= 0; i -= 1) {
-    const payload = current[i]!;
-    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-    lines.push(`submission\t${encodeTerminalField(rendered)}`);
-  }
-  const recorded = result.submissions ?? [];
-  for (let i = recorded.length - 1; i >= 0; i -= 1) {
-    const payload = recorded[i]!;
-    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-    lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
+  for (const [label, rows] of [
+    ["submission", current],
+    ["recorded-submission", result.submissions ?? []],
+  ] as const) {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const payload = rows[i]!;
+      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+      lines.push(`${label}\t${encodeTerminalField(rendered)}`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }

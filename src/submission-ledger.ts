@@ -450,15 +450,6 @@ export async function readRecordedSubmissions(
   return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).map((row) => row.accepted);
 }
 
-/** True when the run has at least one recorded original payload (any outcome class). */
-export async function hasRecordedSubmission(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<boolean> {
-  return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).length > 0;
-}
-
 type LedgerState = { sequence: number };
 
 async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<LedgerState> {

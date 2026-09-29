@@ -1005,16 +1005,16 @@ type BoundAuditorVolume = {
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
-): Promise<readonly BoundAuditorVolume[] | undefined> {
+): Promise<{ parentEntries?: SessionEntry[]; volumes?: readonly BoundAuditorVolume[] }> {
   let parentEntries: SessionEntry[];
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError(error)) return undefined;
+    if (isMissingPathError(error)) return {};
     throw sessionReadFailure(error, "failed to read parent session for auditor binding");
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
-  if (parentId === undefined) return undefined;
+  if (parentId === undefined) return { parentEntries };
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
@@ -1084,8 +1084,8 @@ async function loadBoundAuditorVolumes(
       }
     }
   }
-  if (!sawAnyDirectory && valid.length === 0) return undefined;
-  return valid;
+  if (!sawAnyDirectory && valid.length === 0) return { parentEntries };
+  return { parentEntries, volumes: valid };
 }
 
 function complianceFailureFromAuditorVolumes(
@@ -1218,8 +1218,9 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // host failure is next — it outranks weaker auditor provider-stop fallback so
   // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   let volumes: readonly BoundAuditorVolume[] | undefined;
+  let parentEntries: SessionEntry[] | undefined;
   try {
-    volumes = await loadBoundAuditorVolumes(input.sessionFile);
+    ({ volumes, parentEntries } = await loadBoundAuditorVolumes(input.sessionFile));
     const auditorCompliance = volumes === undefined ? undefined : complianceFailureFromAuditorVolumes(volumes);
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
@@ -1230,25 +1231,15 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       diagnostic: failure.message || failure.name,
     });
   }
-  try {
-    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
-      await readBoundSessionEntries(input.sessionFile),
-    );
+  if (parentEntries !== undefined) {
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(parentEntries);
     if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
-  } catch (error) {
-    if (!isMissingPathError(error)) {
-      const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
-      return resolutionOf({
-        cause: "session",
-        identity: thrownIdentity(failure),
-        diagnostic: failure.message || failure.name,
-      });
-    }
   }
   const auditorStop = volumes === undefined ? undefined : providerStopFallbackFromAuditorVolumes(volumes);
   if (auditorStop !== undefined) return resolutionOf(auditorStop);
   // Parent session provider-stop is next; credential is last.
-  const parentStop = await readSessionProviderStop(input.sessionFile);
+  const parentStop = await readSitianRetainedAuditorProviderStop(input.sessionFile)
+    ?? (parentEntries === undefined ? undefined : extractSessionProviderStop(parentEntries));
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
   // This is the single sidecar read for both knownFailure projection and v1 resume.
   let httpObservation: TypedProviderHttpObservation | undefined;
@@ -2897,12 +2888,7 @@ export async function publishFailureArtifacts(
     sessionDirectory: sessionDirectory,
     sessionFile: sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
-    attachments: admitted.attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      sha256: a.sha256,
-      byteLength: a.byteLength,
-    })),
+    attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     ...(failure.cause === undefined ? {} : { failureCause: failure.cause }),
   };
   const evidenceWrite = await writeFailureJsonRetainingCause(
