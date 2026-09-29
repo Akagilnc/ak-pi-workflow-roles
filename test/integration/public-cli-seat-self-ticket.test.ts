@@ -11,6 +11,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,6 +24,7 @@ import {
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
@@ -94,6 +96,7 @@ function seedGitProject(root: string): void {
 
 async function withSeatProject(
   run: (ctx: { home: string; project: string }) => Promise<void>,
+  options?: { readonly seedDiary?: boolean },
 ): Promise<void> {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -110,7 +113,7 @@ async function withSeatProject(
       },
     });
     // Volume may exist; seats must not mechanically bind from it + summons text.
-    ensureTicketProvenanceVolume(582, project, home);
+    if (options?.seedDiary !== false) ensureTicketProvenanceVolume(582, project, home);
     await configurePassingReviewSeats(home);
     await run({ home, project });
   });
@@ -400,8 +403,10 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
   });
 });
 
-test("public countersign without --ticket: binds its own typed receipt", async () => {
+test("public countersign without a diary binds its own typed receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
+    const diaryPath = resolveTicketProvenanceVolume(582, project, home).recordFile;
+    assert.equal(existsSync(diaryPath), false);
     const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       baseEnv({
@@ -418,7 +423,8 @@ test("public countersign without --ticket: binds its own typed receipt", async (
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-  });
+    assert.equal(existsSync(diaryPath), false, "countersign does not create a diary");
+  }, { seedDiary: false });
 });
 
 test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
