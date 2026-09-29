@@ -26,6 +26,7 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { readRunTerminalArtifact, RUN_TERMINAL_REPORT_FILE } from "../run-terminal-artifacts.ts";
 import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -98,6 +99,7 @@ import {
   ledgerReadScope,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
+  recordedSealedSubmissionCount,
   publishedFailureErrorPath,
   presentStructuralRejection,
   resolveAuditedRunnerFailureResolution,
@@ -883,6 +885,11 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }
 
+    // Snapshot the prior run state before markRunRunning replaces it; a
+    // resumable publication failure can rebuild its missing report (#672).
+    const priorRunState = courtScope.courtAttemptId === undefined
+      ? await readRoleRunState(admitted.runDirectory, env.principalAuthority)
+      : undefined;
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
     // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
@@ -899,7 +906,25 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
+    let beforeTurnSeals: number | undefined;
+    let mayRebuildUnpublishedSeal = false;
+    let baselineReadFailure: { error: unknown } | undefined;
     try {
+      if (courtScope.courtAttemptId === undefined) {
+        try {
+          beforeTurnSeals = await recordedSealedSubmissionCount(admitted);
+          if (beforeTurnSeals > 0) {
+            const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
+            mayRebuildUnpublishedSeal = priorRunState?.state === "resumable"
+              && !(priorFace.status === "present" && priorFace.file === RUN_TERMINAL_REPORT_FILE);
+          }
+        } catch (error) {
+          // A poisoned prior ledger must not block a real host dispatch (#833).
+          // The authoritative post-turn settlement still reads it; if repaired
+          // meanwhile, preserve this observed failure instead of guessing freshness.
+          baselineReadFailure = { error };
+        }
+      }
       recordRunStart(admitted.runDirectory);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
@@ -1034,6 +1059,7 @@ export async function dispatchPostAdmissionTurn<
       // Settlement already attaches the full run history; do not read the ledger
       // again on this normal path. Failure and no-receipt below attach separately.
       settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
+      if (baselineReadFailure !== undefined) throw baselineReadFailure.error;
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
       // recording tag, not a visibility gate — settlement still surfaces
@@ -1045,7 +1071,7 @@ export async function dispatchPostAdmissionTurn<
         settled === undefined
         || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
           ? true
-          : await attemptProducedFreshSubmission(admitted, courtScope);
+          : await attemptProducedFreshSubmission(admitted, courtScope, beforeTurnSeals);
       // A lawful settled outcome already reached this turn takes precedence
       // over a later bare exit-code / session-inspection signal (trailing
       // nonzero exit, late stderr noise, a stale already-superseded
@@ -1062,6 +1088,10 @@ export async function dispatchPostAdmissionTurn<
       // where a bare nonzero exit / resolution failure must not be outranked
       // by someone else's earlier success (#836 r12 class 2).
       const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
+      // An older result is not this bare host turn's reply. Only an unfinished
+      // publication may rebuild its report on a resumable run (#672); after a
+      // no_receipt turn clears the face, a further resume must not revive it.
+      const stalePublishedAcceptance = !settledIsFreshThisAttempt && !mayRebuildUnpublishedSeal;
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
       // window must not land as lawful accepted.
       const cancelAfterSettle = processCancelSignalName(env.signal);
@@ -1070,6 +1100,7 @@ export async function dispatchPostAdmissionTurn<
         && shouldPresent(settled)
         && !directHostFailureSignal
         && !staleAcceptanceOutranksRealFailure
+        && !stalePublishedAcceptance
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {

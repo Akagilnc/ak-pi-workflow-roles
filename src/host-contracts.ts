@@ -20,12 +20,10 @@ export type DurablePrincipal = object & { readonly __durablePrincipal?: never };
  * Closed set of typed facts only — never a fabricated "could not classify" label (#881).
  * When no typed confirmation exists, omit cause and keep the original diagnostic / error pointer.
  */
-export type ControlledFailureCause =
-  | "activation"
-  | "provider"
-  | "session"
-  | "output"
-  | "timeout";
+export const CONTROLLED_FAILURE_CAUSES = [
+  "activation", "provider", "session", "output", "timeout",
+] as const;
+export type ControlledFailureCause = (typeof CONTROLLED_FAILURE_CAUSES)[number];
 
 /** Production-owned typed failure carried on a resolved turn result. */
 export type RoleTurnKnownFailure = {

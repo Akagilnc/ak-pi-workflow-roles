@@ -206,15 +206,18 @@ function recordAttemptId(record: { subject?: unknown; payload?: unknown }): stri
   return undefined;
 }
 
+/** An actual seal or audit-escalation event, not a presentation projection. */
+function isSealedRecord(record: SitianRecord): boolean {
+  if (record.kind === "sealed") return true;
+  if (record.kind !== "outcome") return false;
+  const payload = record.payload as { type?: string; outcome?: string } | undefined;
+  return payload?.type === "outcome" && payload.outcome === "audit-escalation";
+}
+
 /**
- * True when the given attemptId itself already produced a sealed or
- * audit-escalation submission (#836 r12 class 2). This is a separate
- * freshness signal, not a presentation filter — run-scoped readers
- * still present every original payload honestly
- * (#836: attemptId is a recording tag, not a visibility gate). Settlement
- * consumes this only to stop a prior attempt's stale acceptance from
- * outranking the current attempt's own real host-turn failure signal
- * (#637 original intent, restored narrowly).
+ * True when this court itself produced a seal (#836 r12 class 2).
+ * A recording tag is only a freshness signal, never a presentation filter;
+ * run-scoped history remains visible beside the current reply (#879).
  */
 export async function hasFreshAttemptSubmission(
   cwd: string,
@@ -223,15 +226,18 @@ export async function hasFreshAttemptSubmission(
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<boolean> {
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
-  return owned.some((record) => {
-    if (recordAttemptId(record) !== attemptId) return false;
-    if (record.kind === "sealed") return true;
-    if (record.kind === "outcome") {
-      const payload = record.payload as { type?: string; outcome?: string } | undefined;
-      return payload?.type === "outcome" && payload.outcome === "audit-escalation";
-    }
-    return false;
-  });
+  return owned.some((record) => recordAttemptId(record) === attemptId && isSealedRecord(record));
+}
+
+/** Raw sealed-event count across a run: unlike the presentation projection,
+ * separate host turns remain distinct even if their tool call keys coincide. */
+export async function countSealedSubmissionRecords(
+  cwd: string,
+  runId: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): Promise<number> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
+  return owned.filter(isSealedRecord).length;
 }
 
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {

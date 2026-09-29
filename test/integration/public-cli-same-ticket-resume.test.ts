@@ -483,7 +483,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
 
     // 6) After open court seals non-pass, further bare resume still reaches the
-    // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
+    // host (#833 pass-through). Without a new seal, history cannot be this turn's reply.
     const turnsBeforeBare = turn;
     const bareAfterSeal = await runAkRole(["resume", runId], {
       home,
@@ -499,13 +499,11 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "sealed bare resume must reach the host",
     );
     assert.equal(bareAfterSeal.exitCode, 0);
-    assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "no_receipt");
     assert.deepEqual(
-      bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
-        : [],
+      bareAfterSeal.terminal?.submissions?.map((row) => (row as { status?: unknown }).status),
       ["pass", secondCourtSeal.status],
-      "post-court pass-through presents full history with the current non-pass last",
+      "post-court pass-through retains old replies only as history",
     );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
@@ -784,8 +782,8 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
             },
           })(extraArgs, options);
         }
-        if (turn === 2) {
-          // Same-parent court: exit without seal so prior pass does not wash.
+        if (turn === 2 || turn === 4 || turn === 5) {
+          // Same-parent court and later bare resumes: none seals a new reply.
           return scriptedTerminatingToolSession({
             role: "auditor",
             toolName: AUDITOR_OUTPUT_TOOL_NAME,
@@ -974,6 +972,27 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       2,
       "same-ticket distinct parent must leave two auditor run directories",
     );
+    const bare = await runAkRole(["resume", "--model", "faux/live-auditor:low", seen.at(-1)!.runId], {
+      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
+    });
+    assert.equal(turn, 4);
+    assert.equal(bare.exitCode, 0);
+    assert.equal(bare.terminal?.roleOutcome.kind, "no_receipt",
+      "a bare host turn with no new seal must not present an older audit as this turn's reply");
+    assert.equal(bare.terminal?.submissions?.length, 1, "prior pass remains on the historical carrier");
+    const { recordFile: bareHistoryFile } = resolveSitianRecordPath({
+      level: "event", kind: "attempt-history",
+      sessionParent: join(seen[2]!.runDirectory, "session", "session.jsonl"),
+    });
+    assert.deepEqual((await readSitianRecords(bareHistoryFile)).records.map((row) =>
+      (row.payload as { outcome?: { kind?: string } }).outcome?.kind),
+      ["accepted", "no_receipt"], "bare no-seal must not re-record the old pass");
+    const again = await runAkRole(["resume", "--model", "faux/live-auditor:low", seen[2]!.runId], {
+      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
+    });
+    assert.equal(turn, 5);
+    assert.equal(again.terminal?.roleOutcome.kind, "no_receipt",
+      "clearing the prior report must not let the next bare turn revive the old pass");
     void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });

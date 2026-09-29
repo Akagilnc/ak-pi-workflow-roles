@@ -14,6 +14,7 @@ import {
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 
 import {
+  countSealedSubmissionRecords,
   hasFreshAttemptSubmission,
   readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
@@ -22,7 +23,7 @@ import {
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
-import type { RoleTurnKnownFailure } from "../host-contracts.ts";
+import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
@@ -222,20 +223,31 @@ async function sealedLedgerOutcome(
  * (submissions/payloads) always stays run-scoped and unfiltered — this is a
  * control-flow signal only, consumed to keep a stale prior-attempt
  * acceptance from outranking this attempt's own real host-turn failure.
- * Absent a courtAttemptId scope there is no distinct prior attempt to stale
- * against, so this defaults true (unchanged behavior for ordinary,
- * non-court dispatches).
+ * A bare host resume has no court tag: compare sealed-row counts before and
+ * after that turn. Callers without a host-turn baseline still read the run.
  */
 export async function attemptProducedFreshSubmission(
   admitted: AdmittedRoleInvocation,
   scope?: SettlementCourtScope,
+  beforeTurnSeals?: number,
 ): Promise<boolean> {
-  if (scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0) return true;
-  return hasFreshAttemptSubmission(
-    admitted.projectRoot,
-    admitted.runId,
-    scope.courtAttemptId,
-    ledgerReadScope(admitted, scope),
+  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
+    return hasFreshAttemptSubmission(
+      admitted.projectRoot,
+      admitted.runId,
+      scope.courtAttemptId,
+      ledgerReadScope(admitted, scope),
+    );
+  }
+  // A bare resume has no court tag. Compare only sealed rows around its actual
+  // host turn, not receipt versions or the run's older accepted conclusion.
+  return beforeTurnSeals === undefined
+    || (await recordedSealedSubmissionCount(admitted)) > beforeTurnSeals;
+}
+
+export async function recordedSealedSubmissionCount(admitted: AdmittedRoleInvocation): Promise<number> {
+  return countSealedSubmissionRecords(
+    admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
   );
 }
 
@@ -494,12 +506,8 @@ function thrownIdentity(error: Error): {
   return identity;
 }
 
-const CONTROLLED_FAILURE_CAUSES: ReadonlySet<unknown> = new Set<ControlledFailureCause>([
-  "provider", "activation", "session", "output", "timeout",
-]);
-
 function isControlledFailureCause(cause: unknown): cause is ControlledFailureCause {
-  return CONTROLLED_FAILURE_CAUSES.has(cause);
+  return CONTROLLED_FAILURE_CAUSES.some((known) => known === cause);
 }
 
 /** Production-owned typed thrown failure (explicit-internal channel). */
@@ -2805,21 +2813,6 @@ export async function publishFailureArtifacts(
   );
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
-  // #953: failure face must not leave a prior success report as the durable view.
-  // Clear failure must not strand the original controlled failure outside
-  // settlement — same as history failure below, it rides publicationIssues
-  // and unique fallback still places the durable error (locked artifacts/ +
-  // prior face must not abort publishFailureArtifacts).
-  try {
-    await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-  } catch (error) {
-    priorIssues.push(
-      publicationAttemptFromError(
-        roleRunArtifactsDirectory(admitted.runDirectory),
-        error,
-      ),
-    );
-  }
   // #419: a dispatched failure joins history before fixed-name views change.
   // Re-projecting an existing failure does not append. History write failure
   // rides publicationIssues rather than stranding the controlled failure.
@@ -2831,6 +2824,15 @@ export async function publishFailureArtifacts(
     } catch (error) {
       priorIssues.push(publicationAttemptFromError(sessionFile, error));
     }
+  }
+  // #953: clear the prior success face, but a failure here must not strand
+  // the original controlled cause; preserve the issue beside the fallback.
+  try {
+    await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+  } catch (error) {
+    priorIssues.push(publicationAttemptFromError(
+      roleRunArtifactsDirectory(admitted.runDirectory), error,
+    ));
   }
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
