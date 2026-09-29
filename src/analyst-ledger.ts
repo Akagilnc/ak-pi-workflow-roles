@@ -373,6 +373,13 @@ export type AnalystReadableRunFacts = {
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
 
+/** Total wall clock for exactly the readable runs supplied by the caller. */
+export function sumAnalystRunWallMs(runs: readonly AnalystReadableRunFacts[]): number {
+  let total = 0;
+  for (const run of runs) total += run.frameSpan.wallMs;
+  return total;
+}
+
 /** Shared identity order for readable legs and their page/metric projections. */
 export function compareAnalystLegs(
   a: Pick<AnalystReadableRunFacts, "book" | "role" | "runId">,

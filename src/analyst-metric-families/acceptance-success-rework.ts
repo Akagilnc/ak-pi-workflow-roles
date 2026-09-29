@@ -9,7 +9,7 @@
  * - success rate den = success-eligible accepted legs (no-receipt out; planned out)
  * - planned = plan-duty acceptance; never success numerator or denominator
  */
-import { compareAnalystLegs, type AnalystReadableRunFacts, type AnalystRunTerminalFace } from "../analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts, type AnalystRunTerminalFace } from "../analyst-ledger.ts";
 import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 import { packagedAnalystTerminal } from "../packaged-role-registry.ts";
@@ -294,12 +294,10 @@ function aggregateByRole(legs: readonly AnalystAcceptanceLeg[]): AnalystRoleAcce
   });
 }
 
-function reworkLens(legs: readonly AnalystAcceptanceLeg[]): AnalystReworkLens {
+function reworkLens(legs: readonly AnalystAcceptanceLeg[], totalWallMs: number): AnalystReworkLens {
   let reworkWallMs = 0;
-  let totalWallMs = 0;
   let reworkLegCount = 0;
   for (const leg of legs) {
-    totalWallMs += leg.wallMs;
     if (leg.rework) {
       reworkWallMs += leg.wallMs;
       reworkLegCount += 1;
@@ -323,7 +321,7 @@ export function buildAcceptanceSuccessReworkSection(
     kind: "analyst-acceptance-success-rework",
     legs,
     byRole: aggregateByRole(legs),
-    rework: reworkLens(legs),
+    rework: reworkLens(legs, sumAnalystRunWallMs(runs)),
   };
 }
 

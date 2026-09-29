@@ -6,7 +6,7 @@
  * Registers by file drop under analyst-metric-families/ (A2 discovery).
  */
 import { medianNumber } from "../analyst-median.ts";
-import { compareAnalystLegs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
 /** One readable leg's session-frame wall clock (first usable → last usable). */
@@ -65,14 +65,11 @@ const legWallClockFamily: AnalystMetricFamilyModule = {
       return undefined;
     }
 
-    let totalElapsedMs = 0;
-    for (const wallMs of walls) totalElapsedMs += wallMs;
-
     const section: AnalystLegWallClockSection = {
       kind: "analyst-leg-wall-clock",
       ranking,
       medianWallMs,
-      totalElapsedMs,
+      totalElapsedMs: sumAnalystRunWallMs(input.runs),
     };
     return { legWallClock: section };
   },

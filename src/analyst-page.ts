@@ -15,7 +15,7 @@ import {
   ensureRealDirectoryTree,
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
-import { compareAnalystLegs, type AnalystReadableRunFacts } from "./analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts } from "./analyst-ledger.ts";
 import { loadAnalystIssueMetricFamilies } from "./analyst-metric-families.ts";
 import { composeAnalystMetricFamilySections } from "./analyst-metric-family.ts";
 
@@ -268,10 +268,9 @@ export function summarizeAnalystRunEfficiency(
   readonly totalElapsedMs: number;
   readonly lastActivityAt: AnalystOptionalTimestamp;
 } {
-  let totalElapsedMs = 0;
+  const totalElapsedMs = sumAnalystRunWallMs(runs);
   let latestEndedAt: string | undefined;
   for (const run of runs) {
-    totalElapsedMs += run.frameSpan.wallMs;
     const endedAt = run.frameSpan.endedAt;
     if (latestEndedAt === undefined || endedAt > latestEndedAt) {
       latestEndedAt = endedAt;
