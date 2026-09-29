@@ -15,6 +15,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { treeFingerprint } from "../helpers/factory-board-shared.ts";
+import { manualScheduler } from "../helpers/manual-scheduler.ts";
 import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
@@ -24,7 +25,6 @@ import {
   startTicketTrajectoryPage,
   writeTicketTrajectoryPage,
   type TicketSnapshot,
-  type TrajectoryScheduler,
 } from "../../src/ticket-trajectory.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 
@@ -59,20 +59,6 @@ function hasJsonlFailure(path: string, line: number, prefixRows: number) {
     assert.equal(err.prefixRows.length, prefixRows);
     return true;
   };
-}
-
-function manualScheduler(): { scheduler: TrajectoryScheduler; ticks: Array<() => void> } {
-  const ticks: Array<() => void> = [];
-  const scheduler: TrajectoryScheduler = {
-    every(_ms, tick) {
-      ticks.push(tick);
-      return () => {
-        const idx = ticks.indexOf(tick);
-        if (idx >= 0) ticks.splice(idx, 1);
-      };
-    },
-  };
-  return { scheduler, ticks };
 }
 
 test("unique seam renders #127 fixture trajectory: stations, attempts, trusted results only", async () => {

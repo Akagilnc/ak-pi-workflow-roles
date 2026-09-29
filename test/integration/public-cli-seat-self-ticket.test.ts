@@ -399,35 +399,6 @@ test("public countersign without a diary binds its own typed receipt", async () 
   }, { seedDiary: false });
 });
 
-test("countersign rejects --ticket at the public entry (exit 2)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const countersign = await runPublicInstructionSeat(
-      ["--ticket", "582", "裁"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(_request: RoleTurnRequest) {
-            throw new Error("turn must not start on unknown option");
-          },
-        },
-        createRunId: () => "01a063500-0000-7000-8000-00000000rej1",
-      },
-      captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(countersign.exitCode, 2);
-    assert.equal(countersign.admitted, undefined);
-  });
-});
-
 test("notary keeps its bound source-run ticket over a different receipt assertion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");

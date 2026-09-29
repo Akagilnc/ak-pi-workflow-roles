@@ -18,6 +18,7 @@ import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 
 test("#836 host abort coexists with recorded officer payload — does not wash to bounce", async () => {
   const bounce = { status: "continue", findings: ["keep-me"] };
+  const diagnostic = "This operation was aborted";
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -32,7 +33,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
           kind: "failure",
           role: "notary",
           cause: "output",
-          diagnostic: "This operation was aborted",
+          diagnostic,
           decisiveFacts: { cause: "output" },
         },
         navigator: { disposition: "no-advice" },
@@ -44,7 +45,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
   });
   assert.equal(projected.result.status, "transport_failure");
   if (projected.result.status === "transport_failure") {
-    assert.match(projected.result.reason, /This operation was aborted/);
+    assert.equal(projected.result.reason, diagnostic);
     assert.deepEqual(projected.result.submission, [bounce]);
   }
 });

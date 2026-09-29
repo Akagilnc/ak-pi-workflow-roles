@@ -31,7 +31,6 @@ import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../..
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { summonPublicRole } from "../../src/public-role-summons.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   relocateAdmittedRunToTicket,
@@ -216,17 +215,13 @@ test("countersign admission ignores attachment frontmatter", async () => {
 
 });
 
-test("countersign argv rejects unknown options", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--bogus", "裁"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
+test("countersign public entry rejects --ticket before admitting a run", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--bogus", "裁"],
+    const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--ticket", "582", "裁"],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejected.exitCode, 2);

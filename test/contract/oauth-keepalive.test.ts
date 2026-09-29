@@ -35,23 +35,7 @@ import {
   flushEventLoopTurns,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-
-function manualScheduler(): {
-  scheduler: OAuthKeepaliveScheduler;
-  ticks: Array<() => void>;
-} {
-  const ticks: Array<() => void> = [];
-  const scheduler: OAuthKeepaliveScheduler = {
-    every(_ms, tick) {
-      ticks.push(tick);
-      return () => {
-        const idx = ticks.indexOf(tick);
-        if (idx >= 0) ticks.splice(idx, 1);
-      };
-    },
-  };
-  return { scheduler, ticks };
-}
+import { manualScheduler } from "../helpers/manual-scheduler.ts";
 
 type OAuthCounters = {
   refreshCount: number;

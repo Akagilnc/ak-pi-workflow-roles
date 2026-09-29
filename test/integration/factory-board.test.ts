@@ -16,6 +16,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { manualScheduler } from "../helpers/manual-scheduler.ts";
 
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
@@ -28,7 +29,6 @@ import {
   startFactoryBoardPage,
   writeFactoryBoardPage,
   type FactoryBoardBook,
-  type FactoryBoardScheduler,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
 import { loadTicketTrajectoryRuns } from "../../src/ticket-trajectory.ts";
@@ -104,23 +104,6 @@ class BoardSortDocument {
  * rendered HTML (same script body the browser runs — not the TS comparator alone).
  */
 
-
-function manualBoardScheduler(): {
-  scheduler: FactoryBoardScheduler;
-  ticks: Array<() => void>;
-} {
-  const ticks: Array<() => void> = [];
-  const scheduler: FactoryBoardScheduler = {
-    every(_ms, tick) {
-      ticks.push(tick);
-      return () => {
-        const idx = ticks.indexOf(tick);
-        if (idx >= 0) ticks.splice(idx, 1);
-      };
-    },
-  };
-  return { scheduler, ticks };
-}
 
 
 function sampleSnapshot(): BoardSnapshot {
@@ -2065,7 +2048,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
     let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-    const { scheduler, ticks } = manualBoardScheduler();
+    const { scheduler, ticks } = manualScheduler();
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
     const view: FactoryBoardView = {
       ok: true,
@@ -2794,7 +2777,7 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
     let nowMs = Date.parse(RETENTION_NOW);
-    const { scheduler, ticks } = manualBoardScheduler();
+    const { scheduler, ticks } = manualScheduler();
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
 
     const counters = { closedDrainCalls: 0 };
@@ -2948,7 +2931,7 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
       outputPath: join(workspace, "out", "board2.html"),
       refreshBoundarySeconds: 1,
       clock: () => new Date(nowMs),
-      scheduler: manualBoardScheduler().scheduler,
+      scheduler: manualScheduler().scheduler,
     });
     await assert.rejects(failing.started, /snapshot source exploded/);
     await assert.rejects(() => failing.stop(), /snapshot source exploded/);
