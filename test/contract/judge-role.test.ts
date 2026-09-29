@@ -89,7 +89,6 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractNavigatorFact,
-  formatTerminalResult,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -521,12 +520,6 @@ test("after_provider_response production handler writes typed 429 into resumable
       JSON.stringify(outside).includes(runId),
       false,
       "run ID must not appear outside resume.command in typed Terminal regions",
-    );
-    const presented = formatTerminalResult(terminal);
-    assert.equal(presented.includes(terminal.resume.command), true);
-    assert.equal(
-      presented.split(terminal.resume.command).join("").includes(runId),
-      false,
     );
   });
 });

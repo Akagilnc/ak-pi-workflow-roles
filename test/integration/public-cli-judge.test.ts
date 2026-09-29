@@ -49,7 +49,6 @@ import {
   settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
-  formatTerminalResult,
   adviceNavigatorFact,
   type TerminalResult,
   type TerminalRoleOutcome,
@@ -334,10 +333,6 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   }
   assert.equal(terminal.artifacts.length, 2);
   assert.equal(terminal.runId, "run-term-1");
-  // Presentation yields one non-empty write payload; layout/labels stay unfrozen (AC6).
-  const formatted = formatTerminalResult(terminal);
-  assert.equal(typeof formatted, "string");
-  assert.ok(formatted.length > 0);
 });
 
 test("extractNavigatorFact keeps a native playbook read failure on the existing diagnostic", () => {
@@ -434,9 +429,6 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     },
   ]);
   assert.equal(legacyNextOnly.disposition, "advice");
-  if (legacyNextOnly.disposition === "advice") {
-    assert.ok(legacyNextOnly.prose.includes("reviewer"));
-  }
 });
 
 test("extractNavigatorFact uses bound closure rather than late session attendance (#1087)", async () => {

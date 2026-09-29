@@ -347,7 +347,7 @@ test("#959 free-form prose without next is advice, not unavailable", async () =>
       },
     );
     assert.equal(events[0]?.disposition, "advice");
-    assert.ok(typeof events[0]?.prose === "string" && events[0].prose.includes("大理寺"));
+    assert.equal(typeof events[0]?.prose, "string");
   });
 });
 

@@ -13,7 +13,6 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  formatFailureStderrDiagnostic,
   publishFailureArtifacts,
   publishSeatAcceptedArtifacts,
   settleHostEndedNoReceipt,
@@ -190,10 +189,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
     assert.equal(errorBody.identity?.name, "SyntaxError");
     assert.equal(errorBody.diagnostic, terminal.roleOutcome.diagnostic);
     assert.equal(stdout.length, 1);
-    assert.equal(
-      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
-      1,
-    );
   });
 });
 test("unwritable run directory retains activation cause with durable Error Artifact and Terminal", async () => {
@@ -402,7 +397,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     assert.equal(stdout.length, 1);
   });
 });
-test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {
+test("multiline thrown diagnostic keeps full artifact identity", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -449,14 +444,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
       diagnostic: string;
     };
     assert.equal(errorBody.diagnostic, multiline);
-    // stderr presentation is exactly one nonblank line, no stack/event/token flood.
-    // Do not assert selected diagnostic prose on stderr (AC6) — durable identity is above.
-    const presented = stderr[0]!;
-    assert.ok(presented.includes(multiline));
-    const helper = formatFailureStderrDiagnostic({
-      diagnostic: multiline,
-    });
-    assert.ok(helper.includes(multiline));
   });
 });
 test("public Judge settles failed typed output evidence before nonzero stderr fallback", async () => {

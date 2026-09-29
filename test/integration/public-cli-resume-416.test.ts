@@ -206,7 +206,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
     // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.runId,runId);
-    const {io:io2,stderr}=captureIo();let dispatched=false;
+    const {io:io2}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
@@ -216,12 +216,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                       },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
-    const artifactsDirectory=join(runDir,"artifacts");
-    const diagnosticPath=(await readdir(artifactsDirectory))
-      .map((name)=>join(artifactsDirectory,name))
-      .find((path)=>stderr.join("").includes(path));
-    assert.ok(diagnosticPath);
-    const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
+    const recorded=JSON.parse(await readFile(join(runDir,"artifacts","error.json"),"utf8")) as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);

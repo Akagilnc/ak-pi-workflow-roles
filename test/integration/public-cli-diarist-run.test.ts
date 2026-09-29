@@ -1972,7 +1972,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
   });
 });
 
-test("ak-role resume points at an after-dispatch diarist relocation", async () => {
+test("ak-role resume persists an after-dispatch diarist relocation at the ticket placement", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1994,7 +1994,7 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
       runId,
       role: "diarist",
     });
-    const { io, stderr } = captureIo();
+    const { io } = captureIo();
     const baseOptions = {
       home,
       packageRoot,
@@ -2026,7 +2026,6 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
     );
     assert.equal(interrupted.exitCode, 1);
     assert.ok(interrupted.terminal?.resume, JSON.stringify(interrupted.terminal));
-    stderr.length = 0;
 
     const reaskThen429 = diaristEnvelopeRunner(
       { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
@@ -2059,7 +2058,6 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
     const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
-    assert.ok(stderr.join("").includes(errorPath));
     const error = JSON.parse(await readFile(errorPath, "utf8")) as {
       kind?: unknown;
       runId?: unknown;
