@@ -4,7 +4,6 @@
  */
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
-import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -38,10 +37,6 @@ export type CountersignRunEnv = PostAdmissionEnv & {
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
 export type CourtDiaristIdentity =
-  | {
-      readonly kind: "ticket";
-      readonly ticketNumber: number;
-    }
   | { readonly kind: "unbound" }
   | {
       readonly kind: "escalate";
@@ -113,7 +108,7 @@ function courtDiaristEscalateDiagnostic(
   })}`;
 }
 
-/** Env slice shared by court diarist identity summons (countersign / secretariat). */
+/** Env slice for the secretariat's pre-ticket diarist summons. */
 export type CourtDiaristSummonEnv = Pick<
   CountersignRunEnv,
   | "cwd"
@@ -148,11 +143,8 @@ export function courtDiaristEscalated(
 
 /**
  * Invoke public 起居郎 under the court-pipeline quiet face.
- * Returns typed identity: ticket assertion, true-unbound, or escalate.
- * Non-zero exit without escalate status is not rethrown here — caller decides
- * whether refresh must fail or first-entry settles controlled failure.
- * When `boundTicketNumber` is set (typed handoff from countersign), diarist
- * binds under that key before the turn — never mechanical recognition from prose.
+ * Returns escalate or unbound; the secretariat needs no ticket handoff.
+ * Non-zero exit without escalate status is not rethrown here — caller settles controlled failure.
  */
 export async function invokeCourtDiarist(
   input: {
@@ -162,13 +154,11 @@ export async function invokeCourtDiarist(
     readonly attachmentPaths?: readonly string[];
     /** Direct parent run id for durable child lineage (ADR 0010). */
     readonly correlationId?: string;
-    /** Already-verified typed key from countersign (refresh / post-assert handoff). */
-    readonly boundTicketNumber?: number;
   },
   env: CourtDiaristSummonEnv,
   io: CliIo,
 ): Promise<CourtDiaristInvocationResult> {
-  // Quiet face: the countersign caller must not see diarist CLI chatter.
+  // Quiet face: the secretariat caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},
     stderr(text: string) {
@@ -197,9 +187,6 @@ export async function invokeCourtDiarist(
     ...(input.correlationId === undefined
       ? {}
       : { correlationId: input.correlationId }),
-    ...(input.boundTicketNumber === undefined
-      ? {}
-      : { boundTicketNumber: input.boundTicketNumber }),
     // Child seat selects from the composition-root table. Do not pass the
     // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
     ...(env.hostAdapters === undefined
@@ -236,14 +223,6 @@ export async function invokeCourtDiarist(
     };
   }
 
-  const asserted = (result.admitted as { ticketNumber?: number } | undefined)
-    ?.ticketNumber;
-  if (isSafePositiveTicketNumber(asserted)) {
-    return {
-      identity: { kind: "ticket", ticketNumber: asserted },
-      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
-    };
-  }
   return {
     identity: { kind: "unbound" },
     ...(result.admitted === undefined ? {} : { admitted: result.admitted }),

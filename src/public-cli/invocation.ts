@@ -156,16 +156,6 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
 export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
   readonly role: "countersign";
   /**
-   * Historical #871 co-review set; retained for reading existing run records.
-   * New countersign runs do not populate it (ADR 0081).
-   */
-  courtTicketNumbers?: readonly number[];
-  /**
-   * Load-time durable set damage diagnostic (#871 B7). Resume must settle as
-   * countersign controlled failure with this text — never structural exit 2 or main-only.
-   */
-  courtTicketNumbersDamage?: string;
-  /**
    * Parent run directory (#747 / #987 gate same-parent resume). Persisted on first
    * mint when gate supplies parentRunPath; independent of ticket-number lookup.
    */
