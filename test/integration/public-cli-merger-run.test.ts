@@ -46,6 +46,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { Type } from "typebox";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync("git", args, {
@@ -54,13 +55,6 @@ const git = (cwd: string, args: string[], input?: string) =>
     input,
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
-
-function seedGitProject(root: string): void {
-  git(root, ["init", "-b", "main"]);
-  git(root, ["config", "user.name", "Public Table Test"]);
-  git(root, ["config", "user.email", "public-table@test.local"]);
-  git(root, ["commit", "--allow-empty", "-m", "seed"]);
-}
 
 async function conflictedRepository(root: string) {
   const { source, target } = await materializeConflictedRepo(root);

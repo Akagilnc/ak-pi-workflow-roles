@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -45,10 +44,7 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project);
-    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project, stdio: "ignore" });
+    seedGitProject(project);
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
 
@@ -310,13 +306,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project);
-    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
-      cwd: project,
-      stdio: "ignore",
-    });
+    seedGitProject(project);
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
     const credentials: CredentialProviders = { "openai-codex": true, xai: true };

@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
+import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
@@ -842,13 +843,14 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     let captured: string[] | undefined;
     let capturedStdin: string | undefined;
     let turnCwd: string | undefined;
+    const instruction = "Review the latest commit on both axes.";
     const { io, stdout } = captureIo();
     const result = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
       "--project", project, "--base", "HEAD~1", "--lens", "correctness",
       "--authority-ref", "CLAUDE.md",
       "--authority-ref", "docs/adr/0001-roles-grow-by-demand.md",
-      "Review the latest commit on both axes.",
+      instruction,
     ], {
       packageRoot,
       home,
@@ -874,6 +876,23 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.equal(realpathSync(turnCwd!), realpathSync(project));
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
+    // The skill's formal args and the caller's own words must reach the host,
+    // not merely the invocation ledger or the internal argv.
+    const dialogue = readUserDialogueStdin(capturedStdin ?? "");
+    const formalArgs = dialogue.split("\n", 1)[0]!.split(/\s+/);
+    const { values, positionals } = parseArgs({
+      args: formalArgs,
+      options: {
+        base: { type: "string" },
+        lens: { type: "string" },
+        authority: { type: "string", multiple: true },
+      },
+    });
+    assert.deepEqual(positionals, []);
+    assert.equal(values.base, "HEAD~1");
+    assert.equal(values.lens, "correctness");
+    assert.deepEqual(values.authority, ["CLAUDE.md", "docs/adr/0001-roles-grow-by-demand.md"]);
+    assert.ok(dialogue.slice(dialogue.indexOf("\n")).includes(instruction));
     const bookKey = resolveBookKeyFromGit(project);
     const evidence = JSON.parse(
       await readFile(
@@ -884,7 +903,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         "utf8",
       ),
     ) as { callerProvenance?: string };
-    assert.equal(evidence.callerProvenance, "Review the latest commit on both axes.");
+    assert.equal(evidence.callerProvenance, instruction);
   });
 });
 

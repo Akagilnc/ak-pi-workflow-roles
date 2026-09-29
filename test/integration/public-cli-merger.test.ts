@@ -8,7 +8,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * merge-only method, settle completed|escalate on shared success interface.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -39,27 +38,11 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-merger-", scenario);
-}
-
-function git(cwd: string, args: string[], opts: { input?: string } = {}): string {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-    ...(opts.input === undefined ? {} : { input: opts.input }),
-  }).trim();
-}
-
-function seedGitProject(root: string): void {
-  git(root, ["init", "-b", "main"]);
-  git(root, ["config", "user.email", "merger@test.local"]);
-  git(root, ["config", "user.name", "Merger Test"]);
-  git(root, ["commit", "--allow-empty", "-m", "seed"]);
 }
 
 function admitMergerInvocation(options: AdmitMergerInvocationOptions) {

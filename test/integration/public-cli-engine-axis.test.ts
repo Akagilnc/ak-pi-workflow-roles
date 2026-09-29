@@ -13,7 +13,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Zero assertions on free-prose delivery wording / layout.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -237,10 +236,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
 
     // Seed persistent model so set-engine is legal.
     const seed = captureIo();
@@ -694,10 +690,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
 
     await runAkRole(
       ["config", "set", "fixer", "openai-codex/gpt-5.6-sol:high"],
@@ -819,14 +812,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
     await withTempHome(async (home) => {
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
-      execFileSync("git", ["init", "-b", "main"], { cwd: project });
-      execFileSync("git", ["config", "user.email", "engine@test.local"], {
-        cwd: project,
-      });
-      execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
-        cwd: project,
-      });
+      seedGitProject(project);
 
       const seed = captureIo();
       const setModel = await runAkRole(
@@ -1285,10 +1271,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
     const OPAQUE_MODEL = "cursor-grok-4.6-high";

@@ -771,6 +771,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     await savePublicCliConfig(config, home);
     // ADR 0049 host correlation channel remains optional env; no lease mint.
     const attachment = join(home, "note.txt");
+    const instruction = "Decide whether the attachment is sufficient.";
     await writeFile(attachment, "freeze-me", "utf8");
 
     const { io, stdout, stderr } = captureIo();
@@ -784,7 +785,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         attachment,
         "--project",
         project,
-        "Decide whether the attachment is sufficient.",
+        instruction,
       ],
       {
         packageRoot,
@@ -934,7 +935,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         runDirectory: runDir,
         projectRoot: project,
         bookKey,
-        instruction: "Decide whether the attachment is sufficient.",
+        instruction,
         instructionEmpty: false,
       }),
       piDurablePrincipalAuthority,
@@ -977,6 +978,10 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");
     const frozenPath = join(runDir, "attachments", "00-note.txt");
+    const delivered = readUserDialogueStdin(capturedStdin ?? "");
+    assert.ok(delivered.includes(instruction));
+    assert.ok(delivered.includes(frozenPath));
+    assert.equal(delivered.includes(attachment), false);
     assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
   });
 });
