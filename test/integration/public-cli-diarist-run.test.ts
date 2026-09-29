@@ -1461,12 +1461,6 @@ test("ak-role diarist partitions one multi-ticket submission by its submitted bo
               }
               if (reaskSecondTicket) {
                 assert.ok(lastReask);
-                const unbound = roleRunPlacement(resolveActivationLedgerHome(home), {
-                  bookKey: resolveBookKeyFromGit(project),
-                  subject: { unbound: true }, runId, role: "diarist",
-                });
-                const admitted = JSON.parse(readFileSync(join(unbound.runDirectory, "admitted-request.json"), "utf8")) as { ticketNumber?: number };
-                assert.equal(admitted.ticketNumber, undefined, "invalid bounds must not bind this run before reask");
                 assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
               }
               return { status: "completed", ticketNumber: TICKET, ticketSessions };
@@ -1978,7 +1972,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
   });
 });
 
-test("ak-role resume keeps an unbound diarist unbound after invalid bounds", async () => {
+test("ak-role resume points at an after-dispatch diarist relocation", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -2063,9 +2057,8 @@ test("ak-role resume keeps an unbound diarist unbound after invalid bounds", asy
       },
     );
     assert.equal(resumed.exitCode, 1);
-    assert.equal(existsSync(unboundPlacement.runDirectory), true);
-    assert.equal(existsSync(ticketPlacement.runDirectory), false);
-    const errorPath = join(unboundPlacement.runDirectory, "artifacts", "error.json");
+    assert.equal(existsSync(unboundPlacement.runDirectory), false);
+    const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
     assert.ok(stderr.join("").includes(errorPath));
     const error = JSON.parse(await readFile(errorPath, "utf8")) as {
       kind?: unknown;

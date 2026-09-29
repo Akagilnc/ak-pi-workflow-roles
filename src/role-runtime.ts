@@ -866,6 +866,11 @@ export function createDiaristRoleRuntime(
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
+        if (ticketNumber !== undefined) {
+          if (coords.boundTicketNumber === undefined) {
+            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
+          }
+        }
         const singleSessions = submitted && !Object.hasOwn(submitted, "ticketSessions")
           ? projectDiaristSessions(parameters)
           : undefined;
@@ -894,11 +899,6 @@ export function createDiaristRoleRuntime(
             );
           }
           throw error;
-        }
-        // Only a usable completed projection may turn this run's own assertion
-        // into a durable binding. Reasks must retain the admission-time identity.
-        if (ticketNumber !== undefined && coords.boundTicketNumber === undefined) {
-          await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
         }
         return parameters;
       },
