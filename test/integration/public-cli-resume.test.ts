@@ -1047,6 +1047,44 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
           assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
         }
       }
+
+      // #833 also holds for an older, successfully published run whose
+      // run-state lacks the newly added seal watermark.
+      const legacyRunId = "run-legacy-published-poisoned-001";
+      const legacy = sealedPublicationBlockedHost("published on older package", { blockReportPublication: false });
+      const published = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "published before upgrade"], {
+        packageRoot, home, cwd: project, createRunId: () => legacyRunId,
+        credentials: { "openai-codex": true, xai: true }, io: captureIo().io, roleTurnHost: legacy.host,
+      });
+      assert.equal(published.terminal?.roleOutcome.kind, "accepted");
+      const legacyDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${legacyRunId}@judge`);
+      const legacyStatePath = join(legacyDir, "run-state.json");
+      const legacyState = JSON.parse(await readFile(legacyStatePath, "utf8")) as Record<string, unknown>;
+      delete legacyState.publishedSealedCount;
+      await writeFile(legacyStatePath, `${JSON.stringify(legacyState)}\n`, "utf8");
+      const poisonedLedgerPath = join(legacyDir, "session", "submission-ledger", "records.jsonl");
+      await rm(poisonedLedgerPath, { force: true });
+      await mkdir(poisonedLedgerPath);
+      let legacyDispatches = 0;
+      const poisonedLegacy = await runAkRole(["resume", "--model", "test/caller-seat:high", legacyRunId], {
+        packageRoot, home, cwd: project, io: captureIo().io,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot, principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            legacyDispatches += 1;
+            return { code: 0, stderr: "", timedOut: false, args: [...args] };
+          },
+        }),
+      });
+      assert.equal(legacyDispatches, 1, "legacy watermark migration cannot block the host on a poisoned ledger");
+      assert.equal(poisonedLegacy.exitCode, 1);
+      const legacyFailureFace = await readRunTerminalArtifact(legacyDir);
+      assert.equal(legacyFailureFace.status, "present");
+      if (legacyFailureFace.status === "present") {
+        assert.equal(legacyFailureFace.file, "error.json");
+        assert.equal((legacyFailureFace.body.identity as { code?: unknown } | undefined)?.code, "EISDIR");
+      }
     } finally {
       await restoreArtifactsWritable();
     }
