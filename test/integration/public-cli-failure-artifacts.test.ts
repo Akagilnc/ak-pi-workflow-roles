@@ -20,6 +20,7 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -345,6 +346,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     seedGitProject(project);
     const { io, stdout } = captureIo();
     const acceptedDetails = { status: "converged", note: "ok" };
+    let sealedSessionFile = "";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then stderr.log blocked"],
       {
         packageRoot,
@@ -358,6 +360,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const runDir = join(sessionDir, "..");
+            sealedSessionFile = join(sessionDir, "session.jsonl");
             // stderr.log as a directory makes the post-admission writeFile
             // raise EISDIR — even though the child accepted a lawful verdict.
             await mkdir(join(runDir, "stderr.log"), { recursive: true });
@@ -401,6 +404,14 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       );
     }
     assert.equal(stdout.length, 1);
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event", kind: "attempt-history", sessionParent: sealedSessionFile,
+    });
+    const outcomes = (await readSitianRecords(recordFile)).records.map((row) =>
+      (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
+    assert.deepEqual(outcomes,
+      Array.from({ length: (result.terminal?.autoResumeCount ?? 0) + 1 }, () => "failure"),
+      "each dispatched host turn has one final attempt result");
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {

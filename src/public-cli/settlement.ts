@@ -133,6 +133,8 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
 export type SettlementCourtScope = {
   /** Only the dispatched host turn may record this attempt; later reads are projections. */
   readonly recordAttemptHistory?: true;
+  /** Inspect a candidate without rewriting history or terminal artifact faces. */
+  readonly previewOnly?: true;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -314,7 +316,7 @@ async function settleNoReceiptTerminal(
       roleOutcome,
     );
   }
-  await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+  if (scope?.previewOnly !== true) await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return withOptionalGateProjection({
     roleOutcome,
     navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
@@ -2289,7 +2291,9 @@ async function finishLawfulSeat(
   roleOutcome: TerminalRoleOutcome,
   scope: SettlementCourtScope | undefined,
 ): Promise<TerminalResult> {
-  const artifacts = await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
+  const artifacts = scope?.previewOnly === true
+    ? []
+    : await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
   const terminal = await withOptionalGateProjection({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
@@ -2946,7 +2950,9 @@ export async function settleFailureTerminalResult(
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished, options.recordAttemptHistory === true);
+  const artifacts = options.previewOnly === true
+    ? []
+    : await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished, options.recordAttemptHistory === true);
   const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),

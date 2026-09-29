@@ -345,7 +345,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true },
+    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -677,12 +677,20 @@ export async function dispatchPostAdmissionTurn<
    * lease release — success and failure alike. When a primary failure terminal already
    * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
    */
+  const courtScope = {
+    ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+      ? {} : { courtAttemptId: request.courtAttemptId }),
+    ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
+      ? {} : { invocationScopeId: request.invocationScopeId }),
+  };
+  let pendingSettlement: "sealed" | "no_receipt" | undefined;
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
-    // #855: re-read cancel before afterDispatch finalization — never present
-    // lawful success after a catchable process signal. skipRunStateWrite: run-state
+    // #855: re-read cancel before committing the terminal and afterDispatch.
+    // A signal after the history-first commit cannot retroactively erase it.
+    // skipRunStateWrite: run-state
     // may already be terminal from a prior lawful persist; do not reopen as resumable.
     const cancelBeforeFinish = processCancelSignalName(env.signal);
     if (
@@ -712,6 +720,39 @@ export async function dispatchPostAdmissionTurn<
         skipAutoResume: true as const,
         ...deferredPersist,
       };
+    }
+    // The last cancellation check precedes the one durable settlement. A preview
+    // never publishes pointers or history; a superseding failure owns this turn.
+    if (pendingSettlement !== undefined && result.terminal !== undefined
+      && isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)) {
+      try {
+        const terminal = pendingSettlement === "sealed"
+          ? await adapters.trySettle(admitted, env.principalAuthority,
+              { ...courtScope, recordAttemptHistory: true })
+          : await attachRecordedSubmissions(admitted,
+              await settleHostEndedNoReceipt(admitted, env.principalAuthority,
+                { ...courtScope, recordAttemptHistory: true }) as T,
+              courtScope);
+        if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
+        result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
+        if (pendingSettlement === "sealed" && terminal.roleOutcome.kind === "accepted"
+          && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
+          try {
+            await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+          } catch (error) {
+            // The accepted attempt is already durable; cleanup is diagnostic only.
+            await recordBestEffortPostDispatchDiagnostic(admitted, env,
+              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`, io);
+          }
+        }
+      } catch (error) {
+        result = {
+          ...(await settleAfterTurnStarted(admitted,
+            withEngineDetourInvocationScope({ timedOut: false, code: null, stderr: "", thrown: error }, request.invocationScopeId),
+            adapters, env.principalAuthority, io, persistRunState)),
+          turnDispatched: true as const, ...deferredPersist,
+        };
+      }
     }
     try {
       // #858 / #1071: the first identifiable ticketNumber field declaration
@@ -937,18 +978,9 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    const courtScope = {
-      recordAttemptHistory: true as const,
-      ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-        ? {} : { courtAttemptId: request.courtAttemptId }),
-      ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
-        ? {} : { invocationScopeId: request.invocationScopeId }),
-    };
-
-    // Single complete boundary (#840 r9 判词 class 1): resolving the
-    // host/runner failure facts, trySettle, its shouldPresent gate, and the
-    // accepted-settlement cleanup all settle through this one catch — a
-    // throw from any of them (including the session-file decode itself)
+    // Single preview boundary (#840 r9 判词 class 1): resolving the
+    // host/runner failure facts, trySettle and its shouldPresent gate all
+    // settle through this catch. A throw (including session-file decode)
     // still routes through settleAfterTurnStarted's TurnDispatchedFailure
     // instead of losing turnDispatched to an uncaught throw. The facts are
     // resolved before trySettle (#836) so an already-accepted settlement is
@@ -1001,7 +1033,7 @@ export async function dispatchPostAdmissionTurn<
         || resolution.knownFailure !== undefined;
       // Settlement already attaches the full run history; do not read the ledger
       // again on this normal path. Failure and no-receipt below attach separately.
-      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
+      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
       // recording tag, not a visibility gate — settlement still surfaces
@@ -1041,28 +1073,6 @@ export async function dispatchPostAdmissionTurn<
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {
-        // This court sealed — drop open-court pointer (bare resume no longer continues it).
-        if (
-          settled.roleOutcome.kind === "accepted" &&
-          request.courtAttemptId !== undefined &&
-          request.courtAttemptId.length > 0
-        ) {
-          try {
-            await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-          } catch (error) {
-            // Settlement already sealed accepted — a cleanup failure here must
-            // not erase that fact or make the caller replay this court's
-            // summons over already-delivered work (#840 已交劳动只整理终局不重做).
-            // Preserve the cleanup failure as a post-dispatch diagnostic; the
-            // accepted settlement remains authoritative (#840 r9 判词 class 1).
-            await recordBestEffortPostDispatchDiagnostic(
-              admitted,
-              env,
-              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`,
-              io,
-            );
-          }
-        }
         settledOutcome = {
           exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
           admitted,
@@ -1122,6 +1132,7 @@ export async function dispatchPostAdmissionTurn<
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
       // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
+      pendingSettlement = "sealed";
       return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
@@ -1192,7 +1203,7 @@ export async function dispatchPostAdmissionTurn<
 
     const noReceipt = await attachRecordedSubmissions(
       admitted,
-      await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
+      await settleHostEndedNoReceipt(admitted, env.principalAuthority, { ...courtScope, previewOnly: true }) as T,
       courtScope,
     );
     // #855: cancel during no_receipt settlement window is not lawful success.
@@ -1225,6 +1236,7 @@ export async function dispatchPostAdmissionTurn<
       }
     }
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
+    pendingSettlement = "no_receipt";
     return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
