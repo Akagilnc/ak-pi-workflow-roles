@@ -162,11 +162,6 @@ export async function rehomeUnboundTicketProvenance(
   await unlink(source);
 }
 
-export type ReprojectTicketProvenanceResult = {
-  readonly recordFile: string;
-  readonly lines: readonly TicketProvenanceLine[];
-};
-
 /**
  * Resolve a bound endpoint against this round's session lines.
  * id → first physical line carrying that native id; line → that 1-based line.
@@ -327,53 +322,45 @@ async function projectSessionRanges(input: {
 }
 
 /**
- * Append dialogue projection from LLM-submitted bounds into records.jsonl.
+ * Project every submitted boundary before appending any ticket's record.
  * #1090: 纯追加——不回读已成录历史查重、不折叠、不刷新；同一区间再次提交也留下新的追加记录。
  * 证不出的 body 原字节原样留卷。
  */
-export async function reprojectTicketProvenance(input: {
-  readonly ticketNumber: number | null;
+export async function reprojectTicketProvenanceBatch(input: {
   readonly cwd: string;
   readonly home?: string;
   readonly runDirectory?: string;
-  readonly sessions: readonly TicketProvenanceSession[];
-}): Promise<ReprojectTicketProvenanceResult> {
-  const recordInput = ticketProvenanceRecordInput(
-    input.ticketNumber,
-    input.cwd,
-    input.home,
-    input.runDirectory,
-  );
-  const resolved = resolveSitianRecordPath(recordInput);
-  if (input.sessions.length === 0) {
-    return {
-      recordFile: resolved.recordFile,
-      lines: [],
-    };
+  readonly tickets: readonly {
+    readonly ticketNumber: number | null;
+    readonly sessions: readonly TicketProvenanceSession[];
+  }[];
+}): Promise<void> {
+  const projections = [];
+  for (const ticket of input.tickets) {
+    const recordInput = ticketProvenanceRecordInput(
+      ticket.ticketNumber, input.cwd, input.home, input.runDirectory,
+    );
+    const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
+    for (let s = 0; s < ticket.sessions.length; s += 1) {
+      const projected = await projectSessionRanges({
+        s,
+        session: ticket.sessions[s]!,
+        ...(input.home === undefined ? {} : { home: input.home }),
+      });
+      entries.push(...projected.entries);
+    }
+    projections.push({ ticket, recordInput, entries });
   }
 
-  const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
-  for (let s = 0; s < input.sessions.length; s += 1) {
-    const session = input.sessions[s]!;
-    const projected = await projectSessionRanges({
-      s,
-      session,
-      ...(input.home === undefined ? {} : { home: input.home }),
+  for (const { ticket, recordInput, entries } of projections) {
+    if (ticket.sessions.length === 0) continue;
+    appendSitianRecord({
+      ...recordInput,
+      payload: {
+        type: "ticket-provenance-append",
+        sessions: ticket.sessions,
+        lines: entries,
+      },
     });
-    entries.push(...projected.entries);
   }
-
-  const pointer = appendSitianRecord({
-    ...recordInput,
-    payload: {
-      type: "ticket-provenance-append",
-      sessions: input.sessions,
-      lines: entries,
-    },
-  });
-
-  return {
-    recordFile: pointer.recordFile,
-    lines: entries.filter((entry): entry is TicketProvenanceLine => "speaker" in entry),
-  };
 }

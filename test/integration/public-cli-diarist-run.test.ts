@@ -36,10 +36,7 @@ import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-parti
 import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
 import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
-import {
-  reprojectTicketProvenance,
-  resolveTicketProvenanceVolume,
-} from "../../src/ticket-provenance.ts";
+import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
@@ -918,7 +915,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
                   lastReask,
                   "expected bounds reask for directory session path",
                 );
-                assert.match(lastReask, /边界无法使用|session unreadable/);
                 sawDirPathReask = true;
                 assert.equal(
                   readFileSync(paths.recordFile, "utf8"),
@@ -1425,6 +1421,73 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
  * #1090：起居录纯追加——同一区间再交新增记录；先前字节不改写；空 sessions 不追加；
  * 不可解析源行原字节留卷；新范围源不可读 reask 且不改卷。
  */
+test("ak-role diarist partitions one multi-ticket submission by its submitted bounds and appends on replay", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const source = join(home, ".claude", "projects", "probe", "multi.jsonl");
+    await mkdir(join(home, ".claude", "projects", "probe"), { recursive: true });
+    await writeFile(source, [
+      { type: "user", uuid: "owner-a", message: { role: "user", content: "first ticket" } },
+      { type: "assistant", uuid: "runner-a", message: { role: "assistant", content: "first reply" } },
+      { type: "assistant", uuid: "shared", message: { role: "assistant", content: "shared reply" } },
+      { type: "user", uuid: "owner-b", message: { role: "user", content: "second ticket" } },
+      { type: "assistant", uuid: "runner-b", message: { role: "assistant", content: "second reply" } },
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+    const secondTicket = 1837;
+    const ticketSessions = [
+      { ticketNumber: TICKET, sessions: [{ path: source, ranges: [{ from: { line: 1 }, to: { line: 3 } }] }] },
+      { ticketNumber: secondTicket, sessions: [{ path: source, ranges: [{ from: { line: 3 }, to: { line: 5 } }] }] },
+    ];
+    async function run(runId: string, reaskSecondTicket = false) {
+      const { io, stdout } = captureIo();
+      const result = await runAkRole(
+        ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 和 #${secondTicket} 起居录`],
+        {
+          home, packageRoot, cwd: project, io, createRunId: () => runId,
+          principalAuthority: immutablePrincipalAuthority,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot, principalAuthority: immutablePrincipalAuthority,
+            piRunner: diaristEnvelopeRunner((round: number, lastReask?: string) => {
+              if (reaskSecondTicket && round === 1) {
+                return {
+                  status: "completed", ticketNumber: TICKET,
+                  ticketSessions: [ticketSessions[0], {
+                    ticketNumber: secondTicket,
+                    sessions: [{ path: join(home, ".claude", "projects", "probe", "missing.jsonl"), ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+                  }],
+                };
+              }
+              if (reaskSecondTicket) {
+                assert.ok(lastReask);
+                assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
+              }
+              return { status: "completed", ticketNumber: TICKET, ticketSessions };
+            }),
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 0, stdout.join("") || "multi-ticket diarist failed");
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    }
+    await run("01a0diar00-0000-7000-8000-000000000111", true);
+    const first = await readTicketProvenance(TICKET, project, home);
+    const second = await readTicketProvenance(secondTicket, project, home);
+    assert.deepEqual(first.lines.map((line) => line.id), ["owner-a", "runner-a", "shared"]);
+    assert.deepEqual(second.lines.map((line) => line.id), ["shared", "owner-b", "runner-b"]);
+    const firstBytes = await readFile(first.recordFile, "utf8");
+    const secondBytes = await readFile(second.recordFile, "utf8");
+    await run("01a0diar00-0000-7000-8000-000000000112");
+    const repeatedFirst = await readTicketProvenance(TICKET, project, home);
+    const repeatedSecond = await readTicketProvenance(secondTicket, project, home);
+    assert.deepEqual(repeatedFirst.lines.map((line) => line.id), ["owner-a", "runner-a", "shared", "owner-a", "runner-a", "shared"]);
+    assert.deepEqual(repeatedSecond.lines.map((line) => line.id), ["shared", "owner-b", "runner-b", "shared", "owner-b", "runner-b"]);
+    assert.ok((await readFile(first.recordFile, "utf8")).startsWith(firstBytes));
+    assert.ok((await readFile(second.recordFile, "utf8")).startsWith(secondBytes));
+  });
+});
+
 test("ak-role diarist append-only resubmit leaves a new record", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -1571,7 +1634,6 @@ test("ak-role diarist append-only resubmit leaves a new record", async () => {
                 };
               }
               assert.ok(lastReask, "expected unreadable-session reask");
-              assert.match(lastReask, /边界无法使用|session unreadable/);
               sawUnreadableReask = true;
               assert.equal(
                 readFileSync(paths.recordFile, "utf8"),

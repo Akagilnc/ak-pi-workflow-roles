@@ -19,6 +19,38 @@ export { validateRecordedDiaristOutput };
  * 起居郎交卷形状。
  * #901：交边界（sessions）；正文与不可解析原字节由机械投影。
  */
+const diaristSessionsSchema = Type.Array(
+  Type.Object(
+    {
+      path: Type.Optional(Type.String({ description: "会话卷绝对或可读路径" })),
+      ranges: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              from: Type.Optional(
+                Type.Object(
+                  { id: Type.Optional(Type.String()), line: Type.Optional(Type.Unknown()) },
+                  { additionalProperties: true, description: "起点：原生 id 或本轮行号二选一" },
+                ),
+              ),
+              to: Type.Optional(
+                Type.Object(
+                  { id: Type.Optional(Type.String()), line: Type.Optional(Type.Unknown()) },
+                  { additionalProperties: true, description: "终点：原生 id 或本轮行号二选一" },
+                ),
+              ),
+            },
+            { additionalProperties: true, description: "一段对话区间" },
+          ),
+          { description: "本卷本轮各区间；至少一段" },
+        ),
+      ),
+    },
+    { additionalProperties: true, description: "一卷会话的边界" },
+  ),
+  { description: "对话边界；空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。" },
+);
+
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
@@ -42,54 +74,17 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
           description: "status 为 escalate 时：认不出本庭对象的原因",
         }),
       ),
-      sessions: Type.Optional(
+      sessions: Type.Optional(diaristSessionsSchema),
+      ticketSessions: Type.Optional(
         Type.Array(
           Type.Object(
             {
-              path: Type.Optional(
-                Type.String({ description: "会话卷绝对或可读路径" }),
-              ),
-              ranges: Type.Optional(
-                Type.Array(
-                  Type.Object(
-                    {
-                      from: Type.Optional(
-                        Type.Object(
-                          {
-                            id: Type.Optional(Type.String()),
-                            line: Type.Optional(Type.Unknown()),
-                          },
-                          {
-                            additionalProperties: true,
-                            description: "起点：原生 id 或本轮行号二选一",
-                          },
-                        ),
-                      ),
-                      to: Type.Optional(
-                        Type.Object(
-                          {
-                            id: Type.Optional(Type.String()),
-                            line: Type.Optional(Type.Unknown()),
-                          },
-                          {
-                            additionalProperties: true,
-                            description: "终点：原生 id 或本轮行号二选一",
-                          },
-                        ),
-                      ),
-                    },
-                    { additionalProperties: true, description: "一段对话区间" },
-                  ),
-                  { description: "本卷本轮各区间；至少一段" },
-                ),
-              ),
+              ticketNumber: Type.Unknown({ description: "本条边界所归票号（正整数）" }),
+              sessions: diaristSessionsSchema,
             },
-            { additionalProperties: true, description: "一卷会话的边界" },
+            { additionalProperties: true },
           ),
-          {
-            description:
-              "本票对话边界；空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。",
-          },
+          { description: "多票庭逐票对话边界；一次交卷各票各自分录。与单票 sessions 二选一。" },
         ),
       ),
     }),
@@ -109,7 +104,7 @@ export const DIARIST_TOOL_SPEC = {
   name: DIARIST_OUTPUT_TOOL_NAME,
   label: "起居郎输出",
   description:
-    "起居郎交本票对话边界（sessions）；认不出本庭对象则 escalate。",
+    "起居郎交单票 sessions 或多票逐票 ticketSessions 边界；认不出本庭对象则 escalate。",
   promptSnippet: "起居郎交边界",
   parameters: diaristOutputSchema,
 } as const;

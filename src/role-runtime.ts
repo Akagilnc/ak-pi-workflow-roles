@@ -73,6 +73,7 @@ import {
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import {
   projectDiaristSessions,
+  projectDiaristTicketSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
 import { TicketProvenanceInputError } from "./ticket-provenance.ts";
@@ -834,7 +835,7 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 
 /** Plain-language re-ask when diarist bounds cannot be used (#901 / reask-not-explode). */
 const DIARIST_BOUNDS_REASK =
-  "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
+  "边界无法使用。多票请逐票重交 ticketSessions，单票重交 sessions；每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
  * LLM judges ticket + dialogue bounds; mechanical layer reprojects the unique
@@ -870,18 +871,23 @@ export function createDiaristRoleRuntime(
             await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
         }
-        const sessions = projectDiaristSessions(parameters);
-        if (sessions === undefined) {
+        const singleSessions = submitted && !Object.hasOwn(submitted, "ticketSessions")
+          ? projectDiaristSessions(parameters)
+          : undefined;
+        const ticketSessions = submitted && Object.hasOwn(submitted, "ticketSessions")
+          ? projectDiaristTicketSessions(submitted)
+          : singleSessions === undefined
+            ? undefined
+            : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
+        if (ticketSessions === undefined) {
           throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
         }
-        let facts;
         try {
-          facts = await commitDiaristProjection({
-            ticketNumber: ticketNumber ?? null,
+          await commitDiaristProjection({
             cwd: coords.projectRoot,
             home: coords.home,
             runDirectory: coords.runDirectory,
-            sessions,
+            tickets: ticketSessions,
           });
         } catch (error) {
           // Bound/session input failures → reask via typed identity (not message prefix).
