@@ -28,6 +28,7 @@ import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
+  markRunReportPublished,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
   type TypedHttp429Observation,
@@ -2183,11 +2184,7 @@ function acceptedArtifactAttachmentRefs(
  * Seat-specific structured fields stay in callers; do not fork this flow.
  */
 async function publishAcceptedTerminalArtifacts(
-  admitted: {
-    readonly role: TerminalRoleName;
-    readonly runId: string;
-    readonly runDirectory: string;
-  },
+  admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   recordAttemptHistory: boolean,
@@ -2212,6 +2209,7 @@ async function publishAcceptedTerminalArtifacts(
     `${JSON.stringify(bodies.report, null, 2)}\n`,
     "utf8",
   );
+  await markRunReportPublished(admitted.runDirectory, await recordedSealedSubmissionCount(admitted));
   await writeFile(
     evidencePath,
     `${JSON.stringify(bodies.evidence, null, 2)}\n`,

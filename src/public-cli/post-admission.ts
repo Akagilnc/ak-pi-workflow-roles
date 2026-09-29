@@ -916,6 +916,7 @@ export async function dispatchPostAdmissionTurn<
           if (beforeTurnSeals > 0) {
             const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
             mayRebuildUnpublishedSeal = priorRunState?.state === "resumable"
+              && beforeTurnSeals > (priorRunState.publishedSealedCount ?? 0)
               && !(priorFace.status === "present" && priorFace.file === RUN_TERMINAL_REPORT_FILE);
           }
         } catch (error) {
@@ -1088,9 +1089,9 @@ export async function dispatchPostAdmissionTurn<
       // where a bare nonzero exit / resolution failure must not be outranked
       // by someone else's earlier success (#836 r12 class 2).
       const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
-      // An older result is not this bare host turn's reply. Only an unfinished
-      // publication may rebuild its report on a resumable run (#672); after a
-      // no_receipt turn clears the face, a further resume must not revive it.
+      // An older result is not this bare host turn's reply. Only seals added
+      // after the last published report may rebuild on a resumable run (#672);
+      // later failures/no_receipt can clear a previously published face.
       const stalePublishedAcceptance = !settledIsFreshThisAttempt && !mayRebuildUnpublishedSeal;
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
       // window must not land as lawful accepted.
