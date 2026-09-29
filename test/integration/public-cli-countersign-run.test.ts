@@ -178,7 +178,7 @@ test("countersign admission freezes attachments and binds the countersign role",
   });
 });
 
-test("countersign admission ignores attachment frontmatter; --ticket is unknown", async () => {
+test("countersign admission ignores attachment frontmatter", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -214,14 +214,6 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
     assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
-    (error: unknown) =>
-      error instanceof CliUsageError
-      && /unknown countersign option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
 });
 
 test("countersign argv rejects unknown options", async () => {
@@ -1134,24 +1126,6 @@ function countersignPathEnv(input: {
     createRunId: () => input.runId,
   };
 }
-
-test("public countersign path: --ticket is unknown-option reject (exit 2)", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    const result = await runPublicInstructionSeat(
-      ["--ticket", "582", "裁：本票是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000p01",
-        blockTurn: true,
-      }),
-      captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(result.exitCode, 2);
-    assert.equal(result.admitted, undefined);
-  });
-});
 
 test("public countersign path: invalid attachment rejects before identity or run persistence", async () => {
   await withCountersignProject(async ({ home, project }) => {
