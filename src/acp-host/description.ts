@@ -4,11 +4,10 @@
  * optional seat-profile soul — is data here; the lifecycle in role-turn-host.ts
  * stays one copy (#732).
  */
+import type { HostIdentityDescription } from "../host-descriptions.ts";
 import type { SeatProfileSoul } from "./seat-profile-soul.ts";
 
-export type AcpHostDescription = Readonly<{
-  /** Binary path segments relative to the operator home. */
-  binaryFromHome: readonly string[];
+export type AcpHostDescription = HostIdentityDescription & Readonly<{
   argv: Readonly<{
     prefix: readonly string[];
     suffix: readonly string[];
@@ -24,8 +23,6 @@ export type AcpHostDescription = Readonly<{
    *   `provider:model` (hermes).
    */
   modelPassing: "argv" | "set_model";
-  /** Durable ACP binding filename written beside the session principal. */
-  sessionBindingFile: string;
   /**
    * When set, the production factory ensures a seat profile whose SOUL.md is a
    * symlink to the packaged role soul, and prefixes argv with `flag <name>`.
