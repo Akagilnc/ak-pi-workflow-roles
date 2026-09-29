@@ -2,7 +2,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS } from "../host-descriptions.ts";
+import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS, resolveHostBinary } from "../host-descriptions.ts";
 import { packagedMethodSkillNames } from "../packaged-role-registry.ts";
 
 /** Install source only. Which names are required comes from the role registry. */
@@ -126,11 +126,11 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
 
   for (const host of ["claude-code", "hermes"] as const) {
     const root = linkedSkillRoot(home, host)!;
-    const binaryFromHome = host === "claude-code"
-      ? HEADLESS_HOST_DESCRIPTIONS.claude!.binaryFromHome
-      : HOST_DESCRIPTIONS.hermes!.binaryFromHome;
+    const description = host === "claude-code"
+      ? HEADLESS_HOST_DESCRIPTIONS.claude!
+      : HOST_DESCRIPTIONS.hermes!;
     try {
-      accessSync(join(home, ...binaryFromHome), constants.X_OK);
+      accessSync(resolveHostBinary(description, home), constants.X_OK);
     } catch (error) {
       if (["ENOENT", "ENOTDIR", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
       throw error;

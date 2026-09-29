@@ -4,8 +4,6 @@
  * Claude print-mode and codex exec differ enough that #752 host-specific
  * assembly lives here as sibling helpers — not a third unified abstraction.
  */
-import { join } from "node:path";
-
 type HeadlessHostBase = Readonly<{
   /** Binary path segments relative to the operator home. */
   binaryFromHome: readonly string[];
@@ -64,14 +62,6 @@ export function isCodexExecDescription(
   description: HeadlessHostDescription,
 ): description is CodexExecHostDescription {
   return description.protocol === "codex-exec";
-}
-
-/** Absolute agent binary for one operator home. */
-export function resolveHeadlessBinary(
-  description: HeadlessHostDescription,
-  operatorHome: string,
-): string {
-  return join(operatorHome, ...description.binaryFromHome);
 }
 
 /**

@@ -4,8 +4,6 @@
  * optional seat-profile soul — is data here; the lifecycle in role-turn-host.ts
  * stays one copy (#732).
  */
-import { join } from "node:path";
-
 import type { SeatProfileSoul } from "./seat-profile-soul.ts";
 
 export type AcpHostDescription = Readonly<{
@@ -35,11 +33,6 @@ export type AcpHostDescription = Readonly<{
    */
   seatProfileSoul?: SeatProfileSoul;
 }>;
-
-/** Absolute agent binary for one operator home. */
-export function resolveAcpBinary(description: AcpHostDescription, operatorHome: string): string {
-  return join(operatorHome, ...description.binaryFromHome);
-}
 
 /** Stdio argv: optional profile flag, thinking flag, prefix, model, suffix. */
 export function acpStdioArgs(

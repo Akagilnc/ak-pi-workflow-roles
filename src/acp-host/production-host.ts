@@ -9,11 +9,12 @@
 import { randomUUID } from "node:crypto";
 
 import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { resolveHostBinary } from "../host-descriptions.ts";
 import { prepareRoleEnvelope } from "../role-envelope.ts";
 import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
-import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
+import { acpStdioArgs, type AcpHostDescription } from "./description.ts";
 import {
   connectAcpStdio,
   createAcpRoleTurnHost,
@@ -74,7 +75,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           role: request.activation.role,
         });
       return connectAcpStdio({
-        binary: resolveAcpBinary(description, request.home),
+        binary: resolveHostBinary(description, request.home),
         args: acpStdioArgs(
           description,
           request.model,

@@ -6,8 +6,18 @@
  * pi is the in-process default, not a row.
  * Unregistered names fail closed (#510); these tables do not fallback.
  */
+import { join } from "node:path";
+
 import type { AcpHostDescription } from "./acp-host/description.ts";
 import type { HeadlessHostDescription } from "./headless-host/description.ts";
+
+/** Resolve a host description's agent binary under the operator home. */
+export function resolveHostBinary(
+  description: { readonly binaryFromHome: readonly string[] },
+  operatorHome: string,
+): string {
+  return join(operatorHome, ...description.binaryFromHome);
+}
 
 export const DEFAULT_ROLE_TURN_HOST = "pi" as const;
 
