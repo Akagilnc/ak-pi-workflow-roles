@@ -31,7 +31,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, currentAttemptPointer, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import {
   COLLECTOR_CONSTRUCTION_TOOLS,
   COLLECTOR_REQUIRED_TOOLS,
@@ -1344,7 +1344,7 @@ export function createRoleRuntimeExtension(
             while (receiptDelivery.nextAction() === "request-delivery") {
               receiptDelivery.recordDeliveryRequest();
             }
-            const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+            const facts = receiptDelivery.facts({ runPointer, attemptPointer: currentAttemptPointer(runPointer) });
             envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             try {
               sitianReport({
@@ -1384,7 +1384,7 @@ export function createRoleRuntimeExtension(
         const runPointer = runDirectoryFromHostContext(ctx);
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+          const facts = receiptDelivery.facts({ runPointer, attemptPointer: currentAttemptPointer(runPointer) });
           envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           try {
             sitianReport({

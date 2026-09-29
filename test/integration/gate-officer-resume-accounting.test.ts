@@ -18,6 +18,7 @@ import test from "node:test";
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
+import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -450,6 +451,34 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
     }
     assert.deepEqual(projected.summoned?.terminal?.submissions, [first, second]);
   });
+});
+
+test("#879 auditor re-asks instead of treating history as the current reply", async () => {
+  const previous = { status: "converged" };
+  const current = { status: "continue", violations: ["new"] };
+  const reasks: Array<string | undefined> = [];
+  const result = await runComplianceAudit({
+    subject: "judge",
+    context: { cwd: process.cwd() } as never,
+    runDirectory: "/unused/parent",
+    summonAuditor: async (_subject, _directory, _signal, reask) => {
+      reasks.push(reask);
+      return {
+        exitCode: 0,
+        terminal: {
+          roleOutcome: { kind: "accepted", role: "auditor", payloads: reasks.length === 1 ? [] : [current] },
+          submissions: reasks.length === 1 ? [previous] : [previous, current],
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "child",
+        },
+      };
+    },
+  });
+  assert.equal(reasks.length, 2);
+  assert.ok(reasks[1]);
+  assert.equal(result.status, "continue");
+  if (result.status === "continue") assert.deepEqual(result.receipt, current);
 });
 
 test("#1092 station-child officer: no case-dossier pointer material; dialogue = peer only", async () => {

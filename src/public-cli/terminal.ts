@@ -161,23 +161,12 @@ export type TerminalGateFact = {
   readonly rounds: readonly TerminalGateRound[];
 };
 
-/**
- * One admitted Role run's typed Terminal aggregate.
- * Resumable failures carry `resume` and must not re-disclose the run ID via
- * top-level `runId` or public artifact path components — only `resume.command`.
- * #416: autoResumeCount (0..2) is a call-local observation of how many in-place
- * auto-resumes occurred during this single LLM call; it is not persisted to
- * run-state.json and does not participate in limit decisions.
- */
-/**
- * Current-result payloads on a terminal — accepted/audit role result, or a
- * rare intentional failure face. Run history is TerminalResult.submissions
- * (#836 / #953), not this helper.
- */
-export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unknown[] {
-  if (outcome.kind === "accepted" || outcome.kind === "audit_escalation") return outcome.payloads ?? [];
-  if (outcome.kind === "failure") return outcome.payloads ?? [];
-  return [];
+/** Parent-facing current reply: never use run-scoped history as this court's answer (#879). */
+export function currentReplyRows(terminal: TerminalResult | undefined): readonly unknown[] {
+  const outcome = terminal?.roleOutcome;
+  return outcome?.kind === "accepted" || outcome?.kind === "audit_escalation"
+    ? outcome.payloads ?? []
+    : [];
 }
 
 /**
@@ -194,6 +183,10 @@ export function coalesceSubmissionRows(
   return payloads ?? submissions ?? [];
 }
 
+/**
+ * One admitted Role run's typed Terminal aggregate. Resumable failures disclose
+ * the run ID only inside resume.command. autoResumeCount is call-local (#416).
+ */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */

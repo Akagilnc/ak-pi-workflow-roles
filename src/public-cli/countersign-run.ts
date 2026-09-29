@@ -7,7 +7,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { TerminalRoleOutcome } from "./terminal.ts";
+import { currentReplyRows, type TerminalResult, type TerminalRoleOutcome } from "./terminal.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -63,22 +63,6 @@ function isEscalatePayload(payload: unknown): boolean {
 }
 
 /**
- * Rows a parent may read from a nested diarist terminal (#836 / #953).
- * Accepted/audit use role result payloads; failure history is submissions only.
- */
-function courtDiaristPayloadRows(
-  roleOutcome: TerminalRoleOutcome | undefined,
-  submissions: readonly unknown[] | undefined,
-): readonly unknown[] {
-  if (roleOutcome === undefined) return submissions ?? [];
-  if (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation") {
-    return roleOutcome.payloads ?? [];
-  }
-  if (roleOutcome.kind === "failure") return submissions ?? [];
-  return [];
-}
-
-/**
  * Parent diagnostic for court-diarist escalate (#953 / 失败诚实 / 传话).
  * Relays diarist escalate payload(s) via readableGateItem — never invents
  * "cannot identify court target" when a payload already carries other facts
@@ -89,10 +73,9 @@ function courtDiaristPayloadRows(
  * every escalate receipt as-is, last = currentConclusion.
  */
 function courtDiaristEscalateDiagnostic(
-  roleOutcome: TerminalRoleOutcome | undefined,
-  submissions?: readonly unknown[],
+  terminal: TerminalResult | undefined,
 ): string {
-  const payloads = courtDiaristPayloadRows(roleOutcome, submissions);
+  const payloads = currentReplyRows(terminal);
   const escalatePayloads: unknown[] = [];
   for (const payload of payloads) {
     if (isEscalatePayload(payload)) escalatePayloads.push(payload);
@@ -195,14 +178,13 @@ export async function invokeCourtDiarist(
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
-  const submissions = result.terminal?.submissions;
   // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
   if (courtDiaristEscalated(roleOutcome)) {
     return {
       identity: {
         kind: "escalate",
-        diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
+        diagnostic: courtDiaristEscalateDiagnostic(result.terminal),
       },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
       ...(result.terminal === undefined ? {} : { terminal: result.terminal }),

@@ -12,7 +12,7 @@ import {
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
@@ -226,17 +226,6 @@ function projectOfficerDecision(
  * identity. Never guess from undivided submissions — sole row included — history
  * stays on terminal.submissions (#836 presentation).
  */
-function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
-  const outcome = terminal?.roleOutcome;
-  // This-court identity only from accepted/audit_escalation settlement payloads
-  // (#879). Failure history is not this-court (#953) — it rides submissions.
-  if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
-    if (outcome.payloads !== undefined && outcome.payloads.length > 0) return outcome.payloads;
-  }
-  // No sole-row identity guess: undivided submissions are not this-court (#879).
-  return [];
-}
-
 /**
  * Failure/transport channel surfaces recorded history beside the failure
  * (#836 A.3) via the historical carrier only (#953 — not failure.payloads).
@@ -299,7 +288,7 @@ function projectOfficerTerminal(
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
-  const thisCourt = thisCourtOfficerPayloads(terminal);
+  const thisCourt = currentReplyRows(terminal);
   if (outcome === undefined) {
     const detail = summoned.stderr ?? "";
     const failurePayloads = officerFailurePayloads(terminal);

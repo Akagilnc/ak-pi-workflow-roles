@@ -93,6 +93,7 @@ import {
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
+  currentAttemptPointer,
   noReceiptLifecycleFacts,
   parseNoReceiptLifecycleFacts,
   type NoReceiptLifecycleFacts,
@@ -108,6 +109,10 @@ import {
   listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ARTIFACT_FILES,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
+  RUN_TERMINAL_REPORT_FILE,
+  RUN_TERMINAL_ERROR_FILE,
+  RUN_TERMINAL_EVIDENCE_FILE,
+  RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
 } from "../run-terminal-artifacts.ts";
 import {
   ensureRunArtifactsDir,
@@ -247,23 +252,8 @@ export function withSubmissions<T extends TerminalResult>(
   submissions: readonly unknown[],
 ): T {
   if (submissions.length === 0) return terminal;
-  const roleOutcome = terminal.roleOutcome;
-  // #881 / #836: full run history always lands on terminal.submissions.
-  // #879: accepted/audit_escalation may still fill a missing this-court
-  // payloads face from that history. #953: failure must not — prior receipts
-  // stay on the historical carrier only, never as the current failure's
-  // ordinary payloads/receipt face.
-  if (roleOutcome.kind === "failure") {
-    return { ...terminal, submissions };
-  }
-  const withPayloads =
-    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
-      ? {
-          ...roleOutcome,
-          payloads: coalesceSubmissionRows(roleOutcome.payloads, submissions),
-        }
-      : roleOutcome;
-  return { ...terminal, roleOutcome: withPayloads, submissions };
+  // Run history is presentation, never a substitute for this court's reply (#879).
+  return { ...terminal, submissions };
 }
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
@@ -300,26 +290,31 @@ export async function settleHostEndedNoReceipt(
     rejectedReceipts: [],
     deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
     runPointer: admitted.runDirectory,
-    attemptPointer: `current:${admitted.runDirectory}`,
+    attemptPointer: currentAttemptPointer(admitted.runDirectory),
   });
+  return settleNoReceiptTerminal(admitted, authority, scope, facts);
+}
+
+async function settleNoReceiptTerminal(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined,
+  facts: NoReceiptLifecycleFacts,
+): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: {
-        kind: "no_receipt",
-        role: admitted.role,
-        status: "no-accepted-receipt",
-        ...facts,
-        decisiveFacts: facts,
-      },
-      navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
-      artifacts: [],
-      runId: admitted.runId,
+  return withOptionalGateProjection({
+    roleOutcome: {
+      kind: "no_receipt",
+      role: admitted.role,
+      status: "no-accepted-receipt",
+      ...facts,
+      decisiveFacts: facts,
     },
-    coordinates.sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
+    navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
+    artifacts: [],
+    runId: admitted.runId,
+  }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -660,66 +655,27 @@ export function classifyPostAdmissionFailure(input: {
   if (Object.hasOwn(input, "thrown")) {
     return classifyThrownFailure(input.thrown);
   }
-  if (input.knownCause !== undefined) {
-    const fallback =
-      input.knownCause === "provider"
-        ? "provider failure"
-        : input.knownCause === "session"
-          ? "session unreadable"
-          : input.knownCause === "output"
-            ? "role run completed without a lawful typed terminal result"
-            : `role run failed (${input.knownCause})`;
-    const diagnostic =
-      input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
-        ? input.knownDiagnostic
-        : conciseChildDiagnostic(input.stderr, fallback);
-    const { timedOut: _knownTimedOut, ...knownDetails } =
-      input.knownDetails ?? {};
-    const remoteCode = knownDetails.code;
-    return {
-      cause: input.knownCause,
-      diagnostic,
-      details: {
-        ...knownDetails,
-        ...(remoteCode === undefined ? {} : { code: remoteCode }),
-        exitCode: input.code,
-        ...(input.timedOut ? { timedOut: true as const } : {}),
-      },
-      ...(input.knownIdentity === undefined
-        ? {}
-        : { identity: input.knownIdentity }),
-    };
-  }
-  // #881: original failure testimony without a typed class — keep diagnostic/identity;
-  // do not fall through to activation/output wash that would mint a substitute class.
-  // Bare knownDetails alone is secondary evidence for later branches (withKnownDetails),
-  // not a stand-in primary failure record.
-  if (
+  // #881: untyped original testimony retains diagnostic/identity, not a
+  // fabricated activation/output cause. Bare details remain secondary evidence.
+  if (input.knownCause !== undefined ||
     (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "") ||
-    input.knownIdentity !== undefined
-  ) {
-    const diagnostic =
-      input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
-        ? input.knownDiagnostic
-        : conciseChildDiagnostic(input.stderr, "role run failed");
-    const { timedOut: _knownTimedOut, ...knownDetails } =
-      input.knownDetails ?? {};
-    const remoteCode = knownDetails.code;
-    return withKnownDetails(
-      {
-        diagnostic,
-        details: {
-          ...knownDetails,
-          ...(remoteCode === undefined ? {} : { code: remoteCode }),
-          exitCode: input.code,
-          ...(input.timedOut ? { timedOut: true as const } : {}),
-        },
-        ...(input.knownIdentity === undefined
-          ? {}
-          : { identity: input.knownIdentity }),
-      },
-      undefined,
-    );
+    input.knownIdentity !== undefined) {
+    const fallback =
+      input.knownCause === "provider" ? "provider failure"
+      : input.knownCause === "session" ? "session unreadable"
+      : input.knownCause === "output" ? "role run completed without a lawful typed terminal result"
+      : input.knownCause === undefined ? "role run failed"
+      : `role run failed (${input.knownCause})`;
+    const diagnostic = input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
+      ? input.knownDiagnostic
+      : conciseChildDiagnostic(input.stderr, fallback);
+    const { timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
+    return {
+      ...(input.knownCause === undefined ? {} : { cause: input.knownCause }),
+      diagnostic,
+      details: { ...knownDetails, exitCode: input.code, ...(input.timedOut ? { timedOut: true as const } : {}) },
+      ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
+    };
   }
   if (input.timedOut) {
     return withKnownDetails(
@@ -982,16 +938,7 @@ export function extractSessionProviderStop(
   // Older attempt native stops must not replace the newer attempt's stop.
   // Sessions without a user turn are the initial attempt.
   // Auditor retained responses live in Sitian (kind=auditor); see readSessionProviderStop.
-  let attemptStart = 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "message" && entry.message?.role === "user") {
-      attemptStart = i;
-      break;
-    }
-  }
-
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
+  for (let i = entries.length - 1; i >= currentAttemptStartIndex(entries); i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
@@ -1197,35 +1144,10 @@ function providerStopFallbackFromAuditorVolumes(
   return undefined;
 }
 
-/** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
-async function readBoundAuditorComplianceFailure(
-  sessionFile: string,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
-  if (volumes === undefined) return undefined;
-  return complianceFailureFromAuditorVolumes(volumes);
-}
-
-/** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
-async function readBoundAuditorProviderStopFallback(
-  sessionFile: string,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
-  if (volumes === undefined) return undefined;
-  return providerStopFallbackFromAuditorVolumes(volumes);
-}
-
 function typedFailedTerminatingToolKnownFailure(
   entries: readonly SessionEntry[],
 ): RoleTurnKnownFailure | undefined {
-  let attemptStart = 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    if (entries[i]?.type === "message" && entries[i]?.message?.role === "user") {
-      attemptStart = i;
-      break;
-    }
-  }
-  const attemptEntries = entries.slice(attemptStart);
+  const attemptEntries = entries.slice(currentAttemptStartIndex(entries));
   for (let i = attemptEntries.length - 1; i >= 0; i -= 1) {
     const message = attemptEntries[i]?.message;
     if (attemptEntries[i]?.type !== "message" || message?.role !== "toolResult") continue;
@@ -1296,8 +1218,10 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // auditor path itself caused (retention EISDIR race). A typed terminating-tool
   // host failure is next — it outranks weaker auditor provider-stop fallback so
   // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
+  let volumes: readonly BoundAuditorVolume[] | undefined;
   try {
-    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    volumes = await loadBoundAuditorVolumes(input.sessionFile);
+    const auditorCompliance = volumes === undefined ? undefined : complianceFailureFromAuditorVolumes(volumes);
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
@@ -1322,17 +1246,8 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       });
     }
   }
-  try {
-    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
-    if (auditorStop !== undefined) return resolutionOf(auditorStop);
-  } catch (error) {
-    const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
-    return resolutionOf({
-      cause: "session",
-      identity: thrownIdentity(failure),
-      diagnostic: failure.message || failure.name,
-    });
-  }
+  const auditorStop = volumes === undefined ? undefined : providerStopFallbackFromAuditorVolumes(volumes);
+  if (auditorStop !== undefined) return resolutionOf(auditorStop);
   // Parent session provider-stop is next; credential is last.
   const parentStop = await readSessionProviderStop(input.sessionFile);
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
@@ -1583,20 +1498,6 @@ async function readInfrastructureToolFailure(
   } catch {
     return undefined;
   }
-}
-
-/**
- * Prefer a real engine-detour infrastructure tool failure already on the session
- * principal over a later secondary provider-stop (failure-honesty / #357 T2).
- * Cause stays `output` — labor leg failed before accepted typed Receipt.
- */
-export function extractEngineDetourInfrastructureFailure(
-  entries: readonly SessionEntry[],
-): ControlledFailure | undefined {
-  return extractInfrastructureToolFailure(
-    entries,
-    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
-  );
 }
 
 /** Read the bound session principal for an engine-detour infrastructure failure. */
@@ -1902,19 +1803,6 @@ export async function appendRunAttemptHistory(
     timestamp,
   })}\n`;
   await appendFile(source.sessionFile, line, "utf8");
-  try {
-    sitianReport({
-      level: "event",
-      kind: "attempt-history",
-      subject: { runId: source.runId },
-      sessionParent: source.sessionFile,
-      payload: {
-        type: ATTEMPT_HISTORY_ENTRY_TYPE,
-        ...attemptData,
-      },
-      source: "settlement",
-    });
-  } catch {}
 }
 
 function parseNavigatorAttendanceDetails(
@@ -2353,8 +2241,8 @@ async function publishAcceptedTerminalArtifacts(
     roleOutcome,
   );
   const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
+  const reportPath = join(artifactsDir, RUN_TERMINAL_REPORT_FILE);
+  const evidencePath = join(artifactsDir, RUN_TERMINAL_EVIDENCE_FILE);
   await writeFile(
     reportPath,
     `${JSON.stringify(bodies.report, null, 2)}\n`,
@@ -2401,32 +2289,54 @@ async function readLawfulSettlementEntries(
   }
 }
 
-/**
- * Sealed-ledger seats that publish on a lawful outcome and do not scan a
- * residual tool or attach run-scoped submission history.
- * Absence stays undefined. Session-read and publication errors keep their identity.
- * Outcome is read before publication so a later write error cannot erase it.
- */
-async function settleSealedLedgerTerminal(
+async function settleResidualOutputFailure(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-  publish: (
-    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
-    coordinates: DurablePrincipalCoordinates,
-    entries: readonly SessionEntry[],
-  ) => Promise<TerminalArtifactRef[]>,
-  accept?: (
-    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
-  ) => boolean,
+  residual: BoundErroredToolCandidate,
+): Promise<TerminalResult> {
+  const candidate = residual.candidate;
+  return settleFailureTerminalResult(admitted, {
+    cause: "output",
+    diagnostic: residual.diagnostic,
+    details: isRecord(candidate) ? candidate : { candidate },
+  }, authority, scope ?? {});
+}
+
+/** Sealed and residual seats share one lawful terminal; only residual seats scan failed tools. */
+async function settleSealedSeat(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined,
+  options: {
+    acceptedOnly: boolean;
+    residual?: { tool: string; scan: "current-attempt" | "session" };
+  },
 ): Promise<TerminalResult | undefined> {
-  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
-  if (roleOutcome === undefined) return undefined;
-  if (accept !== undefined && !accept(roleOutcome)) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const artifacts = await publish(roleOutcome, coordinates, entries);
-  return withOptionalGateProjection(
+  // Residual seats read first so malformed session data retains its failure identity
+  // even when the ledger has no accepted row. Plain sealed seats read only on success.
+  const priorEntries = options.residual === undefined
+    ? undefined
+    : await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
+  if (options.residual !== undefined && roleOutcome?.kind !== "accepted") {
+    const entries = priorEntries!;
+    const scanStart = options.residual.scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, options.residual.tool);
+      if (residual === undefined) continue;
+      const failed = await settleResidualOutputFailure(admitted, authority, scope, residual);
+      return attachRecordedSubmissions(admitted, failed, scope);
+    }
+    return undefined;
+  }
+  if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) return undefined;
+  const entries = priorEntries ?? await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const artifacts = await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
+  const terminal = await withOptionalGateProjection(
     {
       roleOutcome,
       navigator: extractNavigatorFact(entries),
@@ -2436,70 +2346,7 @@ async function settleSealedLedgerTerminal(
     coordinates.sessionDirectory,
     detourGateContext(admitted, scope),
   );
-}
-
-/**
- * Sealed accepted outcome publishes. Any other ledger face falls through to
- * the latest bound errored tool result in the scan window, which settles as
- * output failure. Both faces attach run-scoped submissions. Absence of both
- * stays undefined. Session is read first so a read failure keeps its identity
- * even when the ledger has no accepted row.
- */
-async function settleSealedAcceptedOrToolResidual(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope: SettlementCourtScope | undefined,
-  role: TerminalRoleName,
-  residualToolName: string,
-  scan: "current-attempt" | "session",
-  publish: (
-    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
-    coordinates: DurablePrincipalCoordinates,
-    entries: readonly SessionEntry[],
-  ) => Promise<TerminalArtifactRef[]>,
-): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, role, scope);
-  if (roleOutcome?.role !== role || roleOutcome.kind !== "accepted") {
-    const scanStart = scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
-    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, residualToolName);
-      if (residual === undefined) continue;
-      const candidate = residual.candidate;
-      const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
-  const artifacts = await publish(roleOutcome, coordinates, entries);
-  return attachRecordedSubmissions(
-    admitted,
-    await withOptionalGateProjection(
-      {
-        roleOutcome,
-        navigator: extractNavigatorFact(entries),
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    ),
-    scope,
-  );
+  return options.residual === undefined ? terminal : attachRecordedSubmissions(admitted, terminal, scope);
 }
 
 /**
@@ -2519,28 +2366,12 @@ async function settleSeat(
   if (record.settlement === "accepted") {
     return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
   }
-  const publish = (
-    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
-    coordinates: DurablePrincipalCoordinates,
-    entries: readonly SessionEntry[],
-  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
-  if (record.settlement === "residual") {
-    return settleSealedAcceptedOrToolResidual(
-      admitted,
-      authority,
-      scope,
-      admitted.role,
-      record.residualTool,
-      record.residualScan,
-      publish,
-    );
-  }
-  const accept = "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true
-    ? (
-      roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
-    ) => roleOutcome.role === admitted.role && roleOutcome.kind === "accepted"
-    : undefined;
-  return settleSealedLedgerTerminal(admitted, authority, scope, publish, accept);
+  return settleSealedSeat(admitted, authority, scope, {
+    acceptedOnly: "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true,
+    ...(record.settlement === "residual"
+      ? { residual: { tool: record.residualTool, scan: record.residualScan } }
+      : {}),
+  });
 }
 
 /**
@@ -2766,19 +2597,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
     );
   }
   if (residual !== undefined) {
-    const details = isRecord(residual.candidate)
-      ? residual.candidate
-      : { candidate: residual.candidate };
-    const failed = await settleFailureTerminalResult(
-      admitted,
-      {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details,
-      },
-      authority,
-      scope ?? {},
-    );
+    const failed = await settleResidualOutputFailure(admitted, authority, scope, residual);
     return withSubmissions(failed, submissions);
   }
   return undefined;
@@ -3128,23 +2947,23 @@ export async function publishFailureArtifacts(
   );
   const errorCandidates = underArtifacts
     ? [
-        join(baseDir, "error.json"),
-        join(baseDir, "error.settlement.json"),
-        join(admitted.runDirectory, "error.settlement.json"),
+        join(baseDir, RUN_TERMINAL_ERROR_FILE),
+        join(baseDir, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
+        join(admitted.runDirectory, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
       ]
     : [
-        join(baseDir, "error.settlement.json"),
-        join(baseDir, "error.json"),
+        join(baseDir, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
+        join(baseDir, RUN_TERMINAL_ERROR_FILE),
       ];
   const evidenceCandidates = underArtifacts
     ? [
-        join(baseDir, "evidence.json"),
+        join(baseDir, RUN_TERMINAL_EVIDENCE_FILE),
         join(baseDir, "evidence.settlement.json"),
         join(admitted.runDirectory, "evidence.settlement.json"),
       ]
     : [
         join(baseDir, "evidence.settlement.json"),
-        join(baseDir, "evidence.json"),
+        join(baseDir, RUN_TERMINAL_EVIDENCE_FILE),
       ];
 
   const errorPayloadBase: Record<string, unknown> = {
@@ -3215,11 +3034,7 @@ export async function settleFailureTerminalResult(
   if (failure.cause === "output") {
     const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
     if (entries !== undefined) {
-      let attemptStart = 0;
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") { attemptStart = index; break; }
-      }
-      const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
+      const lifecycleEntry = entries.slice(currentAttemptStartIndex(entries)).reverse().find((entry: SessionEntry) =>
         entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
       if (raw !== undefined) {
@@ -3234,28 +3049,9 @@ export async function settleFailureTerminalResult(
         if (
           facts !== undefined &&
           facts.runPointer === admitted.runDirectory &&
-          facts.attemptPointer === `current:${admitted.runDirectory}`
+          facts.attemptPointer === currentAttemptPointer(admitted.runDirectory)
         ) {
-          let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
-          // #478: no_receipt is still a public Terminal — project accepted gate facts.
-          // #953: empty public terminal face — clear every reader-adoptable prior face.
-          await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-          return withOptionalGateProjection(
-            {
-              roleOutcome: {
-                kind: "no_receipt",
-                role: admitted.role,
-                status: "no-accepted-receipt",
-                ...facts,
-                decisiveFacts,
-              },
-              navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
-              artifacts: [],
-              runId: admitted.runId,
-            },
-            sessionDirectory,
-            detourGateContext(admitted, options),
-          );
+          return settleNoReceiptTerminal(admitted, authority, options, facts);
         }
       }
     }

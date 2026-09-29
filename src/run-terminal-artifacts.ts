@@ -1,8 +1,8 @@
 /**
- * Canonical reader for run-directory typed terminal artifacts.
- * Layout owner is settlement publish*Artifacts (report.json / error.json /
- * audit-incomplete.json under artifacts/, plus the same publisher's durable
- * failure fallbacks). This module only reads presence and structural
+ * Canonical layout and reader for run-directory typed terminal artifacts.
+ * Settlement publish*Artifacts uses these names (report.json / error.json /
+ * audit-incomplete.json under artifacts/, plus durable failure fallbacks).
+ * The reader only checks presence and structural
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
@@ -11,9 +11,13 @@ import { basename, dirname, join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
 
+export const RUN_TERMINAL_REPORT_FILE = "report.json" as const;
+export const RUN_TERMINAL_ERROR_FILE = "error.json" as const;
+export const RUN_TERMINAL_EVIDENCE_FILE = "evidence.json" as const;
+export const RUN_TERMINAL_ERROR_SETTLEMENT_FILE = "error.settlement.json" as const;
 export const RUN_TERMINAL_ARTIFACT_FILES = [
-  "report.json",
-  "error.json",
+  RUN_TERMINAL_REPORT_FILE,
+  RUN_TERMINAL_ERROR_FILE,
   "audit-incomplete.json",
 ] as const;
 
@@ -26,8 +30,8 @@ export type RunTerminalArtifactFile = (typeof RUN_TERMINAL_ARTIFACT_FILES)[numbe
  * Relative to the run directory.
  */
 export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
-  "artifacts/error.settlement.json",
-  "error.settlement.json",
+  `artifacts/${RUN_TERMINAL_ERROR_SETTLEMENT_FILE}`,
+  RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
 ] as const;
 
 /** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */

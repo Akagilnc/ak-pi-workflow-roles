@@ -3,6 +3,11 @@ export const RECEIPT_DELIVERY_TURN_LIMIT = 2 as const;
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;
 
+/** Attempt binding shared by the delivery owner and terminal settlement. */
+export function currentAttemptPointer(runPointer: string): string {
+  return `current:${runPointer}`;
+}
+
 /** The sole schema shared by lifecycle owners and Terminal projections. */
 export type NoReceiptLifecycleFacts = {
   terminalToolCalled: boolean;
@@ -32,18 +37,13 @@ export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycle
       && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
-  return {
+  return noReceiptLifecycleFacts({
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({
-      reason: item.reason as string,
-      diagnosticAvailable: (item.reason as string).trim() !== "",
-    })),
-    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
-    sessionCompletion: "settled-without-accepted-receipt",
+    rejectedReceipts: input.rejectedReceipts as { reason: string }[],
+    deliveryTurns: input.deliveryTurns,
     runPointer: input.runPointer,
     attemptPointer: input.attemptPointer,
-    acceptedReceipt: false,
-  };
+  });
 }
 
 export function noReceiptLifecycleFacts(
