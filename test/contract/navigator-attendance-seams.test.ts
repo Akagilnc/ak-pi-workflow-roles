@@ -319,16 +319,17 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, root);
       nav.prepare();
+      const advice = { reason: "still thinking", role: "not-a-role" };
       await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        { reason: "still thinking", role: "not-a-role" },
+        advice,
         "legacy-free-form",
       );
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
-      assert.equal(typeof events[0].prose, "string");
+      assert.deepEqual(JSON.parse(events[0].prose), advice);
     }
 
     {

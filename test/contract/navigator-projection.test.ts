@@ -28,7 +28,7 @@ test("navigator projection accepts free-form object as prose body (#959)", () =>
   };
   const projected = projectLawfulNavigatorOutput(freeForm);
   assert.ok(projected);
-  assert.equal(typeof projected!.prose, "string");
+  assert.deepEqual(JSON.parse(projected!.prose), freeForm);
 });
 
 test("navigator projection accepts bare string prose", () => {
