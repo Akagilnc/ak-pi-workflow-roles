@@ -349,55 +349,38 @@ function mapOwnedToSubmissionRows(
   };
 
   for (const record of scoped) {
-    const attemptId = recordAttemptId(record);
-    if (record.kind === "candidate") {
-      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "candidate" }>> & {
-        projection?: { role?: unknown };
-      } | undefined;
-      if (payload?.type !== "candidate" || payload.params === undefined) continue;
-      const callKey =
-        typeof payload.toolCallId === "string"
-          ? submissionCallKey(attemptId, payload.toolCallId)
-          : undefined;
-      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("candidate", payload, payload.params, fallback), callKey);
-      continue;
-    }
-    if (record.kind === "sealed") {
-      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> & {
-        projection?: { role?: unknown };
-      } | undefined;
-      if (payload?.type !== "sealed" || payload.accepted === undefined) continue;
-      const callKey =
-        typeof payload.toolCallId === "string"
-          ? submissionCallKey(attemptId, payload.toolCallId)
-          : undefined;
-      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("accepted", payload, payload.accepted, fallback), callKey);
-      continue;
-    }
-    if (record.kind !== "outcome") continue;
-    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> & {
+    const payload = record.payload as {
+      type?: unknown;
+      role?: unknown;
       projection?: { role?: unknown };
+      toolCallId?: unknown;
+      params?: unknown;
+      accepted?: unknown;
+      outcome?: unknown;
+      auditReceipt?: unknown;
+      auditOfficer?: unknown;
     } | undefined;
-    if (payload?.type !== "outcome" || payload.accepted === undefined) continue;
-    const outcome = payload.outcome;
-    const kind: RecordedSubmissionRow["kind"] |
-      undefined =
-      outcome === "audit-escalation"
-        ? "audit-escalation"
-        : outcome === "correctable-rejection"
-          ? "correctable-rejection"
-          : outcome === "infrastructure"
-            ? "infrastructure"
-            : undefined;
-    if (kind === undefined) continue;
-    const callKey =
-      typeof payload.toolCallId === "string"
-        ? submissionCallKey(attemptId, payload.toolCallId)
+    let kind: RecordedSubmissionRow["kind"] | undefined;
+    let original: unknown;
+    if (record.kind === "candidate" && payload?.type === "candidate") {
+      kind = "candidate";
+      original = payload.params;
+    } else if (record.kind === "sealed" && payload?.type === "sealed") {
+      kind = "accepted";
+      original = payload.accepted;
+    } else if (record.kind === "outcome" && payload?.type === "outcome") {
+      kind = payload.outcome === "audit-escalation" ? "audit-escalation"
+        : payload.outcome === "correctable-rejection" ? "correctable-rejection"
+        : payload.outcome === "infrastructure" ? "infrastructure"
         : undefined;
-    const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-    take(rowFromPayload(kind, payload, payload.accepted, fallback), callKey);
+      original = payload.accepted;
+    }
+    if (kind === undefined || original === undefined || payload === undefined) continue;
+    const callKey = typeof payload.toolCallId === "string"
+      ? submissionCallKey(recordAttemptId(record), payload.toolCallId)
+      : undefined;
+    const fallback = callKey === undefined ? undefined : roleByCall.get(callKey);
+    take(rowFromPayload(kind, payload, original, fallback), callKey);
   }
   return out;
 }

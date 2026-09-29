@@ -136,7 +136,7 @@ export type SettlementCourtScope = {
   readonly invocationScopeId?: string;
 };
 
-function ledgerReadScope(
+export function ledgerReadScope(
   admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
   scope?: SettlementCourtScope,
 ): { home: string; sessionParent: string; attemptId?: string } {
@@ -486,6 +486,14 @@ function thrownIdentity(error: Error): {
   return identity;
 }
 
+const CONTROLLED_FAILURE_CAUSES: ReadonlySet<unknown> = new Set<ControlledFailureCause>([
+  "provider", "activation", "session", "output", "timeout",
+]);
+
+function isControlledFailureCause(cause: unknown): cause is ControlledFailureCause {
+  return CONTROLLED_FAILURE_CAUSES.has(cause);
+}
+
 /** Production-owned typed thrown failure (explicit-internal channel). */
 function isTypedActivationError(
   error: unknown,
@@ -496,13 +504,7 @@ function isTypedActivationError(
 } {
   if (!(error instanceof Error)) return false;
   const cause = (error as { knownCause?: unknown }).knownCause;
-  return (
-    cause === "provider" ||
-    cause === "activation" ||
-    cause === "session" ||
-    cause === "output" ||
-    cause === "timeout"
-  );
+  return isControlledFailureCause(cause);
 }
 
 /** Flatten nested AggregateError leaves; non-aggregate values stay as one fact. */
@@ -1104,14 +1106,7 @@ function complianceFailureFromAuditorVolumes(
       // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
       if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
-      const typedCause =
-        failure.cause === "provider" ||
-        failure.cause === "activation" ||
-        failure.cause === "session" ||
-        failure.cause === "output" ||
-        failure.cause === "timeout"
-          ? (failure.cause as ControlledFailureCause)
-          : undefined;
+      const typedCause = isControlledFailureCause(failure.cause) ? failure.cause : undefined;
       return {
         ...(typedCause === undefined ? {} : { cause: typedCause }),
         ...(identity === undefined ? {} : { identity: {
@@ -2691,17 +2686,10 @@ function publicationAttemptFromError(
   error: unknown,
 ): PublicationAttempt {
   if (error instanceof Error) {
-    const identity: { name?: string; code?: string | number } = {
-      name: error.name,
-    };
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" || typeof code === "number") {
-      identity.code = code;
-    }
     return {
       path,
       diagnostic: error.message || error.name || "write failed",
-      identity,
+      identity: thrownIdentity(error),
     };
   }
   return { path, diagnostic: String(error) };

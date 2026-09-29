@@ -84,7 +84,6 @@ import {
   processCancelSignalName,
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
-import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { recordRunStart } from "../host-session-record.ts";
 import {
   attemptProducedFreshSubmission,
@@ -96,6 +95,7 @@ import {
   formatErrorCauseDetail,
   formatTerminalResult,
   inspectJudgeSession,
+  ledgerReadScope,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   publishedFailureErrorPath,
@@ -723,7 +723,7 @@ export async function dispatchPostAdmissionTurn<
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
           admitted.runId,
-          { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
+          ledgerReadScope(admitted),
         );
         let ticketNumber: number | undefined;
         for (const row of rows) {
