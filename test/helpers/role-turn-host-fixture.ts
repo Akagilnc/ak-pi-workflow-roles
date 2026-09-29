@@ -32,7 +32,7 @@ import {
   sealAcceptedSubmissionForSpawn,
 } from "./submission-ledger-fixture.ts";
 
-/** Lawful 起居郎 true-unbound face (null ticket → 无录). Nested court fixtures use this. */
+/** Lawful 起居郎 true-unbound face (null ticket → 无录). */
 export const TRUE_UNBOUND_DIARIST_DETAILS = {
   status: "completed" as const,
   ticketNumber: null,
@@ -274,9 +274,8 @@ export function createMinimalHost(
 }
 
 /**
- * Nested court 起居郎 under another seat must return a lawful true-unbound
- * terminal (exit 0, null ticket). Typed diarist failure is countersign controlled
- * failure (#771) — fixtures may not wash that into body-continue by omission.
+ * For a fixture that summons a diarist child, return a lawful true-unbound
+ * terminal (exit 0, null ticket). Do not wash a diarist failure into success.
  * When the seat under test is diarist itself, pass primaryRole: "diarist" so the
  * primary turn is not short-circuited.
  */

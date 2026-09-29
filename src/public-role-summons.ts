@@ -421,8 +421,8 @@ export async function summonPublicRole(
           // Nested court stations keep station-child semantics; dual-lens
           // ordinary Reviewer axes opt out (#946 / ADR 0082).
           ...(options.stationChild === false ? {} : { stationChild: true }),
-          // Forward composition-root adapters so nested court stations (e.g.
-          // countersign → diarist) select the same faux/production table (#924).
+          // Forward composition-root adapters so nested stations (e.g.
+          // secretariat → diarist) select the same faux/production table (#924).
           ...(options.hostAdapters === undefined
             ? {}
             : { hostAdapters: options.hostAdapters }),
@@ -535,7 +535,7 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // An escalated officer can return its court diarist's escalation verbatim.
+  // Secretariat can return its preliminary diarist's escalation verbatim.
   // The terminal's independent run, not the officer, is the gate pointer.
   const runDirectory = result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role

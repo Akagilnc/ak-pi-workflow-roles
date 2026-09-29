@@ -210,19 +210,11 @@ function nestedCountersignHost(input: {
   packageRoot: string;
   sequence: ReadonlyArray<{ details: unknown; notaryEscalation?: unknown }>;
   gateCalls: Array<{ kind: string }>;
-  diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
-  /** Override nested 起居郎 (default asserts #924). Omit-ticket cases pass unbound. */
-  diaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
   let call = 0;
-  const diarist = input.diaristRunner ?? courtDiaristFor924();
   const piRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
-    if (role === "diarist") {
-      input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
-      return diarist(args, options);
-    }
     if (role === "notary") {
       input.gateCalls.push({ kind: "countersign_verdict" });
       const step = input.sequence[Math.max(0, call - 1)] ?? input.sequence.at(-1)!;
@@ -342,16 +334,9 @@ function secretariatHostDrivingRealTools(input: {
   countersignRequests?: RoleTurnRequest[];
   /** Host key — arms secretariat_verdict gate on output. */
   submissionGateHost: "codex" | "claude" | "grok-build" | "pi";
-  /**
-   * Nested 给事中 identity 起居郎 override. Parent secretariat identity still
-   * uses #924; omit-ticket cases pass unbound so parent board handoff is the
-   * sole identity source under test.
-   */
-  nestedDiaristRunner?: LegacyFauxPiRunner;
   parentDiaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
-  // Parent identity 起居郎 always asserts #924 so the secretariat board is bound
-  // before the gate; nested 给事中 identity may be overridden (unbound).
+  // The secretariat's preliminary diarist asserts #924 before the gate.
   const parentDiaristHost = roleTurnHostFromLegacyPiRunner({
     packageRoot: input.packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
@@ -378,18 +363,12 @@ function secretariatHostDrivingRealTools(input: {
       packageRoot: input.packageRoot,
       sequence: input.countersignSequence,
       gateCalls: input.gateCalls,
-      ...(input.diaristRunDirectories === undefined
-        ? {}
-        : { diaristRunDirectories: input.diaristRunDirectories }),
       countersignRequests: nestRequests,
-      ...(input.nestedDiaristRunner === undefined
-        ? {}
-        : { diaristRunner: input.nestedDiaristRunner }),
     });
     const nestAdapters = [adapter("pi", nestedTracked)];
     return {
       async executeTurn(request: RoleTurnRequest) {
-        // Parent 起居郎 binds the secretariat board; nested 给事中 uses nestAdapters.
+        // The preliminary diarist binds the secretariat board; gate seats use nestAdapters.
         if (request.activation.role === "diarist") {
           return nextStep === 0
             ? parentDiaristHost.executeTurn(request)
@@ -846,7 +825,6 @@ test("diarist escalation pauses Secretariat, whose final ticket does not rebind 
           ? { status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }
           : { status: "completed", ticketNumber: 923 })(args, options);
       },
-      nestedDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: 924 }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });

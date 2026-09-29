@@ -3,7 +3,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * #635 / #709 / #771 — seat ticket identity from the public CLI true entry
  * (no --ticket / no frontmatter). Mechanical layer never matches summons text
  * against book-known numbers. Typed identity arrives only from:
- * - 起居郎 LLM assertion (countersign court station / diarist seat)
+ * - 给事中交卷票号或起居郎交卷票号（各自独立调用）
  * - --source-run admitted form (notary / auditor)
  * - already-bound resume
  * Asserts typed ticketNumber on admitted-request.json + invocation.json only

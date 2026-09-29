@@ -18,7 +18,6 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
@@ -27,7 +26,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
-import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
@@ -613,12 +611,11 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     await withActivationHome({ prefix: "ak-nav-station-child-" }, async ({ home }) => {
-      // Nested diarist/countersign need caller-set models (#178).
+      // The public countersign and inner-gate notary use caller-set models (#178).
       const { runAkRole } = await import("../../src/public-cli/cli.ts");
       await runAkRole(
         ["config", "set",
           "countersign", "test/caller-seat:high",
-          "diarist", "test/caller-seat:high",
           "judge", "test/caller-seat:high",
           "notary", "test/caller-seat:high",
           "gatekeeper", "test/caller-seat:high",
@@ -663,7 +660,6 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         createRoleRuntimeExtension({
           loadRoleSoul: async (role) => {
             if (role === "countersign") return "COUNTERSIGN LAW";
-            if (role === "diarist") return "DIARIST LAW";
             if (role === "notary") return "NOTARY LAW";
             return "JUDGE LAW";
           },
@@ -707,7 +703,6 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
         { cwd: project },
       );
-      ensureTicketProvenanceVolume(582, project, home);
 
       const captured: RoleTurnRequest[] = [];
       const recordingHost = (scripted: ReturnType<typeof roleTurnHostFromLegacyPiRunner>) => ({
@@ -723,13 +718,6 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         piRunner: async (args, options) => {
           const roleIndex = args.indexOf("--ak-role");
           const role = roleIndex >= 0 ? args[roleIndex + 1] : undefined;
-          if (role === "diarist") {
-            return scriptedTerminatingToolSession({
-              role: "diarist",
-              toolName: DIARIST_OUTPUT_TOOL_NAME,
-              details: { status: "completed", ticketNumber: 582, sessions: [] },
-            })(args, options);
-          }
           if (role === "notary") {
             return scriptedTerminatingToolSession({
               role: "notary",
@@ -771,9 +759,9 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
       );
       assert.equal(countersignResult.exitCode, 0, stderr.join("") || stdout.join(""));
       const topLevel = captured.find((request) => request.activation.role === "countersign");
-      const diaristChild = captured.find((request) => request.activation.role === "diarist");
       assert.ok(topLevel, "countersign public entry must dispatch a top-level turn");
-      assert.ok(diaristChild, "countersign court station must dispatch a diarist child turn");
+      assert.equal(captured.some((request) => request.activation.role === "diarist"), false,
+        "countersign court must not summon a diarist child");
 
       captured.length = 0;
       const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 582 });
@@ -828,11 +816,6 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         await attendanceCreatedFromTurn(topLevel),
         true,
         "top-level public activation must construct Navigator attendance",
-      );
-      assert.equal(
-        await attendanceCreatedFromTurn(diaristChild),
-        false,
-        "court diarist station child must not construct Navigator attendance",
       );
       assert.equal(
         await attendanceCreatedFromTurn(notaryChild),

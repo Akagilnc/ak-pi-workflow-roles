@@ -107,7 +107,7 @@ async function conflictedRepository(root: string) {
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-public-role-table-", async (home) => {
     await configurePassingReviewSeats(home);
-    // Nested court diarist (countersign) resolves from the live table (#178).
+    // Independently summoned diarist resolves from the live table (#178).
     await runAkRole(
       ["config", "set", "diarist", "test/caller-seat:high"],
       { packageRoot, home, io: { stdout() {}, stderr() {} } },

@@ -3,9 +3,8 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 / #987 resume continues via explicit package
- * runId. #742: court admission auto-runs the public 起居郎 station before the
- * body turn. #771: ticket identity comes from 起居郎 LLM typed assertion (court
- * station), never from mechanical matching of summons text against book records.
+ * runId. #1111: court admission leaves diary refresh to the caller; countersign
+ * asserts its own ticketNumber, never matching summons prose against book records.
  * Public re-summons mint a new run under the typed ticket (#505 / #987).
  * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
  * #1092: no code-side 起居录 path delivery.
@@ -144,12 +143,9 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-/** Court station always runs 起居郎 first (#771); body tests use true-unbound. */
-function withTrueUnboundDiarist(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
+/** Gate child uses a lawful notary receipt; countersign does not summon diarist (#1111). */
+function withConvergedNotary(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
   return async (args, options) => {
-    if (argvFlagValue(args, "--ak-role") === "diarist") {
-      return courtPipelinePiRunner(null)(args, options);
-    }
     if (argvFlagValue(args, "--ak-role") === "notary") {
       return scriptedTerminatingToolSession({
         role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -161,7 +157,7 @@ function withTrueUnboundDiarist(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
 }
 
 function scriptedCountersignSession(details: unknown) {
-  return withTrueUnboundDiarist(scriptedTerminatingToolSession({
+  return withConvergedNotary(scriptedTerminatingToolSession({
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     details,
@@ -302,12 +298,8 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            // Court station runs 起居郎 first (#771); true-unbound for no-ticket body.
+            // The court body receives its own scripted receipt; no diarist child.
             piRunner: async (args, options) => {
-              const role = argvFlagValue(args, "--ak-role");
-              if (role === "diarist") {
-                return courtPipelinePiRunner(null, receipt)(args, options);
-              }
               const outcome = await scriptedCountersignSession(receipt)(args, options);
               // #634: scriptedTerminatingToolSession writes only the countersign
               // terminating receipt — it never opens a real pi role activation that
@@ -394,7 +386,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: withTrueUnboundDiarist(async (args) => {
+          piRunner: withConvergedNotary(async (args) => {
             const sessionFile = args[args.indexOf("--session") + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
             await writeFile(sessionFile, "\n", "utf8");
@@ -434,8 +426,8 @@ test("ak-role resume continues countersign on the exact session", async () => {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        // Resume still refreshes 起居郎 (ADR 0075: 每次过庭都跑是调用者用法); true-unbound face.
-        piRunner: withTrueUnboundDiarist(async (args, options) => {
+        // Resume does not refresh 起居郎; the caller owns diary refresh (#1111).
+        piRunner: withConvergedNotary(async (args, options) => {
           resumeArgs = [...args];
           resumeStdin = options.stdin;
           return scriptedCountersignSession({
@@ -483,7 +475,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: withTrueUnboundDiarist(
+          piRunner: withConvergedNotary(
             scriptedCountersignSession({
               status: "converged",
               note: "FIRST-署",
@@ -557,7 +549,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: withTrueUnboundDiarist(
+          piRunner: withConvergedNotary(
             scriptedTerminatingToolSession({
               role: "countersign",
               toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
@@ -587,7 +579,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: withTrueUnboundDiarist(async (args) => {
+        piRunner: withConvergedNotary(async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           // Append a resumed user turn; keep the prior residual so the scan
           // boundary is exercised (production resume appends, does not wipe).
@@ -638,7 +630,7 @@ function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
   return roleTurnHostFromLegacyPiRunner({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
-    piRunner: withTrueUnboundDiarist(piRunner),
+    piRunner: withConvergedNotary(piRunner),
   });
 }
 
@@ -1144,7 +1136,7 @@ function countersignPathEnv(input: {
         const base = roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: withTrueUnboundDiarist(scriptedCountersignSession({
+          piRunner: withConvergedNotary(scriptedCountersignSession({
             status: "converged",
             note: "署",
           })),
