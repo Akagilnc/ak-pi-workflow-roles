@@ -214,21 +214,6 @@ function isSealedRecord(record: SitianRecord): boolean {
   return payload?.type === "outcome" && payload.outcome === "audit-escalation";
 }
 
-/**
- * True when this court itself produced a seal (#836 r12 class 2).
- * A recording tag is only a freshness signal, never a presentation filter;
- * run-scoped history remains visible beside the current reply (#879).
- */
-export async function hasFreshAttemptSubmission(
-  cwd: string,
-  runId: string,
-  attemptId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<boolean> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
-  return owned.some((record) => recordAttemptId(record) === attemptId && isSealedRecord(record));
-}
-
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
   return typeof value === "string" && value.length > 0;
 }

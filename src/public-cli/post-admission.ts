@@ -86,7 +86,6 @@ import {
 } from "./process-cancel.ts";
 import { recordRunStart } from "../host-session-record.ts";
 import {
-  attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
@@ -1025,28 +1024,21 @@ export async function dispatchPostAdmissionTurn<
         credential: undefined,
         runDirectory: admitted.runDirectory,
       });
-      // A direct, current signal from the host/runner itself (timeout / host
-      // knownFailure / runner knownFailure / missing credential) is a real
-      // problem regardless of what else already settled — a settled accepted
-      // outcome must not paper over it (it rides beside the recorded payload
-      // via `submissions`, never replacing the payload). The audited
-      // resolution's own typed session read (malformed JSONL, provider-stop,
-      // an illegal/unsealed accepted status, a stale/superseded typed-HTTP
-      // observation, ...) makes a run with no sealed acceptance a true
-      // failure too — it must not be discarded into a lawful no_receipt just
-      // because the raw runner signal alone looked clean. But it must not
-      // retroactively invalidate an acceptance that already sealed this turn
-      // — a resolved 429 observed earlier in the same session is exactly
-      // that.
+      // What the host CLI reported for this call: a signal it raised itself
+      // (timeout, its own declared failure, a process cancel) or a failure the
+      // audited read of this call established. Either is a real problem
+      // whatever else settled — a settled accepted outcome must not paper over
+      // it, and the recorded payload rides beside it on `submissions` rather
+      // than being replaced.
       const processCancelName = processCancelSignalName(env.signal);
       const directHostFailureSignal =
         result.timedOut
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
         || processCancelName !== undefined;
-      // The turn fails on what the host CLI itself reported for this call:
-      // its exit code, its own declared failure, or a signal. No history read
-      // takes part in that decision.
+      // The turn fails on the CLI's own report for it: that signal, its exit
+      // code, or the failure the audited read established. No history read and
+      // no prior-turn settlement takes part in this decision.
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
@@ -1055,29 +1047,15 @@ export async function dispatchPostAdmissionTurn<
       // Settlement attaches the run's recorded history here; failure and
       // no-receipt below attach history on their own paths.
       settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
-
-      // #836 r12 class 2: an accepted/audit_escalation settlement can be
-      // entirely a prior attempt's stale payload (courtAttempt is a
-      // recording tag, not a visibility gate — settlement still surfaces
-      // that historical payload honestly either way).
-      // Consume the ledger's own subject.attemptId (submission-ledger.ts)
-      // only to learn whether *this* attempt itself produced a fresh seal —
-      // never to filter what presents.
-      const settledIsFreshThisAttempt =
-        settled === undefined
-        || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
-          ? true
-          : await attemptProducedFreshSubmission(admitted, courtScope);
       // The host CLI reported this call: its exit code, its own declared
       // failure, a timeout, or a signal. When it reported a failure, that report
-      // is this turn's outcome — a settlement left over from an earlier turn
-      // never presents as this turn's success, and no history read has a say.
-      // A settlement this turn actually sealed still wins over a trailing bare
-      // exit code, and a real stderr.log durable-write failure is infrastructure
-      // trouble rather than a lawful result (#836: never kill an already-recorded
-      // leg, never wash a real failure away either).
-      const staleAcceptanceOutranksRealFailure =
-        !settledIsFreshThisAttempt && hostSignalFailed;
+      // is this turn's outcome — a settlement, whether sealed this turn or left
+      // by an earlier one, never presents over it, and no history read has a
+      // say (owner 4743ade7: 代码凭什么要去决定cli的失败原因？). A settlement
+      // that sealed this turn keeps its receipt on submissions either way, so
+      // #836's recorded leg survives the failure terminal.
+      // A real stderr.log durable-write failure is infrastructure trouble rather
+      // than a lawful result, and never washes the recorded payload away.
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
       // window must not land as lawful accepted.
       const cancelAfterSettle = processCancelSignalName(env.signal);
