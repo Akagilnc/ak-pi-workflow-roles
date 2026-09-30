@@ -1009,6 +1009,9 @@ export async function dispatchPostAdmissionTurn<
       | undefined;
     let hostSignalFailed = false;
     let resolution: Awaited<ReturnType<typeof resolveAuditedRunnerFailureResolution>> | undefined;
+    // What the host reported for this call, held outside the try so a failure
+    // while resolving or settling cannot lose it.
+    const hostReportedFailure = result.knownFailure;
     try {
       const sessionFile =
         admitted.principal !== undefined
@@ -1076,12 +1079,24 @@ export async function dispatchPostAdmissionTurn<
     } catch (error) {
       // Settle (or its shouldPresent gate, or the failure-fact resolution
       // above) throw is a real failure fact — never swallow into undefined.
+      // Two real facts can stand here: what the host already reported for this
+      // call, and a settlement failure that happened afterwards. Both are
+      // preserved — the host's own report stays the cause it gave, and the
+      // settlement error rides beside it as a secondary fact instead of
+      // replacing it (失败诚实宪法：接住可以，洗白不行).
       const settledFailure = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
+          // The host's own report for this call, with the settlement error that
+          // happened afterwards as secondary evidence beside it. Both are real;
+          // the settlement error does not replace what the host reported.
+          ...((resolution?.knownFailure ?? hostReportedFailure) === undefined ? {} : {
+            knownFailure: resolution?.knownFailure ?? hostReportedFailure,
+            knownDetails: { settlementFailure: describeCaughtError(error) },
+          }),
           thrown: error,
         }, request.invocationScopeId),
         adapters,
@@ -1133,7 +1148,14 @@ export async function dispatchPostAdmissionTurn<
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
     if (hostSignalFailed) {
-      const resolutionInput = controlledFailureInputFromResolution(resolution!);
+      // The audited resolution is absent when resolving or settling threw
+      // before it completed; the host's own report for this call still stands
+      // and is what the failure terminal presents (owner 4743ade7).
+      const resolutionInput = resolution === undefined
+        ? (hostReportedFailure === undefined ? {} : {
+            knownFailure: hostReportedFailure,
+          })
+        : controlledFailureInputFromResolution(resolution);
       const processCancelName = processCancelSignalName(env.signal);
       const stderrLogWriteDetails =
         stderrLogWriteFailure === undefined

@@ -106,13 +106,13 @@ test("Error Artifact publication collisions retain original cause and reader-vis
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: "Error: original activation boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure", row.label);
       if (terminal.roleOutcome.kind === "failure") {
-        // Original controlled failure must not be washed to the publication errno.
-        assert.equal(terminal.roleOutcome.cause, "activation", row.label);
+        // The original diagnostic must not be washed to the publication errno.
+        // A bare nonzero exit names no cause of its own.
+        assert.equal(terminal.roleOutcome.cause, undefined, row.label);
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR", row.label);
         assert.equal(terminal.roleOutcome.diagnostic, "Error: original activation boom\n", row.label);
       }
@@ -120,14 +120,14 @@ test("Error Artifact publication collisions retain original cause and reader-vis
         cause: string;
         diagnostic: string;
       };
-      assert.equal(errorBody.cause, "activation", row.label);
+      assert.equal(errorBody.cause, undefined, row.label);
       assert.equal(errorBody.diagnostic, "Error: original activation boom\n", row.label);
       // #953: public terminal face must reflect this failure, not stale directory EISDIR.
       assert.ok(runDir !== undefined, row.label);
       const read = await readRunTerminalArtifact(runDir!);
       assert.equal(read.status, "present", row.label);
       if (read.status === "present") {
-        assert.equal(read.body.cause, "activation", row.label);
+        assert.equal(read.body.cause, undefined, row.label);
         assert.equal(read.body.diagnostic, "Error: original activation boom\n", row.label);
       }
       // One complete Terminal — must not escape to outer raw catch with zero stdout.
@@ -198,7 +198,7 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
     );
   });
 });
-test("unwritable run directory retains activation cause with durable Error Artifact and Terminal", async () => {
+test("unwritable run directory keeps the child diagnostic primary with a durable Error Artifact and Terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -240,21 +240,22 @@ test("unwritable run directory retains activation cause with durable Error Artif
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: "Error: boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.cause, "activation");
+        // A bare nonzero exit names no cause; the child's own diagnostic stays
+        // primary and is not washed to the EACCES below.
+        assert.equal(terminal.roleOutcome.cause, undefined);
         assert.equal(terminal.roleOutcome.diagnostic, "Error: boom\n");
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EACCES");
       }
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-        cause: string;
+        cause?: string;
         diagnostic: string;
         publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
-      assert.equal(errorBody.cause, "activation");
+      assert.equal(errorBody.cause, undefined);
       assert.equal(errorBody.diagnostic, "Error: boom\n");
       assert.ok(Array.isArray(errorBody.publicationIssues));
       assert.ok(
@@ -314,21 +315,21 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       result,
       stdout,
       stderr,
-      expectedCause: "activation",
       diagnosticEquals: "Error: child failed after admission\n",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "activation");
+      // A bare nonzero exit names no cause; the child's diagnostic is primary
+      // and the auxiliary stderr.log errno must not become the identity.
+      assert.equal(terminal.roleOutcome.cause, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "Error: child failed after admission\n");
-      // Auxiliary stderr.log errno must not become the primary identity.
       assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
+      cause?: string;
       diagnostic: string;
     };
-    assert.equal(errorBody.cause, "activation");
+    assert.equal(errorBody.cause, undefined);
     assert.equal(errorBody.diagnostic, "Error: child failed after admission\n");
     // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
     assert.equal(stdout.length, 1);

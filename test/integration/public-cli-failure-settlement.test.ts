@@ -164,13 +164,16 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timeout.cause, "timeout");
   assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
 
-  const activation = classifyPostAdmissionFailure({
+  // A nonzero exit says the run failed, not why. With no typed confirmation the
+  // cause stays absent — no fabricated label — while the real diagnostic and
+  // exit code are kept.
+  const nonzeroExit = classifyPostAdmissionFailure({
     timedOut: false,
     code: 1,
     stderr: floodStderr(),
   });
-  assert.equal(activation.cause, "activation");
-  assert.equal(activation.diagnostic, floodStderr());
+  assert.equal(nonzeroExit.cause, undefined);
+  assert.equal(nonzeroExit.diagnostic, floodStderr());
 
   const missing = classifyPostAdmissionFailure({
     timedOut: false,
@@ -207,13 +210,14 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(typed.identity?.name, "ProviderUnavailableError");
   assert.equal(typed.identity?.code, "PROVIDER_UNAVAILABLE");
 
-  // JSONL observation flood must not displace the real diagnostic.
+  // JSONL observation flood must not displace the real diagnostic, and a bare
+  // nonzero exit still names no cause.
   const jsonl = classifyPostAdmissionFailure({
     timedOut: false,
     code: 1,
     stderr: realisticJsonlFloodStderr(),
   });
-  assert.equal(jsonl.cause, "activation");
+  assert.equal(jsonl.cause, undefined);
   assert.equal(jsonl.diagnostic, realisticJsonlFloodStderr());
 
   // Pi auth-guidance multi-line stderr is kept whole (#836 no footer clip).
@@ -287,7 +291,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     code: null,
     stderr: "",
   });
-  assert.equal(noThrownKey.cause, "activation");
+  assert.equal(noThrownKey.cause, undefined);
 });
 test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
   await withTempHome(async (home) => {
@@ -408,11 +412,11 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
         },
       );
       const flood = realisticJsonlFloodStderr();
+      // A bare nonzero exit names no cause; the real diagnostic is kept whole.
       const { terminal } = await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: flood,
       });
       assert.equal(terminal.roleOutcome.kind, "failure");
@@ -450,11 +454,12 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
           }),
         },
       );
+      // A bare nonzero exit keeps the real stderr diagnostic whole and claims
+      // no cause of its own.
       const { terminal, errorRef } = await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: stderrText,
       });
       const body = JSON.parse(await readFile(errorRef.path, "utf8")) as {

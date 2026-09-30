@@ -334,17 +334,13 @@ export {
   isLawfulTypedTerminalOutcome,
 };
 
-/** Preserved post-admission failure (not a role Receipt). */
-export type ControlledFailure = {
-  /** Typed class only when confirmed; omitted when unknown (#881 — no fabricated label). */
-  readonly cause?: ControlledFailureCause;
-  readonly diagnostic: string;
-  readonly identity?: {
-    readonly name?: string;
-    readonly code?: string | number;
-  };
-  readonly details?: Readonly<Record<string, unknown>>;
-};
+/**
+ * Preserved post-admission failure (not a role Receipt). The host contract owns
+ * the shape; the only difference settlement requires is that a settled failure
+ * always carries a diagnostic to present, so `cause` and `identity` stay
+ * omitted when no typed fact confirms them (#881 — no fabricated label).
+ */
+export type ControlledFailure = RoleTurnKnownFailure & { readonly diagnostic: string };
 
 // A resumable public Terminal omits artifact paths (#108); its actual error
 // publication remains available only to the CLI's resume presentation seam.
@@ -635,8 +631,27 @@ export function classifyPostAdmissionFailure(input: {
   knownDetails?: Readonly<Record<string, unknown>>;
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
+  // An exception caught after the host already reported its own failure carries
+  // both real facts: the host's report stays the cause, and the later exception
+  // is kept beside it (失败诚实宪法：接住可以，洗白不行).
   if (Object.hasOwn(input, "thrown")) {
-    return classifyThrownFailure(input.thrown);
+    const thrown = classifyThrownFailure(input.thrown);
+    const hostReported = input.knownCause !== undefined
+      || (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "")
+      || input.knownIdentity !== undefined;
+    if (!hostReported) return thrown;
+    const cause = input.knownCause ?? thrown.cause;
+    return {
+      ...(cause === undefined ? {} : { cause }),
+      diagnostic: input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
+        ? input.knownDiagnostic
+        : thrown.diagnostic,
+      ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
+      details: {
+        ...(thrown.details ?? {}),
+        ...(input.knownDetails ?? {}),
+      },
+    };
   }
   // #881: untyped original testimony retains diagnostic/identity, not a
   // fabricated activation/output cause. Bare details remain secondary evidence.
@@ -671,10 +686,12 @@ export function classifyPostAdmissionFailure(input: {
     );
   }
   if (input.code !== 0) {
+    // A nonzero exit says the run failed, not why. No typed fact confirmed a
+    // class, so `cause` stays absent and the CLI's own diagnostic and exit code
+    // are what remains (host contract: omit cause, keep the original).
     const fallback = `role run failed with exit ${input.code ?? "null"}`;
     return withKnownDetails(
       {
-        cause: "activation",
         diagnostic: conciseChildDiagnostic(input.stderr, fallback),
         details: { exitCode: input.code },
       },
@@ -1006,27 +1023,9 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // nothing else. A bound auditor volume, a Sitian-retained stop, the run-level
   // typed-HTTP sidecar and an earlier attempt's session bytes are history: they
   // stay on the record for presentation, and none of them is consulted here.
-  if (input.runner !== undefined) return resolutionOf(input.runner);
-  let entries: SessionEntry[] = [];
-  try {
-    entries = await readBoundSessionEntries(input.sessionFile);
-  } catch (error) {
-    // A session that is not there yet is absence, not a failure; any other
-    // read failure happened now, so it is this turn's own fact.
-    if (!isMissingPathError(error)) {
-      const failure = sessionReadFailure(error, "failed to read the current session");
-      return resolutionOf({
-        cause: "session",
-        identity: thrownIdentity(failure),
-        diagnostic: failure.message || failure.name,
-      });
-    }
-  }
-  const terminatingFailure = typedFailedTerminatingToolKnownFailure(entries);
-  if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
-  const parentStop = extractSessionProviderStop(entries);
-  // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
-  // This is the single sidecar read for both failure projection and v1 resume.
+  // The typed-HTTP sidecar is read first and only ever rides along for the v1
+  // resume decision; it is a separate observation and never edits a field of
+  // the failure this call reported.
   let httpObservation: TypedProviderHttpObservation | undefined;
   if (input.runDirectory !== undefined) {
     try {
@@ -1047,24 +1046,37 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     settled: input.runDirectory !== undefined,
     ...(httpObservation === undefined ? {} : { observation: httpObservation }),
   };
-  if (parentStop !== undefined) {
-    return resolutionOf(
-      knownFailureFromProviderStop({
-        ...parentStop,
-        ...(httpObservation === undefined
-          ? {}
-          : {
-            httpStatus: httpObservation.httpStatus,
-            // Observation association outranks session-configured provider name alone.
-            provider: httpObservation.provider,
-          }),
-      }),
-      typedHttp,
-    );
-  }
   // A caller-declared credential failure is this invocation's own fact.
   if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
-  // The sidecar only rides along for v1 resume; it is not a failure on its own.
+  // The host reported this call's failure. Scanning the session for a provider
+  // stop here would let an earlier turn's bytes answer for this one, so the
+  // scan runs only when the host has not reported anything.
+  if (input.runner !== undefined) return resolutionOf(input.runner, typedHttp);
+  // Nothing but a possibly damaged session is left to read, and a real read
+  // failure now is this turn's own fact.
+  let entries: SessionEntry[] = [];
+  try {
+    entries = await readBoundSessionEntries(input.sessionFile);
+  } catch (error) {
+    // A session that is not there yet is absence, not a failure.
+    if (!isMissingPathError(error)) {
+      const failure = sessionReadFailure(error, "failed to read the current session");
+      return resolutionOf(
+        {
+          cause: "session",
+          identity: thrownIdentity(failure),
+          diagnostic: failure.message || failure.name,
+        },
+        typedHttp,
+      );
+    }
+  }
+  const terminatingFailure = typedFailedTerminatingToolKnownFailure(entries);
+  if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure, typedHttp);
+  const parentStop = extractSessionProviderStop(entries);
+  if (parentStop !== undefined) {
+    return resolutionOf(knownFailureFromProviderStop(parentStop), typedHttp);
+  }
   return resolutionOf(undefined, typedHttp);
 }
 /**
@@ -1279,20 +1291,12 @@ function knownFailureFromControlled(failure: ControlledFailure): RoleTurnKnownFa
   };
 }
 
-const RUNNER_FAILURE_POLICY = {
-  "engine-detour-known-first": {
-    read: readEngineDetourInfrastructureFailure,
-    rank: "known-first",
-  },
-  "engine-detour-record-first": {
-    read: readEngineDetourInfrastructureFailure,
-    rank: "record-first",
-  },
-} as const;
-
 /**
- * Runner-failure rank for one seat. The composition-root `runnerFailure`
- * leaf is the only seat difference; absent means the runner knownFailure stands.
+ * Runner-failure reader for one seat. The composition-root `runnerFailure` leaf
+ * says a seat also reports an engine-detour infrastructure failure; what it may
+ * not do is rank one source over another. The host's own report for this call
+ * always stands, and a session record only fills in when the host reported
+ * nothing (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
  */
 export function seatKnownFailureResolver(
   role: PackagedRole,
@@ -1302,17 +1306,12 @@ export function seatKnownFailureResolver(
 }) => Promise<RoleTurnKnownFailure | undefined>) | undefined {
   const record = packagedRoleMetadata(role);
   if (record === undefined || !("runnerFailure" in record)) return undefined;
-  const policy = RUNNER_FAILURE_POLICY[record.runnerFailure];
   return async ({ result, sessionFile }) => {
-    const infrastructureFailure = await policy.read(sessionFile);
-    if (policy.rank === "record-first") {
-      return infrastructureFailure === undefined
-        ? result.knownFailure
-        : knownFailureFromControlled(infrastructureFailure);
-    }
-    return result.knownFailure ?? (
-      infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
-    );
+    if (result.knownFailure !== undefined) return result.knownFailure;
+    const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+    return infrastructureFailure === undefined
+      ? undefined
+      : knownFailureFromControlled(infrastructureFailure);
   };
 }
 

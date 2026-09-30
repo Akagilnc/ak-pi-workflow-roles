@@ -367,11 +367,12 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
         }),
       },
     );
+    // No typed confirmation here, so no cause is claimed; the point of the case
+    // is that credential absence did not supply one either.
     const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
-      expectedCause: "activation",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
@@ -384,7 +385,9 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
       identity?: { name?: string; code?: string | number };
       diagnostic: string;
     };
-    assert.equal(errorBody.cause, "activation");
+    // A bare nonzero exit names no cause; what matters here is that credential
+    // absence did not relabel it either.
+    assert.equal(errorBody.cause, undefined);
     assert.notEqual(errorBody.identity?.name, "MissingProviderCredential");
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.ok(errorBody.diagnostic.length > 0);
@@ -458,7 +461,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
     assert.ok(stderr[0]!.length > 0);
   });
 });
-test("lawful terminal preferred over child nonzero exit (no wash into failure)", async () => {
+test("a sealed receipt stays recorded when the host CLI reported a nonzero exit", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -515,13 +518,20 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
         }),
       },
     );
-    assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 0);
+    // The host CLI reported a nonzero exit for this call, so the turn fails on
+    // that report even though a submission was sealed. The sealed receipt is not
+    // lost: it stays on the run-scoped submissions (owner 4743ade7).
+    assert.equal(result.exitCode, 1);
+    assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["converged"]);
-    assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, undefined);
+    }
+    assert.deepEqual(
+      (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)),
+      [`{"status":"converged"}`],
+      "the sealed receipt stays recorded on the run-scoped carrier",
+    );
   });
 });

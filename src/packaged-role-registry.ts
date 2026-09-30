@@ -96,7 +96,7 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
     auditTool: JUDGE_AUDIT_TOOL_NAME,
     settlement: "sealed",
-    runnerFailure: "engine-detour-known-first",
+    runnerFailure: "engine-detour",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
     /** Navigator subject is the public admitted instruction when the run is bound. */
@@ -214,7 +214,7 @@ export const PUBLIC_ROLE_RECORDS = [
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
-    runnerFailure: "engine-detour-record-first",
+    runnerFailure: "engine-detour",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -489,7 +489,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
+    runnerFailure: "engine-detour",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
@@ -504,7 +504,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
+    runnerFailure: "engine-detour",
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
@@ -527,7 +527,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
-    runnerFailure: "engine-detour-record-first",
+    runnerFailure: "engine-detour",
     gateStageLabel: "审刑院",
     /** Gate summon binds --subject judge and --source-run. */
     gateSummon: "subject-source",

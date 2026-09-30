@@ -83,7 +83,7 @@ test("runnerFailure registry rank is the public settlement principal", async () 
   const knownDiagnostic = "KNOWN_FAILURE_505_STANDS";
   const cases = [
     {
-      label: "judge known-first still reads a lone engine-detour record",
+      label: "judge: a lone engine-detour record supplies the cause when the host reported none",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "rank"],
       session: "detour" as const,
       known: false,
@@ -91,20 +91,22 @@ test("runnerFailure registry rank is the public settlement principal", async () 
       diagnostic: detourDiagnostic,
     },
     {
-      label: "reviewer record-first lets the engine-detour record replace knownFailure",
+      // The host's own report for this call stands; a session record does not
+      // replace it (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
+      label: "reviewer: the host report is not replaced by an engine-detour record",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "--lens", "correctness", "--authority-ref", "CLAUDE.md"],
       session: "detour" as const,
       known: true,
-      cause: "output" as const,
-      diagnostic: detourDiagnostic,
+      cause: "provider" as const,
+      diagnostic: knownDiagnostic,
     },
     {
-      label: "gatekeeper shares the record-first engine-detour leaf",
+      label: "gatekeeper: same rule as every other runner-failure seat",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "gatekeeper", "--project", project, "rank"],
       session: "detour" as const,
       known: true,
-      cause: "output" as const,
-      diagnostic: detourDiagnostic,
+      cause: "provider" as const,
+      diagnostic: knownDiagnostic,
     },
     {
       label: "collector has no runnerFailure leaf so knownFailure stands",
@@ -336,14 +338,30 @@ test("a malformed current session keeps its real read failure", async () => {
   });
 });
 
-test("bound auditor ENOTDIR evidence outranks credential in shared settlement", async () => {
+test("an unreadable session keeps its real cause beside a credential fact", async () => {
   await withTempHome(async (home) => {
     const pathComponent = join(home, "not-a-directory");
     await writeFile(pathComponent, "file");
+    // The caller-declared credential failure is this invocation's own fact and
+    // is not displaced; the ENOTDIR it would have cost stays on the record.
     const failure = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile: join(pathComponent, "parent.jsonl"),
       credential: { cause: "activation", diagnostic: "credential fallback" },
+    })).knownFailure;
+    assert.equal(failure?.cause, "activation");
+    assert.equal(failure?.diagnostic, "credential fallback");
+  });
+});
+
+test("an unreadable session with no reported fact keeps its real read failure", async () => {
+  await withTempHome(async (home) => {
+    const pathComponent = join(home, "not-a-directory-2");
+    await writeFile(pathComponent, "file");
+    const failure = (await resolveAuditedRunnerFailureResolution({
+      runner: undefined,
+      sessionFile: join(pathComponent, "parent.jsonl"),
+      credential: undefined,
     })).knownFailure;
     assert.equal(failure?.cause, "session");
     assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
