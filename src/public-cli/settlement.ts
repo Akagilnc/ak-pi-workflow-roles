@@ -324,7 +324,7 @@ export type PackageSideFact = {
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
   /** The typed-HTTP sidecar could not be read; the host's report still stands. */
-  readonly sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  readonly sidecarReadFailure?: ThrownErrorFact;
   /** A durable stderr.log write that failed while handling this call. */
   readonly stderrLogWriteFailure?: unknown;
 };
@@ -441,36 +441,33 @@ export async function inspectJudgeSession(
   }
 }
 
-function thrownIdentity(error: Error): {
-  name?: string;
-  code?: string | number;
-} {
-  const identity: { name?: string; code?: string | number } = {
-    name: error.name,
-  };
-  const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" || typeof code === "number") {
-    identity.code = code;
-  }
-  return identity;
-}
-
 /**
- * A caught read failure as a structured fact. The OS errno travels as `code`,
- * so a consumer asserts the identity instead of recognising the system error
- * by its message wording (质量法: 机器只咬契约，不咬呈现).
+ * A caught error's identity, read structurally off the thrown value: its name
+ * and its `code` when it carries one (an OS errno, typically). The errno
+ * travels as data so a consumer asserts the identity instead of recognising
+ * the system error by its message wording (质量法: 机器只咬契约，不咬呈现).
  */
-function withErrorCode(error: Error): {
+export type ThrownErrorIdentity = {
   readonly name: string;
+  readonly code?: string | number;
+};
+
+/** One caught error as a package-side fact: its identity plus the message. */
+export type ThrownErrorFact = ThrownErrorIdentity & {
   readonly message: string;
-  readonly code?: string;
-} {
+};
+
+function thrownIdentity(error: Error): ThrownErrorIdentity {
   const code = (error as { code?: unknown }).code;
   return {
     name: error.name,
-    message: error.message,
-    ...(typeof code === "string" && code !== "" ? { code } : {}),
+    ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
   };
+}
+
+/** A caught error as a package-side fact, reusing the one identity reader. */
+function thrownFact(error: Error): ThrownErrorFact {
+  return { ...thrownIdentity(error), message: error.message };
 }
 
 function isControlledFailureCause(cause: unknown): cause is ControlledFailureCause {
@@ -510,13 +507,12 @@ function flattenThrownFailureLeaves(error: unknown): unknown[] {
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
   if (isTypedActivationError(error)) {
     const identity = thrownIdentity(error);
-    if (error.failureCode !== undefined && identity.code === undefined) {
-      identity.code = error.failureCode;
-    }
     return {
       cause: error.knownCause,
       diagnostic: error.message || error.name || "exception",
-      identity,
+      identity: error.failureCode !== undefined && identity.code === undefined
+        ? { ...identity, code: error.failureCode }
+        : identity,
       details: {
         ...(typeof error.details === "object" && error.details !== null
           ? error.details as Record<string, unknown>
@@ -622,7 +618,7 @@ function withKnownDetails(
  */
 /** This call's package-side facts, or undefined when there are none. */
 function packageFactsOf(input: {
-  readonly sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  readonly sidecarReadFailure?: ThrownErrorFact;
   readonly packageFact?: PackageSideFact;
 }): PackageSideFact | undefined {
   const facts: PackageSideFact = {
@@ -660,7 +656,7 @@ export function classifyPostAdmissionFailure(input: {
   /** Secondary evidence already carried by the typed production failure. */
   knownDetails?: Readonly<Record<string, unknown>>;
   /** This package's own auxiliary read failure; recorded, never a cause. */
-  sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  sidecarReadFailure?: ThrownErrorFact;
   /** Further package-side facts merged under `packageFact`, never the cause. */
   packageFact?: PackageSideFact;
 }): ControlledFailure {
@@ -938,7 +934,7 @@ export type AuditedRunnerFailureResolution = {
    */
   readonly typedHttpObservationSettled: boolean;
   /** The sidecar could not be read; auxiliary, and never a cause. */
-  readonly sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  readonly sidecarReadFailure?: ThrownErrorFact;
 };
 
 function resolutionOf(
@@ -946,7 +942,7 @@ function resolutionOf(
   typedHttp: {
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
-    readonly sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+    readonly sidecarReadFailure?: ThrownErrorFact;
   } = { settled: false },
 ): AuditedRunnerFailureResolution {
   return {
@@ -989,7 +985,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
         input.runner,
         {
           settled: true,
-          sidecarReadFailure: withErrorCode(failure),
+          sidecarReadFailure: thrownFact(failure),
         },
       );
     }
@@ -1020,7 +1016,7 @@ export async function resolveControlledFailureResumeObservation(input: {
    * The sidecar could not be read on this path. This package's own fact: it is
    * never a cause, and it never stands in for what the host reported.
    */
-  readonly observationReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  readonly observationReadFailure?: ThrownErrorFact;
 }> {
   if (input.typedHttpObservationSettled === true) {
     const observation = input.typedHttpObservation;
@@ -1041,7 +1037,7 @@ export async function resolveControlledFailureResumeObservation(input: {
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     return {
-      observationReadFailure: withErrorCode(failure),
+      observationReadFailure: thrownFact(failure),
     };
   }
 }
@@ -1053,7 +1049,7 @@ export function controlledFailureInputFromResolution(
   knownFailure?: RoleTurnKnownFailure;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
-  sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  sidecarReadFailure?: ThrownErrorFact;
 } {
   return {
     ...(resolution.knownFailure === undefined ? {} : { knownFailure: resolution.knownFailure }),

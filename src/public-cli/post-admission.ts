@@ -107,6 +107,7 @@ import {
   rewritePublishedFailureErrorPath,
   type ControlledFailure,
   type PackageSideFact,
+  type ThrownErrorFact,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -386,7 +387,7 @@ export type ControlledFailureInput = {
    */
   packageFact?: PackageSideFact;
   /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
-  sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
+  sidecarReadFailure?: ThrownErrorFact;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
   /**

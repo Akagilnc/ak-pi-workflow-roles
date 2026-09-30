@@ -578,7 +578,7 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     const firstError = JSON.parse(await readFile(join(dirname(errorRef.path), "error.json"), "utf8")) as {
       cause?: string;
       diagnostic?: string;
-      packageFact?: { sidecarReadFailure?: { name?: string; code?: string } };
+      packageFact?: { sidecarReadFailure?: { name?: string; code?: string | number } };
     };
     assert.equal(firstError.cause, undefined);
     // The host's own stderr survives verbatim — this is the original-report
