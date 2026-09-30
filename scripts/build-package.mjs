@@ -70,7 +70,6 @@ const entries = [
   "sitian-facade",
   "sitian-reader",
   "typed-provider-http",
-  "upstream-error-testimony",
 ];
 
 /**
