@@ -183,6 +183,38 @@ async function booksWithLedgers(workspace: string): Promise<FactoryBoardBook[]> 
   ];
 }
 
+test("zero-turn ticket reports zero machine cost, tokens and wall clock", async () => {
+  // Machine boundary (#162 data-* contract): a ticket with no runs has nothing to
+  // sum, so its machine values are 0 — the board must not invent a nonzero
+  // duration or spend to fill the channel. Reuses the zero-run ledgers that
+  // booksWithLedgers already creates (orch #26, roles #128/#130).
+  await withTempRoot("factory-board-zero-turn-", async (workspace) => {
+    const books = await booksWithLedgers(workspace);
+    const html = await renderFactoryBoardHtml(
+      books,
+      { ok: true, snapshot: sampleSnapshot() },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+
+    for (const [book, issue] of [["orch", "26"], ["roles", "128"], ["roles", "130"]] as const) {
+      const card = elementsWith(html, "data-ticket").find(
+        (el) => el["data-book"] === book && el["data-ticket"] === issue,
+      );
+      assert.ok(card, `${book} #${issue} present`);
+      assert.equal(card["data-cost-usd"], "0", `${book} #${issue} cost`);
+      assert.equal(card["data-total-tokens"], "0", `${book} #${issue} tokens`);
+      assert.equal(card["data-wall-ms"], "0", `${book} #${issue} wall`);
+      assert.equal(card["data-landing-cycle-ms"], "0", `${book} #${issue} landing cycle`);
+      // The label row carries the same machine values, not just the card.
+      const costLabel = elementsWith(html, "data-cost-label").find(
+        (el) => el["data-cost-label"] === issue && el["data-book"] === book,
+      );
+      assert.ok(costLabel, `${book} #${issue} cost label`);
+      assert.equal(costLabel["data-total-tokens"], "0", `${book} #${issue} label tokens`);
+    }
+  });
+});
+
 test("board lists title and milestone per ticket; same-number tickets stay in their lanes", async () => {
   await withTempRoot("factory-board-lanes-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
