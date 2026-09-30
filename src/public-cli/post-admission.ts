@@ -643,40 +643,47 @@ async function settleDeferredPersist<
 }
 
 /**
- * #1132: one 没交卷催交 on this run's original host session.
- *
- * Institution stays on the AK side (ADR 0082): this builds a host-neutral resume
- * turn carrying the same continuation kind the adapter already resumes natively,
- * and hands the host adapter its stored native session id. No new prompt wording
- * (pi's existing delivery-state content is reused verbatim) and no new host
- * capability — a host that cannot resume natively reports that as a real failure
- * through the existing failure path, never as no_receipt.
- *
- * The receipt, if any, is read through the same `adapters.trySettle` seam the
- * ordinary turn uses, so a delivery-turn submission lands in the ledger and flows
- * on to the audit seat in the existing order.
+ * Court/invocation scope for settlement reads. The one construction of this
+ * shape for every turn (#1132 — the first turn and each 催交 turn share it).
  */
-async function requestReceiptDelivery<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult,
->(input: {
+function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope | undefined {
+  const hasCourt = request.courtAttemptId !== undefined && request.courtAttemptId.length > 0;
+  const hasScope = request.invocationScopeId !== undefined && request.invocationScopeId.length > 0;
+  if (!hasCourt && !hasScope) return undefined;
+  return {
+    ...(hasCourt ? { courtAttemptId: request.courtAttemptId as string } : {}),
+    ...(hasScope ? { invocationScopeId: request.invocationScopeId as string } : {}),
+  };
+}
+
+/**
+ * #1132: one 没交卷催交 turn, dispatched through the SAME settlement path as the
+ * first turn.
+ *
+ * There is deliberately no second settlement implementation here. A delivery
+ * turn is an ordinary host turn on this same run/session: this builds the
+ * host-neutral resume request (the adapter's stored native session id, ADR 0082;
+ * pi's existing delivery-state content reused verbatim — no new prompt wording,
+ * no new host capability) and re-enters `dispatchPostAdmissionTurn`. That keeps
+ * ONE post-turn settlement authority (ADR 0080) shared by both turns, so a
+ * delivery turn gets exactly what the first turn gets: the runner/host failure
+ * re-read, the shouldPresent gate, the fresh-seal check, open-court cleanup,
+ * cancel re-reads, run-state persist, and the stderr mirror.
+ *
+ * `issuedSoFar` is how many delivery requests this run already spent, so the
+ * delivery-state body reports what really went out.
+ */
+async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(input: {
   admitted: A;
   env: PostAdmissionEnv;
   request: RoleTurnRequest;
-  adapters: PostAdmissionAdapters<A, T>;
-  io: CliIo;
-  persistRunState: boolean;
-  deliveryNumber: number;
-}): Promise<
-  | { readonly kind: "still-missing" }
-  | { readonly kind: "settled"; readonly terminal: T }
-  | { readonly kind: "failure"; readonly result: { exitCode: number; admitted: A; terminal: T } }
-> {
-  const { admitted, env, request, adapters, io } = input;
-  // Reuse pi's existing delivery-request body (receipt-delivery-policy) so the
-  // model sees the same typed delivery state it already knows.
-  const policy = createReceiptDeliveryPolicy(env.autoResumeLimit);
-  for (let issued = 0; issued < input.deliveryNumber; issued += 1) {
+  issuedSoFar: number;
+}): Promise<RoleTurnRequest> {
+  const { admitted, env, request } = input;
+  const limit = deliveryLimitFromConfig(env.autoResumeLimit);
+  // pi's existing delivery-request body, carrying the count already spent.
+  const policy = createReceiptDeliveryPolicy(limit);
+  for (let issued = 0; issued < input.issuedSoFar; issued += 1) {
     policy.recordDeliveryRequest();
   }
   const hostSessionId = await readStoredHostSessionId(
@@ -684,99 +691,15 @@ async function requestReceiptDelivery<
     env.principalAuthority,
     admitted.principal,
   );
-  const deliveryRequest: RoleTurnRequest = {
+  return {
     ...request,
     continuation: {
       kind: "resume",
       prompt: JSON.stringify(policy.deliveryState()),
       ...(hostSessionId === undefined ? {} : { hostSessionId }),
     },
-    deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+    deliveryRequestLimit: limit,
   };
-
-  let turnResult: Awaited<ReturnType<RoleTurnHost["executeTurn"]>>;
-  try {
-    turnResult = await env.roleTurnHost.executeTurn(deliveryRequest);
-  } catch (error) {
-    // A 催交 that cannot be delivered is a real failure with its true cause, kept
-    // by the one existing settlement authority (ADR 0080) — never laundered into
-    // no_receipt (失败诚实宪法).
-    return await requestReceiptDeliveryFailure(input, { thrown: error });
-  }
-  if (turnResult.timedOut
-    || turnResult.knownFailure !== undefined
-    || (turnResult.code !== null && turnResult.code !== 0)) {
-    return await requestReceiptDeliveryFailure(input, turnResult);
-  }
-
-  const scope = settlementScopeForTurn(request);
-  const settled = await adapters.trySettle(admitted, env.principalAuthority, scope);
-  if (settled === undefined) return { kind: "still-missing" };
-  // #836/#833: a prior court's accepted payload is history, not this court's
-  // result. The ordinary turn path refuses to present one as a fresh seal; the
-  // 催交 turn must hold the same line or a delivery request would resurrect an
-  // older court as this court's outcome.
-  const settledIsFreshThisAttempt =
-    settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation"
-      ? true
-      : await attemptProducedFreshSubmission(admitted, scope);
-  if (!settledIsFreshThisAttempt) return { kind: "still-missing" };
-  return {
-    kind: "settled",
-    terminal: await attachRecordedSubmissions(admitted, settled, scope) as T,
-  };
-}
-
-/** Court/invocation scope for settlement reads, matching the ordinary turn path. */
-function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope | undefined {
-  if (
-    (request.courtAttemptId === undefined || request.courtAttemptId.length === 0)
-    && (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
-  ) {
-    return undefined;
-  }
-  return {
-    ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-      ? {}
-      : { courtAttemptId: request.courtAttemptId }),
-    ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
-      ? {}
-      : { invocationScopeId: request.invocationScopeId }),
-  };
-}
-
-async function requestReceiptDeliveryFailure<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult,
->(
-  input: {
-    admitted: A;
-    env: PostAdmissionEnv;
-    request: RoleTurnRequest;
-    adapters: PostAdmissionAdapters<A, T>;
-    io: CliIo;
-    persistRunState: boolean;
-  },
-  cause: { thrown?: unknown; timedOut?: boolean; code?: number | null; stderr?: string },
-): Promise<{ readonly kind: "failure"; readonly result: { exitCode: number; admitted: A; terminal: T } }> {
-  const { admitted, env, request, adapters, io } = input;
-  const failed = await settleAfterTurnStarted(
-    admitted,
-    withEngineDetourInvocationScope(
-      {
-        timedOut: cause.timedOut ?? false,
-        code: cause.code ?? null,
-        stderr: cause.stderr ?? "",
-        ...(cause.thrown === undefined ? {} : { thrown: cause.thrown }),
-      },
-      request.invocationScopeId,
-    ),
-    adapters,
-    env.principalAuthority,
-    io,
-    input.persistRunState,
-  );
-  return { kind: "failure", result: failed as { exitCode: number; admitted: A; terminal: T } };
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -792,6 +715,18 @@ export async function dispatchPostAdmissionTurn<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
+  /**
+   * #1132: delivery requests already spent on this run. Carried into the
+   * recursive 催交 turn so `deliveryTurns` records what actually went out, not
+   * the budget. Absent on a first turn = none spent.
+   */
+  issuedDeliveryRequests?: number;
+  /**
+   * #1132: this turn is a 没交卷催交 rather than the first turn. Its outcome is
+   * the run's outcome — never retried by the caller's failure loop into a
+   * lawful no_receipt.
+   */
+  deliveryTurn?: boolean;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -805,6 +740,12 @@ export async function dispatchPostAdmissionTurn<
   const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+  // #1132: a 催交 turn does NOT run a delivery loop of its own. It settles its
+  // own turn (no_receipt when still silent) and hands that back; the caller that
+  // issued the request owns the budget and issues the next one. Without this
+  // the recursion nests one loop per level and multiplies the count
+  // (N×(1+N)+首轮) instead of counting each request once.
+  const deliveryTurnOutcome = input.deliveryTurn === true;
   type DispatchOutcome = {
     exitCode: number;
     admitted: A;
@@ -821,11 +762,11 @@ export async function dispatchPostAdmissionTurn<
    */
   let afterDispatchApplied = false;
   /**
-   * #1132: delivery requests this AK execution seam actually issued after a
-   * host turn ended normally with no receipt. Counted per real prompt sent on
-   * the same run/session — never the budget, never another loop's resumes.
+   * #1132: delivery requests actually issued on this run. Counted per real
+   * prompt sent on the same run/session — never the budget, never another
+   * loop's resumes. A 催交 turn inherits the count its caller already spent.
    */
-  let issuedDeliveryRequests = 0;
+  let issuedDeliveryRequests = input.issuedDeliveryRequests ?? 0;
   /**
    * #1132: the one effective ceiling, resolved once per call from the caller's
    * already-resolved configured value (never re-read here). Shared with the
@@ -1098,19 +1039,7 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    const courtScope =
-      (request.courtAttemptId === undefined || request.courtAttemptId.length === 0) &&
-      (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
-        ? undefined
-        : {
-            ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-            ...(request.invocationScopeId === undefined ||
-              request.invocationScopeId.length === 0
-              ? {}
-              : { invocationScopeId: request.invocationScopeId }),
-          };
+    const courtScope = settlementScopeForTurn(request);
 
     // Single complete boundary (#840 r9 判词 class 1): resolving the
     // host/runner failure facts, trySettle, its shouldPresent gate, and the
@@ -1359,44 +1288,47 @@ export async function dispatchPostAdmissionTurn<
     }
 
     // #1132: 没交卷先回本人催交，不直接结为 no_receipt. The AK execution seam
-    // owns the 催交 and its real count: it resumes this same run's original host
-    // session through the host adapter seam (native CLI resume, no new prompt
-    // wording and no new host capability) and re-settles after each request.
-    // 催交 never substitutes for host failure recovery — a real failure below
-    // keeps its cause and stays a failure. Only an exhausted budget with still
-    // no receipt reaches the settlement seam, and `issuedDeliveryRequests` is
-    // what actually went out.
-    while (akSeamDeliversReceipt && issuedDeliveryRequests < deliveryLimit) {
-      const deliveryTurn = await requestReceiptDelivery({
+    // owns the 催交 and its real count. Each request is a real host turn on this
+    // same run/session and is re-dispatched through this very function, so both
+    // turns share ONE settlement path (ADR 0080) rather than a reduced copy.
+    // 催交 never substitutes for host failure recovery: a delivery turn that
+    // fails returns its own failure below with the true cause intact. Only an
+    // exhausted budget with still no receipt reaches the settlement seam, and
+    // `issuedDeliveryRequests` is what actually went out.
+    while (akSeamDeliversReceipt && !deliveryTurnOutcome && issuedDeliveryRequests < deliveryLimit) {
+      issuedDeliveryRequests += 1;
+      const deliveryRequest = await buildReceiptDeliveryRequest({
         admitted,
         env,
         request,
-        adapters,
-        io: { ...io, stdout: () => {} },
-        persistRunState,
-        deliveryNumber: issuedDeliveryRequests + 1,
+        issuedSoFar: issuedDeliveryRequests,
       });
-      issuedDeliveryRequests += 1;
-      if (deliveryTurn.kind === "failure") {
-        // #1132: 催交不能代替宿主失败恢复. A delivery turn that fails is the run's
-        // real outcome with its true cause — skipAutoResume keeps the failure
-        // loop from retrying it into a lawful no_receipt (失败诚实宪法: 真因必须
-        // 落痕，不洗成 no_receipt). The caller may still resume explicitly.
+      const deliveryTurn = await dispatchPostAdmissionTurn<A, T>({
+        admitted,
+        env,
+        io: { ...io, stdout: () => {} },
+        request: deliveryRequest,
+        adapters,
+        persistRunState,
+        // The delivery count is call-local state carried down the recursion.
+        issuedDeliveryRequests,
+        // #1132: a delivery turn's own no_receipt/failure is this run's outcome;
+        // never let the outer failure loop retry it into a lawful no_receipt.
+        deliveryTurn: true,
+      });
+      // The delivery turn's own outcome IS the run's outcome, except when it
+      // simply still has no receipt — that is the loop's own case to keep going.
+      if (deliveryTurn.terminal?.roleOutcome.kind !== "no_receipt") {
+        // #1132: 催交不能代替宿主失败恢复. A delivery turn that failed carries the
+        // run's real failure; skipAutoResume stops this call's own failure-retry
+        // loop from replaying it until the budget drains into a lawful
+        // no_receipt (失败诚实宪法: 真因必须落痕). The caller may still resume
+        // the run explicitly, which is the existing recovery path.
+        const stopRetrying = deliveryTurn.terminal !== undefined
+          && !isLawfulTypedTerminalOutcome(deliveryTurn.terminal.roleOutcome);
         return await finishAfterTurn({
-          ...deliveryTurn.result,
-          turnDispatched: true as const,
-          skipAutoResume: true as const,
-          ...deferredPersist,
-        });
-      }
-      // A receipt landed on this delivery turn: settle it through the existing
-      // order (ledger → 原话递送该角色应过的审核 → 共同结算), never around it.
-      if (deliveryTurn.kind === "settled") {
-        return await finishAfterTurn({
-          exitCode: exitCodeForTerminalOutcome(deliveryTurn.terminal.roleOutcome),
-          admitted,
-          terminal: deliveryTurn.terminal,
-          turnDispatched: true as const,
+          ...deliveryTurn,
+          ...(stopRetrying ? { skipAutoResume: true as const } : {}),
           ...deferredPersist,
         });
       }
@@ -1447,6 +1379,9 @@ export async function dispatchPostAdmissionTurn<
       admitted,
       terminal: noReceipt,
       turnDispatched: true as const,
+      // #1132: a 催交 turn that ran out of budget hands back to its caller, which
+      // owns the remaining budget — never let an enclosing retry loop replay it.
+      ...(deliveryTurnOutcome ? { skipAutoResume: true as const } : {}),
       ...deferredPersist,
     });
   } finally {

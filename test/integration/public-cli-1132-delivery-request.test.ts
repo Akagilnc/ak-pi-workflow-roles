@@ -18,6 +18,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -25,6 +26,7 @@ import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 
 function captureIo() {
   const stdout: string[] = [];
@@ -49,6 +51,8 @@ async function withSeatHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
       ["config", "set", "judge", "test/caller-seat:high", "diarist", "test/caller-seat:high", "countersign", "test/caller-seat:high"],
       { packageRoot, home, io: { stdout() {}, stderr() {} } },
     );
+    // The review seats must resolve for 不跳审核 to be observable at all.
+    await configurePassingReviewSeats(home);
     return fn(home);
   });
 }
@@ -85,17 +89,22 @@ async function runExternalJudge(
   },
 ): Promise<{
   readonly turns: readonly Turn[];
+  /** Every seat this run dispatched, in order — audit continuation shows up here. */
+  readonly seatsDispatched: readonly string[];
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
 }> {
   await setConfiguredLimit(home, options.limit);
   const turns: Turn[] = [];
+  const seatsDispatched: string[] = [];
   let runDirectorySeen: string | undefined;
   const { io } = captureIo();
   const host = {
     async executeTurn(request: RoleTurnRequest) {
+      seatsDispatched.push(request.activation.role);
       if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
-      // Only this run's judge turns; summoned seats share this faux host.
+      // Only this run's judge turns are counted as催交; review seats share the
+      // faux host and are recorded separately (they prove the audit handoff).
       if (request.runDirectory !== runDirectorySeen || request.activation.role !== "judge") {
         return { code: 0, stderr: "", timedOut: false };
       }
@@ -144,14 +153,16 @@ async function runExternalJudge(
       createRunId: () => options.runId,
       io,
       roleTurnHost: host,
-      hostAdapters: [
-        { name: "pi", create: () => ({ ok: true as const, host }) },
-        { name: "grok-build", create: () => ({ ok: true as const, host }) },
-      ],
+      // Every adapter row uses the faux host so the review chain (auditor /
+      // inspector / notary) is observable too — 不跳断言 needs to see it.
+      hostAdapters: packagedExternalHostNames()
+        .concat("pi")
+        .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
     },
   );
   return {
     turns,
+    seatsDispatched,
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
   };
@@ -179,7 +190,51 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.equal(run.turns[0]?.kind, "initial");
     // 催交 rides a native resume of this run's own host session.
     assert.equal(run.turns[1]?.kind, "resume");
+    // 票面 3：不跳审核。The audit handoff happens in the caller
+    // (dispatchAdmitted → auditSubmittedRole) on the returned terminal's kind, so
+    // a delivery-turn accepted must actually summon a further seat. Judge alone
+    // would be exactly the "未经台院" defect #1050 already ruled on.
+    assert.ok(
+      run.seatsDispatched.some((role) => role !== "judge"),
+      `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
+    );
     assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
+  });
+});
+
+// 变异真跑：去掉催交接线（deliveryTurn: true 传回 / 审核接线）本测试应报红。
+test("#1132: 催交得卷 reaches the audit seat, not a bare accepted", async () => {
+  await withSeatHome(async (home) => {
+    const run = await runExternalJudge(home, {
+      runId: "1132-external-audit-continuation",
+      project: await freshProject(home),
+      limit: 2,
+      sealOnCall: 2,
+    });
+    const nonJudge = run.seatsDispatched.filter((role) => role !== "judge");
+    assert.ok(
+      nonJudge.length > 0,
+      `a催交-sealed judge must continue into review; seats=${JSON.stringify(run.seatsDispatched)}`,
+    );
+  });
+});
+
+// 各循环分别计次：催交轮内 closeRound 重交不虚增 deliveryTurns。
+test("#1132: a delivery turn's internal re-ask rounds do not inflate deliveryTurns", async () => {
+  await withSeatHome(async (home) => {
+    // closeRound inside a delivery turn re-prompts the same host session; the
+    // count must still be exactly the number of催交 turns the AK seam issued.
+    const run = await runExternalJudge(home, {
+      runId: "1132-external-nested-reask",
+      project: await freshProject(home),
+      limit: 2,
+    });
+    const outcome = run.terminal?.roleOutcome;
+    assert.equal(outcome?.kind, "no_receipt");
+    if (outcome?.kind !== "no_receipt") return;
+    assert.equal(outcome.deliveryTurns, 2);
+    // One initial turn plus two催交 turns — never the nested product.
+    assert.equal(run.turns.length, 3);
   });
 });
 
