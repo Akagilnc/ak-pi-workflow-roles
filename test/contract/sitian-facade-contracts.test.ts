@@ -9,8 +9,8 @@
  * - Infrastructure failure honesty (original cause propagated)
  */
 import assert from "node:assert/strict";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -123,6 +123,13 @@ test("Sitian facade: Log4j append-only appends unconditionally without deduplica
     assert.equal(read.records.length, 2, "Both records exist in canonical volume");
     assert.equal(read.records[0]!.identity, "canonical-idem-id-123");
     assert.equal(read.records[1]!.identity, "canonical-idem-id-123");
+    // No sidecar claim file: the volume surface stays the single record file.
+    // Not implied by the row count — a claim sidecar would sit beside it.
+    const recordBase = basename(ptr1.recordFile);
+    const surface = (await readdir(dirname(ptr1.recordFile)))
+      .filter((name) => name === recordBase || name.startsWith(`${recordBase}.`))
+      .sort();
+    assert.deepEqual(surface, [recordBase]);
   });
 });
 

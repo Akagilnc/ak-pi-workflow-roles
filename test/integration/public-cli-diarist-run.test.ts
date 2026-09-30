@@ -1994,7 +1994,7 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
       runId,
       role: "diarist",
     });
-    const { io } = captureIo();
+    const { io, stderr } = captureIo();
     const baseOptions = {
       home,
       packageRoot,
@@ -2044,6 +2044,9 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
         },
       },
     );
+    // #1058: clear the interrupted run's output so the pointer read below is
+    // the one this resume hands the caller.
+    stderr.length = 0;
     const resumed = await runAkRole(
       ["resume", "--model", "test/caller-seat:high", runId],
       {
@@ -2058,6 +2061,8 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
     const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
+    // The resumed caller must be pointed at the relocated run's error record.
+    assert.ok(stderr.join("").includes(errorPath), `resume must point at the relocated error record: ${stderr.join("")}`);
     const error = JSON.parse(await readFile(errorPath, "utf8")) as {
       kind?: unknown;
       runId?: unknown;

@@ -895,7 +895,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
-      const { io: resumeIo } = captureIo();
+      const { io: resumeIo, stderr: resumeStderr } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
@@ -919,7 +919,12 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 1);
       const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`);
-      const error = JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as {
+      // #1058: read the record the caller was actually pointed at, not a known path.
+      const pointedPath = (await readdir(join(runDirectory, "artifacts")))
+        .map((name) => join(runDirectory, "artifacts", name))
+        .find((path) => resumeStderr.join("").includes(path));
+      assert.ok(pointedPath, `resume must point at its error record: ${resumeStderr.join("")}`);
+      const error = JSON.parse(await readFile(pointedPath, "utf8")) as {
         runId?: unknown;
         diagnostic?: unknown;
       };
@@ -1021,7 +1026,12 @@ test("resumable Terminal omits top-level run id; durable artifact keeps original
     assert.equal(resumed.exitCode, 1);
     assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
     assert.equal(resumed.terminal?.artifacts.length, 0);
-    const resumedArtifact = JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as {
+    // #1058: the resumed caller must be pointed at this run's error record.
+    const resumedPointedPath = (await readdir(join(runDirectory, "artifacts")))
+      .map((name) => join(runDirectory, "artifacts", name))
+      .find((path) => resumedIo.stderr.join("").includes(path));
+    assert.ok(resumedPointedPath, `resume must point at its error record: ${resumedIo.stderr.join("")}`);
+    const resumedArtifact = JSON.parse(await readFile(resumedPointedPath, "utf8")) as {
       runId?: unknown;
       diagnostic?: unknown;
     };
@@ -2111,7 +2121,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(loaded.admitted.runId, runId);
 
     await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-    const { io } = captureIo();
+    const { io, stderr } = captureIo();
     let dispatches = 0;
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
@@ -2135,7 +2145,13 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     });
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
-    const noted = JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as {
+    // #1058: read the record the caller was pointed at, not a test-known path.
+    const artifactsDir = join(runDirectory, "artifacts");
+    const pointedPath = (await readdir(artifactsDir))
+      .map((name) => join(artifactsDir, name))
+      .find((path) => stderr.join("").includes(path));
+    assert.ok(pointedPath, `resume must point at its error record: ${stderr.join("")}`);
+    const noted = JSON.parse(await readFile(pointedPath, "utf8")) as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
     };
@@ -2444,9 +2460,19 @@ test("public resume failures persist structured diagnostics", async () => {
         });
         return { ...result, stderr: captured.stderr.join("") };
       };
-      const errorRecord = (runDirectory: string) => join(runDirectory, "artifacts", "error.json");
-      const readError = async (runDirectory: string, expectedRunId: string) => {
-        const parsed: unknown = JSON.parse(await readFile(errorRecord(runDirectory), "utf8"));
+      /** The error record this resume handed the caller, per its own stderr pointer. */
+      const pointedError = async (runDirectory: string, stderr: string): Promise<string> => {
+        const directory = join(runDirectory, "artifacts");
+        const pointed = (await readdir(directory))
+          .map((name) => join(directory, name))
+          .find((path) => stderr.includes(path));
+        assert.ok(pointed, `resume must point at its error record: ${stderr}`);
+        return pointed;
+      };
+      // #1058: the record must be the one the caller was pointed at, not a path
+      // this test already knows — persistence alone proves nothing about delivery.
+      const readError = async (pointedPath: string, expectedRunId: string) => {
+        const parsed: unknown = JSON.parse(await readFile(pointedPath, "utf8"));
         assert.equal(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed), true);
         const record = parsed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
         assert.equal(record.kind, "error");
@@ -2464,10 +2490,14 @@ test("public resume failures persist structured diagnostics", async () => {
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
         const directory = join(runDirectory, "artifacts");
-        const files = (await readdir(directory)).filter((name) =>
-          name.startsWith("resume-diagnostic-") && name.endsWith(".json"));
-        assert.equal(files.length, 1, "one structured resume diagnostic must persist");
-        const record = JSON.parse(await readFile(join(directory, files[0]!), "utf8")) as {
+        // #1058: the caller must be handed a pointer to this run's error record —
+        // derive the pointed file from stderr, then read that file. Reading a
+        // test-known path instead would prove only that the artifact persisted.
+        const pointedPath = (await readdir(directory))
+          .map((name) => join(directory, name))
+          .find((path) => result.stderr.includes(path));
+        assert.ok(pointedPath, `resume failure must point at its error record: ${result.stderr}`);
+        const record = JSON.parse(await readFile(pointedPath, "utf8")) as {
           runId?: unknown;
           diagnostic?: unknown;
           details?: unknown;
@@ -2606,8 +2636,8 @@ test("public resume failures persist structured diagnostics", async () => {
       );
       const parentArtifacts = await readdir(join(parent.runDirectory, "artifacts"));
       const parentDiagnosticPath = parentArtifacts
-        .filter((name) => name.startsWith("resume-diagnostic-") && name.endsWith(".json"))
-        .map((name) => join(parent.runDirectory, "artifacts", name))[0];
+        .map((name) => join(parent.runDirectory, "artifacts", name))
+        .find((path) => parentResume.stderr.join("").includes(path));
       assert.ok(
         parentDiagnosticPath,
         `${parentResume.stderr.join("")} ${parentArtifacts.join(",")}`,
@@ -2639,12 +2669,18 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(dispatchedParentResult.exitCode, 0);
       assert.ok(parentDispatches > 0);
       assert.equal(childDispatches, 2);
-      await readError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
+      await readError(
+        await pointedError(dispatchedParent.runDirectory, dispatchedParentIo.stderr.join("")),
+        "1058-parent-dispatch-failure",
+      );
 
       const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(deletedResult.exitCode, 0);
       const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
-      const deletedRecord = await readError(relocatedDirectory, "1058-no-workspace");
+      const deletedRecord = await readError(
+        await pointedError(relocatedDirectory, deletedResult.stderr),
+        "1058-no-workspace",
+      );
       assert.equal(typeof deletedRecord.diagnostic, "string");
       assert.equal(deletedRecord.diagnostic, "zeta-unique-host-diagnostic");
       assert.equal((deletedRecord as { details?: { exitCode?: unknown } }).details?.exitCode, 1);
@@ -2662,7 +2698,10 @@ test("public resume failures persist structured diagnostics", async () => {
       const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
       assert.notEqual(unknown.exitCode, 0);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
-      const unknownRecord = await readError(unknownHost.runDirectory, "1058-unknown-host");
+      const unknownRecord = await readError(
+        await pointedError(unknownHost.runDirectory, unknown.stderr),
+        "1058-unknown-host",
+      );
       assert.equal(
         unknown.terminal?.roleOutcome.kind === "failure"
           && unknown.terminal.roleOutcome.diagnostic === unknownRecord.diagnostic,
