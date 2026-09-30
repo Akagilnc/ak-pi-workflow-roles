@@ -1,6 +1,6 @@
 import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { Type } from "typebox";
-import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 import { REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
@@ -17,43 +17,24 @@ export type ReviewerAdmittedInputs = Readonly<{
   ticketNumber?: number;
 }>;
 
-const reviewerAmendmentsSchema = Type.Object({
-  completeness: Type.Optional(Type.String({
-    description:
-      "completeness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行。hard-stop／usage error 为 refused 时，若已产出报告仍照录于此",
-  })),
-  correctness: Type.Optional(Type.String({
-    description:
-      "correctness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行。hard-stop／usage error 为 refused 时，若已产出报告仍照录于此",
-  })),
-}, {
-  additionalProperties: true,
-  description:
-    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。",
-});
-// #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
-// branches on its length (src/reviewer-role.ts consumer: reviewer content is
-// returned as submitted, ADR 0057).
-// #836 (ADR 0003 Amendment): status kept open like countersignStatus
-// (src/countersign-role.ts) — one shared description across both variants
-// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
-// #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused
-// (report already produced still lands in selected-lens amendments).
+const REVIEWER_AMENDMENTS_DESCRIPTION =
+  "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略（completeness / correctness）。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。" as const;
+// #1134: `status` alone is the trajectory field (#917 §6 two normal lens verdicts →
+// completed; hard-stop / usage error → refused); its words ride the description.
+// amendments/diagnostic are LLM/human-read narrative content returned as
+// submitted — declaration keeps name + semantic description only, no nested
+// object shape, no string type, no required constraint.
 const REVIEWER_STATUS_DESCRIPTION =
   "completed | refused。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
-const reviewerOutputVariants = Type.Union([
-  Type.Object({
-    status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
-    amendments: Type.Optional(reviewerAmendmentsSchema),
-  }, { additionalProperties: false }),
-  Type.Object({
-    status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
-    diagnostic: Type.String({ description: "拒绝诊断说明；hard-stop／usage error 原因进此字段，已产出报告另照录 amendments" }),
-    amendments: Type.Optional(reviewerAmendmentsSchema),
-  }, { additionalProperties: false }),
-]);
+const reviewerOutputObject = Type.Object({
+  status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
+  amendments: Type.Unknown({ description: REVIEWER_AMENDMENTS_DESCRIPTION }),
+  diagnostic: Type.Unknown({
+    description: "拒绝诊断说明；hard-stop／usage error 原因进此字段，已产出报告另照录 amendments",
+  }),
+});
 export const reviewerOutputSchema = withTerminatingOutputDeclarations(
-  openToolObjectFromUnion(reviewerOutputVariants),
+  openToolObject(reviewerOutputObject),
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;

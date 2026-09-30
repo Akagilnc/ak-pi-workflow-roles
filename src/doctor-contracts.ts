@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.ts";
-import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
@@ -45,55 +45,43 @@ export type DoctorOutput = DoctorSubmission;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
-// #836 r16 class 1: case/finding/assetEvidence/guardrails/prescription/
-// lastRealBite/missingEvidence are LLM/human-read narrative content — Judge/
-// 台院 read the original volume, no code branches on their length or nested
-// presence (src/doctor-contracts.ts:136-138 passes the submission through
-// unprojected). Field/type/description/Literal value stay; provider
-// required/minLength/minItems/minimum/nested additionalProperties:false is deleted.
-const nonblank = Type.Optional(Type.String());
-const evidenceIds = Type.Optional(Type.Array(Type.String()));
-const guardrail = Type.Object({ answer: Type.Optional(Type.Boolean()), evidenceIds, explanation: nonblank }, { additionalProperties: true });
-const lastRealBite = Type.Union([
-  Type.Object({ kind: Type.Optional(Type.Literal("actual")), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: true }),
-  Type.Object({ kind: Type.Optional(Type.Literal("noRealBite")), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: true }),
-]);
-const assetKinds = DOCTOR_TARGET_KINDS;
-const findingBody = {
-  evidenceIds, disposition: Type.Optional(Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")])),
-  guardrails: Type.Optional(Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true })),
-  prescription: Type.Optional(Type.Object({ kind: Type.Optional(Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")])), recommendation: nonblank, necessityExplanation: nonblank }, { additionalProperties: true })), lastRealBite: Type.Optional(lastRealBite),
-};
-const finding = Type.Union([
-  Type.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: true }),
-  Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), assetEvidence: Type.Optional(Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), evidenceId: nonblank }, { additionalProperties: true })), ...findingBody }, { additionalProperties: true }),
-]);
-const caseIdentity = Type.Object({ issueNumber: Type.Optional(Type.Integer()), runsPath: nonblank }, { additionalProperties: true });
-// #836 (ADR 0003 Amendment): status kept open like countersignStatus
-// (src/countersign-role.ts) — one shared description across both variants
-// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
+// #1134: `status` alone is the trajectory field (src/doctor-contracts.ts:112-114
+// reads completed | refused to settle); its words ride the description.
+// case/findings/reason/missingEvidence are LLM/human-read narrative content —
+// the submission passes through unprojected (validateDoctorSubmissionShape) and
+// Judge/台院 read the original volume, so no code branches on their length or
+// nested presence. Declaration keeps field name + semantic description only:
+// type, nesting, Literal, union, length, minimum and required are all deleted,
+// because the package declaration IS the host's pre-dispatch validator.
+// The evidence-read action tool below keeps its own constraints — code reads
+// evidenceId/offset/limit to look up and slice (DoctorEvidenceStore.read), which
+// is a live-target binding, not a submission shape gate (ADR 0037).
 const DOCTOR_STATUS_DESCRIPTION =
   "completed | refused。completed 允许空 findings；refused 仅当证据不足以支撑如实案证词" as const;
-const doctorSubmissionVariants = Type.Union([
-  Type.Object({
-    status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),
-    case: Type.Unsafe({ ...caseIdentity, description: "留存太医署案身份" }),
-    findings: Type.Array(finding, { description: "可空或仅含非处方案观察；缺可复用资产或 bounded-bite 证据只排除对应资产处方" }),
-  }, { additionalProperties: false, description: "单案证词，不要求任何处方或可复用 finding" }),
-  Type.Object({
-    status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),
-    reason: Type.String({ description: "证据不足以支撑如实证词的原因" }),
-    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: evidenceIds }, { additionalProperties: true }), { description: "如实证词所需而尚缺的证据" }),
-  }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
-]);
+const doctorSubmissionObject = Type.Object({
+  status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),
+  case: Type.Unknown({
+    description:
+      "留存太医署案身份，原样留存（如 issueNumber、runsPath）。机械层另按绑定 run 投影案身份，不在本字段重判。",
+  }),
+  findings: Type.Unknown({
+    description:
+      "逐条资产观察与处方，原样留存（如 targetKey、observation、evidenceIds、disposition、guardrails、prescription、lastRealBite、assetEvidence）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。",
+  }),
+  reason: Type.Unknown({
+    description: "证据不足以支撑如实证词的原因；仅 refused 时用。",
+  }),
+  missingEvidence: Type.Unknown({
+    description: "如实证词所需而尚缺的证据，原样留存（如每项 need、targetKeys）。",
+  }),
+});
 export const doctorSubmissionSchema = withTerminatingOutputDeclarations(
-  openToolObjectFromUnion(doctorSubmissionVariants),
+  openToolObject(doctorSubmissionObject),
 );
 // #836 r16 class 3: action tool — code reads evidenceId to look up the Map entry
-// and offset/limit to slice + accumulate coverage (src/doctor-contracts.ts:97-128,
-// src/doctor-role.ts:38); those constraints stay. Root additionalProperties:false
-// is deleted — no reader consumes extra fields, so a closed object only rejects
-// the role for saying more (src/doctor-role.ts execute reads named params only).
+// and offset/limit to slice + accumulate coverage (DoctorEvidenceStore.read);
+// those constraints stay. Root additionalProperties:false is deleted — no reader
+// consumes extra fields, so a closed object only rejects the role for saying more.
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "待读留存证据标识" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "起始字节偏移（从 0 计）" })), limit: Type.Optional(Type.Integer({ minimum: 1, description: "返回字节数（无上限）" })) }, { additionalProperties: true });
 export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

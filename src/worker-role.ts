@@ -1,6 +1,6 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
-import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 import {
@@ -36,37 +36,26 @@ export {
 };
 export type { WorkerOutput };
 
-// #836 r16 class 1: report/remainingScope are LLM/human-read narrative content —
-// no code branches on their length. `reason` alone keeps minLength: the worker
-// gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
-// (src/worker-submission-gates.ts:159-163,297-302).
-// Worker status is not the review three-state field (#1055): schema stays open.
-// One shared description across every variant
-// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
+// #1134: `status` alone is the trajectory field (WORKER_DONE_STATUSES in
+// src/worker-submission-contracts.ts decides gate entry; its words ride the
+// description every host shows the model). report/remainingScope/reason are
+// narrative content recorded as submitted — declaration keeps name +
+// semantic description only, no type/length/required constraint. In particular
+// `reason` loses minLength:1: the unfinished-reason reminder is a runtime
+// bounce on an empty reason (src/worker-submission-gates.ts:159-163,296-302),
+// never a reason to refuse the call before execute runs.
 const CODER_STATUS_DESCRIPTION =
   `planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。${PARTIALLY_COMPLETED_DEFINITION}` as const;
-const coderOutputVariants = Type.Union([
-  Type.Object({
-    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
-    report: Type.String({ description: "如实结果报告" }),
-  }, { additionalProperties: false }),
-  Type.Object({
-    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
-    report: Type.String({ description: "如实结果报告" }),
-  }, { additionalProperties: false }),
-  Type.Object({
-    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
-    report: Type.String({ description: "如实结果报告" }),
-    remainingScope: Type.String({ description: "本局后剩余工作" }),
-    reason: Type.Optional(Type.String({
-      minLength: 1,
-      description:
-        "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
-    })),
-  }, { additionalProperties: false }),
-]);
+const coderOutputObject = Type.Object({
+  status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
+  report: Type.Unknown({ description: "如实结果报告" }),
+  remainingScope: Type.Unknown({ description: "本局后剩余工作" }),
+  reason: Type.Unknown({
+    description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
+  }),
+});
 export const coderOutputSchema = withTerminatingOutputDeclarations(
-  openToolObjectFromUnion(coderOutputVariants),
+  openToolObject(coderOutputObject),
 );
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {

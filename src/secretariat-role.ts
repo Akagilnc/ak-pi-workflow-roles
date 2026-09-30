@@ -12,7 +12,17 @@ import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "./secreta
 export { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 export type { SecretariatVerdict };
 
-/** 中书省终局回执形状。 */
+/**
+ * 中书省终局回执形状。
+ * #1134: `secretariatStatus` alone is the trajectory field
+ * (src/packaged-role-registry.ts:406 receiptStatusKey; the public settlement reads
+ * converged | escalate to route); its words ride the description. note/evidence/
+ * decisionGate are declared name + semantic description only — the string type, the
+ * number type, the nested question/options object shape and the required constraint
+ * are deleted, because the package declaration IS the host's pre-dispatch validator.
+ * (ticketNumber keeps its own declaration: it is the declared seat identity the
+ * activation flag and settlement read, not narrative content.)
+ */
 export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
@@ -20,19 +30,13 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
         description: "converged | escalate",
       }),
       ticketNumber: Type.Optional(
-        Type.Number({ description: "本票号；署时指向最终正文所在票" }),
+        Type.Unknown({ description: "本票号；署时指向最终正文所在票" }),
       ),
-      note: Type.Optional(Type.String({ description: "附注" })),
+      note: Type.Unknown({ description: "附注" }),
       evidence: Type.Optional(Type.Unknown({ description: "留存证据" })),
-      decisionGate: Type.Optional(
-        Type.Object(
-          {
-            question: Type.Optional(Type.String()),
-            options: Type.Optional(Type.Array(Type.String())),
-          },
-          { additionalProperties: true, description: "需陛下处置的问题与选项" },
-        ),
-      ),
+      decisionGate: Type.Unknown({
+        description: "需陛下处置的问题与选项；可写 question 与 options，原样留存。",
+      }),
     },
     { additionalProperties: true },
   ),
