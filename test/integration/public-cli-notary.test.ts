@@ -139,19 +139,8 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
 });
 
 test("notary public entry rejects caller prompt, attachment and ticket override", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("notary", ["--source-run", "x@judge", "please bounce lightly"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("notary", ["--attach", "./note.md", "--source-run", "x@judge"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("notary", []),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-
+  // The CLI half below binds the same parser through runAkRole, so a direct
+  // parsePublicSeatArgv assertion here would restate the same conclusion.
   // Public CLI structural exit for the same input contract.
   await withTempHome(async (home) => {
     const project = join(home, "project");
