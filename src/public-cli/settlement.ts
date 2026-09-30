@@ -1191,6 +1191,15 @@ export type AuditedRunnerFailureResolution = {
    * False when an earlier evidence tier short-circuited before the sidecar.
    */
   readonly typedHttpObservationSettled: boolean;
+  /**
+   * True when `knownFailure` was identified in this attempt's own session —
+   * the host's declared failure, an auditor volume, an errored terminating
+   * tool, or a current provider-stop. False when it exists only as a
+   * projection of the run-level typed-HTTP sidecar, which a lawful terminal
+   * may already cover. The resolution reports the tier it used so callers
+   * never re-read or re-derive it.
+   */
+  readonly knownFailureFromCurrentAttempt: boolean;
 };
 
 function resolutionOf(
@@ -1199,11 +1208,14 @@ function resolutionOf(
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
   } = { settled: false },
+  /** Whether the failure came from this attempt's session rather than the sidecar alone. */
+  knownFailureFromCurrentAttempt = true,
 ): AuditedRunnerFailureResolution {
   return {
     ...(knownFailure === undefined ? {} : { knownFailure }),
     ...(typedHttp.observation === undefined ? {} : { typedHttpObservation: typedHttp.observation }),
     typedHttpObservationSettled: typedHttp.settled,
+    knownFailureFromCurrentAttempt: knownFailure !== undefined && knownFailureFromCurrentAttempt,
   };
 }
 
@@ -1265,9 +1277,11 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     ...(httpObservation === undefined ? {} : { observation: httpObservation }),
   };
   if (parentStop === undefined) {
+    // A caller-declared credential failure is this invocation's own fact.
     if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
     if (httpObservation === undefined) return resolutionOf(undefined, typedHttp);
     // Project the HTTP observation's status + provider/source association.
+    // The observation is run-level, so a lawful terminal may already cover it.
     return resolutionOf(
       knownFailureFromProviderStop({
         stopReason: "error",
@@ -1275,6 +1289,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
         provider: httpObservation.provider,
       }),
       typedHttp,
+      false,
     );
   }
   return resolutionOf(

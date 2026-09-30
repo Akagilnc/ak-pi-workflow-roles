@@ -1048,9 +1048,17 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
+      // A failure the audited read identified in THIS attempt's own session is a
+      // real current failure and outranks a settlement. The typed-HTTP sidecar is
+      // the one run-level observation a lawful terminal may already cover, so a
+      // knownFailure projected from that read alone stays trailing evidence. The
+      // single audited resolution reports which tier it used — never a re-read.
+      const currentAttemptFailure = resolution.knownFailureFromCurrentAttempt;
+
       // Settlement attaches the run's recorded history here; failure and
       // no-receipt below attach history on their own paths.
       settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
+
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
       // recording tag, not a visibility gate — settlement still surfaces
@@ -1074,11 +1082,17 @@ export async function dispatchPostAdmissionTurn<
       // leg, but never wash a real failure away either). Note: the narrower
       // directHostFailureSignal gates acceptance here; the broader
       // hostSignalFailed (adds bare exit code / resolution.knownFailure)
-      // only gates the no-settlement fallback below — except when the
-      // settlement itself is entirely stale (no fresh seal this attempt),
-      // where a bare nonzero exit / resolution failure must not be outranked
-      // by someone else's earlier success (#836 r12 class 2).
-      const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
+      // only gates the no-settlement fallback below.
+      //
+      // A settlement that is entirely someone else's earlier success never
+      // outranks this turn's own identified failure: the recorded history still
+      // presents on submissions either way, so the real cause survives without
+      // any package-side new/old seal comparison (#836 r12 class 2; #1032
+      // 修订票：失败原因不洗白). staleAcceptanceOutranksRealFailure keeps the
+      // older broad signals (bare exit code, sidecar-only observation) honest
+      // for a stale settlement.
+      const staleAcceptanceOutranksRealFailure =
+        !settledIsFreshThisAttempt && hostSignalFailed;
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
       // window must not land as lawful accepted.
       const cancelAfterSettle = processCancelSignalName(env.signal);
@@ -1087,6 +1101,7 @@ export async function dispatchPostAdmissionTurn<
         && shouldPresent(settled)
         && !directHostFailureSignal
         && !staleAcceptanceOutranksRealFailure
+        && !currentAttemptFailure
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {
