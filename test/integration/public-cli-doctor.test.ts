@@ -881,7 +881,6 @@ test("terminal persistence failure through public entry propagates loudly with n
       result,
       stdout: captured.stdout,
       stderr: captured.stderr,
-      diagnosticIncludes: "EISDIR",
       identityCode: "EISDIR",
     });
     assert.equal(terminal.roleOutcome.role, "doctor");

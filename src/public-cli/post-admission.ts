@@ -386,7 +386,7 @@ export type ControlledFailureInput = {
    */
   packageFact?: PackageSideFact;
   /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
-  sidecarReadFailure?: { readonly name: string; readonly message: string };
+  sidecarReadFailure?: { readonly name: string; readonly message: string; readonly code?: string };
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
   /**
