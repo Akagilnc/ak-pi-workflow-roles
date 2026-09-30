@@ -824,6 +824,7 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
         assert.equal(actual.runId, expected.runId);
         assert.equal(actual.book, expected.book);
         assert.deepEqual(actual.missingSources, [...expected.missingSources]);
+        assert.ok(actual.reason.trim().length > 0);
         assert.deepEqual(actual.firstFrameAt, expected.firstFrameAt);
       } else {
         assert.deepEqual(actual, expected);
@@ -1018,6 +1019,7 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
     const entry = result.page.unreadable.find((u) => u.runId === LEG_A1_RUN);
     assert.ok(entry, "null terminal artifact must produce unreadable entry");
     assert.deepEqual(entry.missingSources, ["terminal-artifact"]);
+    assert.ok(entry.reason.trim().length > 0);
     // Session span was admitted before terminal failure — first frame stays present.
     assert.deepEqual(entry.firstFrameAt, {
       status: "present",
@@ -1091,6 +1093,7 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
     assert.deepEqual(damaged?.missingSources, ["run-state"]);
+    assert.ok((damaged?.reason ?? "").trim().length > 0);
   });
 });
 
@@ -1103,6 +1106,7 @@ test("analyst entry does not turn an incomplete live run state into no-receipt",
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
     assert.deepEqual(damaged?.missingSources, ["run-state"]);
+    assert.ok((damaged?.reason ?? "").trim().length > 0);
   });
 });
 

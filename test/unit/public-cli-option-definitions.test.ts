@@ -182,9 +182,19 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
       argv: ["--project", "/a", "--project", "/b", "task"],
     },
     {
+      // Satisfies every other reviewer precondition, so only the repeated
+      // --base can reject: otherwise a missing --authority-ref would mask it.
       name: "reviewer/--base",
       parse: (args) => parsePublicSeatArgv("reviewer", args),
-      argv: ["--base", "main", "--base", "dev", "task"],
+      argv: [
+        "--base",
+        "main",
+        "--base",
+        "dev",
+        "--authority-ref",
+        "https://example.test/a",
+        "task",
+      ],
     },
     {
       name: "doctor/--issue",

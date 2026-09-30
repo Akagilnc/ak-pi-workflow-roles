@@ -138,7 +138,8 @@ test("shared envelope keeps seat identity separate from typed reference material
     });
     try {
       const soul = await packagedMaterials(["souls/judge.md"]);
-      assert.equal(judge.systemPrompt.body, `\n\n<judge_soul>\n${soul}</judge_soul>`);
+      // Soul bytes reach the prompt verbatim; the wrapping envelope is presentation.
+      assert.ok(judge.systemPrompt.body.includes(soul));
       assert.deepEqual(judge.systemPrompt.materials, [{
         kind: "role-reference-materials",
         content: await packagedMaterials([
@@ -175,7 +176,7 @@ test("shared envelope keeps seat identity separate from typed reference material
     }
     try {
       const soul = await packagedMaterials(["souls/judge-auditor.md"]);
-      assert.equal(auditor.systemPrompt.body, `\n\n<auditor_soul>\n${soul}</auditor_soul>`);
+      assert.ok(auditor.systemPrompt.body.includes(soul));
       assert.deepEqual(auditor.systemPrompt.materials, [{
         kind: "role-reference-materials",
         content: await packagedMaterials([

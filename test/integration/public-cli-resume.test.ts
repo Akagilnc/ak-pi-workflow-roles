@@ -28,6 +28,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
+  describeErrorIdentity,
   loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
@@ -1832,9 +1833,20 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
           (error: unknown) => error,
         );
         assert.ok(failure instanceof RunWriterLeaseHeldError);
-        // The refusal must carry the EACCES errno identity, not just the
-        // dead-pid autopsy — otherwise the true cause is laundered away.
-        assert.ok(String(failure.message).includes("EACCES"));
+        // The refusal must carry the last reclaim failure's true identity, not
+        // just the dead-pid autopsy. The expected identity is derived from an
+        // unlink this test provokes on the same deny-delete lock, so the
+        // assertion is content equality with a real cause — not a search for
+        // generated diagnostic wording.
+        const provoked = await unlink(lockPath).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        assert.ok(provoked !== undefined, "deny-delete ACE must fail this unlink too");
+        assert.ok(
+          String(failure.message).includes(describeErrorIdentity(provoked)),
+          `refusal must name the reclaim failure identity: ${String(failure.message)}`,
+        );
         // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
         assert.equal(existsSync(lockPath), true);
       },

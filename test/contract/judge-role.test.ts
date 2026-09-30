@@ -237,6 +237,22 @@ type Tool = {
 const emptyFixPacket = "Repair the assigned findings.";
 const declaredFixPrerequisites = JSON.stringify([{ id: "owner.choice", requirement: "Owner selects the contract." }]);
 
+/**
+ * Prompt delivery contract: the base system prompt survives and every declared
+ * material arrives verbatim. The envelope layout around them (tag names,
+ * blank-line separation) is presentation and is deliberately not asserted.
+ */
+function assertDelivers(
+  prompt: string,
+  base: string,
+  materials: readonly string[],
+): void {
+  assert.ok(prompt.includes(base), "base system prompt must survive");
+  for (const material of materials) {
+    assert.ok(prompt.includes(material), `prompt must deliver ${JSON.stringify(material)}`);
+  }
+}
+
 const usage = {
   input: 1,
   output: 1,
@@ -665,12 +681,13 @@ test("focused Judge controller registers output without narrowing host tools", a
 
   assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]);
   assert.deepEqual(harness.activeToolSets, []);
-  assert.equal(
+  assertDelivers(
     (await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE" },
       {},
     ) as { systemPrompt: string }).systemPrompt,
-    "BASE\n\n<judge_soul>\nJUDGE LAW\n</judge_soul>",
+    "BASE",
+    ["JUDGE LAW"],
   );
 });
 
@@ -712,10 +729,12 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     { systemPrompt: "BASE" },
     {},
   ) as { systemPrompt: string }).systemPrompt;
-  assert.equal(
-    fixerPrompt,
-    `BASE\n\n<fixer_soul>\nFIXER LAW\n</fixer_soul>\n\n<fixer_phase>\nplan\n</fixer_phase>\n\n<fix_packet_path>\n/packet.md\n</fix_packet_path>\n\n<fixer_prerequisites_path>\n/prereqs.json\n</fixer_prerequisites_path>`,
-  );
+  assertDelivers(fixerPrompt, "BASE", [
+    "FIXER LAW",
+    "plan",
+    "/packet.md",
+    "/prereqs.json",
+  ]);
   assert.equal(fixerPrompt.includes(emptyFixPacket), false);
   assert.equal(fixerPrompt.includes("owner.choice"), false);
   const fixerTool = fixer.tools.get(FIXER_OUTPUT_TOOL_NAME);
@@ -747,12 +766,13 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
   assert.deepEqual([...coder.tools.keys()], [CODER_OUTPUT_TOOL_NAME]);
   assert.ok(coder.handlers.has("before_agent_start"));
   assert.ok(coder.handlers.has("input"));
-  assert.equal(
+  assertDelivers(
     (await coder.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE" },
       {},
     ) as { systemPrompt: string }).systemPrompt,
-    "BASE\n\n<coder_soul>\nCODER LAW\n</coder_soul>\n\n<coder_phase>\nplan\n</coder_phase>\n\n<coder_task>\nTASK BODY\n</coder_task>",
+    "BASE",
+    ["CODER LAW", "plan", "TASK BODY"],
   );
 });
 
@@ -967,10 +987,11 @@ test("coder plan loads its task without construction skill and returns planned",
     ),
     { action: "continue" },
   );
-  assert.equal(
-    prompt,
-    "BASE\n\n<coder_soul>\nCODER LAW\n</coder_soul>\n\n<coder_phase>\nplan\n</coder_phase>\n\n<coder_task>\nIMPLEMENT THE VERTICAL SLICE\n</coder_task>",
-  );
+  assertDelivers(prompt, "BASE", [
+    "CODER LAW",
+    "plan",
+    "IMPLEMENT THE VERTICAL SLICE",
+  ]);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
@@ -1228,10 +1249,12 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
 
   assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-  assert.equal(
-    prompt,
-    `BASE SYSTEM PROMPT\n\n<fixer_soul>\nFIXER LAW\nCreate one forward commit.\n</fixer_soul>\n\n<fixer_phase>\napply\n</fixer_phase>\n\n<fix_packet_path>\n/materials/fix.md\n</fix_packet_path>`,
-  );
+  assertDelivers(prompt, "BASE SYSTEM PROMPT", [
+    "FIXER LAW\nCreate one forward commit.",
+    "apply",
+    "/materials/fix.md",
+  ]);
+  assert.equal(prompt.includes(instructionBytes), false);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);

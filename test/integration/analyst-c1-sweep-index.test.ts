@@ -275,6 +275,7 @@ test("analyst C1 sweep: unreadable later end-frame still wins lastActivityAt; el
     assert.equal(page.unreadableCount, 1);
     assert.equal(page.unreadable[0]?.runId, C1_GAMMA_UNREADABLE_RUN);
     assert.deepEqual(page.unreadable[0]?.missingSources, ["terminal-artifact"]);
+    assert.ok((page.unreadable[0]?.reason ?? "").trim().length > 0);
     assert.deepEqual(page.unreadable[0]?.lastFrameAt, presentAt(GAMMA_LAST_ACTIVITY_AT));
 
     // PRD ②: lastActivityAt = max end-frame of ALL runs (unreadable available end wins).
