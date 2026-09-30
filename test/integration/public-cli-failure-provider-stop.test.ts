@@ -14,7 +14,7 @@ import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
-import { classifyPostAdmissionFailure, extractSessionProviderStop, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { classifyPostAdmissionFailure, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -458,85 +458,7 @@ test("the provider-stop seam keeps its own typed reading rules", () => {
     knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
     undefined,
   );
-  assert.deepEqual(
-    extractSessionProviderStop([
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "WebSocket error",
-          provider: "xai",
-        },
-      },
-    ]),
-    {
-      stopReason: "error",
-      errorMessage: "WebSocket error",
-      provider: "xai",
-    },
-  );
-  // AC5: later non-error assistant stop closes the trajectory — do not reach
-  // back past it to an older provider error (would wash final no-lawful-output).
-  assert.equal(
-    extractSessionProviderStop([
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "older provider boom",
-          provider: "openai-codex",
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "retry" }],
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "end_turn",
-          content: [{ type: "text", text: "could not finish" }],
-          provider: "openai-codex",
-        },
-      },
-    ]),
-    undefined,
-  );
-  // Latest assistant error still counts even with earlier non-error turns.
-  assert.deepEqual(
-    extractSessionProviderStop([
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "end_turn",
-          provider: "xai",
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "final provider boom",
-          provider: "xai",
-        },
-      },
-    ]),
-    {
-      stopReason: "error",
-      errorMessage: "final provider boom",
-      provider: "xai",
-    },
-  );
 });
-
 
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
   const runDir = await mkdtemp(join(tmpdir(), "http-2xx-clear-"));
@@ -680,7 +602,7 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
  * SessionManager defers first durable write until an assistant message exists.
  * After production Sitian retain, append realistic parent-aborted framing so the
  * parent session principal exists on disk. Does not invent the evidence stop —
- * readSessionProviderStop prefers Sitian retained auditor response over this framing.
+ * nothing reads this framing to decide the run's outcome.
  */
 function flushRetainedParentSession(sessionManager: SessionManager): void {
   sessionManager.appendMessage({

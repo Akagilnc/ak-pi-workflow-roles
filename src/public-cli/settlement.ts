@@ -22,7 +22,6 @@ import {
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
-import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
@@ -878,111 +877,6 @@ export async function readBoundSessionEntries(
     }
   }
   return entries;
-}
-
-/**
- * Latest native assistant provider-stop in a session (stopReason error|aborted).
- * Only the final assistant turn decides terminality — an older error followed by a
- * later non-error stop is not a provider failure (would wash a no-lawful-output path).
- * Typed production source for provider cause — not child stderr prose.
- */
-type SessionProviderStop = {
-  stopReason: "error" | "aborted";
-  errorMessage?: string;
-  provider?: string;
-  model?: string;
-  api?: string;
-  rawStopReason?: string;
-  diagnostics?: unknown;
-  httpStatus?: number;
-  body?: unknown;
-  code?: unknown;
-  errno?: unknown;
-};
-
-function typedHttpStatusFromMessage(message: SessionMessage): number | undefined {
-  for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
-    if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
-  }
-  return undefined;
-}
-
-function sessionProviderStopFromAssistant(message: SessionMessage | undefined): SessionProviderStop | undefined {
-  if (message?.role !== "assistant") return undefined;
-  if (message.stopReason !== "error" && message.stopReason !== "aborted") return undefined;
-  const httpStatus = typedHttpStatusFromMessage(message);
-  return {
-    stopReason: message.stopReason,
-    // Preserve held errorMessage bytes — emptiness check must not rewrite.
-    ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
-      ? { errorMessage: message.errorMessage }
-      : {}),
-    ...(typeof message.provider === "string" && message.provider.trim() !== ""
-      ? { provider: message.provider }
-      : {}),
-    ...(typeof message.model === "string" && message.model.trim() !== ""
-      ? { model: message.model }
-      : {}),
-    ...(typeof message.api === "string" && message.api.trim() !== ""
-      ? { api: message.api }
-      : {}),
-    ...(typeof message.rawStopReason === "string" && message.rawStopReason.trim() !== ""
-      ? { rawStopReason: message.rawStopReason }
-      : {}),
-    ...(message.diagnostics === undefined ? {} : { diagnostics: message.diagnostics }),
-    ...(httpStatus === undefined ? {} : { httpStatus }),
-    ...(message.body === undefined ? {} : { body: message.body }),
-    ...(message.code === undefined ? {} : { code: message.code }),
-    ...(message.errno === undefined ? {} : { errno: message.errno }),
-  };
-}
-
-export function extractSessionProviderStop(
-  entries: readonly SessionEntry[],
-): SessionProviderStop | undefined {
-  // A resumed dispatch appends a typed top-level user turn to the same session.
-  // Older attempt native stops must not replace the newer attempt's stop.
-  // Sessions without a user turn are the initial attempt.
-  const scanStart = currentAttemptStartIndex(entries);
-  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "assistant") continue;
-    // Latest assistant in the current attempt only.
-    return sessionProviderStopFromAssistant(message);
-  }
-  return undefined;
-}
-
-function typedFailedTerminatingToolKnownFailure(
-  entries: readonly SessionEntry[],
-): RoleTurnKnownFailure | undefined {
-  const attemptEntries = entries.slice(currentAttemptStartIndex(entries));
-  for (let i = attemptEntries.length - 1; i >= 0; i -= 1) {
-    const message = attemptEntries[i]?.message;
-    if (attemptEntries[i]?.type !== "message" || message?.role !== "toolResult") continue;
-    const classification = classifyPackagedRoleTerminalResult(message);
-    if (classification.kind !== "infrastructure") continue;
-    if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
-    if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === undefined) continue;
-    const textPart = Array.isArray(message.content)
-      ? message.content.find((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
-      : undefined;
-    const diagnostic = isRecord(textPart) ? textPart.text : undefined;
-    // Durable details already carry fact + typed evidence from envelope one-shot projection (#475).
-    // Do not re-parse retained compliance responses here.
-    // Host infrastructure must NOT map to cause=output — that cause is reserved for
-    // role-output failures (isError residual / no sealed receipt), not host infra.
-    const details = isRecord(message.details) ? message.details : classification.fact;
-    return {
-      cause: "activation",
-      identity: { name: message.toolName, code: message.toolCallId },
-      ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
-      details,
-    };
-  }
-  return undefined;
 }
 
 /**
