@@ -395,6 +395,8 @@ test("bound auditor provider failure outranks the parent abort it caused", async
       },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
+    // The volume is bound to this attempt, so it is this turn's own fact and
+    // outranks the credential fallback behind it.
     assert.deepEqual(
       (await resolveAuditedRunnerFailureResolution({
         runner: undefined,
@@ -403,7 +405,7 @@ test("bound auditor provider failure outranks the parent abort it caused", async
           cause: "provider",
           identity: { name: "MissingProviderCredential", code: "openai-codex" },
         },
-      })).knownFailure,
+      })).currentFailure,
       {
         cause: "provider",
         diagnostic: "WebSocket error",
@@ -460,7 +462,7 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
         runner: undefined,
         sessionFile,
         credential: undefined,
-      })).knownFailure,
+      })).currentFailure,
       {
         diagnostic: "WebSocket error",
         details: {
@@ -486,7 +488,7 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
       runner: undefined,
       sessionFile,
       credential: undefined,
-    })).knownFailure;
+    })).currentFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
   });
@@ -500,7 +502,7 @@ test("bound auditor ENOTDIR evidence outranks credential in shared settlement", 
       runner: undefined,
       sessionFile: join(pathComponent, "parent.jsonl"),
       credential: { cause: "activation", diagnostic: "credential fallback" },
-    })).knownFailure;
+    })).currentFailure;
     assert.equal(failure?.cause, "session");
     assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
     assert.ok(failure?.diagnostic);
@@ -523,11 +525,13 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
       } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
-    assert.equal((await resolveAuditedRunnerFailureResolution({
+    const noFailure = await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
-    })).knownFailure, undefined);
+    });
+    assert.equal(noFailure.currentFailure, undefined);
+    assert.equal(noFailure.retainedFailure, undefined);
   });
 });
 // Session provider-stop causal matrix (#420 整改并一)：三条同根「session stop
@@ -777,12 +781,14 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
 
     // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
     assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
-    assert.equal((await resolveAuditedRunnerFailureResolution({
+    const absent = await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure, undefined);
+    });
+    assert.equal(absent.currentFailure, undefined);
+    assert.equal(absent.retainedFailure, undefined);
 
     // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
     await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
@@ -791,7 +797,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
+    })).currentFailure;
     assert.equal(badShape?.cause, "session");
     assert.equal(badShape?.identity?.name, "Error");
 
@@ -802,7 +808,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
+    })).currentFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
 
@@ -814,7 +820,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
+    })).currentFailure;
     assert.equal(eisdir?.cause, "session");
     assert.equal(eisdir?.identity?.code, "EISDIR");
   });
@@ -923,13 +929,14 @@ async function settleDiskSessionStopToErrorJson(input: {
     `${input.runId}@judge`,
   );
   await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-  const known = (await resolveAuditedRunnerFailureResolution({
+  const resolution = await resolveAuditedRunnerFailureResolution({
     runner: undefined,
     sessionFile: input.sessionFile,
     credential: undefined,
     runDirectory,
-  })).knownFailure;
-  assert.ok(known, "disk session must yield a knownFailure");
+  });
+  const known = resolution.currentFailure ?? resolution.retainedFailure;
+  assert.ok(known, "disk session must yield a failure");
   const failure = classifyPostAdmissionFailure({
     timedOut: false,
     code: input.exitCode ?? 1,

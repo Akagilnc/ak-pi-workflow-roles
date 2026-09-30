@@ -1047,13 +1047,14 @@ export async function dispatchPostAdmissionTurn<
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
-        || resolution.knownFailure !== undefined;
-      // A failure the audited read identified in THIS attempt's own session is a
-      // real current failure and outranks a settlement. The typed-HTTP sidecar is
-      // the one run-level observation a lawful terminal may already cover, so a
-      // knownFailure projected from that read alone stays trailing evidence. The
-      // single audited resolution reports which tier it used — never a re-read.
-      const currentAttemptFailure = resolution.knownFailureFromCurrentAttempt;
+        || resolution.currentFailure !== undefined
+        || resolution.retainedFailure !== undefined;
+      // Only a failure established from this turn's own host facts may veto a
+      // settlement. Retained history (a bound auditor volume, a Sitian-retained
+      // stop, the run-level typed-HTTP sidecar) is relayed as recorded and fails
+      // a turn that sealed nothing — it never decides a turn that sealed its own
+      // verdict. The audited resolution carries the split; no re-read here.
+      const currentAttemptFailure = resolution.currentFailure !== undefined;
 
       // Settlement attaches the run's recorded history here; failure and
       // no-receipt below attach history on their own paths.

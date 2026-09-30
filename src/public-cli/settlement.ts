@@ -991,13 +991,16 @@ async function readSitianRetainedAuditorProviderStop(
   return undefined;
 }
 
-/** Read retained auditor stop (Sitian), then cached native entries when already read. */
+/**
+ * This turn's own provider-stop from the parent session, bounded to the current
+ * attempt by its own shape. A Sitian-retained auditor stop records a past turn,
+ * so it is never returned here; callers that also relay retained history read
+ * `readSitianRetainedAuditorProviderStop` on its own channel.
+ */
 export async function readSessionProviderStop(
   sessionFile: string,
   parentEntries?: readonly SessionEntry[],
 ): Promise<SessionProviderStop | undefined> {
-  const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
-  if (retained !== undefined) return retained;
   if (parentEntries !== undefined) return extractSessionProviderStop(parentEntries);
   try {
     return extractSessionProviderStop(await readBoundSessionEntries(sessionFile));
@@ -1007,11 +1010,24 @@ export async function readSessionProviderStop(
 }
 
 type BoundAuditorVolume = {
-  readonly entries: SessionEntry[];
+  readonly entries: readonly SessionEntry[];
   readonly attemptEntryId?: string;
   readonly parentId: string;
   readonly sessionFile: string;
 };
+
+/**
+ * Every parent entry id inside the current attempt, as `currentAttemptStartIndex`
+ * bounds it. A bound auditor volume is this turn's own work when its
+ * `attemptEntryId` names one of them; any other id — or none — is history.
+ */
+function currentAttemptEntryIds(parentEntries: readonly SessionEntry[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const entry of parentEntries.slice(currentAttemptStartIndex(parentEntries))) {
+    if (typeof entry.id === "string" && entry.id.length > 0) ids.add(entry.id);
+  }
+  return ids;
+}
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
@@ -1100,7 +1116,8 @@ async function loadBoundAuditorVolumes(
 
 function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): RoleTurnKnownFailure | undefined {
+  currentAttemptEntryIdsValue: ReadonlySet<string>,
+): { readonly failure: RoleTurnKnownFailure; readonly current: boolean } | undefined {
   for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -1115,13 +1132,16 @@ function complianceFailureFromAuditorVolumes(
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
       const typedCause = isControlledFailureCause(failure.cause) ? failure.cause : undefined;
       return {
-        ...(typedCause === undefined ? {} : { cause: typedCause }),
-        ...(identity === undefined ? {} : { identity: {
-          ...(typeof identity.name === "string" ? { name: identity.name } : {}),
-          ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
-        } }),
-        ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
-        ...(isRecord(failure.details) ? { details: failure.details } : {}),
+        current: attemptEntryId !== undefined && currentAttemptEntryIdsValue.has(attemptEntryId),
+        failure: {
+          ...(typedCause === undefined ? {} : { cause: typedCause }),
+          ...(identity === undefined ? {} : { identity: {
+            ...(typeof identity.name === "string" ? { name: identity.name } : {}),
+            ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
+          } }),
+          ...(typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {}),
+          ...(isRecord(failure.details) ? { details: failure.details } : {}),
+        },
       };
     }
   }
@@ -1130,16 +1150,20 @@ function complianceFailureFromAuditorVolumes(
 
 function providerStopFallbackFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): RoleTurnKnownFailure | undefined {
-  for (const { entries } of volumes) {
+  currentAttemptEntryIdsValue: ReadonlySet<string>,
+): { readonly failure: RoleTurnKnownFailure; readonly current: boolean } | undefined {
+  for (const { entries, attemptEntryId } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     const primary = knownFailureFromProviderStop(stop)!;
     return {
-      ...primary,
-      details: {
-        ...(primary.details ?? {}),
-        secondaryEvidence: "unavailable",
+      current: attemptEntryId !== undefined && currentAttemptEntryIdsValue.has(attemptEntryId),
+      failure: {
+        ...primary,
+        details: {
+          ...(primary.details ?? {}),
+          secondaryEvidence: "unavailable",
+        },
       },
     };
   }
@@ -1182,44 +1206,49 @@ function typedFailedTerminatingToolKnownFailure(
  * never re-read the sidecar in presentControlledFailure.
  */
 export type AuditedRunnerFailureResolution = {
-  readonly knownFailure?: RoleTurnKnownFailure;
+  /**
+   * A failure established from THIS turn's own host facts: the runner's own
+   * declared failure, an errored terminating tool inside the current attempt, a
+   * provider-stop inside the current attempt, a session read that failed now.
+   * Only this decides the turn's terminal.
+   */
+  readonly currentFailure?: RoleTurnKnownFailure;
+  /**
+   * A real failure that only durable history attests: a bound auditor volume
+   * (never expired, #858), a Sitian-retained auditor stop, the run-level
+   * typed-HTTP sidecar. Retained and relayed as recorded; it fails a turn that
+   * sealed nothing, and never vetoes a turn that did.
+   */
+  readonly retainedFailure?: RoleTurnKnownFailure;
   /** Successful sidecar read (not absence). */
   readonly typedHttpObservation?: TypedProviderHttpObservation;
   /**
    * True when this resolution already performed the typed-HTTP sidecar read
-   * (success, absence, or non-absence failure folded into knownFailure).
+   * (success, absence, or non-absence failure folded into a failure).
    * False when an earlier evidence tier short-circuited before the sidecar.
    */
   readonly typedHttpObservationSettled: boolean;
-  /**
-   * True when `knownFailure` was identified in this attempt's own session —
-   * the host's declared failure, an auditor volume, an errored terminating
-   * tool, or a current provider-stop. False when it exists only as a
-   * projection of the run-level typed-HTTP sidecar, which a lawful terminal
-   * may already cover. The resolution reports the tier it used so callers
-   * never re-read or re-derive it.
-   */
-  readonly knownFailureFromCurrentAttempt: boolean;
+};
+
+type ResolutionSource = {
+  readonly failure: RoleTurnKnownFailure | undefined;
+  /** True only for readers bounded to this turn by its own session shape. */
+  readonly current: boolean;
 };
 
 function resolutionOf(
-  knownFailure: RoleTurnKnownFailure | undefined,
+  source: ResolutionSource | undefined,
   typedHttp: {
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
   } = { settled: false },
-  /**
-   * Whether the failure is this attempt's own fact, stated by the source that
-   * produced it. No default on purpose: an unproven source must never inherit
-   * current-failure priority by omission.
-   */
-  knownFailureFromCurrentAttempt: boolean,
 ): AuditedRunnerFailureResolution {
   return {
-    ...(knownFailure === undefined ? {} : { knownFailure }),
+    ...(source?.failure === undefined ? {} : source.current
+      ? { currentFailure: source.failure }
+      : { retainedFailure: source.failure }),
     ...(typedHttp.observation === undefined ? {} : { typedHttpObservation: typedHttp.observation }),
     typedHttpObservationSettled: typedHttp.settled,
-    knownFailureFromCurrentAttempt: knownFailure !== undefined && knownFailureFromCurrentAttempt,
   };
 }
 
@@ -1232,39 +1261,48 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
   // The host declared this failure for this very turn.
-  if (input.runner !== undefined) return resolutionOf(input.runner, { settled: false }, true);
-  // Bound auditor compliance-failure retention outranks a parent failure that the
-  // auditor path itself caused (retention EISDIR race). A typed terminating-tool
-  // host failure is next — it outranks weaker auditor provider-stop fallback so
-  // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
+  if (input.runner !== undefined) return resolutionOf({ failure: input.runner, current: true });
+  // This turn's own session facts are established before any retained history is
+  // consulted, so history can neither outrank them nor pre-empt their read.
+  // A bound auditor compliance failure outranks a parent failure the auditor
+  // path itself caused (retention EISDIR race) — but it is retained history, so
+  // it waits behind this turn's own facts rather than replacing them.
   let volumes: readonly BoundAuditorVolume[] | undefined;
   let parentEntries: SessionEntry[] | undefined;
   try {
     ({ volumes, parentEntries } = await loadBoundAuditorVolumes(input.sessionFile));
-    const auditorCompliance = volumes === undefined ? undefined : complianceFailureFromAuditorVolumes(volumes);
-    // A bound auditor volume is retained history, deliberately not expired
-    // across attempts (#858). Relaying it is correct; presenting it as THIS
-    // turn's failure is not.
-    if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance, { settled: false }, false);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return resolutionOf({
-      cause: "session",
-      identity: thrownIdentity(failure),
-      diagnostic: failure.message || failure.name,
-    }, { settled: false }, true);
+      failure: {
+        cause: "session",
+        identity: thrownIdentity(failure),
+        diagnostic: failure.message || failure.name,
+      },
+      current: true,
+    });
   }
   if (parentEntries !== undefined) {
     const terminatingFailure = typedFailedTerminatingToolKnownFailure(parentEntries);
-    if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure, { settled: false }, true);
+    if (terminatingFailure !== undefined) {
+      return resolutionOf({ failure: terminatingFailure, current: true });
+    }
   }
-  const auditorStop = volumes === undefined ? undefined : providerStopFallbackFromAuditorVolumes(volumes);
-  // Retained auditor provider-stop, same as the compliance tier above.
-  if (auditorStop !== undefined) return resolutionOf(auditorStop, { settled: false }, false);
-  // Parent session provider-stop is next; credential is last.
-  const parentStop = await readSessionProviderStop(input.sessionFile, parentEntries ?? []);
+  // Parent session provider-stop, bounded to this attempt by its own shape.
+  const parentStop = extractSessionProviderStop(parentEntries ?? []);
+  // A bound auditor compliance failure outranks the parent abort it caused (the
+  // retention EISDIR race: the abort is the auditor failure's own consequence).
+  // Both can be this turn's facts, so the precedence is applied among current
+  // facts — never by letting a retained volume reach this branch.
+  if (volumes !== undefined) {
+    const boundCompliance = complianceFailureFromAuditorVolumes(
+      volumes,
+      currentAttemptEntryIds(parentEntries ?? []),
+    );
+    if (boundCompliance?.current === true) return resolutionOf(boundCompliance);
+  }
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
-  // This is the single sidecar read for both knownFailure projection and v1 resume.
+  // This is the single sidecar read for both failure projection and v1 resume.
   let httpObservation: TypedProviderHttpObservation | undefined;
   if (input.runDirectory !== undefined) {
     try {
@@ -1273,12 +1311,14 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       const failure = error instanceof Error ? error : new Error(String(error));
       return resolutionOf(
         {
-          cause: "session",
-          identity: thrownIdentity(failure),
-          diagnostic: failure.message || failure.name,
+          failure: {
+            cause: "session",
+            identity: thrownIdentity(failure),
+            diagnostic: failure.message || failure.name,
+          },
+          current: true,
         },
         { settled: true },
-        true,
       );
     }
   }
@@ -1286,37 +1326,79 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     settled: input.runDirectory !== undefined,
     ...(httpObservation === undefined ? {} : { observation: httpObservation }),
   };
-  if (parentStop === undefined) {
-    // A caller-declared credential failure is this invocation's own fact.
-    if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp, true);
-    if (httpObservation === undefined) return resolutionOf(undefined, typedHttp, false);
-    // Project the HTTP observation's status + provider/source association.
-    // The observation is run-level, so a lawful terminal may already cover it.
+  // This turn's own provider-stop settles the turn.
+  if (parentStop !== undefined) {
     return resolutionOf(
-      knownFailureFromProviderStop({
+      {
+        failure: knownFailureFromProviderStop({
+          ...parentStop,
+          ...(httpObservation === undefined
+            ? {}
+            : {
+              httpStatus: httpObservation.httpStatus,
+              // Observation association outranks session-configured provider name alone.
+              provider: httpObservation.provider,
+            }),
+        }),
+        current: true,
+      },
+      typedHttp,
+    );
+  }
+  // No current fact found in this turn's own session. A bound auditor volume
+  // may still be bound to THIS attempt (the retention race: the parent abort is
+  // the auditor failure's own consequence), so its currency is read from the
+  // binding rather than assumed. Volumes bound to an earlier attempt, a
+  // Sitian-retained stop, and the run-level sidecar are retained history: they
+  // are relayed as recorded and fail a turn that sealed nothing, but they never
+  // decide a turn that sealed its own verdict.
+  if (volumes !== undefined) {
+    const attemptEntryIds = currentAttemptEntryIds(parentEntries ?? []);
+    const auditorSource =
+      complianceFailureFromAuditorVolumes(volumes, attemptEntryIds)
+      ?? providerStopFallbackFromAuditorVolumes(volumes, attemptEntryIds);
+    if (auditorSource !== undefined) return resolutionOf(auditorSource);
+  }
+  const retainedStop = await readSitianRetainedAuditorProviderStop(input.sessionFile);
+  if (retainedStop !== undefined) {
+    return resolutionOf(
+      { failure: knownFailureFromProviderStop(retainedStop), current: false },
+      typedHttp,
+    );
+  }
+  if (parentEntries === undefined) {
+    // The parent session was not readable above; read it for its own stop and
+    // report that as history, never as this turn's verdict.
+    try {
+      const stop = extractSessionProviderStop(await readBoundSessionEntries(input.sessionFile));
+      if (stop !== undefined) {
+        return resolutionOf(
+          { failure: knownFailureFromProviderStop(stop), current: false },
+          typedHttp,
+        );
+      }
+    } catch {
+      // An unreadable parent session is absence here; the sidecar read above owns it.
+    }
+  }
+  // A caller-declared credential failure is this invocation's own fact.
+  if (input.credential !== undefined) {
+    return resolutionOf({ failure: input.credential, current: true }, typedHttp);
+  }
+  if (httpObservation === undefined) return resolutionOf(undefined, typedHttp);
+  // Project the HTTP observation's status + provider/source association. The
+  // observation is run-level, so a lawful terminal may already cover it.
+  return resolutionOf(
+    {
+      failure: knownFailureFromProviderStop({
         stopReason: "error",
         httpStatus: httpObservation.httpStatus,
         provider: httpObservation.provider,
       }),
-      typedHttp,
-      false,
-    );
-  }
-  return resolutionOf(
-    knownFailureFromProviderStop({
-      ...parentStop,
-      ...(httpObservation === undefined
-        ? {}
-        : {
-        httpStatus: httpObservation.httpStatus,
-        // Observation association outranks session-configured provider name alone.
-        provider: httpObservation.provider,
-        }),
-        }),
-        typedHttp,
-        // The parent session's own stop, scoped to this attempt.
-        true,
-        );
+      current: false,
+    },
+    typedHttp,
+  );
 }
 
 /**
@@ -1370,7 +1452,12 @@ export function controlledFailureInputFromResolution(
   typedHttpObservation?: TypedProviderHttpObservation;
 } {
   return {
-    ...(resolution.knownFailure === undefined ? {} : { knownFailure: resolution.knownFailure }),
+    // This turn's own fact is the cause; retained history is the cause only
+    // when nothing current was found, so a recorded past failure still reports
+    // honestly for a turn that sealed nothing.
+    ...((resolution.currentFailure ?? resolution.retainedFailure) === undefined
+      ? {}
+      : { knownFailure: resolution.currentFailure ?? resolution.retainedFailure }),
     ...(resolution.typedHttpObservationSettled
       ? {
         typedHttpObservationSettled: true as const,
@@ -1508,13 +1595,18 @@ async function readInfrastructureToolFailure(
   }
 }
 
-/** Read the bound session principal for an engine-detour infrastructure failure. */
+/**
+ * Read the bound session principal for an engine-detour infrastructure failure.
+ * Bounded to the current attempt: this record decides the turn, so a detour
+ * failure an earlier turn already recorded is history, not this turn's verdict.
+ */
 export async function readEngineDetourInfrastructureFailure(
   sessionFile: string,
 ): Promise<ControlledFailure | undefined> {
   return readInfrastructureToolFailure(
     sessionFile,
     ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
+    { currentAttemptOnly: true },
   );
 }
 
