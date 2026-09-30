@@ -14,7 +14,6 @@ import {
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 
 import {
-  countSealedSubmissionRecords,
   hasFreshAttemptSubmission,
   readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
@@ -28,7 +27,6 @@ import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
-  markRunReportPublished,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
   type TypedHttp429Observation,
@@ -139,8 +137,6 @@ export type SettlementCourtScope = {
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
-  /** Host-turn row baseline; only the new rows are this bare turn's reply. */
-  readonly beforeTurnRowCount?: number;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -228,31 +224,20 @@ async function sealedLedgerOutcome(
  * (submissions/payloads) always stays run-scoped and unfiltered — this is a
  * control-flow signal only, consumed to keep a stale prior-attempt
  * acceptance from outranking this attempt's own real host-turn failure.
- * A bare host resume has no court tag: compare sealed-row counts before and
- * after that turn. Callers without a host-turn baseline still read the run.
+ * Absent a courtAttemptId scope there is no distinct prior attempt to stale
+ * against, so this defaults true (unchanged behavior for ordinary,
+ * non-court dispatches).
  */
 export async function attemptProducedFreshSubmission(
   admitted: AdmittedRoleInvocation,
   scope?: SettlementCourtScope,
-  beforeTurnSeals?: number,
 ): Promise<boolean> {
-  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
-    return hasFreshAttemptSubmission(
-      admitted.projectRoot,
-      admitted.runId,
-      scope.courtAttemptId,
-      ledgerReadScope(admitted, scope),
-    );
-  }
-  // A bare resume has no court tag. Compare only sealed rows around its actual
-  // host turn, not receipt versions or the run's older accepted conclusion.
-  return beforeTurnSeals === undefined
-    || (await recordedSealedSubmissionCount(admitted)) > beforeTurnSeals;
-}
-
-export async function recordedSealedSubmissionCount(admitted: AdmittedRoleInvocation): Promise<number> {
-  return countSealedSubmissionRecords(
-    admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
+  if (scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0) return true;
+  return hasFreshAttemptSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    scope.courtAttemptId,
+    ledgerReadScope(admitted, scope),
   );
 }
 
@@ -2213,7 +2198,6 @@ async function publishAcceptedTerminalArtifacts(
     `${JSON.stringify(bodies.report, null, 2)}\n`,
     "utf8",
   );
-  await markRunReportPublished(admitted.runDirectory, await recordedSealedSubmissionCount(admitted));
   await writeFile(
     evidencePath,
     `${JSON.stringify(bodies.evidence, null, 2)}\n`,
@@ -2310,16 +2294,7 @@ async function finishLawfulSeat(
     artifacts,
     runId: admitted.runId,
   }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
-  const withCurrentReply = scope?.beforeTurnRowCount === undefined
-    ? terminal
-    : {
-        ...terminal,
-        currentReplyPayloads: (await readRecordedSubmissionRows(
-          admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
-        )).slice(scope.beforeTurnRowCount)
-          .filter((row) => row.role === admitted.role).map((row) => row.accepted),
-      };
-  return attachRecordedSubmissions(admitted, withCurrentReply, scope);
+  return attachRecordedSubmissions(admitted, terminal, scope);
 }
 
 /**

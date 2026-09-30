@@ -161,11 +161,15 @@ export type TerminalGateFact = {
   readonly rounds: readonly TerminalGateRound[];
 };
 
-/** Parent-facing current reply: never use run-scoped history as this court's answer (#879). */
+/**
+ * Parent-facing current reply: a court's own accepted/audit payloads only.
+ * Run-scoped history stays on TerminalResult.submissions (#879 / #836), and a
+ * failure face never answers as this court's reply (#953).
+ */
 export function currentReplyRows(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
   return outcome?.kind === "accepted" || outcome?.kind === "audit_escalation"
-    ? terminal?.currentReplyPayloads ?? outcome.payloads ?? []
+    ? outcome.payloads ?? []
     : [];
 }
 
@@ -175,8 +179,6 @@ export function currentReplyRows(terminal: TerminalResult | undefined): readonly
  */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
-  /** Bare resume's turn-local reply; run history remains on submissions and published report. */
-  currentReplyPayloads?: readonly unknown[];
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
   reviewerChildren?: Readonly<{
     completeness?: TerminalResult;

@@ -26,7 +26,6 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
-import { readRunTerminalArtifact, RUN_TERMINAL_REPORT_FILE } from "../run-terminal-artifacts.ts";
 import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -72,7 +71,6 @@ import {
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
-  markRunReportPublished,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
@@ -100,7 +98,6 @@ import {
   ledgerReadScope,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
-  recordedSealedSubmissionCount,
   publishedFailureErrorPath,
   presentStructuralRejection,
   resolveAuditedRunnerFailureResolution,
@@ -348,7 +345,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly beforeTurnRowCount?: number; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
+    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -687,7 +684,6 @@ export async function dispatchPostAdmissionTurn<
       ? {} : { invocationScopeId: request.invocationScopeId }),
   };
   let pendingSettlement: "sealed" | "no_receipt" | undefined;
-  let beforeTurnRowCount: number | undefined;
 
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
@@ -732,7 +728,7 @@ export async function dispatchPostAdmissionTurn<
       try {
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
-              { ...courtScope, ...(beforeTurnRowCount === undefined ? {} : { beforeTurnRowCount }), recordAttemptHistory: true })
+              { ...courtScope, recordAttemptHistory: true })
           : await attachRecordedSubmissions(admitted,
               await settleHostEndedNoReceipt(admitted, env.principalAuthority,
                 { ...courtScope, recordAttemptHistory: true }) as T,
@@ -887,11 +883,6 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }
 
-    // Snapshot the prior run state before markRunRunning replaces it; a
-    // resumable publication failure can rebuild its missing report (#672).
-    const priorRunState = courtScope.courtAttemptId === undefined
-      ? await readRoleRunState(admitted.runDirectory, env.principalAuthority)
-      : undefined;
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
     // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
@@ -908,36 +899,11 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
-    let beforeTurnSeals: number | undefined;
-    let mayRebuildUnpublishedSeal = false;
-    let baselineReadFailure: { error: unknown } | undefined;
     try {
-      if (courtScope.courtAttemptId === undefined) {
-        try {
-          beforeTurnSeals = await recordedSealedSubmissionCount(admitted);
-          beforeTurnRowCount = (await readRecordedSubmissionRows(
-            admitted.projectRoot, admitted.runId, ledgerReadScope(admitted),
-          )).length;
-          if (beforeTurnSeals > 0) {
-            const priorFace = await readRunTerminalArtifact(admitted.runDirectory);
-            if (priorRunState?.publishedSealedCount === undefined
-              && priorFace.status === "present" && priorFace.file === RUN_TERMINAL_REPORT_FILE) {
-              // Preserve the still-visible report's seal watermark on a legacy
-              // run. Like the baseline read, migration failure must not block
-              // a real host turn; settlement will retain that failure.
-              await markRunReportPublished(admitted.runDirectory, beforeTurnSeals);
-            }
-            mayRebuildUnpublishedSeal = priorRunState?.state === "resumable"
-              && beforeTurnSeals > (priorRunState.publishedSealedCount ?? 0)
-              && !(priorFace.status === "present" && priorFace.file === RUN_TERMINAL_REPORT_FILE);
-          }
-        } catch (error) {
-          // A poisoned prior ledger must not block a real host dispatch (#833).
-          // The authoritative post-turn settlement still reads it; if repaired
-          // meanwhile, preserve this observed failure instead of guessing freshness.
-          baselineReadFailure = { error };
-        }
-      }
+      // A bare `ak-role resume` only forwards the caller's instruction to the
+      // host CLI's native resume. Nothing here may gate, redirect or reshape
+      // that dispatch on prior conclusions, row counts or report presence;
+      // the authoritative post-turn settlement reads whatever really happened.
       recordRunStart(admitted.runDirectory);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
@@ -1069,10 +1035,9 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
-      // Settlement attaches full history and the turn-local reply separately.
-      // Failure and no-receipt below attach history on their own paths.
-      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, ...(beforeTurnRowCount === undefined ? {} : { beforeTurnRowCount }), previewOnly: true });
-      if (baselineReadFailure !== undefined) throw baselineReadFailure.error;
+      // Settlement attaches the run's recorded history here; failure and
+      // no-receipt below attach history on their own paths.
+      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
       // #836 r12 class 2: an accepted/audit_escalation settlement can be
       // entirely a prior attempt's stale payload (courtAttempt is a
       // recording tag, not a visibility gate — settlement still surfaces
@@ -1084,7 +1049,7 @@ export async function dispatchPostAdmissionTurn<
         settled === undefined
         || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
           ? true
-          : await attemptProducedFreshSubmission(admitted, courtScope, beforeTurnSeals);
+          : await attemptProducedFreshSubmission(admitted, courtScope);
       // A lawful settled outcome already reached this turn takes precedence
       // over a later bare exit-code / session-inspection signal (trailing
       // nonzero exit, late stderr noise, a stale already-superseded
@@ -1101,10 +1066,6 @@ export async function dispatchPostAdmissionTurn<
       // where a bare nonzero exit / resolution failure must not be outranked
       // by someone else's earlier success (#836 r12 class 2).
       const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
-      // An older result is not this bare host turn's reply. Only seals added
-      // after the last published report may rebuild on a resumable run (#672);
-      // later failures/no_receipt can clear a previously published face.
-      const stalePublishedAcceptance = !settledIsFreshThisAttempt && !mayRebuildUnpublishedSeal;
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
       // window must not land as lawful accepted.
       const cancelAfterSettle = processCancelSignalName(env.signal);
@@ -1113,7 +1074,6 @@ export async function dispatchPostAdmissionTurn<
         && shouldPresent(settled)
         && !directHostFailureSignal
         && !staleAcceptanceOutranksRealFailure
-        && !stalePublishedAcceptance
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {

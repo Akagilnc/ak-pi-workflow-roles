@@ -37,7 +37,7 @@ import {
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleFailureTerminalResult, trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
-import { currentReplyRows, type TerminalResult } from "../../src/public-cli/terminal.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -717,8 +717,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         `${runId}@judge`,
       );
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, undefined,
-        "the first sealed report has never reached its public face");
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const { recordFile } = resolveSitianRecordPath({
@@ -770,7 +768,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(rebuilt.exitCode, 0);
       assert.ok(rebuilt.terminal);
       assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
-      assert.deepEqual(currentReplyRows(rebuilt.terminal!), [], "report reconstruction is not a new reply from the host");
       if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
         assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
         assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
@@ -782,7 +779,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
       const reportStat = await stat(reportPath);
       assert.equal(reportStat.isFile(), true, "resume must rebuild report.json as a file");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, dispatches());
       const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
         role?: string;
         runId?: string;
@@ -810,63 +806,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       assert.deepEqual(await historyOutcomes(), [...failedPublicationHistory, "accepted"],
         "re-reading the latest seal must not append another attempt");
-
-      // Simulate a successful report published by an older package: the
-      // on-disk run-state predates the publication watermark field.
-      const statePath = join(runDirectory, "run-state.json");
-      const legacyState = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
-      delete legacyState.publishedSealedCount;
-      await writeFile(statePath, `${JSON.stringify(legacyState)}\n`, "utf8");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, undefined);
-
-      // The report was successfully published on this resume. A later real
-      // provider failure clears that face; a further no-seal turn must not
-      // mistake the now-missing report for the original publication failure.
-      const laterFailure = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot, home, cwd: project, io: captureIo().io,
-        credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot, principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            await observeTyped429ViaProductionHandler({ runDirectory, provider: "xai" });
-            return { code: 1, stderr: "", timedOut: false, args: [...args] };
-          },
-        }),
-      });
-      assert.equal(laterFailure.terminal?.roleOutcome.kind, "failure");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-      const noNewSeal = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot, home, cwd: project, io: captureIo().io,
-        credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot, principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => ({ code: 0, stderr: "", timedOut: false, args: [...args] }),
-        }),
-      });
-      assert.equal(noNewSeal.terminal?.roleOutcome.kind, "no_receipt",
-        "a previously published old seal cannot be rebuilt after a later real failure");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount, dispatches(),
-        "legacy published reports must acquire a seal watermark before any later failure clears the face");
-
-      // A genuinely newer seal can still use #672 if its own report fails.
-      const newSeal = sealedPublicationBlockedHost("later sealed version");
-      try {
-        const failedNewPublication = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-          packageRoot, home, cwd: project, io: captureIo().io,
-          credentials: { "openai-codex": true, xai: true }, roleTurnHost: newSeal.host,
-        });
-        assert.equal(failedNewPublication.terminal?.roleOutcome.kind, "failure");
-      } finally {
-        await newSeal.restoreArtifactsWritable();
-      }
-      const rebuiltNewSeal = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot, home, cwd: project, io: captureIo().io,
-        credentials: { "openai-codex": true, xai: true }, roleTurnHost: passthroughHost,
-      });
-      assert.equal(rebuiltNewSeal.terminal?.roleOutcome.kind, "accepted");
-      assert.deepEqual(currentReplyRows(rebuiltNewSeal.terminal), [], "rebuilding the latest seal is not a new reply");
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.publishedSealedCount,
-        dispatches() + newSeal.dispatches());
     } finally {
       await restoreArtifactsWritable();
     }
@@ -1050,43 +989,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         }
       }
 
-      // #833 also holds for an older, successfully published run whose
-      // run-state lacks the newly added seal watermark.
-      const legacyRunId = "run-legacy-published-poisoned-001";
-      const legacy = sealedPublicationBlockedHost("published on older package", { blockReportPublication: false });
-      const published = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "published before upgrade"], {
-        packageRoot, home, cwd: project, createRunId: () => legacyRunId,
-        credentials: { "openai-codex": true, xai: true }, io: captureIo().io, roleTurnHost: legacy.host,
-      });
-      assert.equal(published.terminal?.roleOutcome.kind, "accepted");
-      const legacyDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${legacyRunId}@judge`);
-      const legacyStatePath = join(legacyDir, "run-state.json");
-      const legacyState = JSON.parse(await readFile(legacyStatePath, "utf8")) as Record<string, unknown>;
-      delete legacyState.publishedSealedCount;
-      await writeFile(legacyStatePath, `${JSON.stringify(legacyState)}\n`, "utf8");
-      const poisonedLedgerPath = join(legacyDir, "session", "submission-ledger", "records.jsonl");
-      await rm(poisonedLedgerPath, { force: true });
-      await mkdir(poisonedLedgerPath);
-      let legacyDispatches = 0;
-      const poisonedLegacy = await runAkRole(["resume", "--model", "test/caller-seat:high", legacyRunId], {
-        packageRoot, home, cwd: project, io: captureIo().io,
-        credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot, principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            legacyDispatches += 1;
-            return { code: 0, stderr: "", timedOut: false, args: [...args] };
-          },
-        }),
-      });
-      assert.equal(legacyDispatches, 1, "legacy watermark migration cannot block the host on a poisoned ledger");
-      assert.equal(poisonedLegacy.exitCode, 1);
-      const legacyFailureFace = await readRunTerminalArtifact(legacyDir);
-      assert.equal(legacyFailureFace.status, "present");
-      if (legacyFailureFace.status === "present") {
-        assert.equal(legacyFailureFace.file, "error.json");
-        assert.equal((legacyFailureFace.body.identity as { code?: unknown } | undefined)?.code, "EISDIR");
-      }
     } finally {
       await restoreArtifactsWritable();
     }

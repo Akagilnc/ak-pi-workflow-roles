@@ -229,17 +229,6 @@ export async function hasFreshAttemptSubmission(
   return owned.some((record) => recordAttemptId(record) === attemptId && isSealedRecord(record));
 }
 
-/** Raw sealed-event count across a run: unlike the presentation projection,
- * separate host turns remain distinct even if their tool call keys coincide. */
-export async function countSealedSubmissionRecords(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<number> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
-  return owned.filter(isSealedRecord).length;
-}
-
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
   return typeof value === "string" && value.length > 0;
 }

@@ -100,8 +100,6 @@ export type RoleRunRecord = {
   readonly sessionFile: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
-  /** Raw seal count when a success report last reached its public face. */
-  readonly publishedSealedCount?: number;
   /** Coder/Fixer — preserved for resume continuation. */
   readonly phase?: CoderPhase | FixerPhase;
   /** Present only while state === "resumable".
@@ -233,7 +231,6 @@ type RoleRunStateDisk = {
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
   readonly principalWire: RoleRunPrincipalWire;
-  readonly publishedSealedCount?: number;
   readonly phase?: CoderPhase | FixerPhase;
   readonly resumable?: TypedHttp429Observation;
   /** Open court turn (#637); omit when no unsealed current court. */
@@ -411,9 +408,6 @@ async function readRoleRunStateDisk(
       ? record.phase
       : undefined;
   const currentCourt = parseCurrentCourtState(record.currentCourt);
-  const publishedSealedCount = typeof record.publishedSealedCount === "number"
-    && Number.isSafeInteger(record.publishedSealedCount) && record.publishedSealedCount >= 0
-    ? record.publishedSealedCount : undefined;
   return {
     runId: identity.runId,
     role: identity.role,
@@ -428,7 +422,6 @@ async function readRoleRunStateDisk(
     ) as string,
     principalWire,
     ...(phase === undefined ? {} : { phase }),
-    ...(publishedSealedCount === undefined ? {} : { publishedSealedCount }),
     ...(resumable === undefined ? {} : { resumable }),
     ...(currentCourt === undefined ? {} : { currentCourt }),
   };
@@ -451,7 +444,6 @@ async function writeRoleRunStateDisk(
       : { sessionFile: disk.principalWire.sessionFile }),
     admittedRequestPath: disk.admittedRequestPath,
     ...(disk.phase === undefined ? {} : { phase: disk.phase }),
-    ...(disk.publishedSealedCount === undefined ? {} : { publishedSealedCount: disk.publishedSealedCount }),
     ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
     ...(disk.currentCourt === undefined ? {} : { currentCourt: disk.currentCourt }),
   };
@@ -482,7 +474,6 @@ function materializeRoleRunFromDisk(
         runDirectory: disk.runDirectory,
         admittedRequestPath: disk.admittedRequestPath,
         ...(disk.phase === undefined ? {} : { phase: disk.phase }),
-        ...(disk.publishedSealedCount === undefined ? {} : { publishedSealedCount: disk.publishedSealedCount }),
         ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
       },
     };
@@ -605,16 +596,6 @@ export async function markRunResumable(
     state: "resumable",
     resumable: observation,
   });
-}
-
-/** Seal watermark of the last published success report, retained across
- * later failure/no-receipt face clears; not a terminal conclusion. */
-export async function markRunReportPublished(runDirectory: string, sealedCount: number): Promise<void> {
-  const current = await readRoleRunStateDisk(runDirectory);
-  // Direct settlement projections may have artifacts without a public run-state;
-  // only an admitted public run needs the durable resume distinction.
-  if (current === undefined || current.publishedSealedCount === sealedCount) return;
-  await writeRoleRunStateDisk(runDirectory, { ...current, publishedSealedCount: sealedCount });
 }
 
 export async function markRunTerminal(runDirectory: string): Promise<void> {
