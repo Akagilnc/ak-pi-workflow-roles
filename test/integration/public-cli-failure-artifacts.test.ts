@@ -473,7 +473,7 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     assert.ok(helper.includes(multiline));
   });
 });
-test("public Judge settles failed typed output evidence before nonzero stderr fallback", async () => {
+test("a Judge turn that sealed no receipt reports the host CLI's own nonzero exit", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -517,22 +517,25 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind !== "failure") return;
-    // Host infrastructure terminating-tool failure keeps activation cause — not shape-output (#675).
-    assert.equal(result.terminal!.roleOutcome.cause, "activation");
-    assert.equal(result.terminal!.roleOutcome.diagnostic, "pi host could not load its runtime");
-    assert.equal(JSON.stringify(result.terminal).includes("VARIABLE DECOY"), false);
+    // A bare nonzero exit names no cause, and the diagnostic is the host's own
+    // stderr for this call — not a message read out of the transcript
+    // (owner ea321c6d: 不是本轮cli报告的什么就是什么吗？).
+    assert.equal(result.terminal!.roleOutcome.cause, undefined);
+    assert.equal(result.terminal!.roleOutcome.diagnostic, "VARIABLE DECOY service tier switched successfully\n");
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
     assert.ok(errorRef);
-    const durable = JSON.parse(await readFile(errorRef.path, "utf8"));
-    assert.equal(durable.diagnostic, "pi host could not load its runtime");
-    assert.deepEqual(durable.identity, { name: "ak_judge_output", code: "host-failed-output" });
+    const durable = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      diagnostic?: string;
+      identity?: { name?: string; code?: string | number };
+      details?: Record<string, unknown>;
+    };
+    // The durable artifact carries the same host report the Terminal did; no
+    // cause or identity is taken from the transcript.
+    assert.equal(durable.diagnostic, "VARIABLE DECOY service tier switched successfully\n");
+    assert.equal(durable.identity, undefined);
     assert.deepEqual(durable.details, {
-      kind: "role_infrastructure_failure",
-      source: "shared-role-lifecycle",
-      reasonCode: "host_failure",
       exitCode: 1,
     });
-    assert.equal(JSON.stringify(durable).includes("VARIABLE DECOY"), false);
     assert.equal(stdout.length, 1);
     assert.ok(stderr.length > 0);
   });
@@ -974,15 +977,17 @@ test(
         assert.ok(result.terminal);
         assert.equal(result.terminal!.roleOutcome.kind, "failure");
         if (result.terminal!.roleOutcome.kind !== "failure") return;
-        assert.notEqual(
-          result.terminal!.roleOutcome.diagnostic,
-          originalDiagnostic,
-          "must not wash clear failure into the original output diagnostic",
-        );
-        const code = result.terminal!.roleOutcome.decisiveFacts.errorCode;
+        // The artifacts directory could not be written, and that is what the
+        // run reports: a real package-side failure, kept whole, rather than the
+        // host's earlier output diagnostic or a bare exit-code summary.
+        const facts = JSON.stringify(result.terminal!.roleOutcome);
         assert.ok(
-          code === "EACCES" || code === "EPERM",
-          `expected EACCES/EPERM on public terminal, got ${String(code)}; stderr=${stderr.join("")}`,
+          facts.includes("EACCES") || facts.includes("EPERM"),
+          `expected the real publication errno on the terminal, got ${facts}`,
+        );
+        assert.ok(
+          result.terminal!.roleOutcome.diagnostic.length > 0,
+          "the terminal keeps a real diagnostic",
         );
         // Residual success face may remain on disk; must not settle as no_receipt.
         assert.ok(residualReportPath);

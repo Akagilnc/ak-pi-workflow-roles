@@ -640,16 +640,22 @@ export function classifyPostAdmissionFailure(input: {
       || (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "")
       || input.knownIdentity !== undefined;
     if (!hostReported) return thrown;
-    const cause = input.knownCause ?? thrown.cause;
+    // The host's report is presented exactly as it gave it — a field it left out
+    // is not filled in from the exception, which is a different failure. The
+    // exception is kept whole beside it under its own key, so neither erases
+    // the other (失败诚实宪法：接住可以，洗白不行).
     return {
-      ...(cause === undefined ? {} : { cause }),
+      ...(input.knownCause === undefined ? {} : { cause: input.knownCause }),
+      // A settled failure always presents a diagnostic. The host's own is used
+      // when it gave one; otherwise the exception's stands, and the host's
+      // omitted fields stay omitted rather than being invented.
       diagnostic: input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
         : thrown.diagnostic,
       ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
       details: {
-        ...(thrown.details ?? {}),
         ...(input.knownDetails ?? {}),
+        secondaryFailure: thrown,
       },
     };
   }
@@ -1019,25 +1025,38 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   /** Optional run directory for typed provider HTTP observation (resume/429). */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
-  // This turn's outcome and its cause come from this turn's own host facts and
-  // nothing else. A bound auditor volume, a Sitian-retained stop, the run-level
-  // typed-HTTP sidecar and an earlier attempt's session bytes are history: they
-  // stay on the record for presentation, and none of them is consulted here.
-  // The typed-HTTP sidecar is read first and only ever rides along for the v1
-  // resume decision; it is a separate observation and never edits a field of
-  // the failure this call reported.
+  // This turn's outcome and its cause are what the host CLI reported for this
+  // call, and nothing else. The Pi host returns only code/stderr/timedOut, so
+  // anything richer came from the host's own declared failure; a session
+  // transcript, a bound auditor volume, a Sitian-retained stop and the
+  // run-level sidecar are history, and none of them is read to decide the cause
+  // here (owner ea321c6d: resume报失败为什么要去看历史？).
+  //
+  // The typed-HTTP sidecar is a separate observation used only for the v1 resume
+  // decision. A failure to read it is its own real fact and never replaces what
+  // the host reported.
   let httpObservation: TypedProviderHttpObservation | undefined;
   if (input.runDirectory !== undefined) {
     try {
       httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      // The sidecar is auxiliary, so its read failure rides as a detail on
+      // whatever the host already reported rather than becoming the cause.
       return resolutionOf(
-        {
-          cause: "session",
-          identity: thrownIdentity(failure),
-          diagnostic: failure.message || failure.name,
-        },
+        input.runner === undefined
+          ? {
+            cause: "session",
+            identity: thrownIdentity(failure),
+            diagnostic: failure.message || failure.name,
+          }
+          : {
+            ...input.runner,
+            details: {
+              ...(input.runner.details ?? {}),
+              sidecarReadFailure: { name: failure.name, message: failure.message },
+            },
+          },
         { settled: true },
       );
     }
@@ -1048,36 +1067,9 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   };
   // A caller-declared credential failure is this invocation's own fact.
   if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
-  // The host reported this call's failure. Scanning the session for a provider
-  // stop here would let an earlier turn's bytes answer for this one, so the
-  // scan runs only when the host has not reported anything.
-  if (input.runner !== undefined) return resolutionOf(input.runner, typedHttp);
-  // Nothing but a possibly damaged session is left to read, and a real read
-  // failure now is this turn's own fact.
-  let entries: SessionEntry[] = [];
-  try {
-    entries = await readBoundSessionEntries(input.sessionFile);
-  } catch (error) {
-    // A session that is not there yet is absence, not a failure.
-    if (!isMissingPathError(error)) {
-      const failure = sessionReadFailure(error, "failed to read the current session");
-      return resolutionOf(
-        {
-          cause: "session",
-          identity: thrownIdentity(failure),
-          diagnostic: failure.message || failure.name,
-        },
-        typedHttp,
-      );
-    }
-  }
-  const terminatingFailure = typedFailedTerminatingToolKnownFailure(entries);
-  if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure, typedHttp);
-  const parentStop = extractSessionProviderStop(entries);
-  if (parentStop !== undefined) {
-    return resolutionOf(knownFailureFromProviderStop(parentStop), typedHttp);
-  }
-  return resolutionOf(undefined, typedHttp);
+  // The host's report for this call, or nothing: a run whose CLI reported no
+  // failure is not given one by reading what earlier turns left behind.
+  return resolutionOf(input.runner, typedHttp);
 }
 /**
  * v1 resume observation for controlled-failure settlement — at most one sidecar read.
@@ -2053,7 +2045,13 @@ async function settleSealedSeat(
     }
     return undefined;
   }
-  if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) return undefined;
+  if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) {
+    // A transcript that cannot be read is a real fact about this run, whatever
+    // the ledger holds. It is reported as this run's own session failure; it is
+    // never used to attribute a cause the host did not report.
+    if (options.residual === undefined) await readLawfulSettlementEntries(coordinates.sessionFile);
+    return undefined;
+  }
   const entries = priorEntries ?? await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   return finishLawfulSeat(admitted, coordinates, entries, roleOutcome, scope);
 }

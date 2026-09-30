@@ -492,15 +492,30 @@ export async function presentControlledFailure<
   // knownFailure channel owns details when present; otherwise caller knownDetails.
   const fromKnownFailure =
     explicitInternalKnownFailureClassificationInput(knownFailure);
+  // Merge the two detail sources so a key carried by either survives; a later
+  // spread would otherwise drop the earlier one's keys entirely.
+  const callerDetails =
+    failureInput.knownDetails === undefined && fromKnownFailure.knownDetails === undefined
+      ? undefined
+      : { ...(failureInput.knownDetails ?? {}), ...(fromKnownFailure.knownDetails ?? {}) };
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...(failureInput.knownDetails === undefined
+    // Both detail sources are real; merging keeps each one's keys instead of
+    // letting the later spread drop the earlier one.
+    ...(callerDetails === undefined ? {} : { knownDetails: callerDetails }),
+    // The knownFailure channel's own cause/identity/diagnostic ride with it.
+    ...(fromKnownFailure.knownCause === undefined
       ? {}
-      : { knownDetails: failureInput.knownDetails }),
-    ...fromKnownFailure,
+      : { knownCause: fromKnownFailure.knownCause }),
+    ...(fromKnownFailure.knownIdentity === undefined
+      ? {}
+      : { knownIdentity: fromKnownFailure.knownIdentity }),
+    ...(fromKnownFailure.knownDiagnostic === undefined
+      ? {}
+      : { knownDiagnostic: fromKnownFailure.knownDiagnostic }),
     ...(failureInput.knownCause === undefined
       ? {}
       : { knownCause: failureInput.knownCause }),
@@ -1090,12 +1105,11 @@ export async function dispatchPostAdmissionTurn<
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
-          // The host's own report for this call, with the settlement error that
-          // happened afterwards as secondary evidence beside it. Both are real;
-          // the settlement error does not replace what the host reported.
+          // The host's own report for this call, kept as it gave it. The
+          // settlement error rides beside it under its own key via `thrown`,
+          // so neither fact replaces the other.
           ...((resolution?.knownFailure ?? hostReportedFailure) === undefined ? {} : {
             knownFailure: resolution?.knownFailure ?? hostReportedFailure,
-            knownDetails: { settlementFailure: describeCaughtError(error) },
           }),
           thrown: error,
         }, request.invocationScopeId),

@@ -320,23 +320,6 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
     assert.equal(errorBody.diagnostic, secondaryDiagnostic);
   });
 });
-test("a malformed current session keeps its real read failure", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(sessionFile, "{malformed\n");
-    // The session this call reads is unreadable now, so the read failure is
-    // this turn's own fact and keeps its identity.
-    const malformed = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
-      sessionFile,
-      credential: undefined,
-    })).knownFailure;
-    assert.equal(malformed?.cause, "session");
-    assert.equal(malformed?.identity?.name, "SyntaxError");
-  });
-});
 
 test("an unreadable session keeps its real cause beside a credential fact", async () => {
   await withTempHome(async (home) => {
@@ -354,20 +337,6 @@ test("an unreadable session keeps its real cause beside a credential fact", asyn
   });
 });
 
-test("an unreadable session with no reported fact keeps its real read failure", async () => {
-  await withTempHome(async (home) => {
-    const pathComponent = join(home, "not-a-directory-2");
-    await writeFile(pathComponent, "file");
-    const failure = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
-      sessionFile: join(pathComponent, "parent.jsonl"),
-      credential: undefined,
-    })).knownFailure;
-    assert.equal(failure?.cause, "session");
-    assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
-    assert.ok(failure?.diagnostic);
-  });
-});
 test("typed output failure cannot bind a call from an earlier attempt", async () => {
   await withTempHome(async (home) => {
     const sessionFile = join(home, "session.jsonl");
@@ -393,49 +362,15 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
     assert.equal(noFailure.knownFailure, undefined);
   });
 });
-// Session provider-stop causal matrix (#420 整改并一)：三条同根「session stop
-// 因果穿越退出码形态」——code=1 / code=0 / timedOut——收成一条三行表。
-test("session provider-stop retains typed identity across exit-code shapes", async () => {
-  const sessionRows = (errorMessage: string): string =>
-    [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "go" }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage,
-          provider: "xai",
-          model: "grok-4",
-          api: "openai-responses",
-        },
-      }),
-    ].join("\n") + "\n";
+// A turn's cause is what the host CLI reported for that call. The transcript
+// it left behind does not decide anything: a provider-stop written into the
+// session is neither promoted into the failure's identity nor required to
+// explain it (owner ea321c6d: 不是本轮cli报告的什么就是什么吗？).
+test("a provider stop left in the transcript never becomes this turn's cause", async () => {
   const rows = [
-    {
-      label: "nonzero exit keeps session-stop cause without injected knownFailure",
-      runId: "run-session-provider-stop-001",
-      errorMessage: "WebSocket error",
-      child: { code: 1 as const, stderr: "activation wrapper exited nonzero\n", timedOut: false as const },
-    },
-    {
-      label: "zero-exit still reads session provider-stop (not washed to output)",
-      runId: "run-zero-exit-session-provider-stop-001",
-      errorMessage: "upstream websocket failed",
-      child: { code: 0 as const, stderr: "", timedOut: false as const },
-    },
-    {
-      label: "timedOut co-present keeps session provider identity (AC2)",
-      runId: "run-timeout-provider-stop-001",
-      errorMessage: "provider hung then killed",
-      child: { code: null as unknown as number, stderr: "still running\n", timedOut: true as const },
-    },
+    { label: "nonzero exit", runId: "run-session-stop-not-a-cause-001", code: 1 as const, stderr: "activation wrapper exited nonzero\n", timedOut: false as const },
+    { label: "zero exit, no receipt", runId: "run-session-stop-zero-exit-001", code: 0 as const, stderr: "", timedOut: false as const },
+    { label: "timed out", runId: "run-session-stop-timeout-001", code: null as unknown as number, stderr: "still running\n", timedOut: true as const },
   ] as const;
   for (const row of rows) {
     await withTempHome(async (home) => {
@@ -444,7 +379,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
-        ["--model", "xai/grok-4:off", "judge", "--project", project, `session provider stop: ${row.label}`],
+        ["--model", "xai/grok-4:off", "judge", "--project", project, `transcript stop: ${row.label}`],
         {
           packageRoot,
           home,
@@ -456,48 +391,47 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), sessionRows(row.errorMessage), "utf8");
-            return {
-              ...row.child,
-              args: [...args],
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await mkdir(sessionDir, { recursive: true });
+              await writeFile(join(sessionDir, "session.jsonl"), [
+                JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } }),
+                JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "TRANSCRIPT PROVIDER STOP", provider: "xai", model: "grok-4" } }),
+              ].join("\n") + "\n", "utf8");
               // deliberately omit knownFailure — production default runner path
-            };
-          },
+              return { ...row, args: [...args] };
+            },
           }),
         },
       );
-      const { terminal, errorRef } = await assertPublicFailureSettlement({
-        result,
-        stdout,
-        stderr,
-        diagnosticEquals: row.errorMessage,
-      });
-      assert.equal(terminal.roleOutcome.kind, "failure", row.label);
-      if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.cause, undefined, row.label);
-        assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined, row.label);
-        assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined, row.label);
-        assert.equal(terminal.roleOutcome.diagnostic, row.errorMessage, row.label);
-      }
-      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-        cause: string;
-        diagnostic: string;
-        identity?: { name?: string; code?: string | number };
-        details?: { timedOut?: boolean; errorMessage?: string };
-      };
-      assert.equal(errorBody.cause, undefined, row.label);
-      assert.equal(errorBody.diagnostic, row.errorMessage, row.label);
-      assert.equal(errorBody.identity, undefined, row.label);
-      assert.equal(errorBody.details?.errorMessage, row.errorMessage, row.label);
-      if (row.child.timedOut) {
-        // AC2: timeout must not wash the co-present provider-stop identity.
-        assert.equal(errorBody.details?.timedOut, true, row.label);
+      const facts = JSON.stringify(result.terminal?.roleOutcome);
+      assert.equal(
+        facts?.includes("TRANSCRIPT PROVIDER STOP"),
+        false,
+        `${row.label}: a message in the transcript must not decide this turn's failure`,
+      );
+      if (row.timedOut) {
+        assert.equal(result.exitCode, 1, row.label);
+        assert.equal(result.terminal?.roleOutcome.kind, "failure", row.label);
+        if (result.terminal?.roleOutcome.kind === "failure") {
+          assert.equal(result.terminal.roleOutcome.cause, "timeout", row.label);
+        }
+      } else if (row.code !== 0) {
+        assert.equal(result.exitCode, 1, row.label);
+        assert.equal(result.terminal?.roleOutcome.kind, "failure", row.label);
+        if (result.terminal?.roleOutcome.kind === "failure") {
+          assert.equal(result.terminal.roleOutcome.diagnostic, row.stderr, row.label);
+        }
+      } else {
+        // Nothing failed and nothing sealed: an honest no_receipt, not a
+        // provider failure reconstructed from the transcript.
+        assert.equal(result.exitCode, 0, stdout.join("") + stderr.join(""));
+        assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", row.label);
       }
     });
   }
+});
 
+test("the provider-stop seam keeps its own typed reading rules", () => {
   // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
   const fromStop = knownFailureFromProviderStop({
     stopReason: "error",
