@@ -156,6 +156,7 @@ export type PiSpawnRunner = (
   code: number | null;
   stderr: string;
   timedOut: boolean;
+  signal?: string;
   knownFailure?: RoleTurnKnownFailure;
 }>;
 
@@ -332,7 +333,9 @@ export function createDefaultPiSpawnRunner(options: {
         settled = true;
         reject(error);
       });
-      child.on("close", (code) => {
+      // `close` carries (code, signal): a signal-killed child reports code null.
+      // Both travel out so a signal death is never read as a clean exit.
+      child.on("close", (code, closeSignal) => {
         if (timer !== undefined) clearTimeout(timer);
         parentSignal?.removeEventListener("abort", terminateForParentAbort);
         void identityRecorded.then(
@@ -351,6 +354,7 @@ export function createDefaultPiSpawnRunner(options: {
               code,
               stderr,
               timedOut,
+              ...(closeSignal === null ? {} : { signal: closeSignal }),
             });
           },
           (error) => {

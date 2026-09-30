@@ -206,14 +206,6 @@ function recordAttemptId(record: { subject?: unknown; payload?: unknown }): stri
   return undefined;
 }
 
-/** An actual seal or audit-escalation event, not a presentation projection. */
-function isSealedRecord(record: SitianRecord): boolean {
-  if (record.kind === "sealed") return true;
-  if (record.kind !== "outcome") return false;
-  const payload = record.payload as { type?: string; outcome?: string } | undefined;
-  return payload?.type === "outcome" && payload.outcome === "audit-escalation";
-}
-
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
   return typeof value === "string" && value.length > 0;
 }

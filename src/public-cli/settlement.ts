@@ -62,9 +62,11 @@ import {
   type PackagedArtifactLeaf,
 } from "../packaged-role-registry.ts";
 import {
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
   currentAttemptPointer,
   noReceiptLifecycleFacts,
+  parseNoReceiptLifecycleFacts,
   type NoReceiptLifecycleFacts,
 } from "../receipt-delivery-policy.ts";
 import type {
@@ -231,14 +233,59 @@ export async function settleHostEndedNoReceipt(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const facts = noReceiptLifecycleFacts({
-    terminalToolCalled: false,
-    rejectedReceipts: [],
-    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const binding = {
     runPointer: admitted.runDirectory,
     attemptPointer: currentAttemptPointer(admitted.runDirectory),
-  });
-  return settleNoReceiptTerminal(admitted, authority, scope, facts);
+  };
+  // The delivery owner records what actually happened this attempt — whether the
+  // terminal tool was called and what was rejected. Present those facts; a fixed
+  // `false` / `[]` would assert an empty delivery that never happened
+  // (#1032: 无回执如实呈 no_receipt; 单一真源).
+  const recorded = await readRecordedNoReceiptFacts(coordinates.sessionFile, binding);
+  return settleNoReceiptTerminal(
+    admitted,
+    authority,
+    scope,
+    recorded ?? noReceiptLifecycleFacts({
+      terminalToolCalled: false,
+      rejectedReceipts: [],
+      deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+      ...binding,
+    }),
+  );
+}
+
+/**
+ * The delivery owner's own lifecycle record for this attempt, when it wrote one.
+ * A missing or unreadable record is absence, not a fabricated one.
+ */
+async function readRecordedNoReceiptFacts(
+  sessionFile: string,
+  binding: { runPointer: string; attemptPointer: string },
+): Promise<NoReceiptLifecycleFacts | undefined> {
+  let entries: readonly SessionEntry[];
+  try {
+    entries = await readBoundSessionEntries(sessionFile);
+  } catch {
+    return undefined;
+  }
+  const entry = entries.slice(currentAttemptStartIndex(entries)).reverse().find(
+    (item: SessionEntry) =>
+      item.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
+      || item.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  );
+  const raw = entry?.data ?? entry?.message?.details;
+  if (raw === undefined) return undefined;
+  try {
+    const facts = parseNoReceiptLifecycleFacts(raw);
+    return facts.runPointer === binding.runPointer
+      && facts.attemptPointer === binding.attemptPointer
+      ? facts
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function settleNoReceiptTerminal(
@@ -321,6 +368,12 @@ export type ControlledFailure = RoleTurnKnownFailure & {
  * promoted into the host's cause, diagnostic or details.
  */
 export type PackageSideFact = {
+  /**
+   * This package's own view of the host's exit for this call. Kept beside the
+   * host's `details`, never inside it.
+   */
+  readonly exitCode?: number | null;
+  readonly timedOut?: boolean;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
   /** The typed-HTTP sidecar could not be read; the host's report still stands. */
@@ -593,17 +646,15 @@ function withKnownDetails(
   const facts = packageFact === undefined || Object.keys(packageFact).length === 0
     ? undefined
     : packageFact;
-  if (knownDetails === undefined) {
-    return facts === undefined ? failure : { ...failure, packageFact: facts };
-  }
-  const { timedOut: _knownTimedOut, ...rest } = knownDetails;
+  // The host's own details win outright: this helper must not displace a key the
+  // host carried. Only when the host supplied no record at all does the
+  // classified failure keep the details it derived from the host's exit.
   return {
     ...failure,
     ...(facts === undefined ? {} : { packageFact: facts }),
-    details: {
-      ...rest,
-      ...(failure.details ?? {}),
-    },
+    // The host's own record replaces the derived one when it supplied one; when
+    // it supplied none, the failure keeps what it derived from the host's exit.
+    ...(knownDetails === undefined ? {} : { details: knownDetails }),
   };
 }
 
@@ -620,8 +671,12 @@ function withKnownDetails(
 function packageFactsOf(input: {
   readonly sidecarReadFailure?: ThrownErrorFact;
   readonly packageFact?: PackageSideFact;
+  readonly code?: number | null;
+  readonly timedOut?: boolean;
 }): PackageSideFact | undefined {
   const facts: PackageSideFact = {
+    ...(input.code === undefined ? {} : { exitCode: input.code }),
+    ...(input.timedOut === true ? { timedOut: true } : {}),
     ...(input.packageFact ?? {}),
     ...(input.sidecarReadFailure === undefined
       ? {}
@@ -655,6 +710,8 @@ export function classifyPostAdmissionFailure(input: {
   knownDiagnostic?: string;
   /** Secondary evidence already carried by the typed production failure. */
   knownDetails?: Readonly<Record<string, unknown>>;
+  /** The signal that killed the host child, when one did (a non-normal exit). */
+  signal?: string;
   /** This package's own auxiliary read failure; recorded, never a cause. */
   sidecarReadFailure?: ThrownErrorFact;
   /** Further package-side facts merged under `packageFact`, never the cause. */
@@ -669,7 +726,35 @@ export function classifyPostAdmissionFailure(input: {
     const hostReported = input.knownCause !== undefined
       || (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "")
       || input.knownIdentity !== undefined;
-    if (!hostReported) return thrown;
+    // The host reported no *typed* class, but it did report this call: a
+    // nonzero exit, a timeout, or a signal death are its own facts. A later
+    // settlement exception does not replace them — it is a different failure
+    // and rides beside them (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
+    if (!hostReported) {
+      // A number is the host having reported an exit. A null code with a signal
+      // is its native signal-death report. Anything else means the host produced
+      // no result at all, and then the exception really is the only fact there
+      // is — there is nothing of the host's to preserve over it.
+      const hostFailed = input.timedOut
+        || input.signal !== undefined
+        || (typeof input.code === "number" && input.code !== 0);
+      if (!hostFailed) return thrown;
+      const fallback = input.timedOut
+        ? "role run timed out"
+        : `role run failed with exit ${input.code ?? "null"}`;
+      const facts = packageFactsOf(input);
+      const packageFact = facts === undefined ? { thrown } : { ...facts, thrown };
+      return {
+        ...(input.timedOut ? { cause: "timeout" as const } : {}),
+        diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+        details: {
+          ...(input.knownDetails ?? {}),
+          exitCode: input.code,
+          ...(input.timedOut ? { timedOut: true as const } : {}),
+        },
+        packageFact,
+      };
+    }
     // The host's report is presented exactly as it gave it — a field it left out
     // is not filled in from the exception, which is a different failure. The
     // exception is kept whole beside it under its own key, so neither erases
@@ -703,12 +788,15 @@ export function classifyPostAdmissionFailure(input: {
     const diagnostic = input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
       ? input.knownDiagnostic
       : conciseChildDiagnostic(input.stderr, fallback);
-    const { timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
     const packageFact = packageFactsOf(input);
     return {
       ...(input.knownCause === undefined ? {} : { cause: input.knownCause }),
       diagnostic,
-      details: { ...knownDetails, exitCode: input.code, ...(input.timedOut ? { timedOut: true as const } : {}) },
+      // The host's details are handed back byte-for-byte. This package's own
+      // view of the exit rides beside them — writing `exitCode` in there would
+      // overwrite a value the host itself carried (host-contracts.ts:41: an
+      // open read-only record with no reserved keys).
+      ...(input.knownDetails === undefined ? {} : { details: input.knownDetails }),
       ...(packageFact === undefined ? {} : { packageFact }),
       ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
     };
@@ -760,11 +848,17 @@ export function classifyPostAdmissionFailure(input: {
       packageFactsOf(input),
     );
   }
+  // No typed fact confirmed a class, so none is asserted: the host exited
+  // cleanly, and the package has nothing to add (host-contracts.ts:19–42: omit
+  // cause and keep the original when no typed confirmation exists). A caller
+  // that must present a failure for a clean run settles it on the no_receipt
+  // path, not by minting a class here.
   return withKnownDetails(
     {
-      cause: "output",
-      diagnostic: "role run completed without a lawful typed terminal result",
-      details: { exitCode: input.code },
+      diagnostic: conciseChildDiagnostic(
+        input.stderr,
+        "role run completed without a lawful typed terminal result",
+      ),
     },
     input.knownDetails,
     packageFactsOf(input),
@@ -958,8 +1052,6 @@ function resolutionOf(
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerFailureResolution(input: {
   runner: RoleTurnKnownFailure | undefined;
-  sessionFile: string;
-  credential: RoleTurnKnownFailure | undefined;
   /** Optional run directory for typed provider HTTP observation (resume/429). */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
@@ -994,8 +1086,6 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     settled: input.runDirectory !== undefined,
     ...(httpObservation === undefined ? {} : { observation: httpObservation }),
   };
-  // A caller-declared credential failure is this invocation's own fact.
-  if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
   // The host's report for this call, or nothing: a run whose CLI reported no
   // failure is not given one by reading what earlier turns left behind.
   return resolutionOf(input.runner, typedHttp);

@@ -200,9 +200,18 @@ export type RoleTurnRequest = {
 
 /** Turn result — only fields upper layers currently consume. */
 export type RoleTurnResult = {
+  /**
+   * The child's exit code, or null when it was killed by a signal — Node's
+   * native close contract. A null code is a non-normal exit, never a success.
+   */
   readonly code: number | null;
   readonly stderr: string;
   readonly timedOut: boolean;
+  /**
+   * The signal that killed the child, when one did. Carried so a signal death
+   * reports the real cause instead of settling as a successful no_receipt.
+   */
+  readonly signal?: string;
   readonly knownFailure?: RoleTurnKnownFailure;
 };
 

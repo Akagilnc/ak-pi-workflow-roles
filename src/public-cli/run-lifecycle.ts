@@ -655,10 +655,24 @@ export async function clearCurrentCourt(
 
 export class RunWriterLeaseHeldError extends Error {
   readonly code = "AK_RUN_WRITER_LEASE_HELD" as const;
-  constructor(message = "role run writer lease is already held") {
+  /**
+   * Why the lease could not be taken, as structured data: the OS errno of the
+   * underlying reclaim failure when there was one. Carried so a consumer
+   * asserts the real cause instead of recognising it in the message text
+   * (质量法: 机器只咬契约，不咬呈现).
+   */
+  readonly causeCode?: string | number;
+  constructor(message = "role run writer lease is already held", causeCode?: string | number) {
     super(message);
     this.name = "RunWriterLeaseHeldError";
+    if (causeCode !== undefined) this.causeCode = causeCode;
   }
+}
+
+/** The OS errno of a thrown value, when it carries one. */
+function errnoOf(error: unknown): string | number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" || typeof code === "number" ? code : undefined;
 }
 
 export type RunWriterLease = {
@@ -944,6 +958,7 @@ export async function acquireRunWriterLease(
     } catch (reclaimError) {
       throw new RunWriterLeaseHeldError(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
+        errnoOf(reclaimError),
       );
     }
     if (reclaimed) {
@@ -957,6 +972,7 @@ export async function acquireRunWriterLease(
     lastReclaimFailure !== undefined
       ? `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)}; last reclaim failure: ${describeErrorIdentity(lastReclaimFailure)})`
       : `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
+    lastReclaimFailure === undefined ? undefined : errnoOf(lastReclaimFailure),
   );
 }
 

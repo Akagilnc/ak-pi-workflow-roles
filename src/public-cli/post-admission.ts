@@ -80,6 +80,7 @@ import {
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
+  childSignalDeathDiagnostic,
   processCancelDiagnostic,
   processCancelSignalName,
   type CatchableProcessSignal,
@@ -100,6 +101,7 @@ import {
   publishedFailureErrorPath,
   presentStructuralRejection,
   resolveAuditedRunnerFailureResolution,
+  type AuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
@@ -386,6 +388,8 @@ export type ControlledFailureInput = {
    * cause, and never written into the host's open `details`.
    */
   packageFact?: PackageSideFact;
+  /** The signal that killed the host child, when one did. */
+  signal?: string;
   /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
   sidecarReadFailure?: ThrownErrorFact;
   typedHttpObservationSettled?: true;
@@ -539,6 +543,7 @@ export async function presentControlledFailure<
     ...(sidecarReadFailure === undefined
       ? {}
       : { sidecarReadFailure }),
+    ...(failureInput.signal === undefined ? {} : { signal: failureInput.signal }),
     ...(failureInput.packageFact === undefined
       ? {}
       : { packageFact: failureInput.packageFact }),
@@ -666,6 +671,21 @@ async function settleDeferredPersist<
     );
     return { ...failed, turnDispatched: true as const, skipAutoResume: true as const };
   }
+}
+
+/**
+ * This package's own failures while handling a turn the host itself reported as
+ * clean: an unreadable typed-HTTP sidecar, a stderr mirror that would not write.
+ * Present when any exist, so no branch can settle a no_receipt while quietly
+ * dropping them (CLAUDE.md:48 真因必须落痕).
+ */
+function packageSideFailureOf(
+  result: RoleTurnResult,
+  resolution: AuditedRunnerFailureResolution | undefined,
+): PackageSideFact | undefined {
+  const sidecarReadFailure = resolution?.sidecarReadFailure;
+  if (sidecarReadFailure === undefined) return undefined;
+  return { sidecarReadFailure };
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -1045,14 +1065,8 @@ export async function dispatchPostAdmissionTurn<
     // while resolving or settling cannot lose it.
     const hostReportedFailure = result.knownFailure;
     try {
-      const sessionFile =
-        admitted.principal !== undefined
-          ? env.principalAuthority.decode(admitted.principal).sessionFile
-          : "";
       resolution = await resolveAuditedRunnerFailureResolution({
         runner: result.knownFailure,
-        sessionFile,
-        credential: undefined,
         runDirectory: admitted.runDirectory,
       });
       // What the host CLI reported for this call: a timeout, its own declared
@@ -1068,9 +1082,13 @@ export async function dispatchPostAdmissionTurn<
       // The turn fails on the CLI's own report for it: that signal or its exit
       // code. No history read and no prior-turn settlement takes part in this
       // decision (owner ea321c6d: resume报失败为什么要去看历史？).
+      // A null code means the child was killed by a signal — Node's native close
+      // contract, and a non-normal exit. It is a failure, never a clean run that
+      // may settle as no_receipt (ADR 0052: 真失败退非零).
       hostSignalFailed =
         directHostFailureSignal
-        || (result.code !== null && result.code !== 0)
+        || result.code === null
+        || result.code !== 0
         || resolution.knownFailure !== undefined;
 
       // Settlement attaches the run's recorded history here; failure and
@@ -1192,6 +1210,13 @@ export async function dispatchPostAdmissionTurn<
           timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
+          // The host's own report: a signal-killed child says so itself.
+          ...(result.signal === undefined
+            ? {}
+            : {
+              knownDiagnostic: childSignalDeathDiagnostic(result.signal),
+              signal: result.signal,
+            }),
           ...resolutionInput,
           ...(processCancelName === undefined
             ? {}
@@ -1211,6 +1236,28 @@ export async function dispatchPostAdmissionTurn<
           env.signal,
         ),
       );
+    }
+
+    // The turn itself was clean, but this package hit a real failure while
+    // handling it (an unreadable sidecar, a stderr mirror that would not write).
+    // Those are true facts about this run, so they are reported rather than
+    // dropped on the way to a no_receipt (CLAUDE.md:48 真因必须落痕).
+    if (packageSideFailureOf(result, resolution) !== undefined) {
+      const facts = packageSideFailureOf(result, resolution)!;
+      const failed = await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope({
+          timedOut: false,
+          code: result.code,
+          stderr: result.stderr,
+          packageFact: facts,
+        }, request.invocationScopeId),
+        adapters,
+        env.principalAuthority,
+        io,
+        persistRunState,
+      );
+      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     // Nothing else was wrong, but the durable stderr mirror itself failed to

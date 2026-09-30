@@ -326,47 +326,6 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
   });
 });
 
-test("an unreadable session keeps its real cause beside a credential fact", async () => {
-  await withTempHome(async (home) => {
-    const pathComponent = join(home, "not-a-directory");
-    await writeFile(pathComponent, "file");
-    // The caller-declared credential failure is this invocation's own fact and
-    // is not displaced; the ENOTDIR it would have cost stays on the record.
-    const failure = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
-      sessionFile: join(pathComponent, "parent.jsonl"),
-      credential: { cause: "activation", diagnostic: "credential fallback" },
-    })).knownFailure;
-    assert.equal(failure?.cause, "activation");
-    assert.equal(failure?.diagnostic, "credential fallback");
-  });
-});
-
-test("typed output failure cannot bind a call from an earlier attempt", async () => {
-  await withTempHome(async (home) => {
-    const sessionFile = join(home, "session.jsonl");
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "reused-id", name: "ak_judge_output", arguments: {} }] } },
-      { type: "message", message: { role: "user" } },
-      { type: "message", message: {
-        role: "toolResult",
-        toolCallId: "reused-id",
-        toolName: "ak_judge_output",
-        isError: true,
-        content: [{ type: "text", text: "unbound current-attempt result" }],
-        details: { kind: "role_infrastructure_failure", source: "shared-role-lifecycle", reasonCode: "host_failure" },
-      } },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-
-    const noFailure = await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
-      sessionFile,
-      credential: undefined,
-    });
-    assert.equal(noFailure.knownFailure, undefined);
-  });
-});
 // A turn's cause is what the host CLI reported for that call. The transcript
 // it left behind does not decide anything: a provider-stop written into the
 // session is neither promoted into the failure's identity nor required to
@@ -467,14 +426,10 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
     await mkdir(runDirectory, { recursive: true });
-    const sessionFile = join(runDirectory, "session", "missing-session.jsonl");
-
     // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
     assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
     const absent = await resolveAuditedRunnerFailureResolution({
       runner: undefined,
-      sessionFile,
-      credential: undefined,
       runDirectory,
     });
     assert.equal(absent.knownFailure, undefined);
@@ -487,8 +442,6 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
     const badShape = await resolveAuditedRunnerFailureResolution({
       runner: hostReport,
-      sessionFile,
-      credential: undefined,
       runDirectory,
     });
     assert.deepEqual(badShape.knownFailure, hostReport);
@@ -498,8 +451,6 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
     const malformed = await resolveAuditedRunnerFailureResolution({
       runner: hostReport,
-      sessionFile,
-      credential: undefined,
       runDirectory,
     });
     assert.deepEqual(malformed.knownFailure, hostReport);
@@ -510,8 +461,6 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     await mkdir(join(runDirectory, "typed-provider-http.json"));
     const eisdir = await resolveAuditedRunnerFailureResolution({
       runner: hostReport,
-      sessionFile,
-      credential: undefined,
       runDirectory,
     });
     assert.deepEqual(eisdir.knownFailure, hostReport);

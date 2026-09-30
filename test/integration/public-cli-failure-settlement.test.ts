@@ -162,6 +162,8 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: floodStderr(),
   });
   assert.equal(timeout.cause, "timeout");
+  // No host details were supplied, so the record is the package's own view of
+  // the exit — never written into a host record it did not provide.
   assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
 
   // A nonzero exit says the run failed, not why. With no typed confirmation the
@@ -175,12 +177,15 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(nonzeroExit.cause, undefined);
   assert.equal(nonzeroExit.diagnostic, floodStderr());
 
+  // A clean exit with no typed confirmation asserts no class: the host
+  // confirmed nothing, so the package mints nothing (host-contracts.ts:19–42).
   const missing = classifyPostAdmissionFailure({
     timedOut: false,
     code: 0,
     stderr: "",
   });
-  assert.equal(missing.cause, "output");
+  assert.equal(missing.cause, undefined);
+  assert.equal(typeof missing.diagnostic, "string");
 
   const original = new Error("socket hang up");
   original.name = "ProviderTransportError";
@@ -257,10 +262,11 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timedOutWithProvider.diagnostic, "rate limited");
   assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
   assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
-  assert.deepEqual(timedOutWithProvider.details, {
-    exitCode: null,
-    timedOut: true,
-  });
+  // The host gave a typed cause but no details record, so none is invented:
+  // this package's own view of the exit rides beside it under packageFact.
+  assert.equal(timedOutWithProvider.details, undefined);
+  assert.equal(timedOutWithProvider.packageFact?.exitCode, null);
+  assert.equal(timedOutWithProvider.packageFact?.timedOut, true);
 
   const reservedKnownDetails = classifyPostAdmissionFailure({
     timedOut: false,
@@ -270,11 +276,16 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     knownDiagnostic: "upstream unavailable",
     knownDetails: { code: 99, timedOut: true, provider: "xai" },
   });
+  // The host's record is handed back exactly as given. This package's own view
+  // of the exit (exitCode 1) rides beside it under packageFact rather than being
+  // written in — a key the host itself carried must never be overwritten
+  // (host-contracts.ts:41: an open read-only record with no reserved keys).
   assert.deepEqual(reservedKnownDetails.details, {
-    provider: "xai",
     code: 99,
-    exitCode: 1,
+    timedOut: true,
+    provider: "xai",
   });
+  assert.equal(reservedKnownDetails.packageFact?.exitCode, 1);
 
   // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
   const thrownUndefined = classifyPostAdmissionFailure({

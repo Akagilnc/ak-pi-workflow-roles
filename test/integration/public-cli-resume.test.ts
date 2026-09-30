@@ -1896,11 +1896,12 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
           (error: unknown) => error,
         );
         assert.ok(failure instanceof RunWriterLeaseHeldError);
-        // The refusal carries a typed identity, not just the dead-pid autopsy —
-        // otherwise the true cause is laundered away. Asserted on the code, not
-        // by recognising EACCES in the message.
+        // The refusal carries the real reclaim errno structurally, not just the
+        // dead-pid autopsy — otherwise the true cause is laundered away. Both
+        // the wrapper's own code and the underlying EACCES are asserted, so
+        // dropping the reclaim identity fails this test.
         assert.equal(failure.code, "AK_RUN_WRITER_LEASE_HELD");
-        assert.equal(failure.name, "RunWriterLeaseHeldError");
+        assert.equal(failure.causeCode, "EACCES");
         // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
         assert.equal(existsSync(lockPath), true);
       },
