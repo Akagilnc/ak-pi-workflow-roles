@@ -611,6 +611,7 @@ async function assertAuditorRolesUnreadable(
   const entry = result.page.unreadable.find((row) => row.runId === GATE_JUDGE_RUN);
   assert.ok(entry, `${label}: judge leg must be page-local unreadable`);
   assert.deepEqual(entry.missingSources, ["auditor-roles"]);
+  assert.ok(entry.reason.trim().length > 0);
   assert.equal(
     gateSection(result.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
     false,

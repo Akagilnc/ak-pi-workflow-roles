@@ -959,6 +959,7 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
       assert.equal(damaged.runId, expected.runId);
       assert.equal(damaged.book, expected.book);
       assert.deepEqual(damaged.missingSources, [...expected.missingSources]);
+      assert.ok(damaged.reason.trim().length > 0);
       assert.deepEqual(damaged.firstFrameAt, expected.firstFrameAt);
       // No wall-clock / duration field admitted for unreadable runs on A1 page.
       assert.equal(
