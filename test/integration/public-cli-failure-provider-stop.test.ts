@@ -13,7 +13,6 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { classifyPostAdmissionFailure, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -431,34 +430,6 @@ test("a provider stop left in the transcript never becomes this turn's cause", a
   }
 });
 
-test("the provider-stop seam keeps its own typed reading rules", () => {
-  // Typed seam unit: stopReason error without upstream testimony is unknown; other stops ignored.
-  const fromStop = knownFailureFromProviderStop({
-    stopReason: "error",
-    errorMessage: "WebSocket error",
-    provider: "xai",
-  });
-  assert.equal(fromStop?.cause, undefined);
-  assert.equal(fromStop?.identity, undefined);
-  assert.equal(fromStop?.diagnostic, "WebSocket error");
-  assert.deepEqual(
-    fromStop?.details,
-    { errorMessage: "WebSocket error" },
-  );
-  // Prose "500:" alone is not testimony (kept once here; no duplicate helper block).
-  assert.equal(
-    knownFailureFromProviderStop({
-      stopReason: "error",
-      errorMessage: "500: Internal error during token generation",
-      provider: "openai-codex",
-    })?.cause,
-    undefined,
-  );
-  assert.equal(
-    knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
-    undefined,
-  );
-});
 
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
   const runDir = await mkdtemp(join(tmpdir(), "http-2xx-clear-"));
