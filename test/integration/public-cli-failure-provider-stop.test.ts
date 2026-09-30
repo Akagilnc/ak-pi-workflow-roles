@@ -77,51 +77,56 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
-test("runnerFailure registry rank is the public settlement principal", async () => {
+// Per seat, with a full engine-detour transcript left behind either way: the
+// host's own report for this call is what the terminal presents. A record in
+// the transcript never supplies a cause and never replaces one (owner 4743ade7:
+// 代码凭什么要去决定cli的失败原因？). Every seat is asserted on the same rule —
+// there is no seat whose failure this package attributes any other way.
+test("every seat presents the host's own report; a transcript record never decides it", async () => {
   const detourDiagnostic = "ENGINE_DETOUR_HARD_FAIL_505_RECORD";
   const knownDiagnostic = "KNOWN_FAILURE_505_STANDS";
   const cases = [
     {
-      // The host reported a bare nonzero exit and nothing else. An
-      // engine-detour record sitting in the transcript is history: it does not
-      // become this call's cause, and no cause is invented for it (#881).
+      // The host reported a bare nonzero exit and nothing else. The
+      // engine-detour record in the transcript is history: it does not become
+      // this call's cause, and no cause is invented for it (#881).
       label: "judge: a lone engine-detour record supplies nothing when the host reported none",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "rank"],
-      session: "detour" as const,
       known: false,
       cause: undefined,
       diagnostic: undefined,
     },
     {
-      // The host's own report for this call stands; a session record does not
-      // replace it (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
       label: "reviewer: the host report is not replaced by an engine-detour record",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "--lens", "correctness", "--authority-ref", "CLAUDE.md"],
-      session: "detour" as const,
       known: true,
       cause: "provider" as const,
       diagnostic: knownDiagnostic,
     },
     {
-      label: "gatekeeper: same rule as every other runner-failure seat",
+      label: "gatekeeper: the host report stands",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "gatekeeper", "--project", project, "rank"],
-      session: "detour" as const,
       known: true,
       cause: "provider" as const,
       diagnostic: knownDiagnostic,
     },
     {
-      label: "collector has no runnerFailure leaf so knownFailure stands",
+      label: "navigator: the host report stands",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "navigator", "--project", project, "rank"],
+      known: true,
+      cause: "provider" as const,
+      diagnostic: knownDiagnostic,
+    },
+    {
+      label: "collector: the host report stands",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "collector", "--project", project, "--pr", "7", "--repo", "acme/widgets"],
-      session: "detour" as const,
       known: true,
       cause: "provider" as const,
       diagnostic: knownDiagnostic,
     },
     {
-      label: "gleaner-left has no runnerFailure leaf so knownFailure stands",
+      label: "gleaner-left: the host report stands",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "gleaner-left", "--project", project, "--base", "HEAD", "rank"],
-      session: "detour" as const,
       known: true,
       cause: "provider" as const,
       diagnostic: knownDiagnostic,
@@ -140,7 +145,7 @@ test("runnerFailure registry rank is the public settlement principal", async () 
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        createRunId: () => `run-505-rank-${index}`,
+        createRunId: () => `run-host-report-${index}`,
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,

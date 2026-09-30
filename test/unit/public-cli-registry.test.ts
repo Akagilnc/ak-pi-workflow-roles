@@ -27,7 +27,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_submission_output",
     auditTool: "ak_soul_audit_decision",
     settlement: "sealed",
-    runnerFailure: "engine-detour",
     boardPlacement: "judge-history",
     navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
@@ -118,7 +117,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
     },
     transportPrompt: "skill-args",
-    runnerFailure: "engine-detour",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -335,7 +333,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_gatekeeper_output",
     settlement: "accepted",
-    runnerFailure: "engine-detour",
     activationStage: "load-and-install",
   },
   {
@@ -348,7 +345,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_navigator_output",
     settlement: "accepted",
-    runnerFailure: "engine-detour",
     activationStage: "load-and-install",
   },
   {
@@ -365,7 +361,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_submission_output",
     settlement: "accepted",
     reaskPrompt: true,
-    runnerFailure: "engine-detour",
     gateStageLabel: "审刑院",
     gateSummon: "subject-source",
     activationStage: "load-and-install",
