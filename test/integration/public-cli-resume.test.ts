@@ -1,3 +1,5 @@
+import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
@@ -920,10 +922,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(resumeResult.exitCode, 1);
       const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`);
       // #1058: read the record the caller was actually pointed at, not a known path.
-      const pointedPath = (await readdir(join(runDirectory, "artifacts")))
-        .map((name) => join(runDirectory, "artifacts", name))
-        .find((path) => resumeStderr.join("").includes(path));
-      assert.ok(pointedPath, `resume must point at its error record: ${resumeStderr.join("")}`);
+      const pointedPath = await pointedErrorRecordPath(runDirectory, resumeStderr.join(""));
       const error = JSON.parse(await readFile(pointedPath, "utf8")) as {
         runId?: unknown;
         diagnostic?: unknown;
@@ -1027,10 +1026,7 @@ test("resumable Terminal omits top-level run id; durable artifact keeps original
     assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
     assert.equal(resumed.terminal?.artifacts.length, 0);
     // #1058: the resumed caller must be pointed at this run's error record.
-    const resumedPointedPath = (await readdir(join(runDirectory, "artifacts")))
-      .map((name) => join(runDirectory, "artifacts", name))
-      .find((path) => resumedIo.stderr.join("").includes(path));
-    assert.ok(resumedPointedPath, `resume must point at its error record: ${resumedIo.stderr.join("")}`);
+    const resumedPointedPath = await pointedErrorRecordPath(runDirectory, resumedIo.stderr.join(""));
     const resumedArtifact = JSON.parse(await readFile(resumedPointedPath, "utf8")) as {
       runId?: unknown;
       diagnostic?: unknown;
@@ -2146,11 +2142,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
     // #1058: read the record the caller was pointed at, not a test-known path.
-    const artifactsDir = join(runDirectory, "artifacts");
-    const pointedPath = (await readdir(artifactsDir))
-      .map((name) => join(artifactsDir, name))
-      .find((path) => stderr.join("").includes(path));
-    assert.ok(pointedPath, `resume must point at its error record: ${stderr.join("")}`);
+    const pointedPath = await pointedErrorRecordPath(runDirectory, stderr.join(""));
     const noted = JSON.parse(await readFile(pointedPath, "utf8")) as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
@@ -2460,15 +2452,6 @@ test("public resume failures persist structured diagnostics", async () => {
         });
         return { ...result, stderr: captured.stderr.join("") };
       };
-      /** The error record this resume handed the caller, per its own stderr pointer. */
-      const pointedError = async (runDirectory: string, stderr: string): Promise<string> => {
-        const directory = join(runDirectory, "artifacts");
-        const pointed = (await readdir(directory))
-          .map((name) => join(directory, name))
-          .find((path) => stderr.includes(path));
-        assert.ok(pointed, `resume must point at its error record: ${stderr}`);
-        return pointed;
-      };
       // #1058: the record must be the one the caller was pointed at, not a path
       // this test already knows — persistence alone proves nothing about delivery.
       const readError = async (pointedPath: string, expectedRunId: string) => {
@@ -2489,14 +2472,10 @@ test("public resume failures persist structured diagnostics", async () => {
         const result = await resume(argv);
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
-        const directory = join(runDirectory, "artifacts");
         // #1058: the caller must be handed a pointer to this run's error record —
         // derive the pointed file from stderr, then read that file. Reading a
         // test-known path instead would prove only that the artifact persisted.
-        const pointedPath = (await readdir(directory))
-          .map((name) => join(directory, name))
-          .find((path) => result.stderr.includes(path));
-        assert.ok(pointedPath, `resume failure must point at its error record: ${result.stderr}`);
+        const pointedPath = await pointedErrorRecordPath(runDirectory, result.stderr);
         const record = JSON.parse(await readFile(pointedPath, "utf8")) as {
           runId?: unknown;
           diagnostic?: unknown;
@@ -2634,13 +2613,9 @@ test("public resume failures persist structured diagnostics", async () => {
         (JSON.parse(await readFile(priorParentReport, "utf8")) as { status?: unknown }).status,
         "prior-parent",
       );
-      const parentArtifacts = await readdir(join(parent.runDirectory, "artifacts"));
-      const parentDiagnosticPath = parentArtifacts
-        .map((name) => join(parent.runDirectory, "artifacts", name))
-        .find((path) => parentResume.stderr.join("").includes(path));
-      assert.ok(
-        parentDiagnosticPath,
-        `${parentResume.stderr.join("")} ${parentArtifacts.join(",")}`,
+      const parentDiagnosticPath = await pointedErrorRecordPath(
+        parent.runDirectory,
+        parentResume.stderr.join(""),
       );
       const parentDiagnostic = JSON.parse(await readFile(parentDiagnosticPath, "utf8")) as {
         runId?: unknown;
@@ -2670,7 +2645,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.ok(parentDispatches > 0);
       assert.equal(childDispatches, 2);
       await readError(
-        await pointedError(dispatchedParent.runDirectory, dispatchedParentIo.stderr.join("")),
+        await pointedErrorRecordPath(dispatchedParent.runDirectory, dispatchedParentIo.stderr.join("")),
         "1058-parent-dispatch-failure",
       );
 
@@ -2678,7 +2653,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(deletedResult.exitCode, 0);
       const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
       const deletedRecord = await readError(
-        await pointedError(relocatedDirectory, deletedResult.stderr),
+        await pointedErrorRecordPath(relocatedDirectory, deletedResult.stderr),
         "1058-no-workspace",
       );
       assert.equal(typeof deletedRecord.diagnostic, "string");
@@ -2699,7 +2674,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(unknown.exitCode, 0);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
       const unknownRecord = await readError(
-        await pointedError(unknownHost.runDirectory, unknown.stderr),
+        await pointedErrorRecordPath(unknownHost.runDirectory, unknown.stderr),
         "1058-unknown-host",
       );
       assert.equal(

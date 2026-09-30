@@ -19,7 +19,6 @@ import test from "node:test";
 import {
   fauxAssistantMessage,
   InMemoryCredentialStore,
-  type Provider,
 } from "@earendil-works/pi-ai";
 
 import {

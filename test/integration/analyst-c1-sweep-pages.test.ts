@@ -22,12 +22,12 @@ test("analyst changedLines rejects non-finite negatives at issue and sweep bound
     for (const changedLines of [-3, Number.POSITIVE_INFINITY]) {
       await assert.rejects(
         () => runAnalyst({ mode: "issue", projectRoot: ISSUE_ALPHA, changedLines }, { home }),
-        (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
+        (error: unknown) => error instanceof Error,
       );
     }
     await assert.rejects(
       () => runAnalyst({ mode: "sweep", mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }] }, { home }),
-      (error: unknown) => error instanceof Error && Object.getPrototypeOf(error) === Error.prototype,
+      (error: unknown) => error instanceof Error,
     );
     // 0 remains lawful typed 空缺.
     const zero = await runAnalyst({

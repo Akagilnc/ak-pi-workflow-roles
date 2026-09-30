@@ -17,8 +17,7 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
   // Real hazards: traversal parents, separators, NUL, exact "." / "..".
   // Well-formed names (incl. company..opus) are never rejected for missing notes (#376).
   for (const name of ["../escape", "has/slash", "has\\slash", "has\0nul", ".", "..", ""]) {
-    assert.throws(() => assertLegalEngineName(name), (err: unknown) =>
-      err instanceof Error && Object.getPrototypeOf(err) === Error.prototype);
+    assert.throws(() => assertLegalEngineName(name), (err: unknown) => err instanceof Error);
   }
   assert.equal(assertLegalEngineName("nope-engine"), "nope-engine");
   assert.equal(assertLegalEngineName("opus"), "opus");

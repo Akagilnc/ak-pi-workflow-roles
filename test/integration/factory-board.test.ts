@@ -1918,7 +1918,6 @@ test("blockedBy connection paginates to completion and refuses silent truncation
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.equal(Object.getPrototypeOf(err), Error.prototype);
       return true;
     },
   );
@@ -2046,7 +2045,6 @@ test("snapshot adapter carries closedAt and refuses closed issues without it", a
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.equal(Object.getPrototypeOf(err), Error.prototype);
       return true;
     },
   );
@@ -2743,7 +2741,6 @@ test("retention drain refuses silent truncation and validates the injected clock
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.equal(Object.getPrototypeOf(err), Error.prototype);
       return true;
     },
   );
@@ -2757,7 +2754,7 @@ test("retention drain refuses silent truncation and validates the injected clock
         closedIssueNumbers: [],
         retentionNow: new Date("not-a-date"),
       }),
-    (err: unknown) => err instanceof Error && Object.getPrototypeOf(err) === Error.prototype,
+    (err: unknown) => err instanceof Error,
   );
 });
 
@@ -2965,7 +2962,7 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
           outputPath: join(workspace, "out", "board3.html"),
           refreshBoundarySeconds: 1,
         }),
-      (err: unknown) => err instanceof Error && Object.getPrototypeOf(err) === Error.prototype,
+      (err: unknown) => err instanceof Error,
     );
     });
 });

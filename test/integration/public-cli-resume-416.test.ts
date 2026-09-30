@@ -1,3 +1,5 @@
+import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
@@ -217,11 +219,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
     // #1058: read the record the caller was pointed at, not a test-known path.
-    const artifactsDirectory=join(runDir,"artifacts");
-    const diagnosticPath=(await readdir(artifactsDirectory))
-      .map((name)=>join(artifactsDirectory,name))
-      .find((path)=>stderr.join("").includes(path));
-    assert.ok(diagnosticPath,`resume must point at its error record: ${stderr.join("")}`);
+    const diagnosticPath=await pointedErrorRecordPath(runDir,stderr.join(""));
     const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };

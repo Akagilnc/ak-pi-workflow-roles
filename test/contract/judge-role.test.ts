@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";

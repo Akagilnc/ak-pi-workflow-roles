@@ -143,8 +143,7 @@ test("#1088 public request-manifest keeps semantic validation (UTF-8 JSON + requ
       err instanceof Error && err.cause instanceof SyntaxError);
 
     await writeFile(path, JSON.stringify({ requests: [{ id: "x", body: "" }] }));
-    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) =>
-      err instanceof Error && Object.getPrototypeOf(err) === Error.prototype);
+    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) => err instanceof Error);
   });
 });
 

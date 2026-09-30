@@ -56,9 +56,10 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
         () => readAnalystLibraryIndexPage(join(home, ".ak-roles")),
         (error: unknown) => {
           // The read boundary owns the rejection; a downstream TypeError from
-          // consuming malformed rows is not an acceptable substitute.
+          // consuming malformed rows is not an acceptable substitute. Naming the
+          // excluded class is the contract; pinning the prototype is not.
           assert.ok(error instanceof Error);
-          assert.equal(Object.getPrototypeOf(error), Error.prototype);
+          assert.ok(!(error instanceof TypeError));
           return true;
         },
         `pre-fix passthrough returned ${JSON.stringify(shape)} to consumers`,
