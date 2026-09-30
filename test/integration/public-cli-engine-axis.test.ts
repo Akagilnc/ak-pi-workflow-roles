@@ -1218,9 +1218,13 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
 
       // analyst --engine structural refuse (stable exit semantics; no prose lock).
       {
+        // --ticket 1 is a lawful analyst request, so the refused --engine is the
+        // only illegal input: a second bad token (e.g. --issue) would let the
+        // run reject for that reason instead and keep this case green when the
+        // engine gate stops firing.
         const { io } = captureIo();
         const result = await runAkRole(
-          ["analyst", "--engine", "opus", "--issue", "1"],
+          ["analyst", "--engine", "opus", "--ticket", "1"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);

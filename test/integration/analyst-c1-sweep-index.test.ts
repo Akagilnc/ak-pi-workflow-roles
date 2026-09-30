@@ -8,17 +8,14 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import {
-  buildAnalystLibraryIndexPage,
-  mergeAnalystLibraryIndexRows,
   analystLibraryIndexPath,
-  writeAnalystLibraryIndexPage,
   type AnalystLibraryIndexPage,
   type AnalystLibraryIndexRow,
 } from "../../src/analyst-index.ts";
@@ -219,6 +216,34 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
     assert.equal(await readFile(alphaPath, "utf8"), firstAlphaBytes);
     assert.equal(await readFile(betaPath, "utf8"), firstBetaBytes);
     assert.equal(await readFile(indexPath, "utf8"), firstIndexBytes);
+
+    // A later sweep must retain index rows it did not sweep (#329 全库索引页).
+    // Asserted through the real runAnalyst entry: a whole-page overwrite on every
+    // sweep would drop the carried issue, and the internal merge helper cannot
+    // show that — only the entry point's actual write can.
+    const carriedProject = join(home, "carried-issue");
+    await mkdir(carriedProject, { recursive: true });
+    const carried = await runAnalyst(
+      { mode: "issue", projectRoot: carriedProject, issueNumber: 4242 },
+      { home },
+    );
+    assert.equal(carried.mode, "issue");
+
+    await runAnalyst(
+      { mode: "sweep", mergedPullRequests: [{ projectRoot: ISSUE_BETA }] },
+      { home },
+    );
+
+    const afterSweep = JSON.parse(
+      await readFile(indexPath, "utf8"),
+    ) as AnalystLibraryIndexPage;
+    const issueNumbers = afterSweep.rows
+      .map((row) => row.issueNumber)
+      .sort((x, y) => (x ?? 0) - (y ?? 0));
+    assert.ok(
+      issueNumbers.includes(4242),
+      `a sweep must retain an index row it did not sweep: ${JSON.stringify(issueNumbers)}`,
+    );
   });
 });
 
@@ -303,54 +328,3 @@ test("analyst C1 sweep: unreadable later end-frame still wins lastActivityAt; el
     assert.equal(indexOnDisk.rows[0]?.totalElapsedMs, GAMMA_TOTAL_ELAPSED_MS);
   });
 });
-
-
-test("analyst library-index upserts accumulate through the merge seam without dropping rows", async () => {
-  await withTempHome(async (home) => {
-    const ledgerHome = join(home, ".ak-roles");
-    // Pre-existing row both later upserts must preserve: the merge seam reads
-    // the current page and upserts into it rather than overwriting it.
-    await writeAnalystLibraryIndexPage(
-      ledgerHome,
-      buildAnalystLibraryIndexPage([
-        {
-          bookKey: `root:${physicalPathIdentity("/analyst-fixture/c1-lock-seed")}`,
-          projectRoot: physicalPathIdentity("/analyst-fixture/c1-lock-seed"),
-          issueNumber: 9000,
-          totalElapsedMs: 1,
-          changedLines: { status: "absent" },
-          msPerKLines: { status: "absent" },
-          lastActivityAt: { status: "absent" },
-        },
-      ]),
-    );
-
-    const row = (issueNumber: number): AnalystLibraryIndexRow => ({
-      bookKey: "fixture-book-c1",
-      projectRoot: physicalPathIdentity(`/analyst-fixture/c1-lock-${issueNumber}`),
-      issueNumber,
-      totalElapsedMs: issueNumber,
-      changedLines: { status: "absent" },
-      msPerKLines: { status: "absent" },
-      lastActivityAt: { status: "absent" },
-    });
-
-    // Real entry, deterministically sequenced: each writer's row lands and every
-    // earlier row survives. Cross-process mutual exclusion is real concurrency —
-    // proven by a real run, not asserted here.
-    await mergeAnalystLibraryIndexRows(ledgerHome, [row(9001)]);
-    await mergeAnalystLibraryIndexRows(ledgerHome, [row(9002)]);
-
-    const index = JSON.parse(
-      await readFile(analystLibraryIndexPath(ledgerHome), "utf8"),
-    ) as AnalystLibraryIndexPage;
-    const nums = index.rows
-      .map((entry) => entry.issueNumber)
-      .sort((x, y) => (x ?? 0) - (y ?? 0));
-    assert.deepEqual(nums, [9000, 9001, 9002]);
-  });
-});
-
-
-
-
