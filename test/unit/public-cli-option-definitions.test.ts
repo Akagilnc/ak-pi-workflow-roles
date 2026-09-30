@@ -24,7 +24,6 @@ import {
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   PUBLIC_ROLE_OPTION_OWNERS,
-  REJECTED_PUBLIC_SPELLINGS,
   ANALYST_REQUIRE_ANY_OF,
   allRejectedSpellingTokens,
   createTypedOptionConsumer,

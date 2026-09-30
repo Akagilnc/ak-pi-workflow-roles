@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
 
@@ -93,7 +92,7 @@ import {
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -143,12 +142,6 @@ afterEach(async () => {
   // or provider teardowns, and cleanup failure must not erase a prior primary.
   // Provider teardown is async (mock.close()) — awaited, never discarded (#685 C4).
   const runDirs = [...activeLedgers.keys()];
-  // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
-  // is restored to its original value after nested registrations.
-  const providerCleanups: Array<() => Promise<void>> = [];
-  while (institutionalProviderCleanups.length > 0) {
-    providerCleanups.push(institutionalProviderCleanups.pop()!);
-  }
   await withPrimaryAwareCleanup(
     async () => {
       // Drop any leftover env binding between tests (owned dirs already popped above).
@@ -159,7 +152,6 @@ afterEach(async () => {
         disposeInstitutionalRunDir(runDirectory);
       },
     ),
-    ...providerCleanups,
   );
 });
 
@@ -167,62 +159,6 @@ afterEach(async () => {
 // ModelRuntime that reads <PI_CODING_AGENT_DIR>/models.json — the parent ExtensionContext's
 // modelRegistry is no longer consulted (#518). So every harness that drives a gatekeeper /
 // officer child must register the faux provider in the ambient models.json and serve it over
-// a real OpenAI-completions HTTP round-trip. This mirrors withInstitutionalProviderFixture
-// from the shared harness (gatekeeper-real-entry / auditor-lifecycle), but registers
-// synchronously-per-harness and tears down in afterEach so tool.execute call sites stay
-// structurally unchanged.
-const institutionalProviderCleanups: Array<() => Promise<void>> = [];
-
-function gateModelDefinition(id: string) {
-  return {
-    id,
-    name: id,
-    api: "openai-completions",
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 16384,
-  };
-}
-
-async function registerInstitutionalProviderFixture(
-  faux: ReturnType<typeof fauxProvider>,
-  extraProviders: ReadonlyArray<{ provider: string; id: string }> = [],
-  observers: { onModel?: (modelId: string, body: Record<string, unknown>) => void } = {},
-): Promise<void> {
-  const mock = await createMockProviderServer(faux, observers);
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = mkdtempSync(join(tmpdir(), "ak-judge-provider-"));
-  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-  const providers: Record<string, unknown> = {
-    [faux.provider.id]: {
-      baseUrl: mock.baseUrl,
-      api: "openai-completions",
-      apiKey: "test-key",
-      models: [gateModelDefinition(faux.getModel().id)],
-    },
-  };
-  for (const entry of extraProviders) {
-    if (providers[entry.provider] === undefined) {
-      providers[entry.provider] = {
-        baseUrl: mock.baseUrl,
-        api: "openai-completions",
-        apiKey: "test-key",
-        models: [],
-      };
-    }
-    (providers[entry.provider] as { models: unknown[] }).models.push(gateModelDefinition(entry.id));
-  }
-  writeFileSync(join(tempAgentDir, "models.json"), JSON.stringify({ providers }, null, 2), "utf8");
-  institutionalProviderCleanups.push(async () => {
-    await mock.close();
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    // Owner 2026-09-05: leave temp agent dir under tmpdir for OS cleanup.
-  });
-}
-
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
   name: string;

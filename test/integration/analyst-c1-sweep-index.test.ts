@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #329 analyst-C1 — sweep mode + library index page tracer.
  *

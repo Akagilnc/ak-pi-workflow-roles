@@ -542,20 +542,15 @@ export async function createMockProviderServer(
         .map((m: any) => {
           if (m.role === "system") return undefined;
           if (m.role === "tool") {
-            const isError = typeof m.content === "string"
-              ? /^Tool\s+.+ not found$|^Error:/.test(m.content.trim())
-              : false;
-            let toolName = m.name ?? "";
-            if (!toolName && typeof m.content === "string") {
-              const match = /^Tool\s+(.+)\s+not found$/i.exec(m.content.trim());
-              if (match) toolName = match[1];
-            }
+            // isError and toolName are contract fields on the tool result, not
+            // facts to sniff out of the rendered text: inferring them from the
+            // body made the structured outcome depend on diagnostic wording.
             return {
               role: "toolResult",
               toolCallId: m.tool_call_id,
-              toolName,
+              toolName: m.name ?? "",
               content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
-              isError,
+              isError: m.is_error === true,
             };
           }
           if (m.role === "assistant") {
@@ -603,38 +598,6 @@ export async function createMockProviderServer(
       }));
       const message = await stream.result();
       if (message.stopReason === "error" || message.stopReason === "aborted") {
-        if (message.errorMessage?.includes("Cannot read properties of undefined (reading 'length')")) {
-          const payload = {
-            id: `chatcmpl-${Date.now()}`,
-            object: "chat.completion.chunk",
-            created: 1,
-            model: faux.getModel().id,
-            choices: [{
-              index: 0,
-              delta: {
-                role: "assistant",
-                tool_calls: [{
-                  index: 0,
-                  id: "call-1",
-                  type: "function",
-                  function: {
-                    name: "ak_undefined_decision",
-                    arguments: "{}",
-                  },
-                }],
-              },
-              finish_reason: "tool_calls",
-            }],
-          };
-          res.writeHead(200, {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-          });
-          res.write(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`);
-          res.end();
-          return;
-        }
         // Surface provider failures as an HTTP error so the real adapter's
         // stream path records a transport failure (streamFailure) instead of a
         // flattened normal completion — preserving typed transport_failure
@@ -755,72 +718,6 @@ export async function createMockProviderServer(
   };
 }
 
-
-/**
- * Seed the child institutional sub-session's provider from a faux provider over
- * the real OpenAI-completions HTTP path. The child institutional session builds its
- * own child ModelRuntime that reads `<PI_CODING_AGENT_DIR>/models.json`, so tests
- * that drive `executeAuditorChild`/`runGatekeeper`/`runComplianceAudit` directly
- * must register the faux provider there. Starts a
- * mock SSE server backed by `faux`, writes the model registration, runs `run`,
- * then tears both down.
- */
-export async function withInstitutionalProviderFixture<T>(
-  faux: ReturnType<typeof fauxProvider>,
-  run: () => Promise<T>,
-): Promise<T> {
-  // Own temp agent dir at create seam first; start mock only inside the body so a
-  // failed mkdtemp never leaves a live listener, and setup throws still close it.
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  return withTempRoot("ak-institutional-agent-", async (tempAgentDir) => {
-    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-    let mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined;
-    return withPrimaryAwareCleanup(
-      async () => {
-        mock = await createMockProviderServer(faux);
-        const modelsPath = resolve(tempAgentDir, "models.json");
-        const model = faux.getModel() as {
-          id: string;
-          reasoning?: boolean;
-          thinkingLevelMap?: Record<string, string>;
-        };
-        await writeFile(modelsPath, JSON.stringify({
-          providers: {
-            [faux.provider.id]: {
-              baseUrl: mock.baseUrl,
-              api: "openai-completions",
-              apiKey: "test",
-              models: [{
-                id: model.id,
-                name: model.id,
-                api: "openai-completions",
-                // Preserve faux model reasoning / thinking map so institutional
-                // children honor Navigator :max the same way the parent session does.
-                reasoning: model.reasoning === true,
-                ...(model.thinkingLevelMap === undefined
-                  ? {}
-                  : { thinkingLevelMap: model.thinkingLevelMap }),
-                input: ["text"],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 128000,
-                maxTokens: 16384,
-                compat: { requiresToolResultName: true },
-              }],
-            },
-          },
-        }, null, 2), "utf8");
-        return await run();
-      },
-      async () => {
-        if (mock !== undefined) await mock.close();
-      },
-      async () => {
-        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      },
-    );
-  });
-}
 
 /**
  * Seed agentDir/models.json from a faux provider over the real OpenAI-completions

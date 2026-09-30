@@ -18,9 +18,7 @@ import test from "node:test";
 
 import {
   fauxAssistantMessage,
-  fauxProvider,
   InMemoryCredentialStore,
-  type OAuthCredential,
   type Provider,
 } from "@earendil-works/pi-ai";
 
@@ -28,9 +26,7 @@ import {
   createOAuthKeepalive,
   OAUTH_KEEPALIVE_SETTING_FILENAME,
   readOAuthKeepaliveProviders,
-  type OAuthKeepaliveScheduler,
 } from "../../src/oauth-keepalive.ts";
-import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   flushEventLoopTurns,
   withActivationHome,
@@ -43,86 +39,8 @@ type OAuthCounters = {
   lastAccess: string | undefined;
 };
 
-function oauthCredential(overrides: Partial<OAuthCredential> = {}): OAuthCredential {
-  return {
-    type: "oauth",
-    refresh: "refresh-token",
-    access: "access-token",
-    expires: Date.now() - 1_000,
-    ...overrides,
-  };
-}
 
-/**
- * Controllable OAuth provider: refreshModels present so Models.refresh includes it;
- * oauth.refresh is the network oracle. Stream comes from faux for request success.
- */
-function createOAuthMockProvider(options: {
-  id: string;
-  faux: ReturnType<typeof fauxProvider>;
-  counters: OAuthCounters;
-  /** When set, refresh rejects with this error (network failure path). */
-  refreshError?: Error;
-  /** Delay refresh resolution (single-flight). */
-  hold?: { promise: Promise<void> };
-}): Provider {
-  const { id, faux, counters } = options;
-  const base = faux.provider;
-  return {
-    ...base,
-    id,
-    name: `mock-oauth:${id}`,
-    auth: {
-      oauth: {
-        name: `Mock OAuth ${id}`,
-        async login() {
-          throw new Error(`login not used in keepalive tests (${id})`);
-        },
-        async refresh(credential, signal) {
-          if (signal.aborted) {
-            const err = new Error("aborted");
-            err.name = "AbortError";
-            throw err;
-          }
-          if (options.hold) await options.hold.promise;
-          if (signal.aborted) {
-            const err = new Error("aborted");
-            err.name = "AbortError";
-            throw err;
-          }
-          counters.networkCalls += 1;
-          counters.refreshCount += 1;
-          if (options.refreshError) throw options.refreshError;
-          const next: OAuthCredential = {
-            type: "oauth",
-            refresh: credential.refresh,
-            access: `access-${id}-${counters.refreshCount}`,
-            expires: Date.now() + 60_000,
-          };
-          counters.lastAccess = next.access;
-          return next;
-        },
-        async toAuth(credential) {
-          return { apiKey: credential.access };
-        },
-      },
-    },
-    async refreshModels(context) {
-      // Catalog no-op: presence alone admits this provider into Models.refresh.
-      await context.publish({});
-    },
-  };
-}
 
-function minimalRoleExtension(oauthKeepalive: {
-  providers?: readonly string[];
-  intervalMs?: number;
-  scheduler?: OAuthKeepaliveScheduler;
-}) {
-  return createPiRoleRuntimeExtension({
-    loadRoleSoul: async () => "judge",
-  }, { oauthKeepalive });
-}
 
 async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
   assert.ok(ticks[index], `expected scheduled tick at index ${index}`);
