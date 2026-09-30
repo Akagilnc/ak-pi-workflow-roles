@@ -211,7 +211,10 @@ test("partial and non-monotonic sessions remain reportable with every explicit d
     await mkdir(join(runs, "crashed/session"), { recursive: true });
     await writeFile(join(runs, "crashed/session/truncated.jsonl"), `${JSON.stringify({ type: "session", timestamp: "2026-08-01T00:00:02.000Z" })}\n{`);
     await writeFile(join(runs, "crashed/session/headerless.jsonl"), `${JSON.stringify({ type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "assistant", responseId: "r" } })}\n`);
-    await writeFile(join(runs, "crashed/session/backwards.jsonl"), `${[{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map((row) => JSON.stringify(row)).join("\n")}\n{`);
+    // Only the reversed timestamps: no truncated tail here, or the malformed-JSON
+    // degradation would keep this session reportable even if the non-monotonic
+    // branch stopped firing. The truncated-tail contract has its own file above.
+    await writeFile(join(runs, "crashed/session/backwards.jsonl"), `${[{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map((row) => JSON.stringify(row)).join("\n")}\n`);
     const patient = await loadDoctorCase(runs);
     assert.equal(patient.cost.sessions.length, 3);
     assert.ok(patient.cost.sessions.every((session) => session.completion === "incomplete" && session.degradationReason));

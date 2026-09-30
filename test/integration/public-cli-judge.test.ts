@@ -184,15 +184,10 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
-  // A burden spelling is also an unrecognised option, so a generic usage error
-  // cannot separate the two rules. These three must name the burden refusal;
-  // the unknown-flag row above keeps covering the generic path.
-  const isBurdenRefusal = (error: unknown): boolean =>
-    isUsage(error) && String((error as Error).message).includes("public burden selector");
-  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isBurdenRefusal);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isBurdenRefusal);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isBurdenRefusal);
   const parsed = parsePublicSeatArgv("judge", [
     "--attach",
     "a.md",

@@ -340,8 +340,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
     rule: string;
     argv: string[];
     expect: Expect;
-    /** When set, the rejection must name this reason, not just any usage error. */
-    reason?: string;
   }> = [
     {
       name: "issue+ticket",
@@ -360,14 +358,12 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       rule: "rejected:project-root",
       argv: ["--project-root", "/tmp/p"],
       expect: { ok: false },
-      reason: "no longer accepts --project-root",
     },
     {
       name: "issue rejects ticket+project-root",
       rule: "rejected:project-root",
       argv: ["--ticket", "1", "--project-root", "/tmp/p"],
       expect: { ok: false },
-      reason: "no longer accepts --project-root",
     },
     {
       name: "cohort ok",
@@ -392,7 +388,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       rule: "rejected:project-root",
       argv: [...COHORT_MIN, "--project-root", "/p"],
       expect: { ok: false },
-      reason: "no longer accepts --project-root",
     },
     {
       name: "cohort×attach",
@@ -405,14 +400,12 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       rule: "rejected:model-groups-disabled",
       argv: ["--model-groups"],
       expect: { ok: false },
-      reason: "model-groups public CLI face is disabled",
     },
     {
       name: "model-groups disabled + roots",
       rule: "rejected:model-groups-disabled",
       argv: ["--model-groups", "--project-root", "/a", "--project-root", "/b"],
       expect: { ok: false },
-      reason: "model-groups public CLI face is disabled",
     },
     {
       // Cohort's four group-* options are required in cohort mode, so the row
@@ -422,7 +415,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       rule: "rejected:model-groups-disabled",
       argv: [...COHORT_MIN, "--model-groups"],
       expect: { ok: false },
-      reason: "model-groups public CLI face is disabled",
     },
     {
       name: "sweep attach",
@@ -459,7 +451,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       rule: "rejected:project-root",
       argv: ["--attach", "/tmp/s.json", "--project-root", "/p"],
       expect: { ok: false },
-      reason: "no longer accepts --project-root",
     },
     {
       name: "group on issue",
@@ -474,17 +465,8 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
     covered.add(s.rule);
     if (s.expect.ok) {
       assert.equal(parseAnalystArgv(s.argv).query, s.expect.query, s.name);
-    } else if (s.reason === undefined) {
-      assert.throws(() => parseAnalystArgv(s.argv), isUsage, s.name);
     } else {
-      // A deleted-spelling token is also an unknown option, so a generic usage
-      // error cannot tell the two rules apart. Require this row's own reason:
-      // the spelling is refused as deleted, not merely unrecognised.
-      assert.throws(
-        () => parseAnalystArgv(s.argv),
-        (error: unknown) => isUsage(error) && String((error as Error).message).includes(s.reason!),
-        s.name,
-      );
+      assert.throws(() => parseAnalystArgv(s.argv), isUsage, s.name);
     }
   }
   for (const rule of [

@@ -85,13 +85,9 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
   );
   assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage);
-  // No public packet fields for parents/conflicts/scope. A packet face is also
-  // an unrecognised option, so these must name the packet refusal; the
-  // unknown-option row above keeps covering the generic path.
-  const isPacketRefusal = (error: unknown): boolean =>
-    isUsage(error) && String((error as Error).message).includes("does not accept public packet fields");
-  assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isPacketRefusal);
-  assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isPacketRefusal);
+  // No public packet fields for parents/conflicts/scope.
+  assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isUsage);
 });
 
 test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materials", async () => {
