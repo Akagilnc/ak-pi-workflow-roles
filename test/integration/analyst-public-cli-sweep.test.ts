@@ -168,11 +168,9 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
         name: "multi-attach",
         argv: ["analyst", "--attach", validPath, "--attach", validPathB],
       },
-      {
-        // #399: --project-root deleted unconditionally (not a mix-face attach reject).
-        name: "mix-deleted-project-root",
-        argv: ["analyst", "--attach", validPath, "--project-root", ISSUE_ALPHA],
-      },
+      // --project-root's unconditional refusal is carried by the real CLI case
+      // in analyst-public-cli.test.ts; the sweep case keeps the distinct
+      // attach-cardinality and field-grammar contracts below.
       // ② non-UTF-8 / JSON parse failure
       { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path] },
       { name: "bad-json", argv: ["analyst", "--attach", badJsonPath] },

@@ -302,7 +302,7 @@ test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set",
 });
 
 // D2
-test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", async () => {
+test("D2 analyst #399 bare sees main+2 worktree runs", async () => {
   await withBookScopeWorld(async ({ home, mainRoot, worktreeRoot }) => {
     await withProcessCwd(worktreeRoot, async () => {
       const bare = captureIo();
@@ -315,13 +315,10 @@ test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", 
       assert.equal(ids.has(RUN_MAIN_NO_TICKET), true);
       assert.equal(ids.has(RUN_WORKTREE_TICKET_A), true);
       assert.equal(ids.has(RUN_WT2_NO_TICKET), true);
-
-      const rejected = captureIo();
-      const rejectResult = await runAkRole(
-        ["analyst", "--project-root", mainRoot],
-        { packageRoot, home, io: rejected.io },
-      );
-      assert.equal(rejectResult.exitCode, 2);
+      void mainRoot;
+      // The --project-root refusal itself is carried by the real CLI case in
+      // analyst-public-cli.test.ts ("--project-root: deleted, loud reject"),
+      // which also asserts zero analyst writes; not restated here.
     });
   });
 });

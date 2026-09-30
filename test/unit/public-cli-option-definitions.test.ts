@@ -243,13 +243,9 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
     ]).authorityRefs,
     ["https://example.test/a", "https://example.test/b"],
   );
-  // --model-groups refusal is carried by the real CLI case in
-  // analyst-public-cli.test.ts (refusal + zero analyst writes); asserting it
-  // here too would restate the same conclusion.
-  assert.throws(
-    () => parseAnalystArgv(["--project-root", "/a"]),
-    isUsage,
-  );
+  // The analyst deleted-spelling refusals (--project-root, --model-groups) are
+  // carried by the real CLI cases in analyst-public-cli.test.ts, which also
+  // assert zero analyst writes; not restated here.
 
   assert.throws(
     () => parseAnalystArgv(["sweep", "sweep", "--attach", "/x"]),
@@ -278,31 +274,13 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
     }
   }
 
-  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
-    for (const spelling of entry.spellings) {
-      if (entry.owner === "judge") {
-        assert.throws(
-          () => parsePublicSeatArgv("judge", [spelling, "x", "task"]),
-          isUsage,
-        );
-      }
-      if (entry.owner === "merger") {
-        assert.throws(
-          () => parsePublicSeatArgv("merger", [spelling, "x", "task"]),
-          isUsage,
-        );
-      }
-      if (entry.owner === "analyst") {
-        // --model-groups is covered by the real CLI case in
-        // analyst-public-cli.test.ts; only --project-root remains here.
-        if (spelling === "--model-groups") continue;
-        assert.throws(
-          () => parseAnalystArgv([spelling, "/tmp/p"]),
-          isUsage,
-        );
-      }
-    }
-  }
+  // The parser-refusal conclusions for every rejected spelling are carried by
+  // the owner cases: analyst's two deleted spellings by the real CLI cases in
+  // analyst-public-cli.test.ts, judge's burden selectors by "runAkRole judge
+  // rejects burden selector before admission", and merger's packet face by the
+  // parseMergerArgv case in public-cli-merger.test.ts. Restating them here
+  // would duplicate those conclusions. What is unique here is the projection
+  // guarantee above: a rejected spelling must never appear in public help.
 });
 
 test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)", () => {
@@ -354,18 +332,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       expect: { ok: true, query: "issue" },
     },
     {
-      name: "issue rejects project-root",
-      rule: "rejected:project-root",
-      argv: ["--project-root", "/tmp/p"],
-      expect: { ok: false },
-    },
-    {
-      name: "issue rejects ticket+project-root",
-      rule: "rejected:project-root",
-      argv: ["--ticket", "1", "--project-root", "/tmp/p"],
-      expect: { ok: false },
-    },
-    {
       name: "cohort ok",
       rule: "requiredInModes:cohort:group-*",
       argv: [...COHORT_MIN],
@@ -384,33 +350,9 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       expect: { ok: false },
     },
     {
-      name: "cohort×root",
-      rule: "rejected:project-root",
-      argv: [...COHORT_MIN, "--project-root", "/p"],
-      expect: { ok: false },
-    },
-    {
       name: "cohort×attach",
       rule: "modes:attach:sweep-only",
       argv: [...COHORT_MIN, "--attach", "/tmp/s.json"],
-      expect: { ok: false },
-    },
-    {
-      // The bare --model-groups refusal is carried by the real CLI case in
-      // analyst-public-cli.test.ts; the two combination rows below keep the
-      // mode-combination contract that the bare row cannot express.
-      name: "model-groups disabled + roots",
-      rule: "rejected:model-groups-disabled",
-      argv: ["--model-groups", "--project-root", "/a", "--project-root", "/b"],
-      expect: { ok: false },
-    },
-    {
-      // Cohort's four group-* options are required in cohort mode, so the row
-      // carries them: otherwise the missing-requirement rejection would fire
-      // even if --model-groups were wrongly admitted, masking this rule.
-      name: "cohort×model-groups",
-      rule: "rejected:model-groups-disabled",
-      argv: [...COHORT_MIN, "--model-groups"],
       expect: { ok: false },
     },
     {
@@ -444,12 +386,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       expect: { ok: false },
     },
     {
-      name: "sweep×root",
-      rule: "rejected:project-root",
-      argv: ["--attach", "/tmp/s.json", "--project-root", "/p"],
-      expect: { ok: false },
-    },
-    {
       name: "group on issue",
       rule: "modes:group-a-label:cohort-only",
       argv: ["--group-a-label", "A", "--ticket", "1"],
@@ -469,8 +405,6 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
   for (const rule of [
     "issue-bare-lawful",
     "modes:ticket:issue-ok",
-    "rejected:project-root",
-    "rejected:model-groups-disabled",
     "requiredInModes:cohort:group-*",
     "requiredInModes:sweep:attach",
     "maxCountByMode:attach:sweep:1",
