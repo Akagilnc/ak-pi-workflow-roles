@@ -243,10 +243,9 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
     ]).authorityRefs,
     ["https://example.test/a", "https://example.test/b"],
   );
-  assert.throws(
-    () => parseAnalystArgv(["--model-groups"]),
-    isUsage,
-  );
+  // --model-groups refusal is carried by the real CLI case in
+  // analyst-public-cli.test.ts (refusal + zero analyst writes); asserting it
+  // here too would restate the same conclusion.
   assert.throws(
     () => parseAnalystArgv(["--project-root", "/a"]),
     isUsage,
@@ -294,10 +293,11 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
         );
       }
       if (entry.owner === "analyst") {
-        const argv =
-          spelling === "--project-root" ? [spelling, "/tmp/p"] : [spelling];
+        // --model-groups is covered by the real CLI case in
+        // analyst-public-cli.test.ts; only --project-root remains here.
+        if (spelling === "--model-groups") continue;
         assert.throws(
-          () => parseAnalystArgv(argv),
+          () => parseAnalystArgv([spelling, "/tmp/p"]),
           isUsage,
         );
       }
@@ -396,12 +396,9 @@ test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)"
       expect: { ok: false },
     },
     {
-      name: "model-groups disabled bare",
-      rule: "rejected:model-groups-disabled",
-      argv: ["--model-groups"],
-      expect: { ok: false },
-    },
-    {
+      // The bare --model-groups refusal is carried by the real CLI case in
+      // analyst-public-cli.test.ts; the two combination rows below keep the
+      // mode-combination contract that the bare row cannot express.
       name: "model-groups disabled + roots",
       rule: "rejected:model-groups-disabled",
       argv: ["--model-groups", "--project-root", "/a", "--project-root", "/b"],

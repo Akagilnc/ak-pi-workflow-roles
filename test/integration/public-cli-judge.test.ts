@@ -184,9 +184,9 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isUsage);
+  // The burden-selector refusals are carried by the real CLI case below
+  // ("runAkRole judge rejects burden selector before admission"); asserting
+  // them here as well would restate the same conclusion.
   assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
   const parsed = parsePublicSeatArgv("judge", [
     "--attach",
