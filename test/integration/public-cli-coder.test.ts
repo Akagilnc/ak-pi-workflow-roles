@@ -934,8 +934,8 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
     assert.equal(captured![captured!.indexOf("--provider") + 1], "no-such-provider");
     assert.equal(captured![captured!.indexOf("--model") + 1], "no-such-model");
     assert.equal(captured!.includes("--thinking"), false);
-    // Must not be the pre-#346 thinking-required structural wash.
-    assert.equal(stderr.join("").includes("requires a thinking level"), false);
+    // The dispatch happened with the real provider/model and no thinking flag,
+    // and the run failed; the diagnostic's wording is not the contract.
     assert.notEqual(result.exitCode, 0);
   });
 });

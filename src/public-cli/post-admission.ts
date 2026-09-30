@@ -1044,17 +1044,13 @@ export async function dispatchPostAdmissionTurn<
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
         || processCancelName !== undefined;
+      // The turn fails on what the host CLI itself reported for this call:
+      // its exit code, its own declared failure, or a signal. No history read
+      // takes part in that decision.
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
-        || resolution.currentFailure !== undefined
-        || resolution.retainedFailure !== undefined;
-      // Only a failure established from this turn's own host facts may veto a
-      // settlement. Retained history (a bound auditor volume, a Sitian-retained
-      // stop, the run-level typed-HTTP sidecar) is relayed as recorded and fails
-      // a turn that sealed nothing — it never decides a turn that sealed its own
-      // verdict. The audited resolution carries the split; no re-read here.
-      const currentAttemptFailure = resolution.currentFailure !== undefined;
+        || resolution.knownFailure !== undefined;
 
       // Settlement attaches the run's recorded history here; failure and
       // no-receipt below attach history on their own paths.
@@ -1072,26 +1068,14 @@ export async function dispatchPostAdmissionTurn<
         || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
           ? true
           : await attemptProducedFreshSubmission(admitted, courtScope);
-      // A lawful settled outcome already reached this turn takes precedence
-      // over a later bare exit-code / session-inspection signal (trailing
-      // nonzero exit, late stderr noise, a stale already-superseded
-      // typed-HTTP observation, ...) — but never over a direct current
-      // host/runner failure signal, nor over a real stderr.log durable-write
-      // failure (confirmed infrastructure trouble, not weak/bare evidence),
-      // both of which stay a real failure with the recorded payload riding
-      // beside it, not replacing it (#836: never kill an already-recorded
-      // leg, but never wash a real failure away either). Note: the narrower
-      // directHostFailureSignal gates acceptance here; the broader
-      // hostSignalFailed (adds bare exit code / resolution.knownFailure)
-      // only gates the no-settlement fallback below.
-      //
-      // A settlement that is entirely someone else's earlier success never
-      // outranks this turn's own identified failure: the recorded history still
-      // presents on submissions either way, so the real cause survives without
-      // any package-side new/old seal comparison (#836 r12 class 2; #1032
-      // 修订票：失败原因不洗白). staleAcceptanceOutranksRealFailure keeps the
-      // older broad signals (bare exit code, sidecar-only observation) honest
-      // for a stale settlement.
+      // The host CLI reported this call: its exit code, its own declared
+      // failure, a timeout, or a signal. When it reported a failure, that report
+      // is this turn's outcome — a settlement left over from an earlier turn
+      // never presents as this turn's success, and no history read has a say.
+      // A settlement this turn actually sealed still wins over a trailing bare
+      // exit code, and a real stderr.log durable-write failure is infrastructure
+      // trouble rather than a lawful result (#836: never kill an already-recorded
+      // leg, never wash a real failure away either).
       const staleAcceptanceOutranksRealFailure =
         !settledIsFreshThisAttempt && hostSignalFailed;
       // #855: re-read cancel after trySettle/attach awaits — a signal in this
@@ -1100,9 +1084,7 @@ export async function dispatchPostAdmissionTurn<
       if (
         settled !== undefined
         && shouldPresent(settled)
-        && !directHostFailureSignal
-        && !staleAcceptanceOutranksRealFailure
-        && !currentAttemptFailure
+        && !hostSignalFailed
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {

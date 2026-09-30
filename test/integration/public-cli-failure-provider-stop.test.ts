@@ -14,7 +14,7 @@ import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
-import { classifyPostAdmissionFailure, extractSessionProviderStop, readSessionProviderStop, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { classifyPostAdmissionFailure, extractSessionProviderStop, resolveAuditedRunnerFailureResolution, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -53,32 +53,28 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
         const sessionFile = join(sessionDir, "session.jsonl");
         // #675: compliance is public auditor summon — inject the bound provider-stop
         // fact the settlement layer reads (no retired institutional audit options).
-        const { sitianReport } = await import("../../src/sitian-facade.ts");
-        sitianReport({
-          level: "event",
-          kind: "auditor",
-          cwd: project,
-          sessionParent: sessionFile,
-          payload: {
-            version: 1,
-            response: {
-              stopReason: "error",
-              errorMessage: "WebSocket error",
-              provider: "openai-codex",
-              model: "faux-1",
-            },
-          },
-          source: "test-injected-auditor-stop",
-        });
-        const retainedStop = await readSessionProviderStop(sessionFile);
-        assert.equal(retainedStop?.stopReason, "error");
-        // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.
+        // #675: the host CLI itself reports the provider stop for this call —
+        // exit code plus its own typed failure. The package presents that as
+        // given; it does not read a retained stop back to decide the cause.
         await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "aborted" } })}\n`);
-        return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
+        return {
+          code: 1,
+          stderr: "[ak-patch] normal activation banner\n",
+          timedOut: false,
+          args: [...args],
+          knownFailure: {
+            cause: "provider" as const,
+            diagnostic: "WebSocket error",
+            identity: { name: "faux-1", code: "openai-codex" },
+          },
+        };
       },
           }),
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr });
+    // The cause is the host CLI's own report for this call, presented as given.
+    const { terminal } = await assertPublicFailureSettlement({
+      result, stdout, stderr, expectedCause: "provider",
+    });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -322,173 +318,19 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
     assert.equal(errorBody.diagnostic, secondaryDiagnostic);
   });
 });
-test("bound auditor provider failure outranks the parent abort it caused", async () => {
+test("a malformed current session keeps its real read failure", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-    // Real retention race shape: parent ends with abort after the child
-    // already retained the richer auditor provider stop + identity.
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "parent-user", message: { role: "user" } },
-      {
-        type: "message",
-        id: "parent-attempt",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "This operation was aborted",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    await writeFile(join(childDir, "child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "parent-attempt",
-          },
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "WebSocket error",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      {
-        type: "custom",
-        customType: "ak_auditor_compliance_failure",
-        data: {
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "parent-attempt",
-          },
-          failure: {
-            cause: "provider",
-            diagnostic: "WebSocket error",
-            identity: { name: "faux-1", code: "openai-codex" },
-            details: {
-              provider: "openai-codex",
-              model: "faux-1",
-              retentionFailure: {
-                name: "ComplianceResponseRetentionError",
-                cause: { code: "EISDIR" },
-              },
-            },
-          },
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-
-    // The volume is bound to this attempt, so it is this turn's own fact and
-    // outranks the credential fallback behind it.
-    assert.deepEqual(
-      (await resolveAuditedRunnerFailureResolution({
-        runner: undefined,
-        sessionFile,
-        credential: {
-          cause: "provider",
-          identity: { name: "MissingProviderCredential", code: "openai-codex" },
-        },
-      })).currentFailure,
-      {
-        cause: "provider",
-        diagnostic: "WebSocket error",
-        identity: { name: "faux-1", code: "openai-codex" },
-        details: {
-          provider: "openai-codex",
-          model: "faux-1",
-          retentionFailure: {
-            name: "ComplianceResponseRetentionError",
-            cause: { code: "EISDIR" },
-          },
-        },
-      },
-    );
-  });
-});
-
-// No compliance entry: live public resolver falls back to auditor provider-stop
-// with secondaryEvidence:"unavailable" (was hung on deleted readBoundAuditorKnownFailure).
-test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "user-current", message: { role: "user" } },
-      { type: "message", id: "attempt-current", message: { role: "assistant" } },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    await writeFile(join(childDir, "child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-current" },
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "WebSocket error",
-          provider: "xai",
-          model: "audit-model",
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    assert.deepEqual(
-      (await resolveAuditedRunnerFailureResolution({
-        runner: undefined,
-        sessionFile,
-        credential: undefined,
-      })).currentFailure,
-      {
-        diagnostic: "WebSocket error",
-        details: {
-          errorMessage: "WebSocket error",
-          secondaryEvidence: "unavailable",
-        },
-      },
-    );
-  });
-});
-
-// Discovered auditor JSONL corruption stays an honest session failure on the
-// public resolver (was hung on deleted readBoundAuditorKnownFailure throw path).
-test("bound auditor reader propagates malformed discovered JSONL", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-    await writeFile(sessionFile, JSON.stringify({ type: "session", id: "parent-session" }) + "\n");
-    await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "{malformed\n");
+    // The session this call reads is unreadable now, so the read failure is
+    // this turn's own fact and keeps its identity.
     const malformed = (await resolveAuditedRunnerFailureResolution({
       runner: undefined,
       sessionFile,
       credential: undefined,
-    })).currentFailure;
+    })).knownFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
   });
@@ -502,7 +344,7 @@ test("bound auditor ENOTDIR evidence outranks credential in shared settlement", 
       runner: undefined,
       sessionFile: join(pathComponent, "parent.jsonl"),
       credential: { cause: "activation", diagnostic: "credential fallback" },
-    })).currentFailure;
+    })).knownFailure;
     assert.equal(failure?.cause, "session");
     assert.deepEqual(failure?.identity, { name: "Error", code: "ENOTDIR" });
     assert.ok(failure?.diagnostic);
@@ -530,8 +372,7 @@ test("typed output failure cannot bind a call from an earlier attempt", async ()
       sessionFile,
       credential: undefined,
     });
-    assert.equal(noFailure.currentFailure, undefined);
-    assert.equal(noFailure.retainedFailure, undefined);
+    assert.equal(noFailure.knownFailure, undefined);
   });
 });
 // Session provider-stop causal matrix (#420 整改并一)：三条同根「session stop
@@ -787,8 +628,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       credential: undefined,
       runDirectory,
     });
-    assert.equal(absent.currentFailure, undefined);
-    assert.equal(absent.retainedFailure, undefined);
+    assert.equal(absent.knownFailure, undefined);
 
     // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
     await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
@@ -797,7 +637,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).currentFailure;
+    })).knownFailure;
     assert.equal(badShape?.cause, "session");
     assert.equal(badShape?.identity?.name, "Error");
 
@@ -808,7 +648,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).currentFailure;
+    })).knownFailure;
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
 
@@ -820,7 +660,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).currentFailure;
+    })).knownFailure;
     assert.equal(eisdir?.cause, "session");
     assert.equal(eisdir?.identity?.code, "EISDIR");
   });
@@ -929,13 +769,12 @@ async function settleDiskSessionStopToErrorJson(input: {
     `${input.runId}@judge`,
   );
   await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-  const resolution = await resolveAuditedRunnerFailureResolution({
+  const known = (await resolveAuditedRunnerFailureResolution({
     runner: undefined,
     sessionFile: input.sessionFile,
     credential: undefined,
     runDirectory,
-  });
-  const known = resolution.currentFailure ?? resolution.retainedFailure;
+  })).knownFailure;
   assert.ok(known, "disk session must yield a failure");
   const failure = classifyPostAdmissionFailure({
     timedOut: false,
