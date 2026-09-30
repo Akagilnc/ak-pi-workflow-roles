@@ -13,7 +13,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -86,8 +86,16 @@ async function runExternalJudge(
     readonly limit: number;
     readonly sealOnCall?: number;
     readonly failOnCall?: number;
-  },
-): Promise<{
+  /**
+   * #1132: observed on every turn — the run-state fields and the turn-BEFORE
+   * hooks a催交 turn must NOT re-run.
+   */
+  readonly onTurn?: (observation: {
+    readonly call: number;
+    readonly when: "before" | "after";
+    readonly runState: { readonly state?: unknown; effectiveEngine?: unknown };
+  }) => void;
+}): Promise<{
   readonly turns: readonly Turn[];
   /** Every seat this run dispatched, in order — audit continuation shows up here. */
   readonly seatsDispatched: readonly string[];
@@ -116,6 +124,16 @@ async function runExternalJudge(
       };
       turns.push(turn);
       const call = turns.length;
+      const observe = async (when: "before" | "after"): Promise<void> => {
+        options.onTurn?.({
+          call,
+          when,
+          runState: JSON.parse(
+            await readFile(join(request.runDirectory, "run-state.json"), "utf8"),
+          ) as { state?: unknown; effectiveEngine?: unknown },
+        });
+      };
+      await observe("before");
       const coordinates = piDurablePrincipalAuthority.decode(request.principal);
       await mkdir(coordinates.sessionDirectory, { recursive: true });
       await writeFile(
@@ -125,6 +143,7 @@ async function runExternalJudge(
       );
       if (options.failOnCall === call) {
         // A real host failure must never be washed into no_receipt.
+        await observe("after");
         return { code: 1, stderr: "host exploded\n", timedOut: false };
       }
       if (options.sealOnCall === call) {
@@ -140,6 +159,7 @@ async function runExternalJudge(
           home: request.home,
         });
       }
+      await observe("after");
       return { code: 0, stderr: "", timedOut: false };
     },
   };
@@ -216,6 +236,35 @@ test("#1132: 催交得卷 reaches the audit seat, not a bare accepted", async ()
       nonJudge.length > 0,
       `a催交-sealed judge must continue into review; seats=${JSON.stringify(run.seatsDispatched)}`,
     );
+  });
+});
+
+
+// #1132 变异真跑目标：催交轮不得重跑 turn-BEFORE 钩子，也不得中途落终局。
+test("#1132: 催交 turns keep run-state running and the engine of the first turn", async () => {
+  await withSeatHome(async (home) => {
+    const observed: { call: number; when: string; state?: unknown; effectiveEngine?: unknown }[] = [];
+    const run = await runExternalJudge(home, {
+      runId: "1132-external-run-state",
+      project: await freshProject(home),
+      limit: 2,
+      onTurn: ({ call, when, runState }) => observed.push({ call, when, ...runState }),
+    });
+
+    assert.equal(run.turns.length, 3, "first turn plus two催交 turns");
+    // The run must never look lawfully terminal WHILE催交 is still in progress:
+    // only the outermost turn settles run-state, so every observation up to and
+    // including the last still-silent催交 turn must read `running`. A mid-loop
+    // persist would show `terminal` here and strand a killed process (#1132).
+    const lastStillSilent = observed.filter((seen) => seen.when === "after").at(-1)!;
+    for (const seen of observed.filter((item) => item.call <= 2)) {
+      assert.equal(seen.state, "running", `turn ${seen.call} (${seen.when}) must not be terminal mid-催交`);
+    }
+    assert.ok(lastStillSilent !== undefined);
+    // The engine recorded at admission survives every催交 turn (effectiveEngine
+    // is forwarded; a dropped parameter would blank it on the re-dispatch).
+    const engines = new Set(observed.map((seen) => JSON.stringify(seen.effectiveEngine)));
+    assert.equal(engines.size, 1, `engine must not change across turns: ${JSON.stringify(observed)}`);
   });
 });
 
