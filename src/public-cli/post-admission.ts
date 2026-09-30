@@ -1414,8 +1414,28 @@ export async function dispatchPostAdmissionTurn<
         finishAfterTurn,
       });
       // The delivery turn's own outcome IS the run's outcome, except when it
-      // simply still has no receipt — the loop's own case to keep going.
+      // simply still has no receipt — that is the loop's own case to keep going.
       if (deliveryTurn.kind === "settled") {
+        // #1132: the delivery turn settles with persistRunState:false, so a run
+        // that ends HERE (得卷 or a real failure) still needs the outermost
+        // single run-state write. Without it the ledger says accepted while
+        // run-state stays `running`, and every later resume entry (ADR 0080)
+        // reads a finished run as live. The still-silent attempts above must
+        // NOT write; this one, which ends the run, must.
+        if (persistRunState && deliveryTurn.outcome.terminal !== undefined) {
+          try {
+            await persistReturnedRunState(admitted, {
+              lawful: isLawfulTypedTerminalOutcome(deliveryTurn.outcome.terminal.roleOutcome),
+            });
+          } catch (error) {
+            await recordBestEffortPostDispatchDiagnostic(
+              admitted,
+              env,
+              `run-state persistence failed beside催交 terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+              io,
+            );
+          }
+        }
         return await finishAfterTurn({
           ...deliveryTurn.outcome,
           // #1132: a催交 that failed carries the run's real failure; never let

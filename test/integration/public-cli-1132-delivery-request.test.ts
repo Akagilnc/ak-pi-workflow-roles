@@ -99,6 +99,8 @@ async function runExternalJudge(
   readonly turns: readonly Turn[];
   /** Every seat this run dispatched, in order — audit continuation shows up here. */
   readonly seatsDispatched: readonly string[];
+  /** This run's directory, so a test can read the final run-state. */
+  readonly runDirectory: string | undefined;
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
 }> {
@@ -183,6 +185,7 @@ async function runExternalJudge(
   return {
     turns,
     seatsDispatched,
+    runDirectory: runDirectorySeen,
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
   };
@@ -265,6 +268,117 @@ test("#1132: 催交 turns keep run-state running and the engine of the first tur
     // is forwarded; a dropped parameter would blank it on the re-dispatch).
     const engines = new Set(observed.map((seen) => JSON.stringify(seen.effectiveEngine)));
     assert.equal(engines.size, 1, `engine must not change across turns: ${JSON.stringify(observed)}`);
+  });
+});
+
+// #1132 r3：催交得卷这条主路径必须把 run 落终局。
+test("#1132: a 催交 that obtains a receipt leaves the run terminal", async () => {
+  await withSeatHome(async (home) => {
+    const run = await runExternalJudge(home, {
+      runId: "1132-external-seal-terminal",
+      project: await freshProject(home),
+      limit: 2,
+      sealOnCall: 2,
+    });
+    assert.equal(run.turns.length, 2, "first turn plus one催交 turn");
+    // The催交 really did produce a receipt: the judge continued into the review
+    // chain (a bare accepted would stop at the judge — #1050 未经台院).
+    assert.ok(
+      run.seatsDispatched.some((role) => role !== "judge"),
+      `催交得卷必须继续进审核；seats=${JSON.stringify(run.seatsDispatched)}`,
+    );
+    assert.ok(run.runDirectory !== undefined);
+    // The ledger holds the receipt, so run-state must be terminal too —
+    // otherwise every later resume entry (ADR 0080) reads a finished run as live.
+    const runState = JSON.parse(
+      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
+  });
+});
+
+// #1132 r3：manual-resume 席位（countersign/notary/secretariat/doctor 等
+// inCallAutoResume:false）走 persistRunState=true 一路，deferredPersist 为空，
+// 催交得卷出口没有 needsPersist 可补——这才是 run-state 停在 running 的真路径。
+test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path", async () => {
+  await withSeatHome(async (home) => {
+    const project = await freshProject(home);
+    await runAkRole(["config", "set", "countersign", "test/caller-seat:high"], {
+      packageRoot, home, io: { stdout() {}, stderr() {} },
+    });
+    const seatsDispatched: string[] = [];
+    let runDirectorySeen: string | undefined;
+    let turns = 0;
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        seatsDispatched.push(request.activation.role);
+        if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
+        if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
+        turns += 1;
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        await writeFile(
+          coordinates.sessionFile,
+          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+          "utf8",
+        );
+        if (turns === 2) {
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            runId: runIdFromRunDirectory(request.runDirectory)!,
+            runDirectory: request.runDirectory,
+            role: "countersign",
+            details: { status: "converged" },
+            toolCallId: "countersign-call-2",
+            home: request.home,
+          });
+        }
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    await setConfiguredLimit(home, 2);
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["countersign", "--host", "grok-build", "--project", project, "go"],
+      {
+        packageRoot, home, cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "1132-countersign-seal",
+        io,
+        roleTurnHost: host,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      },
+    );
+    assert.equal(turns, 2, "first turn plus one催交 turn");
+    // The催交 really sealed: the seat continued into its review chain.
+    assert.ok(
+      seatsDispatched.some((role) => role !== "countersign"),
+      `催交得卷必须继续；seats=${JSON.stringify(seatsDispatched)}`,
+    );
+    assert.ok(runDirectorySeen !== undefined);
+    const runState = JSON.parse(
+      await readFile(join(runDirectorySeen, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
+  });
+});
+
+// 催交真失败同样不得停在 running。
+test("#1132: a failing催交 leaves the run out of running", async () => {
+  await withSeatHome(async (home) => {
+    const run = await runExternalJudge(home, {
+      runId: "1132-external-fail-not-running",
+      project: await freshProject(home),
+      limit: 2,
+      failOnCall: 2,
+    });
+    assert.ok(run.runDirectory !== undefined);
+    const runState = JSON.parse(
+      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.notEqual(runState.state, "running", "a failed催交 must not leave the run live");
   });
 });
 
