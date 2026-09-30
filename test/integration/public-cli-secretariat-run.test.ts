@@ -480,9 +480,12 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // This resume is a new court: roleOutcome is that court only.
-    // Both original receipts stay on terminal.submissions (#836 / #879).
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["converged"]);
+    // A bare resume carries no court, so the result face is the run's recorded
+    // sequence — the same rows terminal.submissions presents (#836).
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
+      "converged",
+      "converged",
+    ]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
     const facts = payloads[payloads.length - 1] as {
       secretariatStatus: string;

@@ -684,6 +684,13 @@ export async function dispatchPostAdmissionTurn<
       ? {} : { invocationScopeId: request.invocationScopeId }),
   };
   let pendingSettlement: "sealed" | "no_receipt" | undefined;
+  /**
+   * The terminal this pending publication belongs to. A later real failure
+   * (e.g. a cancel re-read) replaces `result.terminal` with its own settled
+   * failure; that failure is already durable, so the superseded preview must
+   * not publish over it (失败诚实宪法：接住可以，洗白不行).
+   */
+  let pendingTerminal: T | undefined;
 
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
@@ -723,8 +730,14 @@ export async function dispatchPostAdmissionTurn<
       };
     }
     // The last cancellation check precedes the one durable settlement. A preview
-    // never publishes pointers or history; a superseding failure owns this turn.
-    if (pendingSettlement !== undefined && result.terminal !== undefined) {
+    // never publishes pointers or history; a superseding failure owns this turn —
+    // `result.terminal === pendingTerminal` is what makes the publication this
+    // turn's own rather than a superseded one.
+    if (
+      pendingSettlement !== undefined &&
+      pendingTerminal !== undefined &&
+      result.terminal === pendingTerminal
+    ) {
       try {
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
@@ -1138,6 +1151,7 @@ export async function dispatchPostAdmissionTurn<
       // manual resume), not this retried host-turn function.
       // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
       pendingSettlement = "sealed";
+      pendingTerminal = settledOutcome.terminal;
       return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
@@ -1242,6 +1256,7 @@ export async function dispatchPostAdmissionTurn<
     }
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
     pendingSettlement = "no_receipt";
+    pendingTerminal = noReceipt;
     return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
@@ -1344,7 +1359,6 @@ export function resumeTurnRequestProjectionOptions(
       kind: "resume",
       prompt,
     },
-    ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
   };
 }
@@ -1579,13 +1593,13 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        // Open court continue, or new court for summons / message re-review
-        // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.
-        if (
-          openCourtAttemptId !== undefined ||
-          request.summons !== undefined ||
-          request.message !== undefined
-        ) {
+        // Open court continue, or a new court for a real re-summons
+        // (clause 0 新庭可再交卷; #833). Bare resume — with or without caller
+        // words — carries no summons and no open court, so it mints none:
+        // the package must not turn ordinary continuation bytes into an audit
+        // court whose attempt scope would reshape settlement (#1032 修订票：
+        // 此要求不延伸到没有该传召庭次的裸 resume).
+        if (openCourtAttemptId !== undefined || request.summons !== undefined) {
           const courtAttemptId =
             openCourtAttemptId ??
             (turnRequest.courtAttemptId !== undefined &&

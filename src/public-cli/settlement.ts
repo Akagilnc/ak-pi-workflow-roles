@@ -945,7 +945,8 @@ export function extractSessionProviderStop(
   // Older attempt native stops must not replace the newer attempt's stop.
   // Sessions without a user turn are the initial attempt.
   // Auditor retained responses live in Sitian (kind=auditor); see readSessionProviderStop.
-  for (let i = entries.length - 1; i >= currentAttemptStartIndex(entries); i -= 1) {
+  const scanStart = currentAttemptStartIndex(entries);
+  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
