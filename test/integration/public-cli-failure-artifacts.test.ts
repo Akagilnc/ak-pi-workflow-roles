@@ -980,10 +980,21 @@ test(
         // The artifacts directory could not be written, and that is what the
         // run reports: a real package-side failure, kept whole, rather than the
         // host's earlier output diagnostic or a bare exit-code summary.
-        const facts = JSON.stringify(result.terminal!.roleOutcome);
+        // The host's own report for this call stands: it said output failure
+        // with this diagnostic, and that is what the terminal presents. The
+        // blocked artifacts write is this package's own failure, so it is
+        // recorded as a publication issue on the error.json — with its real
+        // errno, asserted structurally rather than by text search.
+        assert.equal(result.terminal!.roleOutcome.diagnostic, originalDiagnostic);
+        const errorRef = result.terminal!.artifacts.find((ref) => ref.kind === "error");
+        assert.ok(errorRef, "the failure published an error artifact");
+        const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+          publicationIssues?: readonly { identity?: { code?: string } }[];
+        };
+        const issueCodes = (errorBody.publicationIssues ?? []).map((i) => i.identity?.code);
         assert.ok(
-          facts.includes("EACCES") || facts.includes("EPERM"),
-          `expected the real publication errno on the terminal, got ${facts}`,
+          issueCodes.includes("EACCES") || issueCodes.includes("EPERM"),
+          `expected the real publication errno among ${JSON.stringify(issueCodes)}`,
         );
         assert.ok(
           result.terminal!.roleOutcome.diagnostic.length > 0,

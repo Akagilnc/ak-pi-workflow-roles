@@ -4,14 +4,14 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
 
 import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
-import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
+import { sitianReport } from "../sitian-facade.ts";
 
 import {
   readAttemptScopedSubmissionRows,
@@ -19,8 +19,6 @@ import {
   readRecordedSubmissions,
 } from "../submission-ledger.ts";
 
-import { isAuditEscalationResult } from "../audit-escalation.ts";
-import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
@@ -31,18 +29,6 @@ import {
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
-  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
-  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  COMPLIANCE_RESPONSE_ENTRY_TYPE,
-  readComplianceCandidate,
-  type ComplianceDecision,
-} from "../compliance-transport.ts";
-// COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
-// interval binding on historical session bytes). Provider-stop retain authority is Sitian.
-import {
-  ENGINE_DETOUR_TOOL_NAME,
-} from "../engine-detour.ts";
-import {
   projectEngineDetourToolUsageForPublicTerminal,
   readEngineDetourToolUsage,
   readInvocationEngineMounted,
@@ -50,33 +36,14 @@ import {
   sessionFileFromSessionDirectory,
   withEngineDetourToolUsageFact,
 } from "../engine-detour-usage.ts";
-import {
-  JUDGE_OUTPUT_TOOL_NAME,
-  type JudgeVerdict,
-} from "../package-contracts/judge-output.ts";
-import {
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-} from "../package-contracts/worker-output.ts";
 
-import {
-  DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorCaseCost,
-} from "../doctor-contracts.ts";
+import type { DoctorCaseCost } from "../doctor-contracts.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
-  REVIEWER_OUTPUT_TOOL_NAME,
-} from "../package-contracts/reviewer-output.ts";
-import {
-  packagedAuditToolName,
-  packagedDurableOfficerEntry,
-  packagedRoleAcceptedOutputTool,
-  packagedRoleMetadata,
-  packagedSkipsGateOnInfrastructureStage,
-  type PackagedArtifactFace,
-  type PackagedArtifactLeaf,
-  type PackagedRole,
-} from "../packaged-role-registry.ts";
+  ensureRunArtifactsDir,
+  homeFromRunDirectory,
+  type AdmittedRoleInvocation,
+} from "./invocation.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
@@ -84,16 +51,20 @@ import {
 import {
   classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
-  hasNavigatorInfrastructureFailureBase,
-  isAcceptedPackagedRoleTerminalResult,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
 } from "../navigator-invocation-identity.ts";
 import {
-  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  packagedDurableOfficerEntry,
+  packagedRoleAcceptedOutputTool,
+  packagedRoleMetadata,
+  packagedSkipsGateOnInfrastructureStage,
+  type PackagedArtifactFace,
+  type PackagedArtifactLeaf,
+} from "../packaged-role-registry.ts";
+import {
   RECEIPT_DELIVERY_TURN_LIMIT,
   currentAttemptPointer,
   noReceiptLifecycleFacts,
-  parseNoReceiptLifecycleFacts,
   type NoReceiptLifecycleFacts,
 } from "../receipt-delivery-policy.ts";
 import type {
@@ -114,12 +85,6 @@ import {
   RUN_TERMINAL_EVIDENCE_FILE,
   RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
 } from "../run-terminal-artifacts.ts";
-import {
-  ensureRunArtifactsDir,
-  homeFromRunDirectory,
-  type AdmittedJudgeInvocation,
-  type AdmittedRoleInvocation,
-} from "./invocation.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
 function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
@@ -339,7 +304,30 @@ export {
  * always carries a diagnostic to present, so `cause` and `identity` stay
  * omitted when no typed fact confirms them (#881 — no fabricated label).
  */
-export type ControlledFailure = RoleTurnKnownFailure & { readonly diagnostic: string };
+export type ControlledFailure = RoleTurnKnownFailure & {
+  readonly diagnostic: string;
+  /**
+   * Real facts this package observed while handling the call, kept beside the
+   * host's report rather than inside its open `details`. `details` belongs to
+   * the host: a key written there can collide with a key the host itself
+   * carries, and the host's value would be the one lost (host-contracts.ts:41
+   * — an open record with no reserved keys).
+   */
+  readonly packageFact?: PackageSideFact;
+};
+
+/**
+ * Facts the package itself established, each kept whole. None of them is ever
+ * promoted into the host's cause, diagnostic or details.
+ */
+export type PackageSideFact = {
+  /** An exception caught after the host already reported this call. */
+  readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
+  /** The typed-HTTP sidecar could not be read; the host's report still stands. */
+  readonly sidecarReadFailure?: { readonly name: string; readonly message: string };
+  /** A durable stderr.log write that failed while handling this call. */
+  readonly stderrLogWriteFailure?: unknown;
+};
 
 // A resumable public Terminal omits artifact paths (#108); its actual error
 // publication remains available only to the CLI's resume presentation seam.
@@ -578,15 +566,26 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
   };
 }
 
-/** Merge caller-owned secondary evidence into a classified failure without washing path facts. */
+/**
+ * Merge caller-owned secondary evidence into a classified failure without
+ * washing path facts. The package's own facts ride along on every branch, so
+ * no fallback path silently drops them.
+ */
 function withKnownDetails(
   failure: ControlledFailure,
   knownDetails: Readonly<Record<string, unknown>> | undefined,
+  packageFact?: PackageSideFact,
 ): ControlledFailure {
-  if (knownDetails === undefined) return failure;
+  const facts = packageFact === undefined || Object.keys(packageFact).length === 0
+    ? undefined
+    : packageFact;
+  if (knownDetails === undefined) {
+    return facts === undefined ? failure : { ...failure, packageFact: facts };
+  }
   const { timedOut: _knownTimedOut, ...rest } = knownDetails;
   return {
     ...failure,
+    ...(facts === undefined ? {} : { packageFact: facts }),
     details: {
       ...rest,
       ...(failure.details ?? {}),
@@ -603,6 +602,20 @@ function withKnownDetails(
  * washed when the child also timed out. Cause is never inferred from stderr wording.
  * AggregateError concurrent leaves keep primary identity and secondary facts in details.
  */
+/** This call's package-side facts, or undefined when there are none. */
+function packageFactsOf(input: {
+  readonly sidecarReadFailure?: { readonly name: string; readonly message: string };
+  readonly packageFact?: PackageSideFact;
+}): PackageSideFact | undefined {
+  const facts: PackageSideFact = {
+    ...(input.packageFact ?? {}),
+    ...(input.sidecarReadFailure === undefined
+      ? {}
+      : { sidecarReadFailure: input.sidecarReadFailure }),
+  };
+  return Object.keys(facts).length === 0 ? undefined : facts;
+}
+
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
   code: number | null;
@@ -628,6 +641,10 @@ export function classifyPostAdmissionFailure(input: {
   knownDiagnostic?: string;
   /** Secondary evidence already carried by the typed production failure. */
   knownDetails?: Readonly<Record<string, unknown>>;
+  /** This package's own auxiliary read failure; recorded, never a cause. */
+  sidecarReadFailure?: { readonly name: string; readonly message: string };
+  /** Further package-side facts merged under `packageFact`, never the cause. */
+  packageFact?: PackageSideFact;
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   // An exception caught after the host already reported its own failure carries
@@ -646,16 +663,16 @@ export function classifyPostAdmissionFailure(input: {
     return {
       ...(input.knownCause === undefined ? {} : { cause: input.knownCause }),
       // A settled failure always presents a diagnostic. The host's own is used
-      // when it gave one; otherwise the exception's stands, and the host's
-      // omitted fields stay omitted rather than being invented.
+      // when it gave one; when it gave none, this call's own stderr supplies the
+      // text. The exception is a different failure and never fills this field —
+      // it rides whole under `packageFact` (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
       diagnostic: input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
-        : thrown.diagnostic,
+        : conciseChildDiagnostic(input.stderr, thrown.diagnostic),
       ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
-      details: {
-        ...(input.knownDetails ?? {}),
-        secondaryFailure: thrown,
-      },
+      // The host's details are handed back exactly as given.
+      ...(input.knownDetails === undefined ? {} : { details: input.knownDetails }),
+      packageFact: { ...input.packageFact, thrown },
     };
   }
   // #881: untyped original testimony retains diagnostic/identity, not a
@@ -673,10 +690,12 @@ export function classifyPostAdmissionFailure(input: {
       ? input.knownDiagnostic
       : conciseChildDiagnostic(input.stderr, fallback);
     const { timedOut: _knownTimedOut, ...knownDetails } = input.knownDetails ?? {};
+    const packageFact = packageFactsOf(input);
     return {
       ...(input.knownCause === undefined ? {} : { cause: input.knownCause }),
       diagnostic,
       details: { ...knownDetails, exitCode: input.code, ...(input.timedOut ? { timedOut: true as const } : {}) },
+      ...(packageFact === undefined ? {} : { packageFact }),
       ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
     };
   }
@@ -688,6 +707,7 @@ export function classifyPostAdmissionFailure(input: {
         details: { timedOut: true, exitCode: input.code },
       },
       input.knownDetails,
+      packageFactsOf(input),
     );
   }
   if (input.code !== 0) {
@@ -701,6 +721,7 @@ export function classifyPostAdmissionFailure(input: {
         details: { exitCode: input.code },
       },
       input.knownDetails,
+      packageFactsOf(input),
     );
   }
   if (input.session?.state === "missing") {
@@ -711,6 +732,7 @@ export function classifyPostAdmissionFailure(input: {
         details: { exitCode: input.code, session: "missing" },
       },
       input.knownDetails,
+      packageFactsOf(input),
     );
   }
   if (input.session?.state === "unreadable") {
@@ -721,6 +743,7 @@ export function classifyPostAdmissionFailure(input: {
         details: { exitCode: input.code, session: "unreadable" },
       },
       input.knownDetails,
+      packageFactsOf(input),
     );
   }
   return withKnownDetails(
@@ -730,6 +753,7 @@ export function classifyPostAdmissionFailure(input: {
       details: { exitCode: input.code },
     },
     input.knownDetails,
+    packageFactsOf(input),
   );
 }
 
@@ -895,6 +919,8 @@ export type AuditedRunnerFailureResolution = {
    * read failure). False when the call's own report short-circuited before it.
    */
   readonly typedHttpObservationSettled: boolean;
+  /** The sidecar could not be read; auxiliary, and never a cause. */
+  readonly sidecarReadFailure?: { readonly name: string; readonly message: string };
 };
 
 function resolutionOf(
@@ -902,11 +928,15 @@ function resolutionOf(
   typedHttp: {
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
+    readonly sidecarReadFailure?: { readonly name: string; readonly message: string };
   } = { settled: false },
 ): AuditedRunnerFailureResolution {
   return {
     ...(knownFailure === undefined ? {} : { knownFailure }),
     ...(typedHttp.observation === undefined ? {} : { typedHttpObservation: typedHttp.observation }),
+    ...(typedHttp.sidecarReadFailure === undefined
+      ? {}
+      : { sidecarReadFailure: typedHttp.sidecarReadFailure }),
     typedHttpObservationSettled: typedHttp.settled,
   };
 }
@@ -935,23 +965,14 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      // The sidecar is auxiliary, so its read failure rides as a detail on
-      // whatever the host already reported rather than becoming the cause.
+      // The sidecar is auxiliary: failing to read it never becomes this call's
+      // cause and never edits the host's report. It is recorded beside them.
       return resolutionOf(
-        input.runner === undefined
-          ? {
-            cause: "session",
-            identity: thrownIdentity(failure),
-            diagnostic: failure.message || failure.name,
-          }
-          : {
-            ...input.runner,
-            details: {
-              ...(input.runner.details ?? {}),
-              sidecarReadFailure: { name: failure.name, message: failure.message },
-            },
-          },
-        { settled: true },
+        input.runner,
+        {
+          settled: true,
+          sidecarReadFailure: { name: failure.name, message: failure.message },
+        },
       );
     }
   }
@@ -968,8 +989,8 @@ export async function resolveAuditedRunnerFailureResolution(input: {
 /**
  * v1 resume observation for controlled-failure settlement — at most one sidecar read.
  * Prefer the pre-resolved outcome from resolveAuditedRunnerFailureResolution.
- * Non-absence failures never throw: they return observationReadFailure for the
- * existing controlled-failure → error.json chain.
+ * Non-absence failures never throw: they return observationReadFailure, which
+ * rides as a package-side fact on the controlled-failure → error.json chain.
  */
 export async function resolveControlledFailureResumeObservation(input: {
   readonly runDirectory: string;
@@ -977,7 +998,11 @@ export async function resolveControlledFailureResumeObservation(input: {
   readonly typedHttpObservation?: TypedProviderHttpObservation;
 }): Promise<{
   readonly typedHttp429?: TypedHttp429Observation;
-  readonly observationReadFailure?: RoleTurnKnownFailure;
+  /**
+   * The sidecar could not be read on this path. This package's own fact: it is
+   * never a cause, and it never stands in for what the host reported.
+   */
+  readonly observationReadFailure?: { readonly name: string; readonly message: string };
 }> {
   if (input.typedHttpObservationSettled === true) {
     const observation = input.typedHttpObservation;
@@ -998,11 +1023,7 @@ export async function resolveControlledFailureResumeObservation(input: {
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     return {
-      observationReadFailure: {
-        cause: "session",
-        identity: thrownIdentity(failure),
-        diagnostic: failure.message || failure.name,
-      },
+      observationReadFailure: { name: failure.name, message: failure.message },
     };
   }
 }
@@ -1014,9 +1035,13 @@ export function controlledFailureInputFromResolution(
   knownFailure?: RoleTurnKnownFailure;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
+  sidecarReadFailure?: { readonly name: string; readonly message: string };
 } {
   return {
     ...(resolution.knownFailure === undefined ? {} : { knownFailure: resolution.knownFailure }),
+    ...(resolution.sidecarReadFailure === undefined
+      ? {}
+      : { sidecarReadFailure: resolution.sidecarReadFailure }),
     ...(resolution.typedHttpObservationSettled
       ? {
         typedHttpObservationSettled: true as const,
@@ -1030,14 +1055,6 @@ export function controlledFailureInputFromResolution(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function safelyRead(object: object, key: string): { readable: true; value: unknown } | { readable: false } {
-  try {
-    return { readable: true, value: (object as Record<string, unknown>)[key] };
-  } catch {
-    return { readable: false };
-  }
 }
 
 function toolResultText(message: SessionMessage): string {
@@ -1078,137 +1095,6 @@ function boundErroredToolCandidate(
   return bound === undefined || diagnostic === ""
     ? undefined
     : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
-}
-
-/** Shared match/cause/identity knobs for session-principal infrastructure failures. */
-type InfrastructureFailureSpec = Readonly<{
-  matchTool: (toolName: string) => boolean;
-  cause: ControlledFailureCause;
-  identityName: string;
-  /**
-   * Errored results only count as infrastructure when the durable details carry
-   * the typed navigator fact.
-   */
-  requireInfrastructureFact?: (toolName: string) => boolean;
-}>;
-
-const ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
-  matchTool: (toolName) => toolName === ENGINE_DETOUR_TOOL_NAME,
-  cause: "output",
-  identityName: "EngineDetourInfrastructureError",
-};
-
-/**
- * Prefer a real infrastructure tool failure already on the session principal
- * over a later secondary provider-stop (failure-honesty).
- * Tool match + cause + identity are call-site parameters — one extraction body.
- */
-function extractInfrastructureToolFailure(
-  entries: readonly SessionEntry[],
-  spec: InfrastructureFailureSpec,
-): ControlledFailure | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.isError !== true) continue;
-    if (
-      typeof message.toolName !== "string" ||
-      !spec.matchTool(message.toolName)
-    ) {
-      continue;
-    }
-    if (spec.requireInfrastructureFact?.(message.toolName) === true) {
-      if (!hasNavigatorInfrastructureFailureBase(message.details)) continue;
-    }
-    const diagnostic = toolResultText(message);
-    if (diagnostic.length === 0) continue;
-    return {
-      cause: spec.cause,
-      diagnostic,
-      identity: { name: spec.identityName },
-    };
-  }
-  return undefined;
-}
-
-/**
- * Read the bound session principal for a parameterized infrastructure tool failure.
- * `currentAttemptOnly` bounds the reverse scan to the latest top-level user turn
- * so a prior attempt's residual cannot mask the current failure (#633).
- */
-async function readInfrastructureToolFailure(
-  sessionFile: string,
-  spec: InfrastructureFailureSpec,
-  options: { readonly currentAttemptOnly?: boolean } = {},
-): Promise<ControlledFailure | undefined> {
-  try {
-    let entries = await readBoundSessionEntries(sessionFile);
-    if (options.currentAttemptOnly === true) {
-      entries = entries.slice(currentAttemptStartIndex(entries));
-    }
-    return extractInfrastructureToolFailure(entries, spec);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Read the bound session principal for an engine-detour infrastructure failure.
- * Bounded to the current attempt: this record decides the turn, so a detour
- * failure an earlier turn already recorded is history, not this turn's verdict.
- */
-export async function readEngineDetourInfrastructureFailure(
-  sessionFile: string,
-): Promise<ControlledFailure | undefined> {
-  return readInfrastructureToolFailure(
-    sessionFile,
-    ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
-    { currentAttemptOnly: true },
-  );
-}
-
-function knownFailureFromControlled(failure: ControlledFailure): RoleTurnKnownFailure {
-  return {
-    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-    diagnostic: failure.diagnostic,
-    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-  };
-}
-
-/**
- * Runner-failure reader for one seat. The composition-root `runnerFailure` leaf
- * says a seat also reports an engine-detour infrastructure failure; what it may
- * not do is rank one source over another. The host's own report for this call
- * always stands, and a session record only fills in when the host reported
- * nothing (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
- */
-export function seatKnownFailureResolver(
-  role: PackagedRole,
-): ((input: {
-  result: { knownFailure?: RoleTurnKnownFailure };
-  sessionFile: string;
-}) => Promise<RoleTurnKnownFailure | undefined>) | undefined {
-  const record = packagedRoleMetadata(role);
-  if (record === undefined || !("runnerFailure" in record)) return undefined;
-  return async ({ result, sessionFile }) => {
-    if (result.knownFailure !== undefined) return result.knownFailure;
-    const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
-    return infrastructureFailure === undefined
-      ? undefined
-      : knownFailureFromControlled(infrastructureFailure);
-  };
-}
-
-function auditToolNameForRole(
-  role: (typeof AUDITOR_SOUL_ROLES)[number],
-): string {
-  const name = packagedAuditToolName(role);
-  if (name === undefined) {
-    throw new Error(`audit tool is not declared for ${role}`);
-  }
-  return name;
 }
 
 type BoundRoleToolCall = {
@@ -1258,138 +1144,6 @@ function boundRoleToolCallForResult(
     && calls[0]!.callIndex < resultIndex
     ? calls[0]
     : undefined;
-}
-
-type BoundRetainedAuditResponse = {
-  candidate: unknown;
-};
-
-type BoundAuditEscalation = {
-  decision: Extract<ComplianceDecision, { status: "escalate" }>;
-  details: Record<string, unknown>;
-};
-
-function sameAuditValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return left.length === right.length && left.every((value, index) =>
-      sameAuditValue(value, right[index]),
-    );
-  }
-  if (isRecord(left) && isRecord(right)) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return leftKeys.length === rightKeys.length &&
-      leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
-  }
-  return false;
-}
-
-/** Snapshot the exact enumerable string face that final Terminal projection uses. */
-function snapshotAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
-  const snapshot: Record<string, unknown> = Object.create(null);
-  for (const key of Object.keys(details)) {
-    Object.defineProperty(snapshot, key, {
-      value: details[key],
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  }
-  return snapshot;
-}
-
-/**
- * Bind the public escalation face to the one retained response that sits inside
- * the same role output call/result interval. A `kind` field alone is never a
- * terminal identity; the retained response must be this seat's real escalate
- * decision and its projected audit-owned fields must agree with it.
- */
-// Historical pre-#1057 session artifacts may still contain this old projection;
-// no current submission path writes it, but resume/settlement must read it.
-function boundAuditEscalationForResult(
-  entries: readonly SessionEntry[],
-  resultIndex: number,
-  message: SessionMessage,
-  role: (typeof AUDITOR_SOUL_ROLES)[number],
-  outputToolName: string,
-): BoundAuditEscalation | undefined {
-  const roleCall = boundRoleToolCallForResult(
-    entries,
-    resultIndex,
-    message,
-    outputToolName,
-  );
-  if (roleCall === undefined) return undefined;
-  const retained = boundRetainedAuditResponse(
-    entries,
-    roleCall.callIndex,
-    resultIndex,
-    auditToolNameForRole(role),
-  );
-  if (retained === undefined) return undefined;
-  try {
-    const decision = readComplianceCandidate(retained.candidate);
-    if (decision.status !== "escalate") return undefined;
-    const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord(details)) return undefined;
-
-    // Read the public face exactly once. Besides making key enumeration and
-    // getters fail closed, this prevents a stateful accessor from authenticating
-    // one value and yielding another during final Terminal projection.
-    const projectedDetails = snapshotAuditDetails(details);
-    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
-    if (hasDecisionConflicts !== hasDetailsConflicts) return undefined;
-    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return undefined;
-    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
-    if (hasDecisionGate !== hasDetailsGate) return undefined;
-    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return undefined;
-    return { decision, details: projectedDetails };
-  } catch {
-    // Retained/public own-key enumeration, property reads, recursive equality,
-    // and projection are all untrusted session evidence.
-    return undefined;
-  }
-}
-
-function isUnboundAuditEscalationFace(details: unknown): boolean {
-  try {
-    if (isAuditEscalationResult(details)) return true;
-  } catch {
-    // Hostile access is not authentic escalation evidence.
-  }
-  if (!isRecord(details)) return false;
-  const kind = safelyRead(details, "kind");
-  return kind.readable && kind.value === "audit_escalation";
-}
-
-function boundRetainedAuditResponse(
-  entries: readonly SessionEntry[],
-  callIndex: number,
-  resultIndex: number,
-  auditToolName: string,
-): BoundRetainedAuditResponse | undefined {
-  const matches: BoundRetainedAuditResponse[] = [];
-  for (let index = callIndex + 1; index < resultIndex; index += 1) {
-    const entry = entries[index];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
-      continue;
-    }
-    if (!isRecord(entry.data) || !isRecord(entry.data.response)) continue;
-    const response = entry.data.response;
-    if (!Array.isArray(response.content)) continue;
-    const calls = response.content.filter(
-      (part): part is Record<string, unknown> =>
-        isRecord(part) && part.type === "toolCall",
-    );
-    if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
-    matches.push({ candidate: calls[0]?.arguments });
-  }
-  // Unique seat-bound match binds even when multi-turn investigation retained
-  // intermediate non-decision responses in the same call/result interval.
-  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /**
@@ -2530,6 +2284,8 @@ export async function publishFailureArtifacts(
     diagnostic: failure.diagnostic,
     ...(failure.identity === undefined ? {} : { identity: failure.identity }),
     ...(failure.details === undefined ? {} : { details: failure.details }),
+    // This package's own facts, kept beside the host's report.
+    ...(failure.packageFact === undefined ? {} : { packageFact: failure.packageFact }),
   };
 
   const errorWrite = await writeFailureJsonRetainingCause(
@@ -2579,34 +2335,6 @@ export async function settleFailureTerminalResult(
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  // #288 is lawful only when the lifecycle owner persisted an exhausted,
-  // current-attempt fact. Transcript reconstruction must not turn arbitrary output
-  // failures (or bytes retained from a prior resume attempt) into exit zero.
-  if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
-    if (entries !== undefined) {
-      const lifecycleEntry = entries.slice(currentAttemptStartIndex(entries)).reverse().find((entry: SessionEntry) =>
-        entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
-      const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
-      if (raw !== undefined) {
-        // Catch only covers lifecycle-byte parse. Clear / navigator / gate I/O
-        // after a valid parse must keep their real failure identity (#953).
-        let facts: NoReceiptLifecycleFacts | undefined;
-        try {
-          facts = parseNoReceiptLifecycleFacts(raw);
-        } catch {
-          /* malformed lifecycle bytes remain the existing nonzero output failure */
-        }
-        if (
-          facts !== undefined &&
-          facts.runPointer === admitted.runDirectory &&
-          facts.attemptPointer === currentAttemptPointer(admitted.runDirectory)
-        ) {
-          return settleNoReceiptTerminal(admitted, authority, options, facts);
-        }
-      }
-    }
-  }
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).

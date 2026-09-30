@@ -82,12 +82,15 @@ test("runnerFailure registry rank is the public settlement principal", async () 
   const knownDiagnostic = "KNOWN_FAILURE_505_STANDS";
   const cases = [
     {
-      label: "judge: a lone engine-detour record supplies the cause when the host reported none",
+      // The host reported a bare nonzero exit and nothing else. An
+      // engine-detour record sitting in the transcript is history: it does not
+      // become this call's cause, and no cause is invented for it (#881).
+      label: "judge: a lone engine-detour record supplies nothing when the host reported none",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "rank"],
       session: "detour" as const,
       known: false,
-      cause: "output" as const,
-      diagnostic: detourDiagnostic,
+      cause: undefined,
+      diagnostic: undefined,
     },
     {
       // The host's own report for this call stands; a session record does not
@@ -192,8 +195,8 @@ test("runnerFailure registry rank is the public settlement principal", async () 
         result,
         stdout,
         stderr,
-        expectedCause: row.cause,
-        diagnosticEquals: row.diagnostic,
+        ...(row.cause === undefined ? {} : { expectedCause: row.cause }),
+        ...(row.diagnostic === undefined ? {} : { diagnosticEquals: row.diagnostic }),
       });
       assert.equal(terminal.roleOutcome.kind, "failure", row.label);
     });
@@ -402,12 +405,10 @@ test("a provider stop left in the transcript never becomes this turn's cause", a
           }),
         },
       );
-      const facts = JSON.stringify(result.terminal?.roleOutcome);
-      assert.equal(
-        facts?.includes("TRANSCRIPT PROVIDER STOP"),
-        false,
-        `${row.label}: a message in the transcript must not decide this turn's failure`,
-      );
+      // Asserted on the structured outcome below — each row states what the
+      // host's own report must produce. No text search over the serialized
+      // roleOutcome: a diagnostic that merely quoted the transcript would pass
+      // such a check while the real cause was still wrong.
       if (row.timedOut) {
         assert.equal(result.exitCode, 1, row.label);
         assert.equal(result.terminal?.roleOutcome.kind, "failure", row.label);
@@ -475,39 +476,44 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     });
     assert.equal(absent.knownFailure, undefined);
 
-    // Non-absence: existing sidecar with illegal typed shape keeps real cause on settlement chain.
+    // A sidecar that cannot be read is a real fact, but it is this package's
+    // own auxiliary observation — it never becomes the call's failure, and it
+    // never edits what the host reported. Each bad sidecar is recorded whole
+    // on the resolution with its real identity.
+    const hostReport = { cause: "provider", diagnostic: "CURRENT_CLI_FAILURE" } as const;
     await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
-    const badShape = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
+    const badShape = await resolveAuditedRunnerFailureResolution({
+      runner: hostReport,
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
-    assert.equal(badShape?.cause, "session");
-    assert.equal(badShape?.identity?.name, "Error");
+    });
+    assert.deepEqual(badShape.knownFailure, hostReport);
+    assert.equal(badShape.sidecarReadFailure?.name, "Error");
 
-    // Non-absence: malformed JSON keeps SyntaxError identity (not laundered as absence).
+    // Malformed JSON keeps SyntaxError identity (not laundered as absence).
     await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
-    const malformed = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
+    const malformed = await resolveAuditedRunnerFailureResolution({
+      runner: hostReport,
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
-    assert.equal(malformed?.cause, "session");
-    assert.equal(malformed?.identity?.name, "SyntaxError");
+    });
+    assert.deepEqual(malformed.knownFailure, hostReport);
+    assert.equal(malformed.sidecarReadFailure?.name, "SyntaxError");
 
-    // Non-absence: EISDIR on the observation path keeps real errno cause.
+    // EISDIR on the observation path keeps its real errno.
     await rm(join(runDirectory, "typed-provider-http.json"), { force: true });
     await mkdir(join(runDirectory, "typed-provider-http.json"));
-    const eisdir = (await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
+    const eisdir = await resolveAuditedRunnerFailureResolution({
+      runner: hostReport,
       sessionFile,
       credential: undefined,
       runDirectory,
-    })).knownFailure;
-    assert.equal(eisdir?.cause, "session");
-    assert.equal(eisdir?.identity?.code, "EISDIR");
+    });
+    assert.deepEqual(eisdir.knownFailure, hostReport);
+    assert.equal(eisdir.sidecarReadFailure?.name, "Error");
+    assert.match(eisdir.sidecarReadFailure?.message ?? "", /EISDIR/);
   });
 });
 test("#307 typed HTTP non-absence failure retains the final dispatch error after resume budget", async () => {
@@ -561,12 +567,17 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     assert.ok(errorRef, "controlled failure must publish error artifact");
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;
     assert.equal(errorBody.attempt, 1);
+    // The first attempt's error.json keeps the host's own report for that call
+    // (a bare nonzero exit, so no typed cause) and records the unreadable
+    // sidecar as this package's own fact beside it.
     const firstError = JSON.parse(await readFile(join(dirname(errorRef.path), "error.json"), "utf8")) as {
       cause?: string;
-      identity?: { code?: string };
+      diagnostic?: string;
+      packageFact?: { sidecarReadFailure?: { name?: string; message?: string } };
     };
-    assert.equal(firstError.cause, "session");
-    assert.equal(firstError.identity?.code, "EISDIR");
+    assert.equal(firstError.cause, undefined);
+    assert.match(firstError.diagnostic ?? "", /provider child exited/);
+    assert.match(firstError.packageFact?.sidecarReadFailure?.message ?? "", /EISDIR/);
   });
 });
 /**

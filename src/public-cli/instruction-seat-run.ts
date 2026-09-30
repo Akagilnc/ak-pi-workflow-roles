@@ -75,7 +75,6 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   readBoundSessionEntries,
-  seatKnownFailureResolver,
   attachPostAuditProjection,
   trySettlePublicSeat,
 } from "./settlement.ts";
@@ -85,7 +84,6 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
-  type TerminalRoleName,
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
@@ -217,11 +215,6 @@ function initialPrompt(
   );
 }
 
-function infraFailure(role: PackagedRole) {
-  const resolveRunnerKnownFailure = seatKnownFailureResolver(role);
-  return resolveRunnerKnownFailure === undefined ? {} : { resolveRunnerKnownFailure };
-}
-
 function isBoardTicketSeat(
   seat: AdmittedRoleInvocation,
 ): seat is AdmittedRoleInvocation & { role: "diarist" } {
@@ -254,7 +247,6 @@ function seatAdapters(
     ...(present === "typed"
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }
       : {}),
-    ...infraFailure(admitted.role),
     ...(packagedBindsBoardTicket(admitted.role)
       ? {
         beforeDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {

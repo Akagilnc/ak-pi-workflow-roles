@@ -106,6 +106,7 @@ import {
   attachRecordedSubmissions,
   rewritePublishedFailureErrorPath,
   type ControlledFailure,
+  type PackageSideFact,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -348,10 +349,6 @@ export type PostAdmissionAdapters<
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
-  resolveRunnerKnownFailure?: (input: {
-    result: RoleTurnResult;
-    sessionFile: string;
-  }) => Promise<RoleTurnKnownFailure | undefined>;
   /** A child office may pause this run with its unchanged terminal before a host turn starts. */
   beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<T | void> | T | void;
   /**
@@ -382,6 +379,14 @@ export type ControlledFailureInput = {
   knownDiagnostic?: string;
   /** Secondary evidence already owned by the typed production failure channel. */
   knownDetails?: Readonly<Record<string, unknown>>;
+  /**
+   * A real failure this package hit while handling the call (e.g. the
+   * stderr.log durable write). Recorded beside the host's report; never a
+   * cause, and never written into the host's open `details`.
+   */
+  packageFact?: PackageSideFact;
+  /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
+  sidecarReadFailure?: { readonly name: string; readonly message: string };
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
   /**
@@ -479,8 +484,11 @@ export async function presentControlledFailure<
       }
       : {}),
   });
-  const knownFailure =
-    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
+  // The host's own report stands on its own; an unreadable sidecar is recorded
+  // beside it and never becomes the call's knownFailure.
+  const knownFailure = failureInput.knownFailure;
+  const sidecarReadFailure =
+    failureInput.sidecarReadFailure ?? resumeObservation.observationReadFailure;
   const session =
     !hasThrown &&
     !failureInput.timedOut &&
@@ -525,6 +533,14 @@ export async function presentControlledFailure<
     ...(failureInput.knownDiagnostic === undefined
       ? {}
       : { knownDiagnostic: failureInput.knownDiagnostic }),
+    // This package's own facts, forwarded so they are reported beside the
+    // host's report rather than dropped.
+    ...(sidecarReadFailure === undefined
+      ? {}
+      : { sidecarReadFailure }),
+    ...(failureInput.packageFact === undefined
+      ? {}
+      : { packageFact: failureInput.packageFact }),
     ...(session === undefined ? {} : { session }),
   });
 
@@ -1032,31 +1048,25 @@ export async function dispatchPostAdmissionTurn<
         admitted.principal !== undefined
           ? env.principalAuthority.decode(admitted.principal).sessionFile
           : "";
-      const runnerKnownFailure =
-        adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
-          ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
-          : result.knownFailure;
       resolution = await resolveAuditedRunnerFailureResolution({
-        runner: runnerKnownFailure,
+        runner: result.knownFailure,
         sessionFile,
         credential: undefined,
         runDirectory: admitted.runDirectory,
       });
-      // What the host CLI reported for this call: a signal it raised itself
-      // (timeout, its own declared failure, a process cancel) or a failure the
-      // audited read of this call established. Either is a real problem
-      // whatever else settled — a settled accepted outcome must not paper over
-      // it, and the recorded payload rides beside it on `submissions` rather
-      // than being replaced.
+      // What the host CLI reported for this call: a timeout, its own declared
+      // failure, or a process cancel. Either is a real problem whatever else
+      // settled — a settled accepted outcome must not paper over it, and the
+      // recorded payload rides beside it on `submissions` rather than being
+      // replaced.
       const processCancelName = processCancelSignalName(env.signal);
       const directHostFailureSignal =
         result.timedOut
         || result.knownFailure !== undefined
-        || runnerKnownFailure !== undefined
         || processCancelName !== undefined;
-      // The turn fails on the CLI's own report for it: that signal, its exit
-      // code, or the failure the audited read established. No history read and
-      // no prior-turn settlement takes part in this decision.
+      // The turn fails on the CLI's own report for it: that signal or its exit
+      // code. No history read and no prior-turn settlement takes part in this
+      // decision (owner ea321c6d: resume报失败为什么要去看历史？).
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
@@ -1171,7 +1181,7 @@ export async function dispatchPostAdmissionTurn<
           })
         : controlledFailureInputFromResolution(resolution);
       const processCancelName = processCancelSignalName(env.signal);
-      const stderrLogWriteDetails =
+      const stderrLogWriteFact =
         stderrLogWriteFailure === undefined
           ? undefined
           : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
@@ -1185,19 +1195,9 @@ export async function dispatchPostAdmissionTurn<
           ...(processCancelName === undefined
             ? {}
             : { knownDiagnostic: processCancelDiagnostic(processCancelName) }),
-          // Secondary fact only — never the cause. Rides on whichever channel
-          // classification actually reads (knownFailure.details owns it when
-          // a knownFailure exists; the top-level knownDetails otherwise).
-          ...(stderrLogWriteDetails === undefined
-            ? {}
-            : resolutionInput.knownFailure !== undefined
-              ? {
-                knownFailure: {
-                  ...resolutionInput.knownFailure,
-                  details: { ...(resolutionInput.knownFailure.details ?? {}), ...stderrLogWriteDetails },
-                },
-              }
-              : { knownDetails: stderrLogWriteDetails }),
+          // Secondary fact only — never the cause, and never merged into the
+          // host's own details.
+          ...(stderrLogWriteFact === undefined ? {} : { packageFact: stderrLogWriteFact }),
         }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
