@@ -30,6 +30,11 @@ import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
+import {
+  createReceiptDeliveryPolicy,
+  deliveryLimitFromConfig,
+  RECEIPT_DELIVERY_LIMIT_ENV,
+} from "../receipt-delivery-policy.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -85,6 +90,7 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import { DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
 import { recordRunStart } from "../host-session-record.ts";
 import {
   attemptProducedFreshSubmission,
@@ -107,6 +113,7 @@ import {
   attachRecordedSubmissions,
   rewritePublishedFailureErrorPath,
   type ControlledFailure,
+  type SettlementCourtScope,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -635,6 +642,143 @@ async function settleDeferredPersist<
   }
 }
 
+/**
+ * #1132: one 没交卷催交 on this run's original host session.
+ *
+ * Institution stays on the AK side (ADR 0082): this builds a host-neutral resume
+ * turn carrying the same continuation kind the adapter already resumes natively,
+ * and hands the host adapter its stored native session id. No new prompt wording
+ * (pi's existing delivery-state content is reused verbatim) and no new host
+ * capability — a host that cannot resume natively reports that as a real failure
+ * through the existing failure path, never as no_receipt.
+ *
+ * The receipt, if any, is read through the same `adapters.trySettle` seam the
+ * ordinary turn uses, so a delivery-turn submission lands in the ledger and flows
+ * on to the audit seat in the existing order.
+ */
+async function requestReceiptDelivery<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  request: RoleTurnRequest;
+  adapters: PostAdmissionAdapters<A, T>;
+  io: CliIo;
+  persistRunState: boolean;
+  deliveryNumber: number;
+}): Promise<
+  | { readonly kind: "still-missing" }
+  | { readonly kind: "settled"; readonly terminal: T }
+  | { readonly kind: "failure"; readonly result: { exitCode: number; admitted: A; terminal: T } }
+> {
+  const { admitted, env, request, adapters, io } = input;
+  // Reuse pi's existing delivery-request body (receipt-delivery-policy) so the
+  // model sees the same typed delivery state it already knows.
+  const policy = createReceiptDeliveryPolicy(env.autoResumeLimit);
+  for (let issued = 0; issued < input.deliveryNumber; issued += 1) {
+    policy.recordDeliveryRequest();
+  }
+  const hostSessionId = await readStoredHostSessionId(
+    env.host,
+    env.principalAuthority,
+    admitted.principal,
+  );
+  const deliveryRequest: RoleTurnRequest = {
+    ...request,
+    continuation: {
+      kind: "resume",
+      prompt: JSON.stringify(policy.deliveryState()),
+      ...(hostSessionId === undefined ? {} : { hostSessionId }),
+    },
+    deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+  };
+
+  let turnResult: Awaited<ReturnType<RoleTurnHost["executeTurn"]>>;
+  try {
+    turnResult = await env.roleTurnHost.executeTurn(deliveryRequest);
+  } catch (error) {
+    // A 催交 that cannot be delivered is a real failure with its true cause, kept
+    // by the one existing settlement authority (ADR 0080) — never laundered into
+    // no_receipt (失败诚实宪法).
+    return await requestReceiptDeliveryFailure(input, { thrown: error });
+  }
+  if (turnResult.timedOut
+    || turnResult.knownFailure !== undefined
+    || (turnResult.code !== null && turnResult.code !== 0)) {
+    return await requestReceiptDeliveryFailure(input, turnResult);
+  }
+
+  const scope = settlementScopeForTurn(request);
+  const settled = await adapters.trySettle(admitted, env.principalAuthority, scope);
+  if (settled === undefined) return { kind: "still-missing" };
+  // #836/#833: a prior court's accepted payload is history, not this court's
+  // result. The ordinary turn path refuses to present one as a fresh seal; the
+  // 催交 turn must hold the same line or a delivery request would resurrect an
+  // older court as this court's outcome.
+  const settledIsFreshThisAttempt =
+    settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation"
+      ? true
+      : await attemptProducedFreshSubmission(admitted, scope);
+  if (!settledIsFreshThisAttempt) return { kind: "still-missing" };
+  return {
+    kind: "settled",
+    terminal: await attachRecordedSubmissions(admitted, settled, scope) as T,
+  };
+}
+
+/** Court/invocation scope for settlement reads, matching the ordinary turn path. */
+function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope | undefined {
+  if (
+    (request.courtAttemptId === undefined || request.courtAttemptId.length === 0)
+    && (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+      ? {}
+      : { courtAttemptId: request.courtAttemptId }),
+    ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
+      ? {}
+      : { invocationScopeId: request.invocationScopeId }),
+  };
+}
+
+async function requestReceiptDeliveryFailure<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(
+  input: {
+    admitted: A;
+    env: PostAdmissionEnv;
+    request: RoleTurnRequest;
+    adapters: PostAdmissionAdapters<A, T>;
+    io: CliIo;
+    persistRunState: boolean;
+  },
+  cause: { thrown?: unknown; timedOut?: boolean; code?: number | null; stderr?: string },
+): Promise<{ readonly kind: "failure"; readonly result: { exitCode: number; admitted: A; terminal: T } }> {
+  const { admitted, env, request, adapters, io } = input;
+  const failed = await settleAfterTurnStarted(
+    admitted,
+    withEngineDetourInvocationScope(
+      {
+        timedOut: cause.timedOut ?? false,
+        code: cause.code ?? null,
+        stderr: cause.stderr ?? "",
+        ...(cause.thrown === undefined ? {} : { thrown: cause.thrown }),
+      },
+      request.invocationScopeId,
+    ),
+    adapters,
+    env.principalAuthority,
+    io,
+    input.persistRunState,
+  );
+  return { kind: "failure", result: failed as { exitCode: number; admitted: A; terminal: T } };
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -676,6 +820,25 @@ export async function dispatchPostAdmissionTurn<
    * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
    */
   let afterDispatchApplied = false;
+  /**
+   * #1132: delivery requests this AK execution seam actually issued after a
+   * host turn ended normally with no receipt. Counted per real prompt sent on
+   * the same run/session — never the budget, never another loop's resumes.
+   */
+  let issuedDeliveryRequests = 0;
+  /**
+   * #1132: the one effective ceiling, resolved once per call from the caller's
+   * already-resolved configured value (never re-read here). Shared with the
+   * host adapter's own re-ask loop through the projected turn request.
+   */
+  const deliveryLimit = deliveryLimitFromConfig(env.autoResumeLimit);
+  // #1132: the AK-side 催交 covers hosts that do not deliver to themselves.
+  // Pi runs the package role runtime in-process, and that runtime already issues
+  // its own delivery requests at `agent_end` and records the real count — asking
+  // again here would double-deliver on one run. External hosts (ACP / headless
+  // CLI) have no such in-child loop, so the AK execution seam owns it for them.
+  const akSeamDeliversReceipt =
+  env.host !== undefined && env.host !== "" && env.host !== DEFAULT_ROLE_TURN_HOST;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
@@ -1195,9 +1358,58 @@ export async function dispatchPostAdmissionTurn<
       return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
+    // #1132: 没交卷先回本人催交，不直接结为 no_receipt. The AK execution seam
+    // owns the 催交 and its real count: it resumes this same run's original host
+    // session through the host adapter seam (native CLI resume, no new prompt
+    // wording and no new host capability) and re-settles after each request.
+    // 催交 never substitutes for host failure recovery — a real failure below
+    // keeps its cause and stays a failure. Only an exhausted budget with still
+    // no receipt reaches the settlement seam, and `issuedDeliveryRequests` is
+    // what actually went out.
+    while (akSeamDeliversReceipt && issuedDeliveryRequests < deliveryLimit) {
+      const deliveryTurn = await requestReceiptDelivery({
+        admitted,
+        env,
+        request,
+        adapters,
+        io: { ...io, stdout: () => {} },
+        persistRunState,
+        deliveryNumber: issuedDeliveryRequests + 1,
+      });
+      issuedDeliveryRequests += 1;
+      if (deliveryTurn.kind === "failure") {
+        // #1132: 催交不能代替宿主失败恢复. A delivery turn that fails is the run's
+        // real outcome with its true cause — skipAutoResume keeps the failure
+        // loop from retrying it into a lawful no_receipt (失败诚实宪法: 真因必须
+        // 落痕，不洗成 no_receipt). The caller may still resume explicitly.
+        return await finishAfterTurn({
+          ...deliveryTurn.result,
+          turnDispatched: true as const,
+          skipAutoResume: true as const,
+          ...deferredPersist,
+        });
+      }
+      // A receipt landed on this delivery turn: settle it through the existing
+      // order (ledger → 原话递送该角色应过的审核 → 共同结算), never around it.
+      if (deliveryTurn.kind === "settled") {
+        return await finishAfterTurn({
+          exitCode: exitCodeForTerminalOutcome(deliveryTurn.terminal.roleOutcome),
+          admitted,
+          terminal: deliveryTurn.terminal,
+          turnDispatched: true as const,
+          ...deferredPersist,
+        });
+      }
+    }
+
     const noReceipt = await attachRecordedSubmissions(
       admitted,
-      await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
+      await settleHostEndedNoReceipt(
+        admitted,
+        env.principalAuthority,
+        courtScope,
+        issuedDeliveryRequests,
+      ) as T,
       courtScope,
     );
     // #855: cancel during no_receipt settlement window is not lawful success.
@@ -1334,6 +1546,8 @@ export function resumeTurnRequestProjectionOptions(
     },
     ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+    // #1132: one configured ceiling, already resolved by the caller (#422).
+    deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
   };
 }
 
@@ -1357,6 +1571,8 @@ export function roleTurnOptions(
       : { correlationId }),
     continuation,
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+    // #1132: one configured ceiling, already resolved by the caller (#422).
+    deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
   };
 }
 

@@ -1,6 +1,6 @@
 /**
  * Middle external-host role-turn loop (#820 / ADR 0082).
- * One copy: serial, abort merge/race, 8-round closeRound retry,
+ * One copy: serial, abort merge/race, closeRound re-ask rounds,
  * host-aborted, round-limit. Last hop = ExternalHostTurnDriver (four verbs).
  */
 import type {
@@ -10,8 +10,19 @@ import type {
   RoleTurnResult,
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
-export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
+/**
+ * #1132: the closeRound re-ask loop is one of the counts that read the single
+ * configured `autoResumeLimit` value. The first round is the initial delivery
+ * and never a re-ask, so the loop spends at most the configured number of
+ * re-ask rounds beyond it. Absent on the request = package default.
+ */
+export function externalRoleTurnRoundLimit(
+  request: Pick<RoleTurnRequest, "deliveryRequestLimit">,
+): number {
+  return 1 + deliveryLimitFromConfig(request.deliveryRequestLimit);
+}
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
@@ -142,8 +153,11 @@ export async function driveExternalRoleTurnRounds(
   let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
   let stderr = "";
+  // #1132: first round is the initial delivery; every later round is one re-ask
+  // charged against the single configured ceiling.
+  const roundLimit = externalRoleTurnRoundLimit(request);
 
-  for (let attempt = 0; attempt < EXTERNAL_ROLE_TURN_ROUND_LIMIT; attempt += 1) {
+  for (let attempt = 0; attempt < roundLimit; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
 
     let round: ExternalHostRoundOutcome;

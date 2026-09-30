@@ -31,7 +31,11 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
+import {
+  createReceiptDeliveryPolicy,
+  deliveryLimitFromEnv,
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+} from "./receipt-delivery-policy.ts";
 import {
   COLLECTOR_CONSTRUCTION_TOOLS,
   COLLECTOR_REQUIRED_TOOLS,
@@ -1062,7 +1066,9 @@ export function createRoleRuntimeExtension(
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
-    let receiptDelivery = createReceiptDeliveryPolicy();
+    // #1132: the one configured ceiling, read once from the child env the AK
+    // execution seam resolved. Never re-read per turn.
+    let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
     let noReceiptRecorded = false;
     // Public-run fetch observation.
     let priorFetch: typeof globalThis.fetch | undefined;
@@ -1713,7 +1719,7 @@ export function createRoleRuntimeExtension(
       roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       activeCollector = undefined;
-      receiptDelivery = createReceiptDeliveryPolicy();
+      receiptDelivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
       noReceiptRecorded = false;
       pendingNavigatorPresentation = undefined;
       navigatorActivation += 1;

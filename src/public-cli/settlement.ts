@@ -92,7 +92,6 @@ import {
 } from "../navigator-invocation-identity.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-  RECEIPT_DELIVERY_TURN_LIMIT,
   noReceiptLifecycleFacts,
   parseNoReceiptLifecycleFacts,
   type NoReceiptLifecycleFacts,
@@ -294,11 +293,17 @@ export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
+  /**
+   * #1132: delivery requests this run actually issued. The settlement seam
+   * records that count verbatim — zero stays zero. The budget is never reported
+   * as a count, and another loop's resumes are never counted as催交.
+   */
+  issuedDeliveryRequests = 0,
 ): Promise<TerminalResult> {
   const facts = noReceiptLifecycleFacts({
     terminalToolCalled: false,
     rejectedReceipts: [],
-    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    deliveryTurns: issuedDeliveryRequests,
     runPointer: admitted.runDirectory,
     attemptPointer: `current:${admitted.runDirectory}`,
   });

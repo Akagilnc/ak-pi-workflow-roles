@@ -24,6 +24,7 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./worker-submission-gates.ts";
+import { deliveryLimitFromEnv } from "./receipt-delivery-policy.ts";
 import {
   fixerBashSeatbeltDenyReason,
   matchFixerBashForbiddenLiteral,
@@ -180,7 +181,11 @@ export function createFixerRoleRuntime(
   let prerequisitesPath: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  const submissionGate = createWorkerSubmissionGate();
+  // #1132: ADR 0050 缺理由催全次数 from the one configured value, read once here
+  // from the child env the AK seam resolved. Absent = package default.
+  const submissionGate = createWorkerSubmissionGate({
+    unfinishedReasonBounceLimit: deliveryLimitFromEnv(process.env),
+  });
 
   pi.registerFlag(
     FIXER_FLAG_DEFINITIONS.packet.name,
@@ -296,7 +301,11 @@ export function createCoderRoleRuntime(
   let task: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  const submissionGate = createWorkerSubmissionGate();
+  // #1132: ADR 0050 缺理由催全次数 from the one configured value, read once here
+  // from the child env the AK seam resolved. Absent = package default.
+  const submissionGate = createWorkerSubmissionGate({
+    unfinishedReasonBounceLimit: deliveryLimitFromEnv(process.env),
+  });
 
   pi.registerFlag("ak-coder-task", {
     description: "Markdown task assigned to the coder role",

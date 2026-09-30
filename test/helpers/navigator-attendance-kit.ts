@@ -3,7 +3,7 @@
  * #959: navigator speaks prose — fixtures submit free-form advice, not candidates.
  */
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
-import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
+import { deliveryLimitFromConfig, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
 export function context(home?: string) {
   return {
@@ -90,7 +90,9 @@ export function sessionHarness() {
       sessionNoReceipts.push({
         terminalToolCalled: rejectedReasons.length > 0,
         rejectedReceipts: rejectedReasons.map((reason) => ({ reason, diagnosticAvailable: reason.trim() !== "" })),
-        deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+        // #1132: a nested session that settled without a receipt spent its own
+        // budget; the count is its own issued total, not a package constant.
+        deliveryTurns: deliveryLimitFromConfig(undefined),
         sessionCompletion: "settled-without-accepted-receipt",
         runPointer: "/fixture/nested-run",
         attemptPointer: "nested-attempt",

@@ -60,7 +60,11 @@ export {
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
+import {
+  createReceiptDeliveryPolicy,
+  deliveryLimitFromEnv,
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+} from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
 
@@ -418,7 +422,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          const delivery = createReceiptDeliveryPolicy();
+          // #1132: same one configured ceiling as the role runtime.
+          const delivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
           // Production prose arrives only via nested summon → prepare tool.execute
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).

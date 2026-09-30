@@ -16,6 +16,7 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
@@ -31,7 +32,6 @@ const HOOKS_DIR = "ak-roles-hooks";
 const HOOK_FILE = "reference-transaction";
 /** Open platform-prefix domain (constitution #10) — not a closed singleton. */
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
-const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
 
 export type WorkerSubmissionGateParent = RecordSessionParent;
 
@@ -225,6 +225,13 @@ export type CreateWorkerSubmissionGateOptions = {
    * Path still derives from required parent session; home only pins ledger root. #604 Scope 2.
    */
   readonly home?: string;
+  /**
+   * #1132: ADR 0050 缺理由催全次数 read from the single configured
+   * `autoResumeLimit` value. Absent = package default. Resolved once here; the
+   * gate never re-reads it per submission. Exhaustion still accepts (照收) —
+   * only the count changes.
+   */
+  readonly unfinishedReasonBounceLimit?: number;
 };
 
 export function createWorkerSubmissionGate(
@@ -244,6 +251,8 @@ export function createWorkerSubmissionGate(
   let sessionParent: string | undefined;
   const explicitHome =
     typeof options.home === "string" && options.home.length > 0 ? options.home : undefined;
+  // #1132: one configured number, resolved once at gate construction.
+  const unfinishedReasonBounceLimit = deliveryLimitFromConfig(options.unfinishedReasonBounceLimit);
   const head = (cwd: string): string | null => {
     try {
       return git(cwd, ["rev-parse", "HEAD"]);
@@ -295,7 +304,7 @@ export function createWorkerSubmissionGate(
     },
     assertAcceptable(status, details) {
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
-        if (unfinishedReasonBounces < UNFINISHED_REASON_BOUNCE_LIMIT) {
+        if (unfinishedReasonBounces < unfinishedReasonBounceLimit) {
           unfinishedReasonBounces += 1;
           throw new WorkerUnfinishedReasonReminderError();
         }
