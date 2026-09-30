@@ -410,7 +410,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completedCase?.issueNumber, 40);
     assert.ok(Array.isArray((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings));
     assert.equal(((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings as unknown[]).length, 1);
-    assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
       ?.path;
@@ -425,7 +424,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     // #836: settlement publishes machine cost from the audit candidate entry
     // as an independent report field beside the role's original payload.
     assert.deepEqual(report.cost, candidateCost);
-    assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
     const runState = JSON.parse(

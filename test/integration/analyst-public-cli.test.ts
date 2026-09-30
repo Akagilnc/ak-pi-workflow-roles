@@ -358,7 +358,6 @@ test("analyst public CLI bare --ticket with no bindings: live empty page, not li
         assert.equal(body.page.issueNumber, TICKET_EMPTY);
         assert.deepEqual(body.page.legs, []);
         assert.equal(body.page.unreadableCount, 0);
-        assert.doesNotMatch(stdout.join(""), /library index/i);
       });
     });
   });

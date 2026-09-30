@@ -294,7 +294,12 @@ test("lawful coder Terminal settlement publishes report and evidence", async () 
     assert.equal(terminal.runId, "run-coder-settle-001");
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
-    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
+    // The report carries the original receipt as a structured field; raw file
+    // text would only agree by accident of JSON escaping.
+    const reportBody = JSON.parse(await readFile(report.path, "utf8")) as {
+      outcome?: { payloads?: unknown };
+    };
+    assert.deepEqual(reportBody.outcome?.payloads, [receipt]);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
 
   });

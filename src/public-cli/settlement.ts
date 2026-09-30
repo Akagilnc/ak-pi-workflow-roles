@@ -1208,8 +1208,12 @@ function resolutionOf(
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
   } = { settled: false },
-  /** Whether the failure came from this attempt's session rather than the sidecar alone. */
-  knownFailureFromCurrentAttempt = true,
+  /**
+   * Whether the failure is this attempt's own fact, stated by the source that
+   * produced it. No default on purpose: an unproven source must never inherit
+   * current-failure priority by omission.
+   */
+  knownFailureFromCurrentAttempt: boolean,
 ): AuditedRunnerFailureResolution {
   return {
     ...(knownFailure === undefined ? {} : { knownFailure }),
@@ -1227,7 +1231,8 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   /** Optional run directory for typed provider HTTP observation (resume/429). */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
-  if (input.runner !== undefined) return resolutionOf(input.runner);
+  // The host declared this failure for this very turn.
+  if (input.runner !== undefined) return resolutionOf(input.runner, { settled: false }, true);
   // Bound auditor compliance-failure retention outranks a parent failure that the
   // auditor path itself caused (retention EISDIR race). A typed terminating-tool
   // host failure is next — it outranks weaker auditor provider-stop fallback so
@@ -1237,21 +1242,25 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   try {
     ({ volumes, parentEntries } = await loadBoundAuditorVolumes(input.sessionFile));
     const auditorCompliance = volumes === undefined ? undefined : complianceFailureFromAuditorVolumes(volumes);
-    if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
+    // A bound auditor volume is retained history, deliberately not expired
+    // across attempts (#858). Relaying it is correct; presenting it as THIS
+    // turn's failure is not.
+    if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance, { settled: false }, false);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return resolutionOf({
       cause: "session",
       identity: thrownIdentity(failure),
       diagnostic: failure.message || failure.name,
-    });
+    }, { settled: false }, true);
   }
   if (parentEntries !== undefined) {
     const terminatingFailure = typedFailedTerminatingToolKnownFailure(parentEntries);
-    if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
+    if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure, { settled: false }, true);
   }
   const auditorStop = volumes === undefined ? undefined : providerStopFallbackFromAuditorVolumes(volumes);
-  if (auditorStop !== undefined) return resolutionOf(auditorStop);
+  // Retained auditor provider-stop, same as the compliance tier above.
+  if (auditorStop !== undefined) return resolutionOf(auditorStop, { settled: false }, false);
   // Parent session provider-stop is next; credential is last.
   const parentStop = await readSessionProviderStop(input.sessionFile, parentEntries ?? []);
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
@@ -1269,6 +1278,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
           diagnostic: failure.message || failure.name,
         },
         { settled: true },
+        true,
       );
     }
   }
@@ -1278,8 +1288,8 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   };
   if (parentStop === undefined) {
     // A caller-declared credential failure is this invocation's own fact.
-    if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp);
-    if (httpObservation === undefined) return resolutionOf(undefined, typedHttp);
+    if (input.credential !== undefined) return resolutionOf(input.credential, typedHttp, true);
+    if (httpObservation === undefined) return resolutionOf(undefined, typedHttp, false);
     // Project the HTTP observation's status + provider/source association.
     // The observation is run-level, so a lawful terminal may already cover it.
     return resolutionOf(
@@ -1298,13 +1308,15 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       ...(httpObservation === undefined
         ? {}
         : {
-          httpStatus: httpObservation.httpStatus,
-          // Observation association outranks session-configured provider name alone.
-          provider: httpObservation.provider,
+        httpStatus: httpObservation.httpStatus,
+        // Observation association outranks session-configured provider name alone.
+        provider: httpObservation.provider,
         }),
-    }),
-    typedHttp,
-  );
+        }),
+        typedHttp,
+        // The parent session's own stop, scoped to this attempt.
+        true,
+        );
 }
 
 /**

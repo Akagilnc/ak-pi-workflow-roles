@@ -244,7 +244,10 @@ test("lawful fixer Terminal accepts a receipt without Skill expansion", async ()
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
-    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
+    const reportBody = JSON.parse(await readFile(report.path, "utf8")) as {
+      outcome?: { payloads?: unknown };
+    };
+    assert.deepEqual(reportBody.outcome?.payloads, [receipt]);
 
     // Without skill expansion, terminal settlement remains accepted.
     const noDiag = await admitFixerInvocation({
