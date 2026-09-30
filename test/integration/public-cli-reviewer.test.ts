@@ -210,8 +210,29 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       ],
     },
   );
-  assert.throws(() => parsePublicSeatArgv("reviewer", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "", "task"]), isUsage);
+  // Each negative below carries every other reviewer precondition, so only the
+  // targeted rule can reject it — a missing --base/--authority-ref would mask
+  // a regression in the rule actually under test.
+  assert.throws(
+    () => parsePublicSeatArgv("reviewer", [
+      "--unknown-flag",
+      "--base",
+      "main",
+      "--authority-ref",
+      "CLAUDE.md",
+    ]),
+    isUsage,
+  );
+  assert.throws(
+    () => parsePublicSeatArgv("reviewer", [
+      "--base",
+      "",
+      "--authority-ref",
+      "CLAUDE.md",
+      "task",
+    ]),
+    isUsage,
+  );
   // Whitespace-bearing --base smuggles Skill flags; single-token only (same rule as authority-ref).
   assert.throws(
     () =>
@@ -250,9 +271,41 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       ]),
     isUsage,
   );
-  assert.throws(() => parsePublicSeatArgv("reviewer", ["--project", "", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach", "spec.md", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach=spec.md", "task"]), isUsage);
+  assert.throws(
+    () => parsePublicSeatArgv("reviewer", [
+      "--project",
+      "",
+      "--base",
+      "main",
+      "--authority-ref",
+      "CLAUDE.md",
+      "task",
+    ]),
+    isUsage,
+  );
+  assert.throws(
+    () => parsePublicSeatArgv("reviewer", [
+      "--attach",
+      "spec.md",
+      "--base",
+      "main",
+      "--authority-ref",
+      "CLAUDE.md",
+      "task",
+    ]),
+    isUsage,
+  );
+  assert.throws(
+    () => parsePublicSeatArgv("reviewer", [
+      "--attach=spec.md",
+      "--base",
+      "main",
+      "--authority-ref",
+      "CLAUDE.md",
+      "task",
+    ]),
+    isUsage,
+  );
   assert.throws(
     () =>
       parsePublicSeatArgv("reviewer", [

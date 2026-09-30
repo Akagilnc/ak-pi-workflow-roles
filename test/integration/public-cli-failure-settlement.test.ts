@@ -48,8 +48,10 @@ test("malformed CLI structure and empty --project= reject structurally before ad
     },
     {
       // Empty project must not resolve("") → cwd and complete admission/dispatch.
+      // --model is supplied so the structural reject cannot be attributed to the
+      // unrelated "seat has no model configured" refusal.
       label: "empty --project=",
-      args: () => ["judge", "--project=", "task"],
+      args: () => ["judge", "--model", "test/caller-seat:high", "--project=", "task"],
     },
   ] as const;
   for (const row of rows) {

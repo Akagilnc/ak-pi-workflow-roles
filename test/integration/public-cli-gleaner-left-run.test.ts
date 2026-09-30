@@ -47,10 +47,12 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    // Each negative carries the other gleaner-left precondition, so the
+    // targeted rule is the only one that can reject it.
     assert.throws(() => parsePublicSeatArgv("gleaner-left", []), (error: unknown) => {
       return error instanceof CliUsageError;
     });
-    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus"]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus", "--base", "HEAD"]), (error: unknown) => {
       return error instanceof CliUsageError;
     });
 

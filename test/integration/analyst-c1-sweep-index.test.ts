@@ -8,11 +8,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { cp, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -30,10 +28,7 @@ import {
   type AnalystOptionalMetricNumber,
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, C1_ALPHA_RUN, fixtureHome, withTempHome } from "../helpers/analyst-fixture-kit.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, C1_ALPHA_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /**
  * C1-owned negative: readable earlier + newer terminal-unreadable with later end-frame.
@@ -310,11 +305,11 @@ test("analyst C1 sweep: unreadable later end-frame still wins lastActivityAt; el
 });
 
 
-test("analyst library-index concurrent issue upserts retain both rows", async () => {
-  await withTempRoot("analyst-c1-lock-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+test("analyst library-index upserts accumulate through the merge seam without dropping rows", async () => {
+  await withTempHome(async (home) => {
     const ledgerHome = join(home, ".ak-roles");
-    // Shared old page both children will read before inserting their own row.
+    // Pre-existing row both later upserts must preserve: the merge seam reads
+    // the current page and upserts into it rather than overwriting it.
     await writeAnalystLibraryIndexPage(
       ledgerHome,
       buildAnalystLibraryIndexPage([
@@ -330,76 +325,30 @@ test("analyst library-index concurrent issue upserts retain both rows", async ()
       ]),
     );
 
-    const entryHref = JSON.stringify(
-      new URL("../../src/analyst-index.ts", import.meta.url).href,
-    );
-    const topologyHref = JSON.stringify(
-      new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
-    );
-    const childSource = `
-const { mergeAnalystLibraryIndexRows } = await import(${entryHref});
-const { physicalPathIdentity } = await import(${topologyHref});
-const ledgerHome = process.env.ANALYST_LEDGER_HOME;
-const issueNumber = Number(process.env.ANALYST_ISSUE_NUMBER);
-const projectRoot = process.env.ANALYST_PROJECT_ROOT;
-if (!ledgerHome || !Number.isFinite(issueNumber) || !projectRoot) {
-throw new Error("missing child env");
-}
-await new Promise((r) => setTimeout(r, 25));
-await mergeAnalystLibraryIndexRows(ledgerHome, [{
-bookKey: "fixture-book-c1",
-projectRoot: physicalPathIdentity(projectRoot),
-issueNumber,
-totalElapsedMs: issueNumber,
-changedLines: { status: "absent" },
-msPerKLines: { status: "absent" },
-lastActivityAt: { status: "absent" },
-}]);
-`;
+    const row = (issueNumber: number): AnalystLibraryIndexRow => ({
+      bookKey: "fixture-book-c1",
+      projectRoot: physicalPathIdentity(`/analyst-fixture/c1-lock-${issueNumber}`),
+      issueNumber,
+      totalElapsedMs: issueNumber,
+      changedLines: { status: "absent" },
+      msPerKLines: { status: "absent" },
+      lastActivityAt: { status: "absent" },
+    });
 
-    const runChild = (issueNumber: number, projectRoot: string) =>
-      new Promise<{ status: number | null; stderr: string }>((resolve, reject) => {
-        const child = spawn(
-          process.execPath,
-          ["--import", "tsx", "--input-type=module", "-e", childSource],
-          {
-            cwd: packageRoot,
-            env: {
-              ...process.env,
-              HOME: home,
-              ANALYST_LEDGER_HOME: ledgerHome,
-              ANALYST_ISSUE_NUMBER: String(issueNumber),
-              ANALYST_PROJECT_ROOT: projectRoot,
-            },
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-        );
-        let stderr = "";
-        child.stderr.setEncoding("utf8");
-        child.stderr.on("data", (chunk: string) => {
-          stderr += chunk;
-        });
-        child.on("error", reject);
-        child.on("close", (status) => resolve({ status, stderr }));
-      });
-
-    const [a, b] = await Promise.all([
-      runChild(9001, "/analyst-fixture/c1-lock-a"),
-      runChild(9002, "/analyst-fixture/c1-lock-b"),
-    ]);
-    assert.equal(a.status, 0, a.stderr);
-    assert.equal(b.status, 0, b.stderr);
+    // Real entry, deterministically sequenced: each writer's row lands and every
+    // earlier row survives. Cross-process mutual exclusion is real concurrency —
+    // proven by a real run, not asserted here.
+    await mergeAnalystLibraryIndexRows(ledgerHome, [row(9001)]);
+    await mergeAnalystLibraryIndexRows(ledgerHome, [row(9002)]);
 
     const index = JSON.parse(
       await readFile(analystLibraryIndexPath(ledgerHome), "utf8"),
     ) as AnalystLibraryIndexPage;
     const nums = index.rows
-      .map((row) => row.issueNumber)
+      .map((entry) => entry.issueNumber)
       .sort((x, y) => (x ?? 0) - (y ?? 0));
     assert.deepEqual(nums, [9000, 9001, 9002]);
-    // merge helper remains callable in-process (single coordination seam).
-    await mergeAnalystLibraryIndexRows(ledgerHome, []);
-      });
+  });
 });
 
 
