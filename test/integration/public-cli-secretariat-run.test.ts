@@ -859,35 +859,6 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
   });
 });
 
-/** Distinct court attempt ids from ledger subject.attemptId (not row count). */
-async function distinctCourtAttemptIds(input: {
-  cwd: string;
-  home: string;
-  runId: string;
-  runDirectory: string;
-}): Promise<Set<string>> {
-  const sessionParent = join(input.runDirectory, "session", "session.jsonl");
-  const ptr = resolveSitianRecordPathInLedger(
-    {
-      level: "event",
-      kind: "candidate",
-      subject: { runId: input.runId },
-      cwd: input.cwd,
-      sessionParent,
-    },
-    resolveActivationLedgerHome(input.home),
-  );
-  const { records } = await readSitianRecords(ptr.recordFile);
-  const ids = new Set<string>();
-  for (const record of records) {
-    const subject = record.subject as { attemptId?: unknown } | undefined;
-    if (typeof subject?.attemptId === "string" && subject.attemptId.length > 0) {
-      ids.add(subject.attemptId);
-    }
-  }
-  return ids;
-}
-
 /**
  * #969 shortest adapter convergence boundary.
  * Real headless (codex/claude) / ACP (grok-build) adapter → public-entry

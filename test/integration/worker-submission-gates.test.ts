@@ -10,14 +10,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -43,7 +42,6 @@ import {
   WORKER_COMMIT_BASELINE_ENTRY_TYPE,
   WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
   WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
-  WORKER_SUBMISSION_GATE_RECORD_KIND,
 } from "../../src/worker-submission-gates.ts";
 import {
   machineLedgerHome,
@@ -141,15 +139,6 @@ function armThenCommit(cwd: string, home: string, message: string) {
   gate.arm(cwd, durableParent(home, cwd));
   git(cwd, ["commit", "--allow-empty", "-m", message]);
   return gate;
-}
-
-function soleGateRecordPath(parentOrNest: SessionManager | string): string {
-  const nest = typeof parentOrNest === "string"
-    ? parentOrNest
-    : join(dirname(parentOrNest.getSessionFile()!), WORKER_SUBMISSION_GATE_RECORD_KIND);
-  const files = readdirSync(nest).filter((n) => n.endsWith(".jsonl"));
-  assert.equal(files.length, 1);
-  return join(nest, files[0]!);
 }
 
 test("unfinished reason gate bounces missing reason up to twice then accepts; reasoned unfinished free; other statuses unchanged", () => {

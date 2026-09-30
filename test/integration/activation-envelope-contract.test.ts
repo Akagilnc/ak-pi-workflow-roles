@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -25,7 +24,6 @@ import {
 } from "../../src/role-runtime.ts";
 import { type ActivationTraceRecord } from "../../src/activation-trace.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { TERMINATING_TOOL_NAMES } from "../../src/package-contracts/terminating-tools.ts";
 import {
@@ -41,136 +39,8 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
-function sha256Hex(bytes: Uint8Array | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-function mergerMaterial(text: string) {
-  const bytes = Buffer.from(text, "utf8");
-  return { bytesBase64: bytes.toString("base64"), sha256: sha256Hex(bytes) };
-}
-const emptyDoctorCost = {
-  invocations: { count: 0, sources: [] as string[] },
-  legs: { count: 0, sources: [] as string[] },
-  modelApiTurns: { count: 0, sources: [] as string[] },
-  outputTokens: { count: 0, sources: [] as string[] },
-  toolCalls: { count: 0, sources: [] as string[] },
-  retries: { count: 0, sources: [] as string[], evidence: "literal run-dir naming" as const },
-  statuses: [] as Array<{ source: string; status: string }>,
-  commits: [] as Array<{ source: string; commit: string }>,
-  sessions: [] as Array<{ source: string; completion: "incomplete" }>,
-  outputBytes: {
-    count: 0,
-    sources: [] as string[],
-    payload: "raw JSONL bytes" as const,
-    providerWireBytes: "unavailable" as const,
-  },
-};
-
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
-
-/** Role load stubs already owned by production RoleRuntimeDependencies — not ledger hooks. */
-function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typeof createRoleRuntimeExtension>[0] {
-  const law = async () => "LAW";
-  const oid = (ch: string) => ch.repeat(40);
-  const base = {
-    loadRoleSoul: law,
-    activationClock: () => "2025-06-01T12:00:00.000Z",
-    activationTraceWriter: () => {},
-  };
-  switch (role) {
-    case "judge":
-      return base;
-    case "fixer":
-      return { ...base, loadFixPacket: async () => "Repair the findings.\n" };
-    case "coder":
-      return { ...base, loadCoderTask: async () => "Build it.\n" };
-    case "reviewer":
-      return base;
-    case "collector":
-      return base;
-    case "doctor":
-      return {
-        ...base,
-        loadDoctorCase: async () => ({
-          version: 1 as const,
-          identity: { issueNumber: 1, runsPath: "/lawful/case" },
-          cost: emptyDoctorCost,
-          evidence: [],
-        }),
-      };
-    case "merger": {
-      const mergerInput = {
-        attemptId: "attempt-1",
-        targetObjectId: oid("a"),
-        sourceObjectId: oid("b"),
-        expectedConflictPaths: ["conflict.txt"],
-        resolutionScope: ["conflict.txt"],
-        authorizedChecks: [{ name: "test", argv: ["npm", "test"] }],
-        materials: {
-          task: mergerMaterial("task"),
-          authority: mergerMaterial("authority"),
-          targetIntent: mergerMaterial("target intent"),
-          sourceIntent: mergerMaterial("source intent"),
-        },
-      };
-      return {
-        ...base,
-        loadMergerInput: async () => mergerInput,
-      };
-    }
-    case "notary":
-      return {
-        ...base,
-        loadNotarySourceRun: async (path: string) => ({
-          runDirectory: path,
-          runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
-          role: "judge",
-        }),
-      };
-    case "countersign":
-    case "secretariat":
-    case "gleaner-left":
-    case "inspector":
-    case "gatekeeper":
-    case "navigator":
-      return base;
-    default:
-      throw new Error(`unexpected packaged role: ${role}`);
-  }
-}
-
-function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string, unknown> {
-  switch (role) {
-    case "judge":
-      return {};
-    case "fixer":
-      return { "ak-fixer-phase": "plan", "ak-fix-packet": "/lawful/packet.md" };
-    case "coder":
-      return { "ak-coder-phase": "plan", "ak-coder-task": "/lawful/task.md" };
-    case "reviewer":
-      return {
-        "ak-review-base": "main~1",
-        "ak-review-lens": "completeness",
-        "ak-review-authority-refs": JSON.stringify(["CLAUDE.md"]),
-      };
-    case "collector":
-      return {
-        "ak-collector-repo": "acme/widgets",
-        "ak-collector-pr": "1",
-      };
-    case "doctor":
-      return { "ak-doctor-case": "/lawful/case" };
-    case "merger":
-      return { "ak-merger-input": "/lawful/merger.json" };
-    case "notary":
-      return { "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge" };
-    case "gleaner-left":
-      return { "ak-gleaner-left-base": "HEAD" };
-    default:
-      return {};
-  }
-}
 
 test("book key follows git common-dir host basename across worktrees, rename, and basename collision", async () => {
   return await withTempRoot("ak-book-topo-", async (root) => {

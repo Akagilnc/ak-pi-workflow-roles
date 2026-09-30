@@ -58,8 +58,6 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 
 const DOCTOR_ISSUE_NUMBER = 5;
 
-const DOCTOR_ISSUE = { issueNumber: DOCTOR_ISSUE_NUMBER } as const;
-
 type SeatTracerSpec = {
   readonly role: TerminalRoleName;
   readonly outputTool: string;

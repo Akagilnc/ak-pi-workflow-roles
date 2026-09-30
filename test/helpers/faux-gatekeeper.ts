@@ -1,31 +1,5 @@
 import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 
-export function fauxGatekeeper(
-  calls: Array<{ tool?: string; args?: JsonObject | undefined; text?: string }>,
-  seen: string[],
-) {
-  return async (context: any) => {
-    if (context?.systemPrompt) seen.push(context.systemPrompt);
-    const next = calls.shift();
-    if (!next) throw new Error("unexpected child turn");
-    if (next.text !== undefined) return fauxAssistantMessage(next.text);
-    // Missing args: emit a toolCall with empty arguments. The real provider
-    // stream cannot serialize `undefined` arguments (it would crash), and the
-    // OpenAI round-trip collapses it to `{}` anyway; the gatekeeper maps an
-    // empty-object decision to the typed missing-args fact.
-    if (next.args === undefined) {
-      return fauxAssistantMessage(
-        { type: "toolCall", id: `call-${seen.length}`, name: next.tool!, arguments: {} },
-        { stopReason: "toolUse" },
-      );
-    }
-    return fauxAssistantMessage(
-      fauxToolCall(next.tool!, next.args, { id: `call-${seen.length}` }),
-      { stopReason: "toolUse" },
-    );
-  };
-}
-
 /**
  * Shared modelRegistry surface for scripted Gatekeeper provider fixtures.
  * Province resolve (#453) may read host public-cli seat selection and call `find`;

@@ -8,7 +8,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  realpath,
   rm,
   symlink,
   writeFile,
@@ -215,12 +214,6 @@ export interface RawPackageManifest {
 
 /** Explicit Internal role entrypoint (not auto-registered; ADR 0052 / #105). */
 export const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = PACKAGE_INTERNAL_ROLE_ENTRYPOINT;
-
-export async function loadRawPackageManifest(): Promise<RawPackageManifest> {
-  return JSON.parse(
-    await readFile(resolve(packageRoot, "package.json"), "utf8"),
-  ) as RawPackageManifest;
-}
 
 /**
  * Resolve the Internal role entrypoint for explicit `-e` load.
@@ -802,39 +795,4 @@ export async function seedAgentDirModelsJsonFromFaux(
     }
     throw error;
   }
-}
-
-export async function withAgentDirProviderFixture<T>(
-  faux: ReturnType<typeof fauxProvider>,
-  agentDir: string,
-  run: () => Promise<T>,
-): Promise<T> {
-  const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-  return withPrimaryAwareCleanup(
-    () => run(),
-    async () => {
-      await seeded.close();
-    },
-  );
-}
-
-export async function writeTestSkill(
-  home: string,
-  name: "ak-cross-m-review" | "tdd",
-): Promise<{ path: string; raw: string }> {
-  const skillDirectory = resolve(home, ".agents", "skills", name);
-  const skillPath = resolve(skillDirectory, "SKILL.md");
-  const raw = [
-    "---",
-    `name: ${name}`,
-    `description: Hermetic ${name} test method`,
-    "---",
-    "",
-    `# Hermetic ${name} method`,
-    "",
-    "Follow the test fixture's requested method.",
-  ].join("\n");
-  await mkdir(skillDirectory, { recursive: true });
-  await writeFile(skillPath, raw);
-  return { path: await realpath(skillPath), raw };
 }

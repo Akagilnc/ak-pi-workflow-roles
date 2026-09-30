@@ -60,19 +60,6 @@ function request(
   };
 }
 
-async function waitFor(path: string, timeoutMs = 5000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    try {
-      await access(path);
-      return;
-    } catch {
-      if (Date.now() - start > timeoutMs) throw new Error(`timeout waiting for ${path}`);
-      await new Promise((r) => setTimeout(r, 20));
-    }
-  }
-}
-
 test("headless host records pointer and copies native dossier post-exit (ADR 0086)", async () => {
   const ledger = createTempPackageHomeLedger({
     prefix: "ak-0086-headless-copy-",

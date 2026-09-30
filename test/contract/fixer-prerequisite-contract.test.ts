@@ -41,13 +41,6 @@ const applyRefusal = {
   }],
 };
 
-function mutableInput(): FixerInvocationInput {
-  return {
-    instructions: "Repair exactly what is assigned.",
-    prerequisites: [{ id: "owner.choice-1", requirement: "Owner selects the contract." }],
-  };
-}
-
 function captureValidationError(source: string): FixerPacketValidationError {
   let caught: unknown;
   try {
