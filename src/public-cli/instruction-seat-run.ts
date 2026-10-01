@@ -265,19 +265,11 @@ async function reaskUnreadablePostSubmissionStatus(
   if (message === undefined) return undefined;
   const next = withUnreadableReask(env);
   if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
-  const held: string[] = [];
-  const resumed = await runPublicInstructionSeatResume(
+  return runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
     next,
-    { stdout: (value) => held.push(value), stderr: io.stderr },
+    io,
   );
-  if (resumed.exitCode === 0 && resumed.terminal?.roleOutcome.kind === "no_receipt"
-    && terminal !== undefined && resumed.terminal.runId === terminal.runId) {
-    const original = presentUnsettledAudit(terminal, undefined, io);
-    return { ...resumed, terminal: original };
-  }
-  for (const value of held) io.stdout(value);
-  return resumed;
 }
 
 function roleRecord(role: PackagedRole) {
@@ -966,7 +958,27 @@ export async function runPublicInstructionSeatResume(
     },
     afterAdmittedLoad: async (admitted) => {
       await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
-      return { kind: "continue" as const, adapters: seatAdapters(admitted, env) };
+      const adapters = seatAdapters(admitted, env);
+      if ((env.unreadableReasksSpent ?? 0) === 0 && env.reviewReask === undefined) {
+        return { kind: "continue" as const, adapters };
+      }
+      const original = await adapters.trySettle(
+        admitted, env.principalAuthority, await readCurrentCourt(admitted.runDirectory),
+      );
+      const unsettled = POST_SUBMISSION_ROUTING[admitted.role] === undefined
+        ? heldUnreadableTerminal(original)
+        : unreadablePostSubmissionStatus(admitted, original) !== undefined;
+      // Select this reask's existing subject before dispatch. The common
+      // settlement then keeps it only when no fresh receipt supersedes it;
+      // actual failures still take their normal failure path.
+      return {
+        kind: "continue" as const,
+        adapters: original === undefined || !unsettled ? adapters : {
+          ...adapters,
+          trySettle: async (seat, authority, scope) =>
+            await adapters.trySettle(seat, authority, scope) ?? original,
+        },
+      };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
@@ -1272,8 +1284,7 @@ async function auditSubmittedRole(
               ...(summoned.runDirectory === undefined ? {} : { runDirectory: summoned.runDirectory }),
             });
           }
-          if (summoned.exitCode !== 0 || summoned.terminal?.roleOutcome.kind !== "no_receipt"
-            || lastSummon?.terminal?.roleOutcome.kind !== "accepted") lastSummon = summoned;
+          lastSummon = summoned;
           return summoned;
         },
       });

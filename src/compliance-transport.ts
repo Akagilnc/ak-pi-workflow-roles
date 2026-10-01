@@ -229,18 +229,16 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     });
   let reask: string | undefined;
   let reasksSpent = 0;
-  let received: ComplianceReceived | undefined;
   const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   for (;;) {
     const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
-      received = decision;
       if (reasksSpent >= reaskLimit) return decision;
       reasksSpent += 1;
       reask = officerConclusionReask(receivedDiscriminator(decision.reply, "status"));
       continue;
     }
-    return decision.status === "no-receipt" && received !== undefined ? received : decision;
+    return decision;
   }
 }

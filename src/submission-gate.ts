@@ -168,7 +168,6 @@ export async function requireSubmissionGate(options: {
 }): Promise<SubmissionGateOutcome | void> {
   let reask: string | undefined;
   let reasksSpent = 0;
-  let unsettled: SubmissionGateOutcome | undefined;
   const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   const summonOfficer =
     options.summonOfficer ??
@@ -220,22 +219,23 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      unsettled = {
-        status: "needs_reask",
-        officer: projected.officer,
-        receipt: gatekeeper.receipt,
-        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-          ? { runId: gatekeeper.runId }
-          : {}),
-        ...(typeof projected.summoned?.runDirectory === "string"
-          && projected.summoned.runDirectory.trim() !== ""
-          ? { runDirectory: projected.summoned.runDirectory }
-          : {}),
-        ...(projected.summoned?.terminal === undefined
-          ? {}
-          : { terminal: projected.summoned.terminal }),
-      };
-      if (reasksSpent >= reaskLimit) return unsettled;
+      if (reasksSpent >= reaskLimit) {
+        return {
+          status: "needs_reask",
+          officer: projected.officer,
+          receipt: gatekeeper.receipt,
+          ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+            ? { runId: gatekeeper.runId }
+            : {}),
+          ...(typeof projected.summoned?.runDirectory === "string"
+            && projected.summoned.runDirectory.trim() !== ""
+            ? { runDirectory: projected.summoned.runDirectory }
+            : {}),
+          ...(projected.summoned?.terminal === undefined
+            ? {}
+            : { terminal: projected.summoned.terminal }),
+        };
+      }
       reasksSpent += 1;
       reask = officerConclusionReask(gatekeeper.receivedStatus);
       continue;
@@ -261,7 +261,6 @@ export async function requireSubmissionGate(options: {
           : {}),
       };
     }
-    if (gatekeeper.status === "no_receipt" && unsettled !== undefined) return unsettled;
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary
     // nonterminal tool result above, not an exception or correctable rejection.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
