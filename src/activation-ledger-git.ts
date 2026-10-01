@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 
+import { errnoCode } from "./unknown-value.ts";
+
 /** Git discovery env vars that must not influence book-key resolution from cwd. */
 const GIT_DISCOVERY_ENV_KEYS = [
   "GIT_DIR",
@@ -60,8 +62,7 @@ export class ActivationGitRepositoryRequiredError extends Error {
 
 /** Spawn/OS failure identity for the git child — not a repository-status result. */
 function isGitSpawnInfrastructureError(error: unknown): boolean {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = (error as { code: unknown }).code;
+  const code = errnoCode(error);
   return code === "ENOENT" || code === "EACCES" || code === "EPERM";
 }
 

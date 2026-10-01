@@ -25,7 +25,6 @@ import {
 import {
   findPlacedMigratingRun,
   isFlatRunsRelative,
-  isMigrationEnoent,
   isTicketNumberString,
   listBackupRunLeaves,
   listMigrationBookKeys,
@@ -38,6 +37,8 @@ import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
 } from "./role-run-relocation.ts";
+
+import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 
 const AUDITOR_ROLES_PARTITION = "auditor-roles";
 const ISSUES_PARTITION = "issues";
@@ -91,7 +92,7 @@ async function directoryExists(path: string): Promise<boolean> {
     const info = await stat(path);
     return info.isDirectory();
   } catch (error) {
-    if (isMigrationEnoent(error)) return false;
+    if (isEnoent(error)) return false;
     throw error;
   }
 }
@@ -200,7 +201,7 @@ async function readJsonlParentSession(path: string): Promise<string | undefined>
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (isMigrationEnoent(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   const newline = raw.indexOf("\n");
@@ -208,7 +209,7 @@ async function readJsonlParentSession(path: string): Promise<string | undefined>
   if (line.length === 0) return undefined;
   try {
     const header: unknown = JSON.parse(line);
-    if (header === null || typeof header !== "object" || Array.isArray(header)) {
+    if (!isRecord(header)) {
       return undefined;
     }
     const parentSession = (header as { parentSession?: unknown }).parentSession;
@@ -249,13 +250,13 @@ async function findTrueVolumeParent(
   try {
     ledgerRaw = await readFile(join(volumeDirectory, CURRENT_SESSION_LEDGER), "utf8");
   } catch (error) {
-    if (isMigrationEnoent(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   let sessionFileField: string;
   try {
     const ledger: unknown = JSON.parse(ledgerRaw);
-    if (ledger === null || typeof ledger !== "object" || Array.isArray(ledger)) {
+    if (!isRecord(ledger)) {
       return undefined;
     }
     const sessionFile = (ledger as { sessionFile?: unknown }).sessionFile;
@@ -279,7 +280,7 @@ async function findTrueVolumeParent(
     const info = await lstat(liveSession);
     if (!info.isFile()) return undefined;
   } catch (error) {
-    if (isMigrationEnoent(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
 
@@ -394,7 +395,7 @@ async function readSessionFileField(path: string): Promise<string | undefined> {
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (isMigrationEnoent(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   let parsed: unknown;
@@ -403,12 +404,12 @@ async function readSessionFileField(path: string): Promise<string | undefined> {
   } catch (error) {
     throw new Error(
       `book topology migration cannot read current-session pointer at ${path}: invalid JSON (${
-        error instanceof Error ? error.message : String(error)
+        errorText(error)
       })`,
       { cause: error },
     );
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error(
       `book topology migration cannot read current-session pointer at ${path}: expected a JSON object`,
     );
@@ -461,7 +462,7 @@ async function mergeRewrittenCurrentSession(
     srcStat = await stat(srcPath);
     srcRaw = await readFile(srcPath, "utf8");
   } catch (error) {
-    if (isMigrationEnoent(error)) return;
+    if (isEnoent(error)) return;
     throw error;
   }
 
@@ -469,7 +470,7 @@ async function mergeRewrittenCurrentSession(
   let nextSessionFile: string | undefined;
   try {
     const parsed: unknown = JSON.parse(srcRaw);
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (isRecord(parsed)) {
       const record = parsed as Record<string, unknown>;
       if (typeof record.sessionFile === "string") {
         const rewritten = rewritePathIntoDestination(
@@ -491,7 +492,7 @@ async function mergeRewrittenCurrentSession(
   try {
     destStat = await stat(destPath);
   } catch (error) {
-    if (!isMigrationEnoent(error)) throw error;
+    if (!isEnoent(error)) throw error;
   }
   await writeWinningCurrentSession(
     destPath,
@@ -637,7 +638,7 @@ async function copyIssuesNonRunTree(source: string, destination: string): Promis
         `book topology migration refuses to overwrite ${to} with ${from}`,
       );
     } catch (error) {
-      if (!isMigrationEnoent(error)) throw error;
+      if (!isEnoent(error)) throw error;
     }
     await cp(from, to, { preserveTimestamps: true });
   }
@@ -700,7 +701,7 @@ async function unlinkIfPresent(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch (error) {
-    if (!isMigrationEnoent(error)) throw error;
+    if (!isEnoent(error)) throw error;
   }
 }
 

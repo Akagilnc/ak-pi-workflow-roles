@@ -10,7 +10,6 @@ import { basename, dirname, join, relative, sep } from "node:path";
 
 import {
   destinationRunDirectory,
-  isMigrationEnoent,
   isTicketNumberString,
   listBackupRunLeaves,
   listMigrationBookKeys,
@@ -32,6 +31,8 @@ import {
   readBoardTicketNumber,
 } from "./run-ticket-number.ts";
 
+import { isEnoent } from "./unknown-value.ts";
+
 const RUNS_PARTITION = "runs";
 
 type PlannedRunMove = {
@@ -51,7 +52,7 @@ async function pathExists(path: string): Promise<boolean> {
     await stat(path);
     return true;
   } catch (error) {
-    if (isMigrationEnoent(error)) return false;
+    if (isEnoent(error)) return false;
     throw error;
   }
 }
@@ -318,7 +319,7 @@ export async function relocateBoardBoundUnboundRunsInBook(
   try {
     entries = await readdir(unboundRuns, { withFileTypes: true });
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
 

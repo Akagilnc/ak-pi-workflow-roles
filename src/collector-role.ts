@@ -3,8 +3,9 @@
  * #1088: code no longer observes/requests/merges GitHub findings — the LLM
  * uses host CLI tools. Envelope owns host-surface + construction seatbelt.
  */
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
-import type { Static } from "typebox";
+import type { RoleHost, HostContext } from "./host-contracts.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import {
   emptyCollectorManifest,
@@ -17,8 +18,6 @@ import {
 import {
   COLLECTOR_OUTPUT_TOOL,
 } from "./package-contracts/collector-output.ts";
-import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
-
 export { COLLECTOR_OUTPUT_TOOL };
 
 export const COLLECTOR_REQUIRED_TOOLS = [COLLECTOR_OUTPUT_TOOL] as const;
@@ -54,8 +53,6 @@ export const COLLECTOR_TRANSPORT_FLAGS = Object.freeze([
   }),
 ] as const);
 
-const outputSchema = collectorOutputArgsSchema;
-type OutputParams = Static<typeof outputSchema>;
 
 export type CollectorRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -164,28 +161,8 @@ export function createCollectorRoleRuntime(
       if (toolsRegistered) return;
       toolsRegistered = true;
 
-      pi.registerTool({
-        name: COLLECTOR_OUTPUT_TOOL,
-        label: "通进司输出",
-        description: "提交通进司回执。",
-        promptSnippet: "提交通进司回执",
-        parameters: outputSchema,
-        async execute(
-          _toolCallId: string,
-          params: OutputParams,
-          _signal: AbortSignal | undefined,
-          _onUpdate: unknown,
-          _ctx: HostContext,
-        ): Promise<HostToolResult<unknown>> {
-          const activation = getActivation();
-          if (activation === undefined) throw new Error("通进司未激活");
-          // #1088 / #836: record as submitted — runtime does not merge findings.
-          return {
-            content: [],
-            details: params,
-            terminate: true as const,
-          };
-        },
+      registerFiledSubmissionTool(pi, roleSubmissionDeclaration("collector"), {
+        readyError: () => (getActivation() === undefined ? "通进司未激活" : undefined),
       });
     },
   };

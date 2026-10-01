@@ -30,6 +30,8 @@ import {
   navigatorWorkContextFile,
 } from "./navigator-work-base.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
  * first, else a parent session file under .ak-roles. Never context.home / env HOME /
@@ -55,10 +57,6 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
 /** Resume key only — points at a host run principal, never stores advice prose. */
 export const NAVIGATOR_HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
 
-function exactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
   const parsed = parseRunLeaf(basename(runDirectory));
   if (parsed === undefined || parsed.role !== "navigator") return undefined;
@@ -68,10 +66,10 @@ export function runIdFromNavigatorDirectory(runDirectory: string): string | unde
 export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (!exactRecord(entry)) continue;
+    if (!isRecord(entry)) continue;
     if (entry.type === "custom" && entry.customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY) {
       const data = entry.data;
-      if (exactRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
+      if (isRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
         return data.runId.trim();
       }
     }

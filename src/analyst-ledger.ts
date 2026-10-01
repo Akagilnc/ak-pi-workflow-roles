@@ -54,23 +54,9 @@ import {
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
 
+import { isRecord, errorText, isMissingPathError } from "./unknown-value.ts";
+
 export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error
-    && "code" in error
-    && (error.code === "ENOENT" || error.code === "ENOTDIR")
-  );
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** Existing public-cli run-state live phases — not a new state machine. */
 const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);

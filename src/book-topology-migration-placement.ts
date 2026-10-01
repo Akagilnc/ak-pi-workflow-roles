@@ -27,18 +27,7 @@ import {
   readMigrationDerivedTicketNumber,
 } from "./run-ticket-number.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Sole migration ENOENT projection — non-ENOENT must propagate. */
-export function isMigrationEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
+import { isRecord, isEnoent } from "./unknown-value.ts";
 
 /** Book-key directories under a books root; missing root → []. */
 export async function listMigrationBookKeys(
@@ -51,7 +40,7 @@ export async function listMigrationBookKeys(
       .map((entry) => entry.name)
       .sort((a, b) => a.localeCompare(b));
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
 }
@@ -64,7 +53,7 @@ export async function listMigrationDirents(
     const entries = await readdir(directory, { withFileTypes: true });
     return [...entries].sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
 }
@@ -104,7 +93,7 @@ async function readProjectRootFromRun(
         return { projectRoot, sourcePage: page };
       }
     } catch (error) {
-      if (isMigrationEnoent(error)) continue;
+      if (isEnoent(error)) continue;
       throw error;
     }
   }

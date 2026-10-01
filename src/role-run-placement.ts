@@ -7,6 +7,8 @@ import {
 } from "./activation-ledger-topology.ts";
 import { requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
+import { isEnoent } from "./unknown-value.ts";
+
 export type RoleRunSubject =
   | { readonly ticketNumber: number }
   | { readonly unbound: true };
@@ -18,14 +20,6 @@ export type RoleRunPlacement = {
   readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
 };
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /** Writer leaf `<runId>@<role>`. Empty sides stay empty; this is not a validator. */
 export function formatRunLeaf(runId: string, role: string): string {
@@ -95,7 +89,7 @@ export async function listBookRunContainers(bookDir: string): Promise<string[]> 
   try {
     subjects = await readdir(bookDir, { withFileTypes: true });
   } catch (error) {
-    if (isMissingPathError(error)) return containers;
+    if (isEnoent(error)) return containers;
     throw error;
   }
   const names = subjects
@@ -120,7 +114,7 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
     try {
       entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isMissingPathError(error)) continue;
+      if (isEnoent(error)) continue;
       throw error;
     }
     for (const entry of entries) {

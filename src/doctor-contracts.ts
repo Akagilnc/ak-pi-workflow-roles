@@ -3,6 +3,8 @@ import { canonicalJson } from "./canonical-json.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
@@ -85,7 +87,7 @@ export const doctorSubmissionSchema = withTerminatingOutputDeclarations(
 // consumes extra fields, so a closed object only rejects the role for saying more.
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "待读留存证据标识" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "起始字节偏移（从 0 计）" })), limit: Type.Optional(Type.Integer({ minimum: 1, description: "返回字节数（无上限）" })) }, { additionalProperties: true });
 export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+
 function read(value: unknown, key: string): unknown { if (!isRecord(value)) return undefined; try { return value[key]; } catch { return undefined; } }
 export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
   return value as DoctorSubmission;

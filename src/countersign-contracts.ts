@@ -6,6 +6,7 @@
  */
 
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const COUNTERSIGN_OUTPUT_TOOL_NAME = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -25,7 +26,7 @@ export type CountersignVerdict =
   };
 
 export function validateRecordedCountersignOutput(verdict: unknown): CountersignVerdict {
-  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) {
+  if (!isRecord(verdict)) {
     throw new Error("Countersign verdict has no execution discriminator");
   }
   let status: unknown;

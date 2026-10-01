@@ -11,6 +11,8 @@ import type {
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
@@ -103,7 +105,7 @@ export function withExternalHostCleanupFailure(
   cleanupError: unknown,
   name: string,
 ): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  const message = errorText(cleanupError);
   if (outcome.knownFailure === undefined) {
     return externalHostFailure("session", name, "dispose-failed", { cleanupError: message }, message);
   }

@@ -32,6 +32,8 @@ import {
   type RecordPointer,
 } from "./sitian-facade.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 /** Sitian event kind for one detour-tool call (volume under session/). */
 export const ENGINE_DETOUR_CALL_KIND = "engine-detour-call" as const;
 
@@ -158,10 +160,6 @@ export function reportEngineDetourCall(
       : { stdoutByteLength: input.stdoutByteLength }),
     recordPointer: pointer,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function callFactFromSitianPayload(

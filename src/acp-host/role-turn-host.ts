@@ -27,6 +27,8 @@ import {
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 /**
  * #959: collect free-form agent text from ACP session/update stream.
  * Used only when the navigator seat spoke prose without calling the output tool.
@@ -42,7 +44,7 @@ function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | 
   let textFallback: unknown;
 
   const nested = params.update;
-  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+  if (isRecord(nested)) {
     const record = nested as Record<string, unknown>;
     kind = record.sessionUpdate;
     content = record.content;
@@ -55,7 +57,7 @@ function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | 
 
   if (kind !== "agent_message_chunk" && kind !== "agent_message") return undefined;
   if (typeof content === "string" && content.length > 0) return content;
-  if (typeof content === "object" && content !== null && !Array.isArray(content)) {
+  if (isRecord(content)) {
     const record = content as Record<string, unknown>;
     if (typeof record.text === "string" && record.text.length > 0) return record.text;
   }

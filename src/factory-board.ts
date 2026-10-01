@@ -41,6 +41,7 @@ import {
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
 
+import { isRecord } from "./unknown-value.ts";
 
 /** Unaccepted latest-run mtime bands (page-visible thresholds). */
 export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
@@ -306,10 +307,6 @@ function currentStateLabel(state: TicketCurrentState): string {
     case "escalate-awaiting":
       return "escalate 待裁";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function escapeHtml(text: string): string {

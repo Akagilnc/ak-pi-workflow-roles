@@ -6,6 +6,8 @@
  */
 import type { HostIdentityDescription } from "../host-descriptions.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 /** Claude Code print-mode (#645). */
 export type ClaudePrintHostDescription = HostIdentityDescription & Readonly<{
   protocol: "claude-print";
@@ -167,7 +169,7 @@ export function closeJsonSchemaForCodex(
   schema: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
   const closed = closeSchemaNode(schema) as Record<string, unknown>;
-  const existingDefs = isPlainObject(closed.$defs)
+  const existingDefs = isRecord(closed.$defs)
     ? (closed.$defs as Record<string, unknown>)
     : {};
   return {
@@ -179,14 +181,9 @@ export function closeJsonSchemaForCodex(
   };
 }
 
-/** Shared plain-object guard for headless host schema/event reduction. */
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Pure null leaf only — composite type|null is stripped in-leaf, not dropped whole. */
 function isPureNullTypeSchema(value: unknown): boolean {
-  if (!isPlainObject(value)) return false;
+  if (!isRecord(value)) return false;
   if (value.type === "null") return true;
   if (Array.isArray(value.type) && value.type.length > 0 && value.type.every((t) => t === "null")) {
     return true;
@@ -199,7 +196,7 @@ function isPureNullTypeSchema(value: unknown): boolean {
  * Required edges keep the non-null type(s); optional edges re-add null once.
  */
 function stripNullFromLeafType(leaf: unknown): unknown {
-  if (!isPlainObject(leaf) || !Array.isArray(leaf.type)) return leaf;
+  if (!isRecord(leaf) || !Array.isArray(leaf.type)) return leaf;
   const nonNull = leaf.type.filter((t) => t !== "null");
   if (nonNull.length === leaf.type.length) return leaf;
   if (nonNull.length === 0) return { ...leaf, type: "null" };
@@ -213,7 +210,7 @@ function stripNullFromLeafType(leaf: unknown): unknown {
  * lack `type`; strict structured output rejects those intermediate nodes.
  */
 function flattenUnionLeaves(schema: unknown): unknown[] {
-  if (!isPlainObject(schema)) return [schema];
+  if (!isRecord(schema)) return [schema];
   if (Array.isArray(schema.anyOf)) {
     return schema.anyOf.flatMap(flattenUnionLeaves);
   }
@@ -233,7 +230,7 @@ function nonNullLeaves(schema: unknown): unknown[] {
  */
 function closePropertySchema(schema: unknown, optional: boolean): unknown {
   const description =
-    isPlainObject(schema) && typeof schema.description === "string"
+    isRecord(schema) && typeof schema.description === "string"
       ? { description: schema.description }
       : {};
   const leaves = nonNullLeaves(schema).map(closeSchemaNode);
@@ -242,10 +239,10 @@ function closePropertySchema(schema: unknown, optional: boolean): unknown {
     const closed = leaves.length === 1 ? leaves[0] : { anyOf: leaves };
     // Codex strict does not allow sibling keys on $ref; put property guidance
     // on an enclosing schema instead of losing it or weakening the free-JSON ref.
-    if (isPlainObject(closed) && typeof closed.$ref === "string") {
+    if (isRecord(closed) && typeof closed.$ref === "string") {
       return { anyOf: [closed], ...description };
     }
-    return isPlainObject(closed) ? { ...closed, ...description } : closed;
+    return isRecord(closed) ? { ...closed, ...description } : closed;
   }
   return { anyOf: [...leaves, { type: "null" }], ...description };
 }
@@ -258,7 +255,7 @@ function closePropertySchema(schema: unknown, optional: boolean): unknown {
 function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknown> {
   if (schema.type !== undefined) return schema;
   if (typeof schema.$ref === "string") return schema;
-  if (isPlainObject(schema.properties) || schema.additionalProperties !== undefined) {
+  if (isRecord(schema.properties) || schema.additionalProperties !== undefined) {
     return { ...schema, type: "object" };
   }
   if (schema.items !== undefined) {
@@ -287,7 +284,7 @@ function originalRequiredNames(node: Record<string, unknown>): ReadonlySet<strin
 }
 
 function closeSchemaNode(node: unknown): unknown {
-  if (!isPlainObject(node)) return node;
+  if (!isRecord(node)) return node;
 
   // Already a ref (free-JSON leaf or pre-existing) — do not retype.
   if (typeof node.$ref === "string") return node;
@@ -305,13 +302,13 @@ function closeSchemaNode(node: unknown): unknown {
   if (node.items !== undefined) {
     out.items = closeSchemaNode(node.items);
   }
-  if (isPlainObject(node.$defs)) {
+  if (isRecord(node.$defs)) {
     out.$defs = Object.fromEntries(
       Object.entries(node.$defs).map(([key, value]) => [key, closeSchemaNode(value)]),
     );
   }
 
-  const hasProperties = isPlainObject(node.properties);
+  const hasProperties = isRecord(node.properties);
   const isObjectType =
     node.type === "object"
     || (Array.isArray(node.type) && node.type.includes("object"))
@@ -351,10 +348,10 @@ function closeSchemaNode(node: unknown): unknown {
 function stringEnvironment(value: unknown): Record<string, string> | undefined {
   const entries = Array.isArray(value)
     ? value.flatMap((item) => {
-        if (!isPlainObject(item) || typeof item.name !== "string" || typeof item.value !== "string") return [];
+        if (!isRecord(item) || typeof item.name !== "string" || typeof item.value !== "string") return [];
         return [[item.name, item.value] as const];
       })
-    : isPlainObject(value)
+    : isRecord(value)
       ? Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")
       : [];
   return entries.length === 0 ? undefined : Object.fromEntries(entries);

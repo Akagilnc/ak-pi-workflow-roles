@@ -38,6 +38,7 @@ import {
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
 
+import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -88,10 +89,6 @@ const OFFICER_ARG_ALIASES: Readonly<Record<string, "inspector" | "notary">> = {
   notary: "notary",
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isParentAttemptBindingRow(row: LedgerSessionRow): boolean {
   return row.type === "custom" && row.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE;
 }
@@ -102,15 +99,6 @@ function intervalRowsForGateCall(
   callRowIndex: number,
 ): readonly LedgerSessionRow[] {
   return intervalRowsAroundAnchor(rows, callRowIndex, isParentAttemptBindingRow).rows;
-}
-
-/** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */
-function isMissingDirectoryError(error: unknown): boolean {
-  return (
-    error instanceof Error
-    && "code" in error
-    && error.code === "ENOENT"
-  );
 }
 
 function normalizeOfficerArg(raw: unknown): "inspector" | "notary" | undefined {
@@ -438,7 +426,7 @@ async function resolveOfficerSessionFromPointerFile(
     raw = JSON.parse(await readFile(pointerPath, "utf8"));
   } catch (error) {
     throw new Error(
-      `direct officer run pointer unreadable in ${pointerPath}: ${error instanceof Error ? error.message : String(error)}`,
+      `direct officer run pointer unreadable in ${pointerPath}: ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -490,7 +478,7 @@ export async function readAnalystGateCyclesFromAuditorRoles(
         .map((e) => e.name)
         .sort();
     } catch (error) {
-      if (isMissingDirectoryError(error)) continue;
+      if (isEnoent(error)) continue;
       throw error;
     }
     for (const name of names) {

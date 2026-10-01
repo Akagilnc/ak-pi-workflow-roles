@@ -52,6 +52,7 @@ import {
 } from "./package-contracts/terminating-tools.ts";
 import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 
+import { isRecord, isMissingPathError } from "./unknown-value.ts";
 
 /** Declared refresh bound for the same viewing surface (seconds). */
 export const DEFAULT_REFRESH_BOUNDARY_SECONDS = 30;
@@ -127,14 +128,6 @@ export type TicketTrajectoryRun = {
 };
 
 type ParsedRun = TicketTrajectoryRun;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
 
 /** realpath when the node exists; lexical path only for recognized absence — never for other errors. */
 async function realpathOrLexicalIfMissing(path: string): Promise<string> {

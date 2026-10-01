@@ -17,7 +17,6 @@ import {
 import {
   bookHistoricalRoots,
   findPlacedMigratingRun,
-  isMigrationEnoent,
   listMigrationBookKeys,
   listMigrationDirents,
   runRefFromBoundPath,
@@ -28,6 +27,8 @@ import {
   sitianVolumeRecordsFile,
 } from "./sitian-appender.ts";
 
+import { isRecord, isEnoent } from "./unknown-value.ts";
+
 const SITIAN_MIXED_VOLUME_PARTITIONS = [
   "attendance",
   "auditor",
@@ -36,10 +37,6 @@ const SITIAN_MIXED_VOLUME_PARTITIONS = [
 ] as const;
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function posixRelative(from: string, to: string): string {
   return relative(from, to).split(sep).join("/");
@@ -103,7 +100,7 @@ async function readRegularBackupFile(path: string): Promise<string | undefined> 
   try {
     info = await lstat(path);
   } catch (error) {
-    if (isMigrationEnoent(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   if (!info.isFile()) {

@@ -1,6 +1,5 @@
 /** Package-owned Judge output leaf — no role registration surface. */
 
-
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
 
 export const JUDGE_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;

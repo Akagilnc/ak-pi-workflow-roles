@@ -1,4 +1,5 @@
 import { parseTicketNumber } from "./run-ticket-number.ts";
+import { isRecord } from "./unknown-value.ts";
 
 /**
  * 起居录（ticket-provenance）typed 形状 —— ADR 0075 / ADR 0081 / #1090。
@@ -62,10 +63,6 @@ export type TicketProvenanceLine = {
   readonly id?: string;
   readonly text: string;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function positiveInteger(value: unknown): number | undefined {
   return parseTicketNumber(value);

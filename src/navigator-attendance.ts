@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -63,6 +62,9 @@ import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
+
+import { sha256Hex } from "./sha256.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
@@ -167,25 +169,21 @@ function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
     : undefined;
 }
 
-function exactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Correlate one rejected prepare call/result inside the just-finished prompt. */
 function rejectedPrepareReason(entries: readonly unknown[], start: number): string | undefined {
   const recent = entries.slice(start);
   const prepareCalls = new Set<string>();
   for (const entry of recent) {
-    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)
       || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
     for (const part of entry.message.content) {
-      if (exactRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME
+      if (isRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME
         && typeof part.id === "string") prepareCalls.add(part.id);
     }
   }
   let reason: string | undefined;
   for (const entry of recent) {
-    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)
       || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
     const callId = entry.message.toolCallId;
     if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME
@@ -194,7 +192,7 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
     }
     const content = entry.message.content;
     const text = Array.isArray(content)
-      ? content.flatMap((part) => exactRecord(part) && typeof part.text === "string" ? [part.text] : []).join("")
+      ? content.flatMap((part) => isRecord(part) && typeof part.text === "string" ? [part.text] : []).join("")
       : typeof content === "string" ? content : "";
     if (text.trim() !== "") reason = text.trim();
   }
@@ -220,7 +218,7 @@ export function navigatorSubjectKey(
   if (provenance === "placeholder") return subjectRoot;
   const normalized = subject.trim().replace(/\s+/g, " ");
   if (normalized === "") return subjectRoot;
-  return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
+  return `${subjectRoot}#${sha256Hex(normalized).slice(0, 32)}`;
 }
 
 /**
@@ -485,10 +483,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             return undefined;
           }
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
-            if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
+            if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
           });
-          const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : undefined;
+          const nativeMessage = isRecord(nativeFailure) && isRecord(nativeFailure.message) ? nativeFailure.message : undefined;
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit direction advice";

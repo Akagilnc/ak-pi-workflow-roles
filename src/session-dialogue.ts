@@ -1,3 +1,4 @@
+import { isRecord } from "./unknown-value.ts";
 /**
  * 对话事实适配（ADR 0075 `dialogue-only` / `no-tool-output` / `speaker-required`）。
  *
@@ -19,10 +20,6 @@ export type DialogueEvent = {
   readonly text: string;
   readonly id?: string;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * 原生 id：行级或消息体级主键的单一实现（bound 解析与落盘共用）。

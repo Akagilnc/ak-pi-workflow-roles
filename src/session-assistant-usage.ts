@@ -8,6 +8,8 @@ import { readStrictPiSessionJsonl } from "./ledger-session-read.ts";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 export async function readAssistantUsageFromSessionFile(
   sessionFile: string,
 ): Promise<Usage | undefined> {
@@ -18,7 +20,7 @@ export async function readAssistantUsageFromSessionFile(
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
     if (!(error instanceof SyntaxError)) throw error;
     throw new Error(
-      `session usage parse failed (${sessionFile}): ${error.message}`,
+      `session usage parse failed (${sessionFile}): ${errorText(error)}`,
       { cause: error },
     );
   }
