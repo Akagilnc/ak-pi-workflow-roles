@@ -924,7 +924,7 @@ test("coder plan loads its task without construction skill and returns planned",
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
 });
 
-test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
+test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", () => withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -933,9 +933,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-  });
+  await harness.handlers.get("session_start")?.({}, activationCtx(home));
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const bare = {
@@ -979,9 +977,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness2.handlers.get("session_start")?.({}, activationCtx(home));
-  });
+  await harness2.handlers.get("session_start")?.({}, activationCtx(home));
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
@@ -1036,7 +1032,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     await harness2.handlers.get("agent_end")?.({ messages: [] }, context2);
     assert.equal(deliveryPrompts.length, 2);
   });
-});
+}));
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [

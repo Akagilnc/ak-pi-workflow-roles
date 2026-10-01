@@ -84,7 +84,7 @@ export type CoderRoleDependencies = {
 export type WorkerRoleRuntime = {
   activate(ctx?: HostContext): Promise<void>;
   /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Durable parent required (#857). */
-  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
+  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string): void;
 };
 
 /** Read only the field that selects the worker's next package-owned path. */
@@ -272,8 +272,8 @@ export function createFixerRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
-      submissionGate.arm(cwd, parent);
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string) {
+      submissionGate.arm(cwd, parent, invocationScopeId);
     },
   };
 }
@@ -341,8 +341,8 @@ export function createCoderRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
-      submissionGate.arm(cwd, parent);
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string) {
+      submissionGate.arm(cwd, parent, invocationScopeId);
     },
   };
 }

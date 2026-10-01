@@ -260,16 +260,24 @@ async function reaskUnreadablePostSubmissionStatus(
   terminal: TerminalResult | undefined,
   env: InstructionSeatRunEnv,
   io: CliIo,
+  message = unreadablePostSubmissionStatus(admitted, terminal),
 ): Promise<SeatRunResult | typeof UNREADABLE_REASK_EXHAUSTED | undefined> {
-  const message = unreadablePostSubmissionStatus(admitted, terminal);
   if (message === undefined) return undefined;
   const next = withUnreadableReask(env);
   if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
-  return runPublicInstructionSeatResume(
+  const held: string[] = [];
+  const resumed = await runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
     next,
-    io,
+    { stdout: (value) => held.push(value), stderr: io.stderr },
   );
+  if (resumed.exitCode === 0 && resumed.terminal?.roleOutcome.kind === "no_receipt"
+    && terminal !== undefined && resumed.terminal.runId === terminal.runId) {
+    const original = presentUnsettledAudit(terminal, undefined, io);
+    return { ...resumed, terminal: original };
+  }
+  for (const value of held) io.stdout(value);
+  return resumed;
 }
 
 function roleRecord(role: PackagedRole) {
@@ -1049,16 +1057,16 @@ async function queueConclusionFromChild(
     if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
       return { admitted: current, terminal, status };
     }
-    const next = withUnreadableReask(budgetEnv);
-    if (next === undefined) {
+    const reasked = await reaskUnreadablePostSubmissionStatus(
+      current, terminal, budgetEnv, io, officerConclusionReask(status),
+    );
+    if (reasked === undefined || isUnreadableReaskExhausted(reasked)) {
       return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
     }
-    budgetEnv = next;
-    const reasked = await runPublicInstructionSeatResume({
-      runId: current.runId,
-      message: officerConclusionReask(status),
-    }, env, io);
-    if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
+    budgetEnv = withUnreadableReask(budgetEnv)!;
+    if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined
+      || reasked.terminal.roleOutcome.kind === "no_receipt"
+      || reasked.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true) {
       return { stop: reasked };
     }
     const reaskedStatus = latestQueueStatus(reasked.terminal);
@@ -1264,7 +1272,8 @@ async function auditSubmittedRole(
               ...(summoned.runDirectory === undefined ? {} : { runDirectory: summoned.runDirectory }),
             });
           }
-          lastSummon = summoned;
+          if (summoned.exitCode !== 0 || summoned.terminal?.roleOutcome.kind !== "no_receipt"
+            || lastSummon?.terminal?.roleOutcome.kind !== "accepted") lastSummon = summoned;
           return summoned;
         },
       });

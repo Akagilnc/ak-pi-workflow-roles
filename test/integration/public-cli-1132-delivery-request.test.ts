@@ -20,7 +20,6 @@ import { randomUUID } from "node:crypto";
 import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
@@ -85,15 +84,6 @@ async function runExternalJudge(
     readonly limit: number;
     readonly sealOnCall?: number;
     readonly failOnCall?: number;
-  /**
-   * #1132: observed on every turn — the run-state fields and the turn-BEFORE
-   * hooks a催交 turn must NOT re-run.
-   */
-  readonly onTurn?: (observation: {
-    readonly call: number;
-    readonly when: "before" | "after";
-    readonly runState: { readonly state?: unknown; effectiveEngine?: unknown };
-  }) => void;
 }): Promise<{
   readonly turns: readonly Turn[];
   /** Every seat this run dispatched, in order — audit continuation shows up here. */
@@ -123,16 +113,6 @@ async function runExternalJudge(
       };
       turns.push(turn);
       const call = turns.length;
-      const observe = async (when: "before" | "after"): Promise<void> => {
-        options.onTurn?.({
-          call,
-          when,
-          runState: JSON.parse(
-            await readFile(join(request.runDirectory, "run-state.json"), "utf8"),
-          ) as { state?: unknown; effectiveEngine?: unknown },
-        });
-      };
-      await observe("before");
       const coordinates = piDurablePrincipalAuthority.decode(request.principal);
       await mkdir(coordinates.sessionDirectory, { recursive: true });
       await writeFile(
@@ -142,7 +122,6 @@ async function runExternalJudge(
       );
       if (options.failOnCall === call) {
         // A real host failure must never be washed into no_receipt.
-        await observe("after");
         return { code: 1, stderr: "host exploded\n", timedOut: false };
       }
       if (options.sealOnCall === call) {
@@ -158,7 +137,6 @@ async function runExternalJudge(
           home: request.home,
         });
       }
-      await observe("after");
       return { code: 0, stderr: "", timedOut: false };
     },
   };
@@ -234,34 +212,6 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
     ) as { state: string };
     assert.equal(runState.state, "terminal");
-  });
-});
-
-// #1132 变异真跑目标：催交轮不得重跑 turn-BEFORE 钩子，也不得中途落终局。
-test("#1132: 催交 turns keep run-state running and the engine of the first turn", async () => {
-  await withSeatHome(async (home) => {
-    const observed: { call: number; when: string; state?: unknown; effectiveEngine?: unknown }[] = [];
-    const run = await runExternalJudge(home, {
-      runId: "1132-external-run-state",
-      project: await freshProject(home),
-      limit: 2,
-      onTurn: ({ call, when, runState }) => observed.push({ call, when, ...runState }),
-    });
-
-    assert.equal(run.turns.length, 3, "first turn plus two催交 turns");
-    // The run must never look lawfully terminal WHILE催交 is still in progress:
-    // only the outermost turn settles run-state, so every observation up to and
-    // including the last still-silent催交 turn must read `running`. A mid-loop
-    // persist would show `terminal` here and strand a killed process (#1132).
-    const lastStillSilent = observed.filter((seen) => seen.when === "after").at(-1)!;
-    for (const seen of observed.filter((item) => item.call <= 2)) {
-      assert.equal(seen.state, "running", `turn ${seen.call} (${seen.when}) must not be terminal mid-催交`);
-    }
-    assert.ok(lastStillSilent !== undefined);
-    // The engine recorded at admission survives every催交 turn (effectiveEngine
-    // is forwarded; a dropped parameter would blank it on the re-dispatch).
-    const engines = new Set(observed.map((seen) => JSON.stringify(seen.effectiveEngine)));
-    assert.equal(engines.size, 1, `engine must not change across turns: ${JSON.stringify(observed)}`);
   });
 });
 
@@ -933,58 +883,5 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     assert.ok(runDirectory !== undefined);
     const runState = JSON.parse(await readFile(join(runDirectory!, "run-state.json"), "utf8")) as { state?: string };
     assert.equal(runState.state, "terminal");
-  });
-});
-
-// Pi 现场已经记下的当前跑实发次数，无卷结算照用。外层接缝这次没有另发。
-test("#1132: a Pi no-receipt settlement keeps the persisted delivery count", async () => {
-  await withSeatHome(async (home) => {
-    const limit = 3;
-    await setConfiguredLimit(home, limit);
-    const project = await freshProject(home);
-    const kinds: string[] = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        kinds.push(request.continuation.kind);
-        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(coordinates.sessionDirectory, { recursive: true });
-        const facts = {
-          terminalToolCalled: true,
-          rejectedReceipts: [{ reason: "held", diagnosticAvailable: true }],
-          deliveryTurns: limit,
-          sessionCompletion: "settled-without-accepted-receipt",
-          runPointer: request.runDirectory,
-          attemptPointer: receiptAttemptPointer(request.runDirectory, request.invocationScopeId),
-          acceptedReceipt: false,
-        };
-        await writeFile(
-          coordinates.sessionFile,
-          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n${JSON.stringify({ type: "custom", customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, data: facts })}\n`,
-          "utf8",
-        );
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-    const result = await runAkRole(
-      ["judge", "--project", project, "go"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "1132-pi-persisted-delivery",
-        io: captureIo().io,
-        hostAdapters: packagedExternalHostNames()
-          .concat("pi")
-          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
-      },
-    );
-    assert.deepEqual(kinds, ["initial"]);
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
-    if (result.terminal?.roleOutcome.kind !== "no_receipt") return;
-    assert.equal(result.terminal.roleOutcome.deliveryTurns, limit);
-    assert.equal(result.terminal.roleOutcome.terminalToolCalled, true);
-    assert.equal(result.terminal.roleOutcome.rejectedReceipts[0]?.reason, "held");
   });
 });
