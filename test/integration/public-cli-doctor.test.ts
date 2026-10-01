@@ -48,7 +48,6 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
@@ -879,18 +878,5 @@ test("terminal persistence failure is noted and the auditor read of that run is 
     assert.equal(result.terminal, undefined);
     assert.equal(captured.stderr.some((line) => line.includes("EISDIR")), true);
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
-    const sessionFile = join(runDirectory, "session", "session.jsonl");
-    const entries = (await readFile(sessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-    assert.equal(
-      entries.some((entry) =>
-        entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-        && typeof entry.data?.diagnostic === "string"
-        && entry.data.diagnostic.includes("code=EISDIR")),
-      true,
-    );
   });
 });

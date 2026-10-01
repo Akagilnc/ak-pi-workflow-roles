@@ -183,7 +183,9 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
         timedOut: input.result.timedOut,
         code: input.result.code,
         stderr: input.result.stderr,
+        ...(input.result.signal === undefined ? {} : { signal: input.result.signal }),
         knownDiagnostic: processCancelDiagnostic(input.cancelName),
+        cancelName: input.cancelName,
       },
       input.invocationScopeId,
     ),
@@ -707,6 +709,7 @@ export async function dispatchPostAdmissionTurn<
               code: null,
               stderr: "",
               knownDiagnostic: processCancelDiagnostic(cancelBeforeFinish),
+              cancelName: cancelBeforeFinish,
               skipRunStateWrite: true,
             },
             request.invocationScopeId,
@@ -921,6 +924,7 @@ export async function dispatchPostAdmissionTurn<
           timedOut: false,
           code: null,
           stderr: "",
+          ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
           thrown:
             processCancelName === undefined
               ? error

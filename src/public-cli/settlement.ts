@@ -519,6 +519,11 @@ export type PackageSideFact = {
    * one. Beside the host's details, never inside them.
    */
   readonly signal?: string;
+  /**
+   * Catchable process signal this call actually received. Beside the host's
+   * report, never a replacement for it.
+   */
+  readonly cancelName?: string;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
   /** A durable stderr.log write that failed while handling this call. */
@@ -778,11 +783,15 @@ function packageFactsOf(input: {
   readonly code?: number | null;
   readonly timedOut?: boolean;
   readonly signal?: string;
+  readonly cancelName?: string;
 }): PackageSideFact | undefined {
   const facts: PackageSideFact = {
     ...(input.code === undefined ? {} : { exitCode: input.code }),
     ...(input.timedOut === true ? { timedOut: true } : {}),
     ...(input.signal === undefined || input.signal.length === 0 ? {} : { signal: input.signal }),
+    ...(input.cancelName === undefined || input.cancelName.length === 0
+      ? {}
+      : { cancelName: input.cancelName }),
     ...(input.packageFact ?? {}),
   };
   return Object.keys(facts).length === 0 ? undefined : facts;
@@ -847,7 +856,14 @@ export function classifyPostAdmissionFailure(input: {
       const hostFailed = input.timedOut
         || input.signal !== undefined
         || (typeof input.code === "number" && input.code !== 0);
-      if (!hostFailed) return thrown;
+      if (!hostFailed) {
+        const facts = packageFactsOf(input);
+        if (facts?.cancelName === undefined && facts?.signal === undefined) return thrown;
+        return {
+          ...thrown,
+          packageFact: { ...facts, ...(thrown.packageFact ?? {}) },
+        };
+      }
       const facts = packageFactsOf(input);
       const packageFact = facts === undefined ? { thrown } : { ...facts, thrown };
       return {

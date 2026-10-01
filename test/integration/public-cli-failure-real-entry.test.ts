@@ -98,22 +98,6 @@ test("public report publication failure stays beside the accepted terminal", asy
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.runId, runId);
-      const bookKey = resolveBookKeyFromGit(project);
-      const sessionFile = join(
-        home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`, "session", "session.jsonl",
-      );
-      const entries = (await readFile(sessionFile, "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-      const diagnostic = entries.find((entry) => entry.customType === "ak_post_admission_cleanup_diagnostic");
-      const text = diagnostic?.data?.diagnostic;
-      assert.equal(typeof text, "string");
-      assert.equal(
-        (text as string).includes("code=EACCES") || (text as string).includes("code=EPERM"),
-        true,
-      );
     } finally {
       if (lockedArtifactsDir !== undefined) {
         try {

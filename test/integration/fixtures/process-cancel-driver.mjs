@@ -74,9 +74,14 @@ const hangingHost = {
     });
 
     return {
-      code: 143,
+      code: 1,
       stderr: "",
       timedOut: false,
+      knownFailure: {
+        diagnostic: "HOST ORIGINAL",
+        identity: { name: "HostReported", code: "HOST" },
+        details: { report: "HOST ORIGINAL" },
+      },
     };
   },
 };
@@ -85,6 +90,9 @@ const principalAuthority = piDurablePrincipalAuthority;
 
 let exitCode = 1;
 let diagnostic;
+let identity;
+let details;
+let packageFact;
 let runState;
 let runDirectory;
 
@@ -112,8 +120,19 @@ try {
       : result.exitCode;
 
   const outcome = result.terminal?.roleOutcome;
-  if (outcome && typeof outcome === "object" && "diagnostic" in outcome) {
-    diagnostic = outcome.diagnostic;
+  if (outcome && typeof outcome === "object") {
+    if ("diagnostic" in outcome) diagnostic = outcome.diagnostic;
+    if ("identity" in outcome) identity = outcome.identity;
+    if ("details" in outcome) details = outcome.details;
+  }
+  const errorArtifact = result.terminal?.artifacts?.find((item) => item.kind === "error");
+  if (errorArtifact?.path) {
+    const { readFile } = await import("node:fs/promises");
+    const errorBody = JSON.parse(await readFile(errorArtifact.path, "utf8"));
+    packageFact = errorBody.packageFact;
+    if (details === undefined) details = errorBody.details;
+    if (identity === undefined) identity = errorBody.identity;
+    if (diagnostic === undefined) diagnostic = errorBody.diagnostic;
   }
   const settledRunId =
     typeof result.terminal?.runId === "string" ? result.terminal.runId : runId;
@@ -146,7 +165,7 @@ try {
   await mkdir(home, { recursive: true });
   await writeFile(
     resultFile,
-    `${JSON.stringify({ exitCode, diagnostic, runState, runDirectory, turnCount }, null, 2)}\n`,
+    `${JSON.stringify({ exitCode, diagnostic, identity, details, packageFact, runState, runDirectory, turnCount }, null, 2)}\n`,
     "utf8",
   );
   process.exitCode = exitCode;

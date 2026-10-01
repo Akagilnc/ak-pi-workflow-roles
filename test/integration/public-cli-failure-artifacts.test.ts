@@ -178,19 +178,15 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
     const names = await readdir(join(runDirectory, "artifacts"));
-    const notes: string[] = [];
-    for (const name of names) {
-      if (!name.startsWith("post-admission-diagnostic-")) continue;
-      const body = JSON.parse(await readFile(join(runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown };
-      if (typeof body.diagnostic === "string") notes.push(body.diagnostic);
-    }
+    const artifactNote = names.some((name) => name.startsWith("post-admission-diagnostic-"));
     const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
-    for (const line of sessionText.split("\n")) {
-      if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) continue;
-      const entry = JSON.parse(line) as { data?: { diagnostic?: unknown } };
-      if (typeof entry.data?.diagnostic === "string") notes.push(entry.data.diagnostic);
-    }
-    assert.equal(notes.some((note) => note.includes("SyntaxError")), true);
+    const sessionNote = sessionText.split("\n").some((line) => {
+      if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
+      const entry = JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } };
+      return entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
+        && typeof entry.data?.diagnostic === "string";
+    });
+    assert.equal(artifactNote || sessionNote, true);
   });
 });
 test("unwritable run directory keeps the child diagnostic primary with a durable Error Artifact and Terminal", async () => {

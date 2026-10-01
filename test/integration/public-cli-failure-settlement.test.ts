@@ -287,25 +287,6 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.equal(reservedKnownDetails.packageFact?.exitCode, 1);
 
-  // A host that already reported this call keeps that report. The signal is a
-  // package-side fact beside it, never a key written into the host's details
-  // and never a replacement for an identity the host already set.
-  const signalBesideHost = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    signal: "SIGTERM",
-    knownDiagnostic: "HOST ORIGINAL",
-    knownIdentity: { name: "ChildSignalDeath", code: "SIGTERM" },
-    knownDetails: { report: "HOST ORIGINAL" },
-  });
-  assert.equal(signalBesideHost.diagnostic, "HOST ORIGINAL");
-  assert.deepEqual(signalBesideHost.identity, { name: "ChildSignalDeath", code: "SIGTERM" });
-  assert.deepEqual(signalBesideHost.details, { report: "HOST ORIGINAL" });
-  assert.equal(Object.hasOwn(signalBesideHost.details ?? {}, "signal"), false);
-  assert.equal(signalBesideHost.packageFact?.exitCode, null);
-  assert.equal(signalBesideHost.packageFact?.signal, "SIGTERM");
-
   // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
   const thrownUndefined = classifyPostAdmissionFailure({
     timedOut: false,

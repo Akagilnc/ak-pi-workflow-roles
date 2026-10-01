@@ -1,7 +1,7 @@
 /**
  * #855: catchable process signals through the public ak-role entry.
  * Table-driven SIGTERM/SIGINT/SIGHUP — one harness, three signals.
- * Asserts: non-zero exit, terminal/run-state carry the signal name, host child gone.
+ * Asserts: non-zero exit, host report kept, received signal on packageFact, host child gone.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -115,15 +115,22 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
         const result = JSON.parse(await readFile(resultFile, "utf8")) as {
           exitCode: number;
           diagnostic?: string;
+          identity?: { name?: string; code?: string };
+          details?: { report?: string };
+          packageFact?: { exitCode?: number | null; cancelName?: string; signal?: string };
           runState?: string;
           runDirectory?: string;
           turnCount?: number;
         };
         assert.notEqual(result.exitCode, 0, `${signalName}: settled exitCode`);
-        assert.ok(
-          typeof result.diagnostic === "string" && result.diagnostic.includes(signalName),
-          `${signalName}: diagnostic must name the signal; got ${result.diagnostic}`,
-        );
+        assert.equal(result.diagnostic, "HOST ORIGINAL", `${signalName}: host report stays`);
+        assert.equal(result.identity?.name, "HostReported");
+        assert.equal(result.identity?.code, "HOST");
+        assert.equal(result.details?.report, "HOST ORIGINAL");
+        assert.equal(Object.hasOwn(result.details ?? {}, "cancelName"), false);
+        assert.equal(Object.hasOwn(result.details ?? {}, "signal"), false);
+        assert.equal(result.packageFact?.exitCode, 1);
+        assert.equal(result.packageFact?.cancelName, signalName);
         assert.equal(result.runState, "terminal", `${signalName}: run-state must be terminal`);
         // #855 p1: cancel must not auto-resume-re-dispatch (principal forced available).
         assert.equal(
