@@ -49,6 +49,7 @@ import {
   type PackagedRole,
 } from "../packaged-role-registry.ts";
 import {
+  admittedReviewerBaseFault,
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
@@ -1566,25 +1567,7 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<
-  | "judge"
-  | "coder"
-  | "fixer"
-  | "collector"
-  | "doctor"
-  | "reviewer"
-  | "merger"
-  | "notary"
-  | "countersign"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat"
-  | undefined
-> {
+): Promise<PackagedRole | undefined> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
@@ -1704,14 +1687,12 @@ function admitResumedRole(loaded: {
     }
     case "review-basis": {
       const rawBase = fields.baseRevision;
-      if (rawBase === undefined || rawBase.trim() === "") {
+      const baseFault = admittedReviewerBaseFault(rawBase);
+      if (baseFault !== undefined || rawBase === undefined) {
         throw new CliUsageError(
-          `role run admitted reviewer base revision is missing: ${runId}`,
-        );
-      }
-      if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
-        throw new CliUsageError(
-          `role run admitted reviewer base revision is damaged: ${runId}`,
+          baseFault === "damaged"
+            ? `role run admitted reviewer base revision is damaged: ${runId}`
+            : `role run admitted reviewer base revision is missing: ${runId}`,
         );
       }
       const lens = fields.lens;

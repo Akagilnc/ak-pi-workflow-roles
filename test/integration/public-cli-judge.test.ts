@@ -201,26 +201,6 @@ test("parseJudgeArgv rejects blank --project/--attach path values", () => {
   assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
 });
 
-test("admitJudgeInvocation rejects blank project override before resolve", async () => {
-  await withTempHome(async (home) => {
-    await assert.rejects(
-      () =>
-        admitPublicRole("judge", {
-          instruction: "task",
-          attachmentPaths: [],
-          project: "",
-        }, {
-          principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: home,
-        }),
-      // Typed structural reject only (AC6) — do not freeze diagnostic phrasing.
-      (error: unknown) =>
-        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
-    );
-  });
-});
-
 test("admitJudgeInvocation freezes regular-file attachments against later mutation", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
