@@ -86,11 +86,6 @@ async function acceptThroughTypedRoundClosure(input: {
 }
 import {
 } from "../../src/public-cli/run-lifecycle.ts";
-import {
-  extractNavigatorFact,
-  NAVIGATOR_POST_ROLE_GRACE_MS,
-  settleFailureTerminalResult,
-} from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 

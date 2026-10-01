@@ -1,5 +1,4 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
@@ -13,7 +12,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
-  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -39,9 +37,6 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 import {
   admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
-import {
-  trySettlePublicSeat,
-} from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   doctorSessionRows,
@@ -501,111 +496,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       (objectPayloads(refused.terminal!.roleOutcome)[0] ?? {}).reason,
       "Need retained sessions",
     );
-
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      "run-doctor-settle@doctor",
-    );
-    const admittedSnap = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as {
-      issueNumber: number;
-      caseRunsPath: string;
-      caseIdentity: { issueNumber: number; runsPath: string };
+    const refusedReportPath = refused.terminal!.artifacts.find((a) => a.kind === "report")?.path;
+    assert.ok(refusedReportPath);
+    const refusedReport = JSON.parse(await readFile(refusedReportPath, "utf8")) as {
+      cost?: unknown;
+      auditNoReceipt?: unknown;
     };
-    const settled = await trySettlePublicSeat(
-      fixtureDoctorAdmitted({
-        runId: "run-doctor-settle",
-        bookKey,
-        projectRoot: project,
-        instruction: "inspect",
-        instructionEmpty: false,
-        runDirectory,
-        issueNumber: admittedSnap.issueNumber,
-        caseRunsPath: admittedSnap.caseRunsPath,
-        caseIdentity: admittedSnap.caseIdentity,
-      }),
-      piDurablePrincipalAuthority,
-      undefined,
-    );
-    assert.ok(settled);
-    assert.equal(settled.roleOutcome.kind, "accepted");
-
-    // #836: candidate cost and auditNoReceipt stay on the current attempt.
-    // A later attempt with no candidate entry of its own must not inherit
-    // the prior attempt's facts.
-    const settleSessionFile = join(runDirectory, "session", "session.jsonl");
-    await appendFile(
-      settleSessionFile,
-      `${JSON.stringify({
-        type: "message",
-        message: { role: "user", content: "resume" },
-      })}\n${JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: DOCTOR_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: candidateDetails,
-        },
-      })}\n`,
-      "utf8",
-    );
-    const settledNextAttempt = await trySettlePublicSeat(
-      fixtureDoctorAdmitted({
-        runId: "run-doctor-settle",
-        bookKey,
-        projectRoot: project,
-        instruction: "inspect",
-        instructionEmpty: false,
-        runDirectory,
-        issueNumber: admittedSnap.issueNumber,
-        caseRunsPath: admittedSnap.caseRunsPath,
-        caseIdentity: admittedSnap.caseIdentity,
-      }),
-      piDurablePrincipalAuthority,
-      undefined,
-    );
-    assert.ok(settledNextAttempt);
-    assert.equal(settledNextAttempt.roleOutcome.kind, "accepted");
-    const reportPathNextAttempt = settledNextAttempt.artifacts.find((a) => a.kind === "report")?.path;
-    assert.ok(reportPathNextAttempt);
-    const reportNextAttempt = JSON.parse(
-      await readFile(reportPathNextAttempt!, "utf8"),
-    ) as { cost: unknown; auditNoReceipt: unknown };
-    assert.equal(
-      reportNextAttempt.cost,
-      undefined,
-      "#836: a prior attempt's candidate cost must not leak into a later attempt lacking its own candidate entry",
-    );
-    assert.equal(
-      reportNextAttempt.auditNoReceipt,
-      undefined,
-      "#836: a prior attempt's auditNoReceipt must not leak into a later attempt lacking its own candidate entry",
-    );
-
-    assert.equal(
-      await trySettlePublicSeat(
-        fixtureDoctorAdmitted({
-          runId: "missing",
-          bookKey,
-          projectRoot: project,
-          instruction: "",
-          instructionEmpty: true,
-          runDirectory: join(runDirectory, "nope"),
-          issueNumber: admittedSnap.issueNumber,
-          caseRunsPath: admittedSnap.caseRunsPath,
-          caseIdentity: admittedSnap.caseIdentity,
-        }),
-        piDurablePrincipalAuthority,
-        undefined,
-      ),
-      undefined,
-    );
+    assert.equal(refusedReport.cost, undefined);
+    assert.equal(refusedReport.auditNoReceipt, undefined);
   });
 });
 
@@ -665,6 +563,14 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
     assert.equal(doctorCalls, 2);
     assert.equal(reviewCalls, 2);
     assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
+    const laterReport = result.terminal!.artifacts.find((a) => a.kind === "report");
+    assert.ok(laterReport);
+    const laterBody = JSON.parse(await readFile(laterReport.path, "utf8")) as {
+      cost?: unknown;
+      auditNoReceipt?: unknown;
+    };
+    assert.equal(laterBody.cost, undefined);
+    assert.equal(laterBody.auditNoReceipt, undefined);
   });
 });
 

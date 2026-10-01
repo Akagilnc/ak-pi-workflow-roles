@@ -1,5 +1,4 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
@@ -23,9 +22,9 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
-import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
@@ -151,91 +150,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.runId, "run-domain-001");
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
-  });
-});
-test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-fail-attendance-001";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    const attendanceDetails = {
-      version: 1,
-      disposition: "no-advice",
-      invocationId: "019f8c2a-6666-7666-8666-666666666666",
-      role: "judge",
-      phase: null,
-      subjectKey: `${project}/.ak/work`,
-    };
-    await writeFile(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "custom",
-          customType: "ak-navigator-invocation",
-          data: {
-            invocationId: "019f8c2a-6666-7666-8666-666666666666",
-            role: "judge",
-            phase: null,
-            subjectKey: attendanceDetails.subjectKey,
-          },
-        }),
-        JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            toolCallId: "fatal-judge",
-            // Durable accepted terminal for post-terminal attendance window; retryable
-            // isError:true/details:{} is nonterminal under the shared classifier.
-            isError: false,
-            details: { status: "converged" },
-          },
-        }),
-        JSON.stringify({
-          type: "custom",
-          customType: "ak-role-submission-closure",
-          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: attendanceDetails },
-        }),
-        JSON.stringify({
-          type: "custom_message",
-          customType: "ak-navigator-attendance",
-          message: { details: attendanceDetails },
-          details: attendanceDetails,
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-    const admitted = fixtureJudgeAdmitted({
-      runId,
-      bookKey,
-      projectRoot: project,
-      instruction: "x",
-      instructionEmpty: false,
-      runDirectory,
-      sessionDirectory,
-      sessionFile,
-    });
-    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-
-    const terminal = await settleFailureTerminalResult(admitted, {
-      cause: "activation",
-      diagnostic: "role infrastructure failed",
-    }, piDurablePrincipalAuthority);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.equal(terminal.navigator.disposition, "no-advice");
   });
 });
 test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
@@ -527,6 +441,11 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     };
     assert.equal(errorBody.cause, "timeout");
     assert.equal(errorBody.details?.timedOut, true);
+    // Empty session on this real failure: missing attendance stays unavailable.
+    assert.equal(terminal.navigator.disposition, "unavailable");
+    if (terminal.navigator.disposition === "unavailable") {
+      assert.equal(terminal.navigator.source, "unknown");
+    }
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
     assert.equal(stderr[0]!.includes("\n"), true);
   });
@@ -620,80 +539,6 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
   });
 });
 
-test("each controlled cause persists typed Error Artifact without manufacturing a Receipt", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const causes: Array<ControlledFailureCause | undefined> = [
-      "activation",
-      "provider",
-      "session",
-      "output",
-      "timeout",
-      undefined, // #881: no typed class — original diagnostic only
-    ];
-    for (const cause of causes) {
-      const causeKey = cause ?? "no-typed-cause";
-      const runId = `run-cause-${causeKey}`;
-      const runDirectory = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        `${runId}@judge`,
-      );
-      await mkdir(join(runDirectory, "session"), { recursive: true });
-      const admitted = fixtureJudgeAdmitted({
-        runId,
-        bookKey,
-        projectRoot: project,
-        instruction: "x",
-        instructionEmpty: false,
-        runDirectory,
-      });
-      await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-      const terminal = await settleFailureTerminalResult(admitted, {
-        ...(cause === undefined ? {} : { cause }),
-        diagnostic: `diagnostic for ${causeKey}`,
-        identity: { name: "CauseProbeError", code: causeKey },
-      }, piDurablePrincipalAuthority);
-      assert.equal(terminal.roleOutcome.kind, "failure");
-      if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-      assert.equal(terminal.roleOutcome.cause, cause);
-      assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
-      assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
-
-      // Durability before caller presentation (absorbed from the former
-      // dedicated durable-recordings test): artifact paths already openable,
-      // evidence leg present, and no session attendance → typed unavailable.
-      if (cause === "activation") {
-        assert.equal(terminal.navigator.disposition, "unavailable");
-        if (terminal.navigator.disposition === "unavailable") {
-          assert.equal(terminal.navigator.source, "unknown");
-          assert.equal(typeof terminal.navigator.reason, "string");
-        }
-        assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-      }
-      const errorRef = terminal.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef);
-      const body = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        kind: string;
-        cause: string;
-        diagnostic: string;
-        identity?: { name?: string; code?: string };
-      };
-      assert.equal(body.kind, "error");
-      assert.equal(body.cause, cause);
-      assert.equal(body.diagnostic, `diagnostic for ${causeKey}`);
-      assert.equal(body.identity?.name, "CauseProbeError");
-      // Must not look like a manufactured Judge Receipt status.
-      assert.equal("judgeStatus" in body, false);
-    }
-  });
-});
 test("#881 non-sealed correctable-rejection and infrastructure params each appear once beside host failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

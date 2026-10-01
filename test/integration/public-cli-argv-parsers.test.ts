@@ -17,7 +17,6 @@ import {
   admitPublicRole,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
-import { formatTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   resolveEffectiveSeat,
   setPersistentSeatConfig,

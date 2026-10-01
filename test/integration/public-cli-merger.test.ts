@@ -1,7 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
@@ -33,9 +32,6 @@ import {
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 
-import {
-  trySettlePublicSeat,
-} from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -233,195 +229,6 @@ test("admitMergerInvocation derives envelope into internal input without public 
   });
 });
 
-test("lawful merger Terminal settlement publishes report/evidence with derived envelope", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    const fixture = await materializeConflictedRepo(project);
-    const admitted = await admitMergerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Complete the merge.",
-      attachmentPaths: [],
-      createRunId: () => "run-merger-settle-001",
-    });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const receipt = {
-      status: "completed" as const,
-      attemptId: "run-merger-settle-001",
-      report: "Compatible intents reconciled into ordinary two-parent merge.",
-      mergeCommitId: "a".repeat(40),
-    };
-    const escalateReceipt = {
-      status: "escalate" as const,
-      attemptId: "run-merger-settle-001",
-      diagnosis: "New authority decision required on API surface.",
-      report: "Incompatible intents cannot be merged without new intent.",
-    };
-    const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "Complete the merge." }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "m1",
-              name: MERGER_OUTPUT_TOOL_NAME,
-              arguments: receipt,
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "m1",
-          toolName: MERGER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: receipt,
-        },
-      }),
-    ];
-    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: project,
-      home,
-      runDirectory: admitted.runDirectory,
-      role: "merger",
-      details: receipt,
-      toolCallId: "m1",
-    });
-
-    const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-    assert.ok(terminal);
-    assert.equal(terminal.roleOutcome.role, "merger");
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(
-      terminal.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(terminal.roleOutcome)
-        : [],
-      ["completed"],
-    );
-    assert.deepEqual(
-      terminal.artifacts.some((a) => a.kind === "report"), true);
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    // #757: full receipt passes through decisiveFacts (report also lives in artifact).
-    assert.equal(
-      Object.hasOwn((objectPayloads(terminal.roleOutcome)[0] ?? {}), "report"),
-      true,
-    );
-    assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).report, receipt.report);
-    const mergerReportBody = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "report")!.path,
-        "utf8",
-      ),
-    ) as { outcome?: { payloads?: unknown } };
-    assert.deepEqual(
-      mergerReportBody.outcome?.payloads,
-      [receipt],
-      "merger report text must live in the artifact receipt",
-    );
-
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as {
-      derived: {
-        targetObjectId: string;
-        sourceObjectId: string;
-        expectedConflictPaths: string[];
-        resolutionScope: string[];
-      };
-    };
-    assert.equal(evidence.derived.targetObjectId, fixture.target);
-    assert.equal(evidence.derived.sourceObjectId, fixture.source);
-    assert.deepEqual(evidence.derived.expectedConflictPaths, [
-      fixture.conflictPath,
-    ]);
-    assert.deepEqual(evidence.derived.resolutionScope, [fixture.conflictPath]);
-
-    // escalate leaf is also a lawful accepted Terminal status (own run ledger).
-    const escalateAdmitted = await admitMergerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Escalate the merge.",
-      attachmentPaths: [],
-      createRunId: () => "run-merger-settle-escalate",
-    });
-    const escalateReceiptBound = { ...escalateReceipt, attemptId: escalateAdmitted.runId };
-    const escalateLines = [
-      sessionLines[0]!,
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "m2",
-              name: MERGER_OUTPUT_TOOL_NAME,
-              arguments: escalateReceiptBound,
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "m2",
-          toolName: MERGER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: escalateReceiptBound,
-        },
-      }),
-    ];
-    await mkdir(piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionDirectory, { recursive: true });
-    await writeFile(
-      piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionFile,
-      `${escalateLines.join("\n")}\n`,
-      "utf8",
-    );
-    await sealAcceptedSubmission({
-      runId: escalateAdmitted.runId,
-      cwd: project,
-      home,
-      runDirectory: escalateAdmitted.runDirectory,
-      role: "merger",
-      details: escalateReceiptBound,
-      toolCallId: "m2",
-    });
-    const escalateTerminal = await trySettlePublicSeat(escalateAdmitted, piDurablePrincipalAuthority, undefined);
-    assert.ok(escalateTerminal);
-    assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(
-      escalateTerminal.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(escalateTerminal.roleOutcome)
-        : [],
-      ["escalate"],
-    );
-    assert.deepEqual(
-      (objectPayloads(escalateTerminal.roleOutcome)[0] ?? {}).diagnosis,
-      "New authority decision required on API surface.",
-    );
-  });
-});
-
 test("ak-role merger dispatches and settles escalate without active merge and completed with active merge under mocked host", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
@@ -485,9 +292,12 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       );
       assert.equal(dispatched, true);
       assert.equal(result.exitCode, 0, stdout.join(""));
-      // The escalate verdict is a structured field; rendered table layout is
-      // presentation and must not be asserted (CLAUDE.md:60).
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
+      assert.equal(
+        (objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).diagnosis,
+        "no in-progress merge",
+      );
     }
 
     // Active merge → derives materials from active merge and settles completed leaf under mocked host.
@@ -539,6 +349,27 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
+      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "report"), true);
+      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "evidence"), true);
+      assert.equal((objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).report, "resolved");
+      const reportBody = JSON.parse(
+        await readFile(result.terminal!.artifacts.find((a) => a.kind === "report")!.path, "utf8"),
+      ) as { outcome?: { payloads?: ReadonlyArray<{ report?: string }> } };
+      assert.equal(reportBody.outcome?.payloads?.[0]?.report, "resolved");
+      const evidence = JSON.parse(
+        await readFile(result.terminal!.artifacts.find((a) => a.kind === "evidence")!.path, "utf8"),
+      ) as {
+        derived: {
+          targetObjectId: string;
+          sourceObjectId: string;
+          expectedConflictPaths: string[];
+          resolutionScope: string[];
+        };
+      };
+      assert.equal(evidence.derived.targetObjectId, fixture.target);
+      assert.equal(evidence.derived.sourceObjectId, fixture.source);
+      assert.deepEqual(evidence.derived.expectedConflictPaths, [fixture.conflictPath]);
+      assert.deepEqual(evidence.derived.resolutionScope, [fixture.conflictPath]);
     }
   });
 });

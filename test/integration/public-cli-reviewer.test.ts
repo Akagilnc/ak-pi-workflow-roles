@@ -1,7 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
@@ -38,9 +37,6 @@ import {
   markRunAdmitted,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import {
-  trySettlePublicSeat,
-} from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
   withProcessCwd,
@@ -512,122 +508,6 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
   });
 });
 
-test("lawful reviewer Terminal preserves review evidence", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const admitted = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Review completeness and correctness lenses.",
-      attachmentPaths: [],
-      baseRevision: "main",
-      lens: "completeness",
-      // 尺③：非空 authorityRefs 落 evidence artifact 的契约在此承接（原冷装
-      // refs-only e2e 的独有断言，#420 类一收拢后由这条在进程内真 Terminal 承载）。
-      authorityRefs: [
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-      ],
-      createRunId: () => "run-reviewer-settle-001",
-    });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const receipt = {
-      ...lawfulReviewerReceipt("completeness"),
-      auditNoReceipt: {
-        status: "no-receipt",
-        terminalToolCalled: true,
-        rejectedReceipts: [{ reason: "  \t" }],
-        deliveryTurns: 2,
-        sessionCompletion: "settled-without-accepted-receipt",
-        runPointer: "/reviewer-audit/run",
-        attemptPointer: "reviewer-audit-attempt",
-        acceptedReceipt: false,
-      },
-    };
-    const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "Review completeness and correctness lenses." }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "r1",
-              name: REVIEWER_OUTPUT_TOOL_NAME,
-              arguments: { status: "completed" },
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "r1",
-          toolName: REVIEWER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: receipt,
-        },
-      }),
-    ];
-    await writeFile(
-      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
-      `${sessionLines.join("\n")}\n`,
-      "utf8",
-    );
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: project,
-      home,
-      runDirectory: admitted.runDirectory,
-      role: "reviewer",
-      details: receipt,
-      toolCallId: "r1",
-    });
-
-    const terminal = await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-    assert.ok(terminal);
-    assert.equal(terminal.roleOutcome.role, "reviewer");
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
-    assert.equal(terminal.runId, "run-reviewer-settle-001");
-    assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    if (terminal.roleOutcome.kind === "accepted") {
-      assert.deepEqual((terminal.roleOutcome.payloads?.[0] as { auditNoReceipt?: unknown })?.auditNoReceipt, receipt.auditNoReceipt);
-    }
-
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as Record<string, unknown> & {
-      baseRevision?: string;
-      callerProvenance?: string;
-    };
-    assert.equal("taskPath" in evidence, false);
-    assert.equal("taskSha256" in evidence, false);
-    assert.equal(evidence.baseRevision, "main");
-    assert.deepEqual(evidence.authorityRefs, [
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-    ]);
-    assert.equal(evidence.callerProvenance, "Review completeness and correctness lenses.");
-  });
-});
-
 /** Shortest lawful child turn: write receipt from --ak-review-lens (or override). */
 async function lawfulChildTurn(
   args: readonly string[],
@@ -935,17 +815,29 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       okDialogue,
     );
     assert.match(okDialogue, /Review the latest commit on both axes\./);
-    const bookKey = resolveBookKeyFromGit(project);
-    const evidence = JSON.parse(
-      await readFile(
-        join(
-          home, ".ak-roles", "books", bookKey, "unbound", "runs",
-          "run-cli-reviewer-ok@reviewer", "artifacts", "evidence.json",
-        ),
-        "utf8",
-      ),
-    ) as { callerProvenance?: string };
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.artifacts.some((a) => a.kind === "report"), true);
+    const evidenceRef = result.terminal?.artifacts.find((a) => a.kind === "evidence");
+    assert.ok(evidenceRef);
+    const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as {
+      callerProvenance?: string;
+      baseRevision?: string;
+      authorityRefs?: string[];
+    };
     assert.equal(evidence.callerProvenance, "Review the latest commit on both axes.");
+    assert.equal(evidence.baseRevision, "HEAD~1");
+    assert.deepEqual(evidence.authorityRefs, [
+      "CLAUDE.md",
+      "docs/adr/0001-roles-grow-by-demand.md",
+    ]);
+    assert.equal("taskPath" in evidence, false);
+    assert.equal("taskSha256" in evidence, false);
+    if (result.terminal?.roleOutcome.kind === "accepted") {
+      const amendments = (result.terminal.roleOutcome.payloads?.[0] as {
+        amendments?: { completeness?: string };
+      } | undefined)?.amendments;
+      assert.equal(amendments?.completeness, "completeness-axis-report");
+    }
   });
 });
 

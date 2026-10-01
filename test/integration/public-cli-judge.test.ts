@@ -45,7 +45,6 @@ import {
   extractNavigatorFact,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
-  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import {
   adviceNavigatorFact,
@@ -976,18 +975,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       "unbound", "runs",
       "run-cli-judge-001@judge",
     );
-    const terminal = await trySettlePublicSeat(
-      fixtureJudgeAdmitted({
-        runId: "run-cli-judge-001",
-        runDirectory: runDir,
-        projectRoot: project,
-        bookKey,
-        instruction: "Decide whether the attachment is sufficient.",
-        instructionEmpty: false,
-      }),
-      piDurablePrincipalAuthority,
-      undefined,
-    );
+    const terminal = result.terminal;
     assert.ok(terminal);
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
@@ -1092,27 +1080,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
     assert.equal(stdout.length, 1);
     assert.ok(stdout[0]!.length > 0);
 
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      "run-empty-001@judge",
-    );
-    const terminal = await trySettlePublicSeat(
-      fixtureJudgeAdmitted({
-        runId: "run-empty-001",
-        runDirectory: runDir,
-        projectRoot: project,
-        bookKey,
-        instruction: "",
-        instructionEmpty: true,
-      }),
-      piDurablePrincipalAuthority,
-      undefined,
-    );
+    const terminal = result.terminal;
     assert.ok(terminal);
     // Missing attendance is not successful no-advice — require affirmative typed fact.
     assert.equal(terminal.navigator.disposition, "unavailable");
