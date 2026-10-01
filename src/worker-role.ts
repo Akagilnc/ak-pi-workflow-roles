@@ -29,6 +29,8 @@ import {
   matchFixerBashForbiddenLiteral,
 } from "./fixer-bash-seatbelt.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -104,10 +106,6 @@ export type WorkerRoleRuntime = {
   armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Read only the field that selects the worker's next package-owned path. */
 function workerStatusOf(output: WorkerOutput): string | undefined {
   return isRecord(output) && typeof output.status === "string"
@@ -129,7 +127,6 @@ export function validateWorkerOutput(
   if (roleLabel === "Fixer") return validateFixerOutput(output, phase);
   return validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
 }
-
 
 /** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
 function assertAcceptableThroughHost(

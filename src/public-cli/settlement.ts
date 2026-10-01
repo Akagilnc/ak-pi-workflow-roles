@@ -346,6 +346,8 @@ import {
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
+import { isEnoent, isMissingPathError, isRecord } from "../unknown-value.ts";
+
 export type { ControlledFailureCause };
 
 export {
@@ -467,7 +469,7 @@ export async function inspectJudgeSession(
     await readFile(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
-    if (isMissingPathError(error)) return { state: "missing" };
+    if (isEnoent(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic:
@@ -834,24 +836,6 @@ type SessionEntry = {
   parentSession?: string;
 };
 
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
-}
-
-/** Face clear only: path not enterable as a face (ENOENT or file mid-path). */
-function isAbsentFacePathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    ((error as { code?: unknown }).code === "ENOENT" ||
-      (error as { code?: unknown }).code === "ENOTDIR")
-  );
-}
-
 /**
  * Preserve session-read failure identity as a typed session cause.
  * SyntaxError keeps its name so durable settlement does not wash malformed JSONL
@@ -1064,7 +1048,7 @@ async function loadBoundAuditorVolumes(
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     throw sessionReadFailure(error, "failed to read parent session for auditor binding");
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
@@ -1078,7 +1062,7 @@ async function loadBoundAuditorVolumes(
       names = await readdir(childDirectory);
       sawAnyDirectory = true;
     } catch (error) {
-      if (isMissingPathError(error)) continue;
+      if (isEnoent(error)) continue;
       throw sessionReadFailure(error, "failed to read bound auditor session directory");
     }
     for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
@@ -1313,7 +1297,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     );
     if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
   } catch (error) {
-    if (!isMissingPathError(error)) {
+    if (!isEnoent(error)) {
       const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
       return resolutionOf({
         cause: "session",
@@ -1459,10 +1443,6 @@ export function controlledFailureInputFromResolution(
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function safelyRead(object: object, key: string): { readable: true; value: unknown } | { readable: false } {
   try {
     return { readable: true, value: (object as Record<string, unknown>)[key] };
@@ -1478,9 +1458,7 @@ function toolResultText(message: SessionMessage): string {
   return content
     .map((part) => {
       if (
-        typeof part === "object" &&
-        part !== null &&
-        !Array.isArray(part) &&
+        isRecord(part) &&
         typeof (part as { text?: unknown }).text === "string"
       ) {
         return (part as { text: string }).text;
@@ -2234,7 +2212,7 @@ async function extractNavigatorFactFromAdmittedSession(
     const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (isEnoent(error)) {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -2261,7 +2239,7 @@ async function removeFaceIfPresent(path: string): Promise<void> {
     // force:true already ignores ENOENT; ENOTDIR = face path not enterable
     // (artifacts-as-file mid-path) — same absent-face semantics as the reader.
     // Other errno stay loud (失败诚实).
-    if (isAbsentFacePathError(error)) return;
+    if (isMissingPathError(error)) return;
     throw error;
   }
 }
@@ -2392,7 +2370,7 @@ async function readLawfulSettlementEntries(
     return await readBoundSessionEntries(sessionFile);
   } catch (error) {
     // Missing path is absence of a lawful outcome; callers classify via session inspect.
-    if (isMissingPathError(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     // Malformed JSONL and other read failures keep typed session identity.
     throw error instanceof Error &&
       (error as { knownCause?: unknown }).knownCause === "session"
@@ -2839,7 +2817,7 @@ function countersignTerminalFromEntries(
     if (entry?.type !== "custom") continue;
     if (entry.customType !== SECRETARIAT_GATE_OFFICER_ENTRY_TYPE) continue;
     const data =
-      entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
+      isRecord(entry.data)
         ? (entry.data as Record<string, unknown>)
         : undefined;
     if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;

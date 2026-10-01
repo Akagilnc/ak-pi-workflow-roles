@@ -5,6 +5,8 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { isEnoent, isRecord } from "./unknown-value.ts";
+
 const TYPED_HTTP_FILE = "typed-provider-http.json";
 
 export type TypedProviderHttpObservation = {
@@ -27,13 +29,7 @@ export async function clearTypedProviderHttpObservation(
   try {
     await unlink(typedProviderHttpPath(runDirectory));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-    ) {
-      return;
-    }
+    if (isEnoent(error)) return;
     throw error;
   }
 }
@@ -75,17 +71,11 @@ export async function readLatestTypedProviderHttpObservation(
   try {
     text = await readFile(typedProviderHttpPath(runDirectory), "utf8");
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-    ) {
-      return undefined;
-    }
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   const raw: unknown = JSON.parse(text);
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     throw new Error("typed provider HTTP observation must be a JSON object");
   }
   const record = raw as Record<string, unknown>;

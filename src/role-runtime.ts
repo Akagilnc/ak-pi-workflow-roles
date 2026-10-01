@@ -188,7 +188,7 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
       parsed = JSON.parse(rawAuthorityRefs);
     } catch (error) {
       throw new Error(
-        `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Reviewer authority refs transport error: JSON decode failed: ${errorText(error)}`,
       );
     }
     if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
@@ -296,6 +296,8 @@ export {
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
+
+import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -507,7 +509,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     return { kind: "role_infrastructure_failure", role, phase };
   }
   // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
+  const details = isRecord(event.details)
     ? event.details as Record<string, unknown>
     : {};
   const status = typeof details.status === "string"
@@ -710,7 +712,7 @@ export function createNavigatorRoleRuntime(
           dependencies.recordRoutePlaybookReadFailure?.(undefined);
           if (content.trim() !== "") parts.push(content);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = errorText(error);
           if (message.trim() !== "") {
             dependencies.recordRoutePlaybookReadFailure?.(message);
             parts.push(message);
@@ -854,7 +856,7 @@ export function createDiaristRoleRuntime(
       soulTag: "diarist",
       beforeAccept: async ({ parameters, ctx }) => {
         const submitted =
-          parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+          isRecord(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
         // Routing belongs to the public seam after this tool call has returned.
@@ -1073,7 +1075,7 @@ export function createRoleRuntimeExtension(
     ): void => {
       if (attendance === undefined) return;
       const recordDisposeFailure = (error: unknown): void => {
-        const diagnostic = error instanceof Error ? error.message : String(error);
+        const diagnostic = errorText(error);
         try {
           sitianReport({
             level: "event",
@@ -1087,7 +1089,7 @@ export function createRoleRuntimeExtension(
           try {
             envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
               diagnostic,
-              recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              recordFailure: errorText(recordError),
             });
           } catch {
             // Failure already diagnosed; recording must not create unhandled rejection (#959).
@@ -1655,15 +1657,7 @@ export function createRoleRuntimeExtension(
       try {
         await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
-        if (
-          status >= 200 &&
-          status < 300 &&
-          error instanceof Error &&
-          "code" in error &&
-          (error as { code?: unknown }).code === "ENOENT"
-        ) {
-          return;
-        }
+        if (status >= 200 && status < 300 && isEnoent(error)) return;
         failInfrastructure(error, ctx);
       }
     };
