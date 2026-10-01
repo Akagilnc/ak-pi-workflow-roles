@@ -669,6 +669,10 @@ function flattenThrownFailureLeaves(error: unknown): unknown[] {
  * AggregateError nesting is handled by classifyThrownFailure.
  */
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
+  const originalDetails = error !== null && typeof error === "object"
+    ? (error as { details?: Readonly<Record<string, unknown>> }).details
+    : undefined;
+  const details = originalDetails === undefined ? { error: serializeThrownValue(error) } : originalDetails;
   if (isTypedActivationError(error)) {
     const identity = thrownIdentity(error);
     return {
@@ -677,7 +681,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
       identity: error.failureCode !== undefined && identity.code === undefined
         ? { ...identity, code: error.failureCode }
         : identity,
-      details: error.details === undefined ? { error: serializeThrownValue(error) } : error.details,
+      details,
     };
   }
   if (error instanceof Error) {
@@ -686,12 +690,12 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
     return {
       diagnostic: error.message || error.name || "exception",
       identity,
-      details: { error: serializeThrownValue(error) },
+      details,
     };
   }
   return {
     diagnostic: error !== null && typeof error === "object" ? "non-Error throw" : String(error),
-    details: { error: serializeThrownValue(error) },
+    details,
   };
 }
 
