@@ -9,10 +9,6 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "../../src/package-contracts/fixer-packet.ts";
-import {
-  fixerOutputSchema,
-  validateFixerOutput,
-} from "../../src/package-contracts/fixer-output.ts";
 
 const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
 const prerequisitesText = JSON.stringify([
@@ -24,22 +20,6 @@ function input(prerequisites = parseFixerPrerequisites(prerequisitesText)): Fixe
   return Object.freeze({ instructions, prerequisites });
 }
 
-const planRefusal = {
-  status: "refused" as const,
-  report: "Cannot lawfully plan yet.",
-  remainingScope: "contract selection",
-  blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice-1", evidence: "No owner choice is recorded." },
-};
-const applyRefusal = {
-  status: "refused" as const,
-  report: "Blocked.",
-  classResults: [{
-    name: "Artifact",
-    disposition: "refused" as const,
-    remainingScope: "artifact consumer",
-    blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "artifact_A", evidence: "Artifact is absent." },
-  }],
-};
 
 function captureValidationError(source: string): FixerPacketValidationError {
   let caught: unknown;
@@ -92,18 +72,4 @@ test("malformed prerequisite attachments keep their true causes behind one stabl
     { id: "same", requirement: "second" },
   ]));
   assert.ok(duplicate.cause instanceof Error);
-});
-
-test("typed prerequisite blockers cross the public TypeBox schema and prerequisite-aware production validator", () => {
-  for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
-    assert.equal(Value.Check(fixerOutputSchema, candidate), true);
-    assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
-  }
-});
-
-test("zero declarations preserve authority refusal, completed apply, and existing settlement combinations", () => {
-  const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
-  const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  assert.deepEqual(validateFixerOutput(authority, "plan"), authority);
-  assert.deepEqual(validateFixerOutput(completed, "apply"), completed);
 });

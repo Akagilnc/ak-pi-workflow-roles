@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
-import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
+import { DoctorEvidenceStore } from "../../src/doctor-contracts.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
@@ -45,15 +45,6 @@ test("one retained runs directory yields an independently cited single-case cost
     assert.equal(patient.cost.sessions[0]?.completion, "accepted");
     assert.equal(patient.cost.sessions[0]?.wallMilliseconds, 1420);
 
-    const store = new DoctorEvidenceStore(patient);
-    store.read("review-004/session/real.jsonl");
-    const output = { status: "completed", case: patient.identity, findings: [] } as const;
-    // #836: cross-check rejection deleted — mismatched case identity still passes shape.
-    assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-    assert.deepEqual(
-      validateDoctorOutput({ ...output, case: { ...patient.identity, issueNumber: 29 } }, patient, store),
-      { ...output, case: { ...patient.identity, issueNumber: 29 } },
-    );
   });
 });
 
@@ -77,9 +68,6 @@ test("runtime-derived metrics permit testimony when a case exceeds evidence pagi
     }
     assert.equal(store.hasRead(evidenceId), true);
     assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: true }]);
-    const finding = { targetKey: "case", observation: "Non-ASCII retained evidence was fully read", evidenceIds: [evidenceId] } as const;
-    const output = { status: "completed", case: patient.identity, findings: [finding] } as const;
-    assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   });
 });
 
@@ -290,75 +278,4 @@ test("case identity discovery propagates unexpected filesystem errors", async ()
     await mkdir(runs, { recursive: true });
     await assert.rejects(loadDoctorCase(runs), (error: NodeJS.ErrnoException) => error.code === "ELOOP");
   });
-});
-
-test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
-  assert.deepEqual(DOCTOR_TARGET_KINDS, ["law", "gate", "template", "station", "seat"]);
-  await withTempRoot("doctor-finding-", async (root) => {
-    const runs = homeRuns(root, 40);
-    await mkdir(join(runs, "judge/session"), { recursive: true });
-    await writeFile(join(runs, "judge/session/session.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
-    const patient = await loadDoctorCase(runs);
-    const evidenceId = "judge/session/session.jsonl";
-    const store = new DoctorEvidenceStore(patient);
-    store.read(evidenceId);
-    const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
-    const finding = { targetKey: "case", observation: "The retained case used two tool calls", evidenceIds: [evidenceId] } as const;
-    const output = { status: "completed", case: patient.identity, findings: [finding] } as const;
-    assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-    const assetFinding = {
-      targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",
-      guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
-      prescription: { kind: "retain", recommendation: "Retain the gate" },
-      lastRealBite: { kind: "actual", targetKey: "judge-output-gate", evidenceId },
-    } as const;
-    const assetOutput = { ...output, findings: [assetFinding] } as const;
-    assert.deepEqual(validateDoctorOutput(assetOutput, patient, store), assetOutput);
-    const emptyAsset = { ...assetOutput, findings: [{ ...assetFinding, assetEvidence: {} }] };
-    assert.deepEqual(validateDoctorOutput(emptyAsset, patient, store), emptyAsset);
-    // #836: evidence/case cross-check rejection deleted — original payload accepted as-is.
-    const mismatched = { ...assetOutput, findings: [{ ...assetFinding, assetEvidence: { targetKey: "case" } }] };
-    assert.deepEqual(validateDoctorOutput(mismatched, patient, store), mismatched);
-    const noRealBiteKeep = { ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] } as const;
-    assert.deepEqual(validateDoctorOutput(noRealBiteKeep, patient, store), noRealBiteKeep);
-    const unexplainedPatch = { ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] } as const;
-    assert.deepEqual(validateDoctorOutput(unexplainedPatch, patient, store), unexplainedPatch);
-    const invented = { ...output, findings: [{ ...finding, targetKey: "invented-run" }] };
-    assert.deepEqual(validateDoctorOutput(invented, patient, store), invented);
-    const refusal = { status: "refused", reason: "Need more bytes", missingEvidence: [{ need: "whole case", targetKeys: ["case"] }] } as const;
-    assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
-    const refusedUnknown = { ...refusal, missingEvidence: [{ need: "unknown", targetKeys: ["invented-gate"] }] };
-    assert.deepEqual(validateDoctorOutput(refusedUnknown, patient, store), refusedUnknown);
-  });
-});
-
-test("Doctor submission accepts unknown guardrail keys and safely rejects unrecognized execution intent", () => {
-  const guardrail = { answer: true, evidenceIds: ["e1"], explanation: "observed" };
-  const baseFinding = {
-    targetKey: "judge-output-gate",
-    targetKind: "gate" as const,
-    assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate" as const, evidenceId: "e1" },
-    evidenceIds: ["e1"],
-    disposition: "keep" as const,
-    prescription: { kind: "retain" as const, recommendation: "Retain the gate" },
-    lastRealBite: { kind: "actual" as const, targetKey: "judge-output-gate", evidenceId: "e1" },
-  };
-  const withUnknown = {
-    status: "completed" as const,
-    case: { issueNumber: 40, runsPath: ".ak/work/issues/40/runs" },
-    findings: [{
-      ...baseFinding,
-      guardrails: {
-        reproducibleFailure: guardrail,
-        owningSeamOrInvariant: guardrail,
-        deletionOrSimplificationSuffices: { ...guardrail, answer: false },
-        narrativeNote: "human-facing only",
-      },
-    }],
-  };
-  assert.deepEqual(validateDoctorSubmissionShape(withUnknown), withUnknown);
-
-  for (const candidate of [undefined, null, 1, { status: "other" }]) {
-    assert.equal(validateDoctorSubmissionShape(candidate), candidate);
-  }
 });

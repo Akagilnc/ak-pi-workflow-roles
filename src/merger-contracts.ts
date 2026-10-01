@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { exactUtf8 } from "./exact-utf8.ts";
-import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 const materialSchema = Type.Object({ bytesBase64: Type.String(), sha256: Type.String() }, { additionalProperties: false });
@@ -14,18 +14,25 @@ export const mergerInputSchema = Type.Object({
   resolutionScope: Type.Array(Type.String(), { description: "材料：解析范围提示；可空" }),
   authorizedChecks: Type.Array(checkSchema),
 }, { additionalProperties: false });
-// #836 r16 class 1: attemptId/report/diagnosis are LLM/human-read narrative
-// content (candidate stored as submitted) — no code branches on their length.
-// mergerInputSchema (host-authored material, not role output) is out of scope.
-// #836 (ADR 0003 Amendment): status kept open like countersignStatus
-// (src/countersign-role.ts) — one shared description across both variants
-// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
+// #836 r16 class 1: attemptId/report/diagnosis/mergeCommitId are LLM/human-read
+// narrative content (candidate stored as submitted) — no code branches on their
+// length. mergerInputSchema (host-authored material, not role output) is out of scope.
+// #1134: `status` alone is the trajectory field (src/packaged-role-registry.ts:327-328
+// receiptCommitWhen picks the commit read off a completed receipt); its words ride
+// the description. Every other output field is declared name + semantic description
+// only — string type, required and the two-variant union are deleted, because the
+// package declaration IS the host's pre-dispatch validator.
 const MERGER_STATUS_DESCRIPTION = "completed | escalate" as const;
-const mergerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),
-]);
-export const mergerOutputSchema = withTerminatingOutputDeclarations(openToolObjectFromUnion(mergerOutputVariants));
+const mergerOutputObject = Type.Object({
+  status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }),
+  attemptId: Type.Unknown({ description: "已受理合并 attempt 身份" }),
+  report: Type.Unknown({ description: "如实结果报告" }),
+  mergeCommitId: Type.Unknown({ description: "完成合并 commit object ID" }),
+  diagnosis: Type.Unknown({
+    description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）",
+  }),
+});
+export const mergerOutputSchema = withTerminatingOutputDeclarations(openToolObject(mergerOutputObject));
 
 export type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 export type MergerMaterial = DeepReadonly<Static<typeof materialSchema>>;
