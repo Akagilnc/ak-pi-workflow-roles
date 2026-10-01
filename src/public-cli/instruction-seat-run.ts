@@ -68,6 +68,7 @@ import {
   loadResumablePublicRole,
   markRunAdmitted,
   parentRunPathFromGatePointerInstruction,
+  readCurrentCourt,
   type PublicResumeRequest,
   type RunWriterLease,
   type SameTicketSummonsMaterials,
@@ -994,7 +995,9 @@ async function queueConclusionFromChild(
 > {
   if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
   if (child.role === "countersign") {
-    const terminal = await trySettlePublicSeat(child, env.principalAuthority, undefined);
+    const terminal = await trySettlePublicSeat(
+      child, env.principalAuthority, await readCurrentCourt(child.runDirectory),
+    );
     const status = latestQueueStatus(terminal);
     if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
       return { admitted: child, terminal, status };
@@ -1010,7 +1013,7 @@ async function queueConclusionFromChild(
     const terminal = await trySettlePublicSeat(
       current,
       env.principalAuthority,
-      undefined,
+      await readCurrentCourt(current.runDirectory),
     );
     const status = latestQueueStatus(terminal);
     if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
@@ -1116,7 +1119,10 @@ async function officerPassedCurrentSubmission(input: {
     return false;
   }
   if (admitted.role !== officer) return false;
-  const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+  // A summon binding identifies the requested review, not its outcome. An open
+  // court (including a failed host turn) must not borrow a previous court's seal.
+  const court = await readCurrentCourt(admitted.runDirectory);
+  const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, court);
   return latestQueueStatus(terminal) === "converged";
 }
 
@@ -1324,7 +1330,9 @@ async function auditSubmittedRole(
           ? undefined : runIdFromRunDirectory(escalation.runDirectory));
       if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
       const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority);
-      const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
+      const terminal = await trySettlePublicSeat(
+        officer.admitted, env.principalAuthority, await readCurrentCourt(officer.admitted.runDirectory),
+      );
       if (terminal === undefined) throw new Error("escalated audit has no terminal result");
       io.stdout(formatTerminalResult(terminal));
       return { exitCode: 0, admitted: officer.admitted, terminal };
