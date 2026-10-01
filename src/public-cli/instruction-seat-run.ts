@@ -535,28 +535,17 @@ async function runCountersignBody(
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
-      const turnProjection: RoleTurnRequestProjectionOptions = {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(env.correlationId === undefined || env.correlationId.trim() === ""
-          ? {}
-          : { correlationId: env.correlationId }),
-        continuation: {
-          kind: "initial",
-          prompt: (env.reviewReask ?? env.gateReviewInstruction)
-            ?? buildInstructionTransportPrompt(
-              admitted,
-              engineSessionMaterialFromOptions({
-                ...pickEngineAxis(env),
-                packageRoot: env.packageRoot,
-              }),
-            ),
-        },
-      };
+      const turnProjection = roleTurnOptions(env, admitted, {
+        kind: "initial",
+        prompt: (env.reviewReask ?? env.gateReviewInstruction)
+          ?? buildInstructionTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...pickEngineAxis(env),
+              packageRoot: env.packageRoot,
+            }),
+          ),
+      });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
         admitted,

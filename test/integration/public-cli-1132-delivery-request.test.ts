@@ -340,6 +340,55 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
   });
 });
 
+// 会签首轮走专用投影，已解析上限必须跟到这一轮，不能退回包默认。
+test("#1132: a countersign first turn carries the configured delivery ceiling", async () => {
+  for (const limit of [0, 5]) {
+    await withSeatHome(async (home) => {
+      await setConfiguredLimit(home, limit);
+      const project = await freshProject(home);
+      await runAkRole(["config", "set", "countersign", "test/caller-seat:high"], {
+        packageRoot, home, io: { stdout() {}, stderr() {} },
+      });
+      let turns = 0;
+      const seenLimits: Array<number | undefined> = [];
+      const host = {
+        async executeTurn(request: RoleTurnRequest) {
+          if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
+          turns += 1;
+          seenLimits.push(request.deliveryRequestLimit);
+          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(coordinates.sessionDirectory, { recursive: true });
+          await writeFile(
+            coordinates.sessionFile,
+            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+            "utf8",
+          );
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      };
+      const result = await runAkRole(
+        ["countersign", "--host", "grok-build", "--project", project, "go"],
+        {
+          packageRoot, home, cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => `1132-countersign-limit-${limit}`,
+          io: captureIo().io,
+          roleTurnHost: host,
+          hostAdapters: packagedExternalHostNames()
+            .concat("pi")
+            .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+        },
+      );
+      assert.deepEqual(seenLimits, Array.from({ length: limit + 1 }, () => limit), `limit ${limit}`);
+      assert.equal(turns, limit + 1, `limit ${limit}`);
+      assert.equal(result.exitCode, 0, `limit ${limit}`);
+      assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", `limit ${limit}`);
+      if (result.terminal?.roleOutcome.kind !== "no_receipt") return;
+      assert.equal(result.terminal.roleOutcome.deliveryTurns, limit, `limit ${limit}`);
+    });
+  }
+});
+
 // 催交真失败同样不得停在 running。
 test("#1132: a failing催交 leaves the run out of running", async () => {
   await withSeatHome(async (home) => {
