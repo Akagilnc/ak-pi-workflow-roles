@@ -18,7 +18,7 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
+import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
@@ -1318,13 +1318,8 @@ export function resumeTurnRequestProjectionOptions(
     prompt = "";
   }
   return {
-    packageRoot: env.packageRoot,
-    home: env.home,
+    ...projectPublicTurnAxes(env),
     ...(env.host === undefined ? {} : { host: env.host }),
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined && admitted.correlationId === undefined
       ? {}
       : { correlationId: env.correlationId ?? admitted.correlationId }),
@@ -1345,13 +1340,8 @@ export function roleTurnOptions(
 ): RoleTurnRequestProjectionOptions {
   const correlationId = env.correlationId ?? admitted.correlationId;
   return {
-    packageRoot: env.packageRoot,
-    home: env.home,
+    ...projectPublicTurnAxes(env),
     ...(env.host === undefined ? {} : { host: env.host }),
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(correlationId === undefined || correlationId.trim() === ""
       ? {}
       : { correlationId }),

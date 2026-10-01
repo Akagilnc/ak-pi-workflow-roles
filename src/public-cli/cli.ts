@@ -4,7 +4,6 @@ import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
 import { realpath } from "node:fs/promises";
-import { join } from "node:path";
 
 import { packageMachineHome } from "../activation-ledger-topology.ts";
 import {
@@ -32,6 +31,7 @@ import {
   setPersistentSeatEngine,
   setPersistentSeatEngineModel,
   setPersistentSeatHost,
+  resolvePublicAgentDir,
   validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
@@ -317,7 +317,7 @@ async function loadPublicRoleDispatchParts(
   env: CliEnv,
   home: string,
 ): Promise<PublicRoleDispatchParts> {
-  const agentDir = resolveAgentDir(env, home);
+  const agentDir = resolvePublicAgentDir(env.agentDir, home);
   const cwd = env.cwd ?? process.cwd();
   const config = await loadAndValidateConfig(home, env.packageRoot);
   const credentials = env.credentials ?? (await loadCredentialProviders(agentDir));
@@ -404,14 +404,6 @@ function defaultIo(): CliIo {
 
 function resolveHome(env: CliEnv): string {
   return env.home ?? packageMachineHome();
-}
-
-function resolveAgentDir(env: CliEnv, home: string): string {
-  return (
-    env.agentDir ??
-    process.env.PI_CODING_AGENT_DIR ??
-    join(home, ".pi", "agent")
-  );
 }
 
 type ParsedGlobal = {
@@ -1165,7 +1157,7 @@ export async function runAkRole(
       const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ??
-        (await loadCredentialProviders(resolveAgentDir(env, home)));
+        (await loadCredentialProviders(resolvePublicAgentDir(env.agentDir, home)));
       const seats = effectiveSeatConfigurations(
         config,
         credentials,

@@ -1587,25 +1587,7 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<
-  | "judge"
-  | "coder"
-  | "fixer"
-  | "collector"
-  | "doctor"
-  | "reviewer"
-  | "merger"
-  | "notary"
-  | "countersign"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat"
-  | undefined
-> {
+): Promise<PackagedRole | undefined> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);

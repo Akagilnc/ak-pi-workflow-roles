@@ -25,6 +25,7 @@ import {
   latestQueueStatus,
 } from "../submission-gate.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
+import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
@@ -34,7 +35,7 @@ import {
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
-import { isAuditorSoulRole, readAuditorResumeBinding } from "../auditor-soul.ts";
+import { readAuditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -90,6 +91,7 @@ import {
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
+  projectPublicTurnAxes,
   projectRoleTurnRequest,
   requiredMethodSkills,
   type RoleTurnRequestProjectionOptions,
@@ -558,12 +560,7 @@ async function runCountersignBody(
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
       const turnProjection: RoleTurnRequestProjectionOptions = {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...projectPublicTurnAxes(env),
         ...(env.correlationId === undefined || env.correlationId.trim() === ""
           ? {}
           : { correlationId: env.correlationId }),
@@ -645,17 +642,18 @@ export async function runPublicInstructionSeat(
   let auditorSubject: "judge" | "doctor" | undefined;
   let auditorSource: string | undefined;
   let auditorTicket: number | undefined;
+  let resolvedNotarySource: NotarySourceRunLocator | undefined;
   if (record.sameParent === "subject-source") {
-    if (!isAuditorSoulRole(parsed.subject)) {
+    if (parsed.subject === undefined) {
       presentStructuralRejection(new CliUsageError("auditor --subject requires judge|doctor"), io);
       return { exitCode: 2 };
     }
     auditorSubject = parsed.subject;
-    const source = typeof parsed.sourceRun === "string" ? parsed.sourceRun.trim() : "";
-    if (source === "") {
+    if (parsed.sourceRun === undefined) {
       presentStructuralRejection(new CliUsageError("auditor --source-run requires a run locator"), io);
       return { exitCode: 2 };
     }
+    const source = parsed.sourceRun;
     try {
       const resolved = await resolveNotarySourceRunLocator({ projectRoot, sourceRun: source, home: env.home });
       auditorSource = resolved.runDirectory;
@@ -734,6 +732,7 @@ export async function runPublicInstructionSeat(
         ? {}
         : { instruction: resumeInstruction, instructionEmpty: false }),
     };
+    resolvedNotarySource = source;
     const resumed = await resumeSameParentInstructionSeat({
       env,
       io,
@@ -747,11 +746,15 @@ export async function runPublicInstructionSeat(
 
   let admitted: AdmittedRoleInvocation;
   try {
+    const admissionOverride = {
+      ...(auditorTicket === undefined ? {} : { assertedTicketNumber: auditorTicket }),
+      ...(resolvedNotarySource === undefined ? {} : { resolvedSourceRun: resolvedNotarySource }),
+    };
     admitted = await admitPublicRole(
       role,
       parsed,
       env,
-      auditorTicket === undefined ? undefined : { assertedTicketNumber: auditorTicket },
+      auditorTicket === undefined && resolvedNotarySource === undefined ? undefined : admissionOverride,
     );
   } catch (error) {
     const rejected = usageExit(error, io);

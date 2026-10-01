@@ -321,16 +321,14 @@ export async function summonPublicRole(
 ): Promise<PublicSummonResult> {
   const packageRoot = resolveSummonsPackageRoot(options.packageRoot);
   const home = await resolveSummonHome(options);
-  const agentDir =
-    options.agentDir
-    ?? process.env.PI_CODING_AGENT_DIR
-    ?? join(home, ".pi", "agent");
   const {
     loadCredentialProviders,
     loadPublicCliConfig,
     resolveEffectiveSeat,
+    resolvePublicAgentDir,
     validatePublicCliConfigAxes,
   } = await import("./public-cli/config.ts");
+  const agentDir = resolvePublicAgentDir(options.agentDir, home);
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);

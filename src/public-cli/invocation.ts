@@ -37,7 +37,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import type { PackagedRole } from "../packaged-role-registry.ts";
+import type { PackagedRole, PublicRoleRecord } from "../packaged-role-registry.ts";
 import {
   packagedAdmittedSubject,
   packagedArgvResult,
@@ -446,39 +446,46 @@ export async function recordEffectiveInvocationModel(
   host?: string,
   engineModel?: string | null,
 ): Promise<void> {
-  const ledgerPath = join(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  const next: Record<string, unknown> = { ...current };
-  if (model !== undefined) {
-    next.provider = model.provider;
-    next.model = model.model;
-    if (model.thinking === undefined) {
-      delete next.thinking;
-    } else {
-      next.thinking = model.thinking;
+  await updateDurableJsonPage(join(runDirectory, "invocation.json"), (current) => {
+    const next: Record<string, unknown> = { ...current };
+    if (model !== undefined) {
+      next.provider = model.provider;
+      next.model = model.model;
+      if (model.thinking === undefined) {
+        delete next.thinking;
+      } else {
+        next.thinking = model.thinking;
+      }
     }
-  }
-  if (engine === null) {
-    delete next.engine;
-  } else if (engine !== undefined) {
-    next.engine = engine;
-  }
-  if (engineModel === null) {
-    delete next.engineModel;
-  } else if (engineModel !== undefined) {
-    next.engineModel = engineModel;
-  }
-  if (host !== undefined) {
-    next.host = host;
-  }
-  await writeFile(
-    ledgerPath,
-    `${JSON.stringify(next, null, 2)}\n`,
-    "utf8",
-  );
+    if (engine === null) {
+      delete next.engine;
+    } else if (engine !== undefined) {
+      next.engine = engine;
+    }
+    if (engineModel === null) {
+      delete next.engineModel;
+    } else if (engineModel !== undefined) {
+      next.engineModel = engineModel;
+    }
+    if (host !== undefined) {
+      next.host = host;
+    }
+    return next;
+  });
+}
+
+/**
+ * Read one durable JSON object, let the caller keep its field rules, and write
+ * the page back. `undefined` means the caller decided not to change the page.
+ */
+async function updateDurableJsonPage(
+  path: string,
+  update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
+): Promise<void> {
+  const current = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  const next = update(current);
+  if (next === undefined) return;
+  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
@@ -486,16 +493,10 @@ async function mergeInvocationIdentityPage(
   runDirectory: string,
   fields: Record<string, unknown>,
 ): Promise<void> {
-  const ledgerPath = join(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<string, unknown>;
-  await writeFile(
-    ledgerPath,
-    `${JSON.stringify({
-      ...current,
-      ...fields,
-    }, null, 2)}\n`,
-    "utf8",
-  );
+  await updateDurableJsonPage(join(runDirectory, "invocation.json"), (current) => ({
+    ...current,
+    ...fields,
+  }));
 }
 
 /**
@@ -510,27 +511,20 @@ export async function persistAdmittedSourceRunPath(
   if (sourceRunPath.trim() === "") {
     throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
   }
-  const admittedPath = admitted.admittedRequestPath;
-  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (typeof current.sourceRunPath === "string" && current.sourceRunPath !== sourceRunPath) {
-    throw new Error(
-      `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
-    );
-  }
-  const sameSubject = auditorSubject === undefined || current.auditorSubject === auditorSubject;
-  if (current.sourceRunPath === sourceRunPath && sameSubject) return;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({
+  await updateDurableJsonPage(admitted.admittedRequestPath, (current) => {
+    if (typeof current.sourceRunPath === "string" && current.sourceRunPath !== sourceRunPath) {
+      throw new Error(
+        `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
+      );
+    }
+    const sameSubject = auditorSubject === undefined || current.auditorSubject === auditorSubject;
+    if (current.sourceRunPath === sourceRunPath && sameSubject) return undefined;
+    return {
       ...current,
       sourceRunPath,
       ...(auditorSubject === undefined ? {} : { auditorSubject }),
-    }, null, 2)}\n`,
-    "utf8",
-  );
+    };
+  });
 }
 
 /**
@@ -552,25 +546,21 @@ export async function recordAdmittedCorrelation(
   admitted: AdmittedRoleInvocation,
   correlationId: string,
 ): Promise<void> {
-  const current = JSON.parse(
-    await readFile(admitted.admittedRequestPath, "utf8"),
-  ) as Record<string, unknown>;
-  const prior = [
-    ...(Array.isArray(current.correlationIds)
-      ? current.correlationIds.filter((value): value is string =>
-          typeof value === "string" && value.trim() !== ""
-        )
-      : []),
-    ...(typeof current.correlationId === "string" && current.correlationId.trim() !== ""
-      ? [current.correlationId]
-      : []),
-  ];
-  const correlationIds = [...new Set([...prior, correlationId])];
-  await writeFile(
-    admitted.admittedRequestPath,
-    `${JSON.stringify({ ...current, correlationId, correlationIds }, null, 2)}\n`,
-    "utf8",
-  );
+  let correlationIds: string[] = [];
+  await updateDurableJsonPage(admitted.admittedRequestPath, (current) => {
+    const prior = [
+      ...(Array.isArray(current.correlationIds)
+        ? current.correlationIds.filter((value): value is string =>
+            typeof value === "string" && value.trim() !== ""
+          )
+        : []),
+      ...(typeof current.correlationId === "string" && current.correlationId.trim() !== ""
+        ? [current.correlationId]
+        : []),
+    ];
+    correlationIds = [...new Set([...prior, correlationId])];
+    return { ...current, correlationId, correlationIds };
+  });
   await mergeInvocationIdentityPage(admitted.runDirectory, {
     correlationId,
     correlationIds,
@@ -671,12 +661,13 @@ export async function recordChildDiaristRun(
   parent: AdmittedRoleInvocation,
   childRunId: string,
 ): Promise<void> {
-  const page = JSON.parse(await readFile(parent.admittedRequestPath, "utf8")) as Record<string, unknown>;
-  const existing = Array.isArray(page.childDiaristRunIds)
-    ? page.childDiaristRunIds.filter((runId): runId is string => typeof runId === "string")
-    : [];
-  const childDiaristRunIds = existing.includes(childRunId) ? existing : [...existing, childRunId];
-  await writeFile(parent.admittedRequestPath, `${JSON.stringify({ ...page, childDiaristRunIds }, null, 2)}\n`, "utf8");
+  await updateDurableJsonPage(parent.admittedRequestPath, (page) => {
+    const existing = Array.isArray(page.childDiaristRunIds)
+      ? page.childDiaristRunIds.filter((runId): runId is string => typeof runId === "string")
+      : [];
+    const childDiaristRunIds = existing.includes(childRunId) ? existing : [...existing, childRunId];
+    return { ...page, childDiaristRunIds };
+  });
 }
 
 /**
@@ -693,16 +684,15 @@ export async function bindTicketNumberOnRunDirectory(
     "bindTicketNumberOnRunDirectory",
   );
   const admittedPath = join(runDirectory, "admitted-request.json");
-  const admitted = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (admitted.ticketNumber === ticketNumber) return;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...admitted, ticketNumber }, null, 2)}\n`,
-    "utf8",
-  );
+  let unchanged = false;
+  await updateDurableJsonPage(admittedPath, (admitted) => {
+    if (admitted.ticketNumber === ticketNumber) {
+      unchanged = true;
+      return undefined;
+    }
+    return { ...admitted, ticketNumber };
+  });
+  if (unchanged) return;
   await mergeInvocationIdentityPage(runDirectory, { ticketNumber });
 }
 
@@ -1435,6 +1425,11 @@ export type PublicSeatParse = {
  * Sole admit call. Kind comes from the composition-root record.
  * Placement stays ticketAdmissionFields. Seat field checks live in this function only.
  */
+type RoleForAdmission<K extends PublicRoleRecord["admission"]> = Extract<
+  PublicRoleRecord,
+  { readonly admission: K }
+>["role"];
+
 export function admitPublicRole<R extends PackagedRole>(
   role: R,
   parsed: PublicSeatParse,
@@ -1442,6 +1437,8 @@ export function admitPublicRole<R extends PackagedRole>(
   override?: {
     readonly assertedTicketNumber?: number;
     readonly deferPersistence?: boolean;
+    /** Locator already resolved on the new-summon path. Absent callers still resolve. */
+    readonly resolvedSourceRun?: NotarySourceRunLocator;
   },
 ): Promise<Extract<AdmittedRoleInvocation, { readonly role: R }>>;
 export async function admitPublicRole(
@@ -1451,6 +1448,8 @@ export async function admitPublicRole(
   override?: {
     readonly assertedTicketNumber?: number;
     readonly deferPersistence?: boolean;
+    /** Locator already resolved on the new-summon path. Absent callers still resolve. */
+    readonly resolvedSourceRun?: NotarySourceRunLocator;
   },
 ): Promise<AdmittedRoleInvocation> {
   const record = packagedRoleMetadata(role);
@@ -1469,7 +1468,7 @@ export async function admitPublicRole(
   switch (record.admission) {
     case "instruction":
       return admitStandardMaterialInvocation(
-        role as "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+        role as RoleForAdmission<"instruction">,
         {
           ...shared,
           instruction,
@@ -1508,9 +1507,6 @@ export async function admitPublicRole(
       });
     }
     case "worker-packet": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
       if (instruction.trim() === "") {
         throw new CliUsageError("fixer requires a nonblank repair instruction");
       }
@@ -1568,18 +1564,7 @@ export async function admitPublicRole(
       });
     }
     case "collect-target": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
-      let explicitPrNumber: number | undefined;
-      if (parsed.prNumber !== undefined) {
-        try {
-          explicitPrNumber = parseCollectorPrNumber(parsed.prNumber);
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          throw new CliUsageError(detail, { cause: error });
-        }
-      }
+      const explicitPrNumber = parsed.prNumber;
       const projectRoot = resolve(parsed.project ?? shared.cwd);
       let repository: CollectorRepository;
       if (parsed.repo !== undefined) {
@@ -1630,19 +1615,12 @@ export async function admitPublicRole(
       return { ...admittedCollector, repository };
     }
     case "case-identity": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
-      const issueNumber = parsed.issueNumber ?? Number.NaN;
-      if (
-        !Number.isInteger(issueNumber) ||
-        issueNumber < 1 ||
-        !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(issueNumber))
-      ) {
+      if (parsed.issueNumber === undefined) {
         throw new CliUsageError(
-          `doctor --issue must be a positive integer, got ${issueNumber}`,
+          `doctor --issue must be a positive integer, got ${Number.NaN}`,
         );
       }
+      const issueNumber = parsed.issueNumber;
       let frozenAttachments: readonly FrozenAttachment[] = [];
       const admittedDoctor = await admitStandardMaterialInvocation("doctor", {
         ...shared,
@@ -1698,22 +1676,21 @@ export async function admitPublicRole(
       return { ...admittedDoctor, attachments: frozenAttachments };
     }
     case "source-locator": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
       const projectRoot = resolve(parsed.project ?? shared.cwd);
-      let sourceRun: NotarySourceRunLocator;
-      try {
-        sourceRun = await resolveNotarySourceRunLocator({
-          projectRoot,
-          sourceRun: parsed.sourceRun ?? "",
-          home: shared.home,
-        });
-      } catch (error) {
-        if (error instanceof NotarySourceRunError) {
-          throw new CliUsageError(error.message, { cause: error });
+      let sourceRun = override?.resolvedSourceRun;
+      if (sourceRun === undefined) {
+        try {
+          sourceRun = await resolveNotarySourceRunLocator({
+            projectRoot,
+            sourceRun: parsed.sourceRun ?? "",
+            home: shared.home,
+          });
+        } catch (error) {
+          if (error instanceof NotarySourceRunError) {
+            throw new CliUsageError(error.message, { cause: error });
+          }
+          throw error;
         }
-        throw error;
       }
       // Board ticket on the source run wins; otherwise the summons ticket. Code does not infer one.
       const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
@@ -1734,9 +1711,6 @@ export async function admitPublicRole(
       });
     }
     case "gleaner": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
       const baseRevision = parsed.baseRevision ?? "";
       if (baseRevision.trim() === "") {
         throw new CliUsageError("--base requires a nonempty revision");
@@ -1751,16 +1725,19 @@ export async function admitPublicRole(
       });
     }
     case "review-basis": {
-      const lens = requireReviewerLens(parsed.lens);
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
+      if (parsed.lens === undefined) {
+        throw new CliUsageError("--lens requires completeness or correctness");
       }
-      const baseRevision = requireReviewerBaseRevision(parsed.baseRevision);
+      if (parsed.baseRevision === undefined) {
+        throw new CliUsageError("--base requires a nonempty revision");
+      }
       const rawRefs = parsed.authorityRefs ?? [];
       if (rawRefs.length === 0) {
         throw new CliUsageError("reviewer requires --authority-ref <ref>");
       }
-      const authorityRefs = Object.freeze(rawRefs.map((ref) => requireAuthorityRef(ref)));
+      const lens = parsed.lens;
+      const baseRevision = parsed.baseRevision;
+      const authorityRefs = Object.freeze([...rawRefs]);
       const admittedReviewer = await admitStandardMaterialInvocation("reviewer", {
         ...shared,
         instruction,
@@ -1775,9 +1752,6 @@ export async function admitPublicRole(
       return { ...admittedReviewer, authorityRefs };
     }
     case "merge-envelope": {
-      if (parsed.project !== undefined) {
-        requireOptionPath("--project", parsed.project);
-      }
       if (instruction.trim() === "") {
         throw new CliUsageError("merger requires a nonblank task instruction");
       }
@@ -1900,9 +1874,6 @@ async function placeRoleAdmission(options: {
   /** Countersign reserves coordinates, then materializes after identity lookup. */
   readonly materialize?: boolean;
 }): Promise<PlacedRoleAdmission> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = options.runId ?? (options.createRunId ?? uuidv7)();
   const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
@@ -2003,7 +1974,7 @@ async function persistPlacedAdmission(
  * doctor resolves the case, then freezes attachments; merger writes merger-input.json).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor" | "merger",
+  R extends PackagedRole,
   Extra extends object = {},
 >(
   role: R,
