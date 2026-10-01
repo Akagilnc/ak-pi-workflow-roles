@@ -1800,11 +1800,6 @@ async function publishDeclaredSeatArtifacts(
   });
 }
 
-/**
- * Accepted seats present the sealed ledger. A session tool error is not a host failure.
- * #757: sealed receipts pass through full decisiveFacts — one path, no per-seat projector.
- */
-
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
 function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -1816,28 +1811,7 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-async function settleLawfulSeatAcceptedTerminalResult(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const read = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (read.kind === "fault") {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
-    );
-  }
-  // Ledger acceptance is the terminal. A later correctable rejection stays a
-  // payload on that acceptance; it does not become a host failure.
-  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
-  if (roleOutcome === undefined) return undefined;
-  return finishLawfulSeat(admitted, coordinates, entriesOf(read), roleOutcome, scope);
-}
-
-/** Accepted-tool seats: one scan, tool name from the composition-root record. */
+/** Accepted-tool seats retain declaration checks and optional officer projection. */
 async function trySettleAcceptedSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
@@ -1847,7 +1821,7 @@ async function trySettleAcceptedSeatTerminalResult(
   if (toolName === undefined) {
     throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
   }
-  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, scope);
+  const settled = await settleSealedSeat(admitted, authority, scope, { acceptedOnly: false });
   const record = packagedRoleMetadata(admitted.role);
   if (
     settled === undefined
