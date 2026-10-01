@@ -3,18 +3,15 @@ import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts"
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
  * session/content route; completed/refused settle on the common Terminal face.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   appendFile,
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rm,
@@ -32,7 +29,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
 import {
   admitPublicRole,

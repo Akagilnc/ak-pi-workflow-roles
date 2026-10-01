@@ -1,14 +1,12 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
-import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, join } from "node:path";
 import test, { after, afterEach } from "node:test";
 
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type JsonObject, type Usage } from "@earendil-works/pi-ai";
+import { fauxProvider, type AssistantMessage, type JsonObject, type Usage } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -16,22 +14,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
+import { createPiRoleHostAdapter, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import type { HostGatekeeperActions } from "../../src/host-contracts.ts";
 
-import type { AuditorSummon } from "../../src/compliance-transport.ts";
-import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import {
-  createNavigatorAttendance,
-  type NavigatorEvent,
-  type NavigatorPreparationSession,
-} from "../../src/navigator-attendance.ts";
-import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
-import type { RoleHost } from "../../src/host-contracts.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   WorkerCommitReminderError,
@@ -87,20 +76,17 @@ import {
   renderResumeCommand,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  extractNavigatorFact,
-  NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import { createTempPackageHomeLedger, packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
 // scope writes the page and manages env + temp dir per test — no global
 // install registry in the shared helper, one page writer reused everywhere.
 const activeLedgers = new Map<string, { dispose(): void }>();
-function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefined>): string {
-  void seats; // seat page deleted (#675); argument retained for call-site shape only.
+function installInstitutionalRunDir(): string {
   // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
   // #604: nest under temp `.ak-roles` so session/ledger path-derive never hits real home.
   const runName = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`;
@@ -120,10 +106,9 @@ function disposeInstitutionalRunDir(runDirectory: string): void {
   }
 }
 async function withInstitutionalRunDir<T>(
-  seats: Record<string, SeatSelection | undefined>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const runDirectory = installInstitutionalRunDir(seats);
+  const runDirectory = installInstitutionalRunDir();
   try {
     return await run();
   } finally {
@@ -300,7 +285,7 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
       ? existingRun
       : undefined;
   const runDirectory =
-    ownedExisting ?? installInstitutionalRunDir(parentInheritedSeats(model));
+    ownedExisting ?? installInstitutionalRunDir();
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
@@ -971,9 +956,8 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
     { cwd: process.cwd(), modelRegistry: { getProvider() { bounceGatekeeperProviderRequests += 1; } } },
   );
-  const seatModel = fauxProvider({ provider: "unfinished-seats", api: "unfinished-seats" }).getModel();
   // Positive: no reason → bounce → same-run reasoned resubmit accepted through Gatekeeper.
-  await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+  await withInstitutionalRunDir(async () => {
     await assert.rejects(
       tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
       (error: unknown) =>
@@ -1008,7 +992,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
-  await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+  await withInstitutionalRunDir(async () => {
     await assert.rejects(
       tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
       (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
@@ -1062,10 +1046,9 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-    const seatModel = fauxProvider({ provider: "prereq-seats", api: "prereq-seats" }).getModel();
     const candidate = (prerequisiteId: string) => ({ status: "refused" as const, report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId, evidence: "Choice absent." } }] });
     // #836 删 9 / 2.12: packet binding is not a code reject. Record the payload as-is.
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await withInstitutionalRunDir(async () => {
       const context = await withPassingGatekeeper(toolCallContext([{ id: "undeclared", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed } = await acceptThroughTypedRoundClosure({
         handlers: harness.handlers,
@@ -1077,7 +1060,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
       });
       assert.deepEqual(sealed.accepted, candidate("other"));
     });
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await withInstitutionalRunDir(async () => {
       const context = await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed, pending } = await acceptThroughTypedRoundClosure({
         handlers: harness.handlers,
@@ -1099,7 +1082,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
         { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
       ],
     };
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await withInstitutionalRunDir(async () => {
       await assert.rejects(
         tool.execute("partial", partial, undefined, undefined, Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })),
         (error: unknown) =>
@@ -1121,7 +1104,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await withInstitutionalRunDir(async () => {
       const output = { status: "completed" as const, report: "Both classes settled.", classResults: [classA, classB] };
       const context3 = await withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed, pending } = await acceptThroughTypedRoundClosure({

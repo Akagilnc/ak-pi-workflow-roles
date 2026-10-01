@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
@@ -12,16 +12,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -29,13 +25,11 @@ import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
   withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,
-  multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
 
 // Admission matrix: structural rejects before model dispatch share one root —

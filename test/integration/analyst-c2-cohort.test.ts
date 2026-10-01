@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #330 analyst-C2 — cohort contrast output tracer.
  *

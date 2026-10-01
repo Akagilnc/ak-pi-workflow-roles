@@ -8,7 +8,6 @@ import test from "node:test";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
-  GatekeeperDecisionError,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
 

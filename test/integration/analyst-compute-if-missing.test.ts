@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #338 analyst on-demand retrieval — compute-if-missing (owner 2026-08-14).
  *
@@ -43,7 +42,6 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
-import type { AnalystModelGroupsPage } from "../../src/analyst-model-groups.ts";
 import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 

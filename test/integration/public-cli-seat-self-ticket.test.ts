@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 / #709 / #771 — seat ticket identity from the public CLI true entry
  * (no --ticket / no frontmatter). Mechanical layer never matches summons text
@@ -11,7 +10,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -28,7 +27,6 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
-  bindAdmittedTicketNumber,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";

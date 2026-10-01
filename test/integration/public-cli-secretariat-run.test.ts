@@ -5,8 +5,6 @@
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,7 +17,6 @@ import {
   lookupHostDescription,
 } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -39,11 +36,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
-  createSecretariatRoleRuntime,
 } from "../../src/role-runtime.ts";
-import {
-  sealAcceptedSubmission,
-} from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -61,16 +54,7 @@ import {
   objectPayloads,
   payloadStatusSequence,
 } from "../helpers/terminal-payload.ts";
-import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
-import {
-  activationBookDirectory,
-  resolveActivationLedgerHome,
-} from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import {
-  readSitianRecords,
-  resolveSitianRecordPathInLedger,
-} from "../../src/sitian-facade.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-secretariat-", async (home) => {

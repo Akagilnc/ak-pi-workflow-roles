@@ -17,7 +17,6 @@ import {
   sitianReport,
   readSitianRecords,
   type SitianRecordInput,
-  type SitianRecord,
 } from "../../src/sitian-facade.ts";
 import {
   seedGitRepository,

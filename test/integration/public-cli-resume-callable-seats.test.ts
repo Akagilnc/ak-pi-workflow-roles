@@ -1,17 +1,13 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #633 abolish one-shot — collector/doctor/notary/inspector resume through the
  * public resume entry: same session principal reopened, each seat settles its
  * own typed terminal. Shortest deterministic four-seat dispatch-table coverage.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   mkdir,
-  mkdtemp,
   appendFile,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";

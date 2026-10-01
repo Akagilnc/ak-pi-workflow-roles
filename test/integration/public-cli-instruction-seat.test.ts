@@ -1,5 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
  *
@@ -14,8 +13,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * (锚定宪法).
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 

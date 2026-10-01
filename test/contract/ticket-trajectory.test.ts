@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S1 single-ticket trajectory — external behavior at the unique seam
  * `(ledgerDir, ticketSnapshot, now) → HTML` and the page lifecycle entry.
@@ -9,7 +8,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * keys / hrefs only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
+import { cp, link, lstat, mkdir, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,7 +25,6 @@ import {
   writeTicketTrajectoryPage,
   type TicketSnapshot,
 } from "../../src/ticket-trajectory.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { elementsWith } from "../helpers/factory-board-shared.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));

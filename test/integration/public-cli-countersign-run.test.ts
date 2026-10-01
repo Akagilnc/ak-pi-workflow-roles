@@ -1,5 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 / #987 resume continues via explicit package
@@ -10,29 +9,21 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
-import { basename, dirname, join, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, writeFile, readFile } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/auditor-role.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { summonPublicRole } from "../../src/public-role-summons.ts";
-import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import {
   admitPublicRole,
-  relocateAdmittedRunToTicket,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { type CountersignRunEnv } from "../../src/public-cli/countersign-run.ts";
@@ -42,13 +33,12 @@ import {
   runPublicInstructionSeatResume,
 } from "../../src/public-cli/instruction-seat-run.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
-import { findRunDirectoryById, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { resolveNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,

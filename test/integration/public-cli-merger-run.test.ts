@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
@@ -12,8 +11,8 @@ import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { appendFile, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
@@ -31,7 +30,7 @@ import {
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
   hasRecordedSubmission,
@@ -40,8 +39,6 @@ import {
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
-  createMinimalHost,
-  roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";

@@ -1,7 +1,6 @@
 import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
 
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -12,7 +11,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import test from "node:test";
@@ -44,12 +43,9 @@ import {
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
-import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";

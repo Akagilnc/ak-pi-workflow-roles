@@ -1,14 +1,12 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -17,21 +15,17 @@ import assert from "node:assert/strict";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   createWorkerSubmissionGate,

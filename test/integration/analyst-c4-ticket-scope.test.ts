@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #332 analyst-C4 — issue scope typed ticketNumber (#176).
  * #399: ticket face is strict — no silent projectRoot fallback for unbound runs;
@@ -19,15 +18,11 @@ import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Issue primary root — legacy path-narrow / display face. */
 const ISSUE_PRIMARY = "/analyst-fixture/c4-issue-primary";
-/** Alien root used historically for dual-key conflict; ticket path no longer conflicts. */
-const ISSUE_ALIEN = "/analyst-fixture/c4-issue-alien";
 /** Dedicated root for no-ticketNumber path-narrow path. */
 const ISSUE_FALLBACK = "/analyst-fixture/c4-issue-fallback";
 
 /** Caller typed ticket face for the ticket path. */
 const SCOPE_TICKET = 4401;
-/** Decoy ticket bound on a primary-root run — must stay out when typed wins. */
-const DECOY_TICKET = 9999;
 
 const RUN_TICKET_MATCH_PRIMARY = "019ff000-4001-7000-8000-0000000004a1";
 const RUN_TICKET_MATCH_ALIEN = "019ff000-4002-7000-8000-0000000004a2";
@@ -82,8 +77,6 @@ test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback"
     assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
     // Book×ticket scope does not emit projectRoot dual-key conflicts.
     assert.deepEqual(result.page.scopeConflicts, []);
-    void DECOY_TICKET;
-    void ISSUE_ALIEN;
   });
 });
 

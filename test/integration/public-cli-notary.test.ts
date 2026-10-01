@@ -1,18 +1,14 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   realpath,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,11 +26,9 @@ import {
   resolveNotarySourceRunLocator,
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   argvFlagValue,
@@ -531,8 +525,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-          void args;
+            piRunner: async () => {
           throw new Error("provider disconnected");
         },
           }),
@@ -566,13 +559,12 @@ test("default judge public path admits no notary seat intake (observable run)", 
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
           dispatchedArgs = args;
           const sessionFile = flagValue(args, "--session");
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, "", "utf8");
-          void options;
           return {
             code: 1,
             timedOut: false,

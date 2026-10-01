@@ -3,7 +3,6 @@ import {
   roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiaristPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -14,13 +13,12 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { AK_ROLE_ENGINE_ENV } from "../../src/engine-detour.ts";
 import {
-  engineSessionMaterialFromOptions,
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";

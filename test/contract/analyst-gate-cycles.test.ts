@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #446 analyst gate-cycle metric family — real-entry tracers only.
  *

@@ -1,4 +1,4 @@
-import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;

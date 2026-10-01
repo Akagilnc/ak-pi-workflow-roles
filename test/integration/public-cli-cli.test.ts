@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
+import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
@@ -20,7 +19,6 @@ import {
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
   loadPublicCliConfig,
-  publicCliConfigPath,
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
@@ -34,7 +32,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
+import { objectPayloads} from "../helpers/terminal-payload.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-cli-", scenario);

@@ -2,7 +2,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -10,9 +9,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import {
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,7 +19,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,

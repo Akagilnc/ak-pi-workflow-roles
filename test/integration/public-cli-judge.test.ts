@@ -10,11 +10,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   access,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -24,17 +21,15 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { readComplianceCandidate } from "../../src/compliance-transport.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -53,15 +48,10 @@ import {
   type TerminalResult,
   type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
   packageRoot,
-  persistActivationSessionFile,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 

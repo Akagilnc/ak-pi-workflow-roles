@@ -4,7 +4,6 @@
  * that ticket.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { sep } from "node:path";
 import { join } from "node:path";

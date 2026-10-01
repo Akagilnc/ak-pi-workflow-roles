@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Detour cancellation propagation + spawn-miss cause seam + silent-idle survival.
  * Narrow call-input only — does NOT cover public-CLI empty-output / exit-23 cause
@@ -6,10 +5,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -122,6 +120,3 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
       await assert.rejects(pending, (error: unknown) => error === reason);
   });
 });
-
-// Keep module URL referenced so tsx resolves consistently under some runners.
-void fileURLToPath(import.meta.url);

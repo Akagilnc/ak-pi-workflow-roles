@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S2 factory board — external behavior at:
  *   1) isolated BoardSnapshot → HTML (no network)
@@ -8,10 +7,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { cp, mkdir, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -24,47 +21,31 @@ import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
-  decideTicketCurrentState,
   renderFactoryBoardHtml,
   startFactoryBoardPage,
   writeFactoryBoardPage,
   type FactoryBoardBook,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
-import { loadTicketTrajectoryRuns } from "../../src/ticket-trajectory.ts";
 import {
   createGhTicketSnapshotTransport,
   fetchBoardSnapshot,
   TicketSnapshotBindingError,
   TicketSnapshotApiError,
   type BoardSnapshot,
-  type SnapshotTicket,
   type TicketSnapshotTransport,
 } from "../../src/ticket-snapshot.ts";
 import type { GhApiRunner, GhApiResponse } from "../../src/gh-api-runner.ts";
 import {
-  acceptedFacts,
-  isTerminatingToolName,
-  validateAcceptedDetails,
-  AcceptedDetailsContractError,
-  type TerminatingToolName,
-} from "../../src/package-contracts/terminating-tools.ts";
-import {
   attrsFromOpenTag,
-  discoverTrueHomeUnacceptedActiveIssue,
   elementsWith,
   executeProductionBoardSort,
-  independentAcceptedTrajectory,
-  independentIssueUsage,
-  independentLatestLegActivity,
   laneSortIdentity,
-  pathExists,
   ticket,
   topLevelLaneEntries,
   treeFingerprint,
   visibleTicketLabel,
   BoardSortElement,
-  type BoardPageSortMode,
 } from "../helpers/factory-board-shared.ts";
 
 /** Page sort modes advertised by the embedded production control (not a board export). */

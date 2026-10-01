@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { fauxProvider } from "@earendil-works/pi-ai";

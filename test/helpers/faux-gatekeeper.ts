@@ -1,5 +1,3 @@
-import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
-
 /**
  * Shared modelRegistry surface for scripted Gatekeeper provider fixtures.
  * Province resolve (#453) may read host public-cli seat selection and call `find`;

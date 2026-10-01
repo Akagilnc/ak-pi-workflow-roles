@@ -1,5 +1,4 @@
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -11,12 +10,10 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {

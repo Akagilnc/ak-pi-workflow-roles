@@ -6,9 +6,7 @@ import {
   copyFile,
   cp,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -26,27 +24,12 @@ import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { promisify } from "node:util";
 
 import {
-  type CredentialStore,
-  type FauxProviderHandle,
   fauxProvider,
   normalizeContext,
-  InMemoryCredentialStore,
-  type Model,
-  type Provider,
 } from "@earendil-works/pi-ai";
 import {
-  DefaultResourceLoader,
   type ExtensionContext,
-  type InlineExtension,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import {
-  resolveActivationLedgerHome,
-  resolveBookKeyFromGit,
-} from "../../src/activation-ledger.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
 
 const execFileAsync = promisify(execFile);

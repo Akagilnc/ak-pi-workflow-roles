@@ -16,10 +16,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  fauxAssistantMessage,
-  InMemoryCredentialStore,
-} from "@earendil-works/pi-ai";
 
 import {
   createOAuthKeepalive,

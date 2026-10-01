@@ -1,6 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -9,14 +8,11 @@ import assert from "node:assert/strict";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
@@ -26,7 +22,7 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
 import {
   admitPublicRole,
@@ -42,7 +38,6 @@ import {
 } from "../../src/public-cli/terminal.ts";
 import {
   packageRoot,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";

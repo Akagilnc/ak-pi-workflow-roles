@@ -1,43 +1,30 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
-import { pathToFileURL } from "node:url";
-import { fauxProvider } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionError } from "@earendil-works/pi-coding-agent";
 import {
   ActivationGitRepositoryRequiredError,
   durableSessionPointer,
-  resolveActivationLedgerHome,
   resolveBookKeyFromGit,
 } from "../../src/role-runtime.ts";
-import { type ActivationTraceRecord } from "../../src/activation-trace.ts";
-import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { TERMINATING_TOOL_NAMES } from "../../src/package-contracts/terminating-tools.ts";
 import {
   activationBookKeyFor,
   machineLedgerHome,
-  packageRoot,
   persistActivationSessionFile,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
-import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });

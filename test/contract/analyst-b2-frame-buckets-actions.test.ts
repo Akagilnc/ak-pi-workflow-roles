@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #326 analyst-B2 — two-bucket full partition + action board tracer.
  *
@@ -7,8 +6,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Family registers by drop-in module under analyst-metric-families/ only.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";

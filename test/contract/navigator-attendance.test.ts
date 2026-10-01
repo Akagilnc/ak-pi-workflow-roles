@@ -11,11 +11,8 @@ import {
 } from "../../src/navigator-attendance.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";

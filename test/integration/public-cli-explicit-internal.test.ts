@@ -1,9 +1,8 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 

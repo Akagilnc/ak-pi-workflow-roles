@@ -1,7 +1,5 @@
 // #685 C1: createRecordSession host durability leg culled. C3: resume 后无二次
 // false bounce 未结 — docs/research/issue-685-c3-deleted-contract-handoff.md §C.
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -15,40 +13,22 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { runAkRole } from "../../src/public-cli/cli.ts";
-import {
-  buildNavigatorInfrastructureFailureFact,
-  FIXER_OUTPUT_TOOL_NAME,
-} from "../../src/role-runtime.ts";
-import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
-  WORKER_COMMIT_BASELINE_ENTRY_TYPE,
-  WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-  WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
 } from "../../src/worker-submission-gates.ts";
 import {
   machineLedgerHome,
-  packageRoot,
-  resolvePackageEntrypoint,
-  seedGitRepository,
-  withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";

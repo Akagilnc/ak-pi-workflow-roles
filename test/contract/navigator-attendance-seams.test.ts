@@ -8,7 +8,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { extractNavigatorFact, NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";

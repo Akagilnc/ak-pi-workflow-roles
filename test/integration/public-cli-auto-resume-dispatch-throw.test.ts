@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Owner 2026-08-23 (immediate order, no separate ticket): a dispatch that exits
  * by throwing must not bypass the auto-resume retry mechanism.

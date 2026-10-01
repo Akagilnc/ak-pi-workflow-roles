@@ -9,8 +9,6 @@ import {
   mkdir,
   readdir,
   readFile,
-  rename,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
