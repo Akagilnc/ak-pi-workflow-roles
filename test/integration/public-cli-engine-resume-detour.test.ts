@@ -84,7 +84,7 @@ const SEAT_TERMINAL: Record<
   },
   countersign: {
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    details: { countersignStatus: "converged" },
+    details: { status: "converged" },
   },
   "gleaner-left": {
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,

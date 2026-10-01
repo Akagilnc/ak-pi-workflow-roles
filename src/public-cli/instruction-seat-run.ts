@@ -101,10 +101,7 @@ import {
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
   "reviewReask" | "gateReviewInstruction" | "parentRunPath"
-> & {
-  /** This call already sent one status reask. The next acceptance is presented. */
-  readonly submissionStatusReasked?: true;
-};
+>;
 
 type SeatRunResult = {
   exitCode: number;
@@ -174,10 +171,10 @@ async function reaskUnreadablePostSubmissionStatus(
   io: CliIo,
 ): Promise<SeatRunResult | undefined> {
   const message = unreadablePostSubmissionStatus(admitted, terminal);
-  if (message === undefined || env.submissionStatusReasked === true) return undefined;
+  if (message === undefined) return undefined;
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
-    { ...env, autoResumeLimit: 0, submissionStatusReasked: true },
+    { ...env, autoResumeLimit: 0 },
     io,
   );
 }
@@ -892,31 +889,31 @@ async function queueConclusionFromChild(
   | undefined
 > {
   if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
-  const settled = await trySettlePublicSeat(child, env.principalAuthority, undefined);
-  const status = latestQueueStatus(settled);
-  if (settled !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
-    return { admitted: child, terminal: settled, status };
+  let current = child;
+  for (;;) {
+    const terminal = await trySettlePublicSeat(
+      current,
+      env.principalAuthority,
+      undefined,
+    );
+    const status = latestQueueStatus(terminal);
+    if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
+      return { admitted: current, terminal, status };
+    }
+    const reasked = await runPublicInstructionSeatResume({
+      runId: current.runId,
+      message: officerConclusionReask(status),
+    }, env, io);
+    if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
+      return { stop: reasked };
+    }
+    const reaskedStatus = latestQueueStatus(reasked.terminal);
+    if (reaskedStatus !== undefined && QUEUE_CONCLUSIONS.has(reaskedStatus)) {
+      return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
+    }
+    if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
+    current = reasked.admitted;
   }
-  const reasked = await runPublicInstructionSeatResume({
-    runId: child.runId,
-    message: officerConclusionReask(status),
-  }, env, io);
-  if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
-    return { stop: reasked };
-  }
-  const reaskedStatus = latestQueueStatus(reasked.terminal);
-  if (reaskedStatus !== undefined && QUEUE_CONCLUSIONS.has(reaskedStatus)) {
-    return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
-  }
-  if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
-  // One reask. A lawful terminal that still has no conclusion is the answer.
-  // Asking again spun when that terminal stayed exit 0.
-  const again = await trySettlePublicSeat(reasked.admitted, env.principalAuthority, undefined);
-  const againStatus = latestQueueStatus(again);
-  if (again !== undefined && againStatus !== undefined && QUEUE_CONCLUSIONS.has(againStatus)) {
-    return { admitted: reasked.admitted, terminal: again, status: againStatus };
-  }
-  return { stop: reasked };
 }
 
 /** Continue the parent once a child has submitted. The child words ride the existing resume. */
@@ -969,18 +966,13 @@ async function auditSubmittedRole(
   const record = accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
-  const statusReask = admitted.role === "secretariat" && status !== "converged" && status !== "escalate"
-    ? SECRETARIAT_STATUS_REASK
-    : admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))
-      ? COUNTERSIGN_STATUS_REASK
-      : undefined;
-  if (statusReask !== undefined) {
-    if (env.submissionStatusReasked === true) {
-      io.stdout(formatTerminalResult(turn.terminal));
-      return turn;
-    }
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: statusReask },
-      { ...env, autoResumeLimit: 0, submissionStatusReasked: true }, io);
+  if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK },
+      { ...env, autoResumeLimit: 0 }, io);
+  }
+  if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK },
+      { ...env, autoResumeLimit: 0 }, io);
   }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must

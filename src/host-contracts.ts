@@ -282,7 +282,6 @@ type InputEvent = { text: string; images?: Array<{ type: "image"; data: string; 
 type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> };
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
-type ProviderResponseEvent = { status?: number };
 type AgentEndEvent = { messages: readonly HostEventMessage[] };
 /** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
 type TurnEndEvent = { readonly turnIndex: number; readonly calls: readonly ToolExecutionEvent[] };
@@ -297,7 +296,6 @@ type HostEventMap = {
   tool_result: ToolResultEvent;
   session_start: SessionStartEvent;
   session_shutdown: Record<never, never>;
-  after_provider_response: ProviderResponseEvent;
   agent_end: AgentEndEvent;
   turn_end: TurnEndEvent;
   agent_settled: Record<never, never>;
@@ -320,7 +318,6 @@ type HostEventResultMap = {
   tool_result: { content?: HostToolResult["content"]; details?: unknown; isError?: boolean };
   session_start: void;
   session_shutdown: void;
-  after_provider_response: void;
   agent_end: void;
   turn_end: void;
   agent_settled: void;
@@ -367,7 +364,6 @@ export interface RoleHost {
   on(event: "tool_result", handler: HostEventHandler<"tool_result">): void;
   on(event: "session_start", handler: HostEventHandler<"session_start">): void;
   on(event: "session_shutdown", handler: HostEventHandler<"session_shutdown">): void;
-  on(event: "after_provider_response", handler: HostEventHandler<"after_provider_response">): void;
   on(event: "agent_end", handler: HostEventHandler<"agent_end">): void;
   on(event: "turn_end", handler: HostEventHandler<"turn_end">): void;
   on(event: "agent_settled", handler: HostEventHandler<"agent_settled">): void;
