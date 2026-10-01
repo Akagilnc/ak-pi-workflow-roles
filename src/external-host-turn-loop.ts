@@ -16,7 +16,14 @@ export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
 export type ExternalHostRoundOutcome =
-  | { readonly status: "delivered"; readonly stderr?: string }
+  | {
+      readonly status: "delivered";
+      readonly stderr?: string;
+      /** Child exit when this driver has one. Omitted when the protocol has no process exit (ACP). */
+      readonly code?: number | null;
+      readonly signal?: string;
+      readonly timedOut?: boolean;
+    }
   | { readonly status: "terminal"; readonly result: RoleTurnResult };
 
 export type ExternalHostTurnDriver = Readonly<{
@@ -97,25 +104,6 @@ export function externalHostFailure(
   });
 }
 
-/** A dispose failure replaces success; a primary failure retains its cause. */
-export function withExternalHostCleanupFailure(
-  outcome: RoleTurnResult,
-  cleanupError: unknown,
-  name: string,
-): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-  if (outcome.knownFailure === undefined) {
-    return externalHostFailure("session", name, "dispose-failed", { cleanupError: message }, message);
-  }
-  return {
-    ...outcome,
-    knownFailure: {
-      ...outcome.knownFailure,
-      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
-    },
-  };
-}
-
 function asFailure(knownFailure: RoleTurnKnownFailure, stderr = ""): RoleTurnResult {
   return { code: null, stderr, timedOut: false, knownFailure };
 }
@@ -163,7 +151,14 @@ export async function driveExternalRoleTurnRounds(
     const closure = await prepared.closeRound();
     if (closure.accepted) {
       await driver.afterAccepted?.();
-      return { code: 0, stderr, timedOut: false };
+      // A lawful reply is not a normal exit. Carry the exit this driver actually has.
+      // ACP session/prompt has no child code; only then is there nothing to carry.
+      return {
+        code: round.code !== undefined ? round.code : 0,
+        stderr,
+        timedOut: round.timedOut === true,
+        ...(round.signal === undefined || round.signal.length === 0 ? {} : { signal: round.signal }),
+      };
     }
     if ("failure" in closure) return asFailure(closure.failure, stderr);
     prompt = closure.retry.message;

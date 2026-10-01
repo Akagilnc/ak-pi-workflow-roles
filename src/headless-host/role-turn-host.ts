@@ -16,8 +16,9 @@ import {
   externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
-  withExternalHostCleanupFailure,
 } from "../external-host-turn-loop.ts";
+import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
+import { retainPackageFault } from "../public-cli/settlement.ts";
 import {
   renderSystemPromptOverride,
   resolveBoundHostSessionId,
@@ -30,7 +31,6 @@ import {
   recordNativeSessionPointer,
 } from "../host-session-record.ts";
 import {
-  closeJsonSchemaForCodex,
   codexTurnArgs,
   headlessMcpConfigDocument,
   headlessTurnArgs,
@@ -227,7 +227,7 @@ function spawnHeadlessTurn(options: {
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
   readonly onClose?: () => void;
-}): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+}): Promise<{ code: number | null; signal?: string; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
       reject(hostAbortedError("headless host aborted"));
@@ -292,7 +292,7 @@ function spawnHeadlessTurn(options: {
       }
     };
     let aborted = false;
-    const settle = (code: number | null): void => {
+    const settle = (code: number | null, closeSignal: NodeJS.Signals | null): void => {
       if (settled) return;
       if (aborted) {
         settled = true;
@@ -310,7 +310,13 @@ function spawnHeadlessTurn(options: {
         reject(stdinDeliveryError);
         return;
       }
-      resolve({ code, stdout: resultStdout, stderr, timedOut });
+      resolve({
+        code,
+        stdout: resultStdout,
+        stderr,
+        timedOut,
+        ...(closeSignal === null ? {} : { signal: closeSignal }),
+      });
     };
     const onAbort = (): void => {
       if (settled) return;
@@ -328,9 +334,9 @@ function spawnHeadlessTurn(options: {
       options.signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
-    child.on("close", (code) => {
+    child.on("close", (code, closeSignal) => {
       options.onClose?.();
-      settle(code);
+      settle(code, closeSignal);
     });
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
@@ -342,8 +348,50 @@ function spawnHeadlessTurn(options: {
   });
 }
 
+type HeadlessSpawnResult = {
+  code: number | null;
+  signal?: string;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
+function signalField(spawned: { signal?: string }): { signal?: string } {
+  return spawned.signal === undefined || spawned.signal.length === 0 ? {} : { signal: spawned.signal };
+}
+
+/** Exit the child actually reported. No cause is added. */
+function exitFacts(spawned: HeadlessSpawnResult): { readonly status: "terminal"; readonly result: RoleTurnResult } {
+  return {
+    status: "terminal",
+    result: {
+      code: spawned.code,
+      stderr: spawned.stderr,
+      timedOut: spawned.timedOut,
+      ...signalField(spawned),
+    },
+  };
+}
+
+function deliveredFromSpawned(
+  spawned: HeadlessSpawnResult,
+): { readonly status: "delivered"; readonly stderr: string; readonly code: number | null; readonly timedOut: boolean; readonly signal?: string } {
+  return {
+    status: "delivered",
+    stderr: spawned.stderr,
+    code: spawned.code,
+    timedOut: spawned.timedOut,
+    ...signalField(spawned),
+  };
+}
+
+/** A signal death or nonzero exit is already the host's report. */
+function exitAlreadyReported(spawned: { code: number | null; signal?: string }): boolean {
+  return spawned.signal !== undefined || spawned.code === null || spawned.code !== 0;
+}
+
 function terminalFromSpawned(
-  spawned: { code: number | null; stderr: string; timedOut: boolean },
+  spawned: HeadlessSpawnResult,
   knownFailure: NonNullable<RoleTurnResult["knownFailure"]>,
 ): { readonly status: "terminal"; readonly result: RoleTurnResult } {
   return {
@@ -352,6 +400,7 @@ function terminalFromSpawned(
       code: spawned.code,
       stderr: spawned.stderr,
       timedOut: spawned.timedOut,
+      ...signalField(spawned),
       knownFailure,
     },
   };
@@ -360,7 +409,7 @@ function terminalFromSpawned(
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly systemPromptPath: string;
-  /** Closed schema; omit for #959 navigator prose-exit seats. */
+  /** Open schema; omit for #959 navigator prose-exit seats. Codex does not receive a narrowed copy. */
   readonly jsonSchema?: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly mcpConfigPath?: string;
@@ -438,16 +487,17 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
       await writeFile(systemPromptPath, systemPrompt, "utf8");
       let mcpConfigPath: string | undefined;
-      let outputSchemaPath: string | undefined;
       if (codex) {
-        // #959: navigator is a prose-exit seat — no closed output-schema.
+        // #959: navigator is a prose-exit seat and never used --output-schema.
+        // Other seats: the native flag cannot express the open contract (it requires
+        // every property and additionalProperties:false). Report the gap; do not send
+        // a narrowed projection.
         if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
-          outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
-          await writeFile(
-            outputSchemaPath,
-            `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
-            "utf8",
-          );
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic:
+              "codex --output-schema omitted: the native flag cannot express this open contract without adding required properties and additionalProperties:false",
+          });
         }
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
@@ -478,7 +528,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 : { jsonSchema: prepared.jsonSchema }),
               mcpServers: prepared.mcpServers,
               ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
-              ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
               ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
               ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
               sessionId,
@@ -507,7 +556,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }) !== undefined;
           }
 
-          let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+          let spawned: HeadlessSpawnResult;
           let childExited = false;
           try {
             spawned = await spawnHeadlessTurn({
@@ -562,11 +611,14 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {
+              await retainPackageFault({
+                runDirectory: request.runDirectory,
+                diagnostic: `headless stream handling failed beside host terminal: ${describeErrorIdentity(error)}`,
+              });
               return {
                 status: "terminal",
                 result: failure("output", "HeadlessCliError", "codex-turn-failed", {
                   diagnostic: observedHostFailure,
-                  sessionRecordDiagnostic: message,
                   sessionId,
                 }, observedHostFailure),
               };
@@ -588,23 +640,23 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             });
           }
 
+          const noteBeside = async (error: unknown, what: string): Promise<void> => {
+            await retainPackageFault({
+              runDirectory: request.runDirectory,
+              diagnostic: `${what}: ${describeErrorIdentity(error)}`,
+            });
+          };
+
           if (codex) {
             const observation = codexObserver!.result();
             // #987 result 6 / 失败诚实: host-reported failure wins over a package
-            // missing-thread-id label or package persistence failure.
+            // missing-thread-id label. A bind error is a separate package fault.
             if (observation.threadId !== undefined && observation.threadId !== "") {
               sessionId = observation.threadId;
-            }
-            let sessionBindingDiagnostic: string | undefined;
-            const hostFailed = observation.failureDiagnostic !== undefined
-              || (spawned.code !== 0 && spawned.code !== null);
-            if (hostFailed && observation.threadId !== undefined && observation.threadId !== "") {
               try {
                 await config.sessionIdentity.bind(request.principal, observation.threadId);
               } catch (error) {
-                // The host failure remains primary; retain persistence failure as
-                // secondary typed evidence instead of replacing the terminal.
-                sessionBindingDiagnostic = error instanceof Error ? error.message : String(error);
+                await noteBeside(error, "session bind failed beside host terminal");
               }
             }
 
@@ -616,23 +668,33 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 details: {
                   sessionId,
                   exitCode: spawned.code,
-                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
                 },
               });
             }
 
-            // Non-zero exit without a parseable failure event still fails loud.
-            if (spawned.code !== 0 && spawned.code !== null) {
-              return terminalFromSpawned(spawned, {
-                cause: "output",
-                identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
-                diagnostic: spawned.stderr.trim() || `codex exec exited ${String(spawned.code)}`,
-                details: {
-                  sessionId,
-                  exitCode: spawned.code,
-                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
-                },
-              });
+            const navigator = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
+            const deliverReply = async (): Promise<ReturnType<typeof deliveredFromSpawned> | undefined> => {
+              if (observation.threadId === undefined || observation.threadId === "") return undefined;
+              if (!observation.turnCompleted || observation.finalMessage === undefined) return undefined;
+              if (navigator) {
+                if (observation.finalMessage.trim() === "") return undefined;
+                await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
+                return deliveredFromSpawned(spawned);
+              }
+              let receipt: unknown;
+              try {
+                receipt = JSON.parse(observation.finalMessage);
+              } catch {
+                return undefined;
+              }
+              await prepared.ingestStructuredOutput(receipt);
+              return deliveredFromSpawned(spawned);
+            };
+
+            // Nonzero or signal is the host's report. Do not invent a cause, and do not
+            // drop a reply the host did state — the reply rides with the real exit.
+            if (exitAlreadyReported(spawned)) {
+              return await deliverReply() ?? exitFacts(spawned);
             }
 
             if (observation.threadId === undefined || observation.threadId === "") {
@@ -644,7 +706,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
             sessionId = observation.threadId;
-            await config.sessionIdentity.bind(request.principal, sessionId);
 
             if (!observation.turnCompleted) {
               return terminalFromSpawned(spawned, {
@@ -665,8 +726,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }
 
             // #959: navigator prose exit — final agent_message is presented as-is.
-            // Empty text is not a lawful accepted receipt (align pi no_receipt / loud empty).
-            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+            // Empty text on a normal exit is not a lawful accepted receipt.
+            if (navigator) {
               if (observation.finalMessage.trim() === "") {
                 return terminalFromSpawned(spawned, {
                   cause: "output",
@@ -676,7 +737,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 });
               }
               await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
-              return { status: "delivered", stderr: spawned.stderr };
+              return deliveredFromSpawned(spawned);
             }
             let receipt: unknown;
             try {
@@ -690,12 +751,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
             await prepared.ingestStructuredOutput(receipt);
-            return { status: "delivered", stderr: spawned.stderr };
+            return deliveredFromSpawned(spawned);
           }
 
           // Claude print-mode path.
           const envelope = parseHeadlessCliStdout(spawned.stdout);
           if (envelope === undefined) {
+            if (exitAlreadyReported(spawned)) return exitFacts(spawned);
             return terminalFromSpawned(spawned, {
               cause: "output",
               identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
@@ -705,9 +767,14 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           // Bind the host-reported session id (authoritative for --resume).
+          // A bind failure stays beside the host report; it does not replace it.
           if (typeof envelope.session_id === "string" && envelope.session_id !== "") {
             sessionId = envelope.session_id;
-            await config.sessionIdentity.bind(request.principal, sessionId);
+            try {
+              await config.sessionIdentity.bind(request.principal, sessionId);
+            } catch (error) {
+              await noteBeside(error, "session bind failed beside host terminal");
+            }
           }
 
           if (envelope.is_error === true || (typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_"))) {
@@ -746,7 +813,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             // when structured_output is absent (json-schema omitted for navigator).
             await prepared.ingestStructuredOutput({ prose: envelope.result });
           }
-          return { status: "delivered", stderr: spawned.stderr };
+          return deliveredFromSpawned(spawned);
         },
       });
       } finally {
@@ -763,7 +830,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       try {
         await prepared.dispose?.();
       } catch (cleanupError) {
-        outcome = withExternalHostCleanupFailure(outcome, cleanupError, "HeadlessDisposeFailure");
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `host dispose failed beside host terminal: ${describeErrorIdentity(cleanupError)}`,
+        });
       }
     }
     return outcome;

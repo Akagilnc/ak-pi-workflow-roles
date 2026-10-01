@@ -3,6 +3,7 @@
  * Seams: createAcpRoleTurnHost / createHeadlessRoleTurnHost executeTurn(resume).
  */
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -11,6 +12,13 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
+
+async function packageNotes(runDirectory: string): Promise<Array<{ diagnostic?: unknown }>> {
+  const dir = roleRunArtifactsDirectory(runDirectory);
+  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
+  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8")) as { diagnostic?: unknown }));
+}
 
 function baseRequest(runDirectory: string): RoleTurnRequest {
   return {
@@ -71,13 +79,18 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "AcpSessionFailure");
-  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
+  assert.equal(result.knownFailure?.details?.cleanupError, undefined);
+  assert.equal(result.code, null);
+  const notes = await packageNotes(runDirectory);
+  assert.equal(notes.length, 1);
+  assert.equal(typeof notes[0]?.diagnostic, "string");
+  assert.equal(String(notes[0]?.diagnostic).includes("cleanup failed"), true);
   assert.equal(methods.includes("session/new"), false);
   assert.equal(methods.includes("session/load"), false);
   assert.equal(methods.includes("session/prompt"), false);
 });
 
-test("ACP successful turn reports dispose failure instead of success", async () => {
+test("ACP successful turn keeps the host result when dispose fails", async () => {
   const runDirectory = "/tmp/ak-1033-acp-cleanup";
   const host = createAcpRoleTurnHost({
     hostName: "hermes",
@@ -110,10 +123,12 @@ test("ACP successful turn reports dispose failure instead of success", async () 
     ...baseRequest(runDirectory),
     continuation: { kind: "resume", prompt: "continue", hostSessionId: "bound-session" },
   });
-  assert.equal(result.knownFailure?.cause, "session");
-  assert.equal(result.knownFailure?.identity?.code, "dispose-failed");
-  assert.equal(result.knownFailure?.identity?.name, "AcpDisposeFailure");
-  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
+  assert.equal(result.knownFailure, undefined);
+  assert.equal(result.code, 0);
+  const notes = await packageNotes(runDirectory);
+  assert.equal(notes.length, 1);
+  assert.equal(typeof notes[0]?.diagnostic, "string");
+  assert.equal(String(notes[0]?.diagnostic).includes("cleanup failed"), true);
 });
 
 test("#1091 headless resume without bound session id reports missing; never binds", async () => {
@@ -153,6 +168,10 @@ test("#1091 headless resume without bound session id reports missing; never bind
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "HeadlessSessionFailure");
-  assert.ok(result.knownFailure?.details?.cleanupError);
+  assert.equal(result.knownFailure?.details?.cleanupError, undefined);
+  const notes = await packageNotes(runDirectory);
+  assert.equal(notes.length, 1);
+  assert.equal(typeof notes[0]?.diagnostic, "string");
+  assert.equal(String(notes[0]?.diagnostic).includes("cleanup failed"), true);
   assert.equal(bindCalls, 0);
 });

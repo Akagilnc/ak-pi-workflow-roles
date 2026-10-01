@@ -8,8 +8,9 @@ import {
   driveExternalRoleTurnRounds,
   externalHostFailure as failure,
   raceAgainstHostAbort,
-  withExternalHostCleanupFailure,
 } from "../external-host-turn-loop.ts";
+import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
+import { retainPackageFault } from "../public-cli/settlement.ts";
 
 import {
   copyAndRecordHostDossier,
@@ -227,7 +228,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let sessionOpened = false;
     let accepted = false;
     const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
-    // Mutable so dispose failure can outrank a clean turn.
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     try {
       if (prepared.mcpServers.length === 0) {
@@ -411,7 +411,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       try {
         await prepared.dispose?.();
       } catch (cleanupError) {
-        outcome = withExternalHostCleanupFailure(outcome, cleanupError, "AcpDisposeFailure");
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `host dispose failed beside host terminal: ${describeErrorIdentity(cleanupError)}`,
+        });
       }
     }
     return outcome;
