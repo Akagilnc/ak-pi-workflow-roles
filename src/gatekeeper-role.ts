@@ -69,7 +69,7 @@ export type GatekeeperResult =
       readonly receivedStatus?: unknown;
       readonly runId?: string;
     }
-  | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
+  | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: Partial<NoReceiptLifecycleFacts> }
   | {
       readonly status: "transport_failure";
       readonly stage: GateOfficer;

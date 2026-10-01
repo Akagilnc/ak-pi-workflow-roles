@@ -47,7 +47,7 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
@@ -791,7 +791,7 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
   });
 });
 
-test("terminal persistence failure through public entry propagates loudly with no fake terminal", async () => {
+test("terminal persistence failure through public entry stays beside the accepted doctor terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -808,12 +808,9 @@ test("terminal persistence failure through public entry propagates loudly with n
       `${runId}@doctor`,
     );
     const captured = captureIo();
-    // #836 A.3 (class 2, r9 bounce): the accepted Doctor payload must ride
-    // beside the persistence failure, not just a bare failure Terminal —
-    // so this run must actually record a submission (sealedAcceptance, same
-    // producer the "completed" tracer above uses) before the run-state write
-    // is broken. Captured here so the assertion below checks against the
-    // real recorded bytes, not a hand-authored duplicate.
+    // The accepted Doctor payload is the terminal. The run-state read failure
+    // is a note beside it. This run records a real submission (sealedAcceptance)
+    // before the run-state path is occupied. The assertion checks those bytes.
     let recordedDetails: unknown;
     const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "41", "--project", project, "inspect"],
       {
@@ -852,7 +849,7 @@ test("terminal persistence failure through public entry propagates loudly with n
           // it writes, so this actually fails that precondition read
           // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
           // write step. The real EISDIR identity must propagate through, not
-          // get relabeled a synthetic "run state missing".
+          // The accepted doctor terminal stays. EISDIR is a package note.
           // No production hook, no direct markRunTerminal call, no new fixture.
           await rm(join(runDirectory, "run-state.json"));
           await mkdir(join(runDirectory, "run-state.json"));
@@ -868,32 +865,22 @@ test("terminal persistence failure through public entry propagates loudly with n
       },
     );
 
-    // #836: the original terminal-persistence error must propagate loudly as
-    // a real controlled-failure Terminal, carrying its own real EISDIR
-    // identity — never silently swallowed, never relabeled a synthetic
-    // "run state missing", and never an escaped exception that reaches
-    // auto-resume with no recorded Terminal at all. Reuses the shared
-    // public-failure-settlement contract (same assertions every other seam's
-    // real-persistence-failure case uses). Asserted on the portable
-    // structured identity (code) rather than a hand-authored diagnostic
-    // string, since the exact Node error message is not a stable contract.
-    const { terminal } = await assertPublicFailureSettlement({
-      result,
-      stdout: captured.stdout,
-      stderr: captured.stderr,
-      identityCode: "EISDIR",
-    });
-    assert.equal(terminal.roleOutcome.role, "doctor");
-    // #836 A.3 / #953: already-recorded Doctor payload rides on the historical
-    // submissions carrier beside the real persistence failure — not as the
-    // current failure's ordinary payloads face.
-    assert.deepEqual(terminal.submissions, [recordedDetails]);
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(
-        terminal.roleOutcome.payloads === undefined
-          || terminal.roleOutcome.payloads.length === 0,
-        true,
-      );
-    }
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.role, "doctor");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(result.terminal?.submissions, [recordedDetails]);
+    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const entries = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
+    assert.equal(
+      entries.some((entry) =>
+        entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
+        && typeof entry.data?.diagnostic === "string"
+        && entry.data.diagnostic.length > 0),
+      true,
+    );
   });
 });

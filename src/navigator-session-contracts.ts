@@ -202,7 +202,7 @@ export type NavigatorPreparationSession = {
    * Present means its own delivery budget is spent — another prompt would open an
    * independent summon rather than press the session that owes the receipt.
    */
-  noReceipt?(): NoReceiptLifecycleFacts | undefined;
+  noReceipt?(): Partial<NoReceiptLifecycleFacts> | undefined;
   /** Native message from the nested playbook read, when that read failed. */
   routePlaybookReadFailure?(): string | undefined;
   setModel?(model: string, thinkingLevel?: string): Promise<void>;

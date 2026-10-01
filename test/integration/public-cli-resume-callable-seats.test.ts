@@ -306,7 +306,6 @@ for (const spec of SEAT_SPECS) {
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.roleOutcome.role, spec.role);
       assert.equal(resumed.terminal!.runId, runId);
-      assert.equal(resumed.terminal!.resume, undefined);
 
       // Durable run-state reaches terminal for the resumed run.
       const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);

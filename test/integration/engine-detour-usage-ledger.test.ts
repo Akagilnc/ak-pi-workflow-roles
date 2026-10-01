@@ -41,7 +41,6 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const ENGINE = "kimi";
 const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
@@ -689,10 +688,6 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
 
           if (turn === 0) {
             turn += 1;
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
             return { code: 1, stderr: "quota", timedOut: false };
           }
 
@@ -776,21 +771,14 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
                 : { host: request.host.trim() }),
               calls: [{ toolCallId: sharedId, kind: "ok" }],
             });
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
             return { code: 1, stderr: "quota", timedOut: false };
           }),
         },
       );
-      // #108 / #537: resumable keeps openable relative pointer; runId only in resume.command.
-      assert.ok(first.terminal?.resume, "typed 429 must settle resumable");
-      assert.equal(first.terminal?.runId, undefined);
-      assert.ok(
-        (first.terminal?.resume.command ?? "").includes(runId),
-        "resume.command must carry runId",
-      );
+      // #537: openable relative pointer; runId lives on the terminal.
+      assert.equal(first.exitCode, 1);
+      assert.equal(first.terminal?.roleOutcome.kind, "failure");
+      assert.equal(first.terminal?.runId, runId);
       const firstUsage = usageOf(first.terminal);
       assert.equal(firstUsage?.callCount, 1);
       assert.equal(firstUsage?.calls[0]?.toolCallId, sharedId);
@@ -808,7 +796,7 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
         false,
         "engineDetourToolUsage decisiveFacts must not re-disclose runId",
       );
-      // Relative pointer reopens once run directory is known from resume.command.
+      // Relative pointer reopens once the run directory is known from terminal.runId.
       const bookRunsRoot = join(home, ".ak-roles", "books");
       const { readdirSync } = await import("node:fs");
       let absoluteRecord: string | undefined;
@@ -829,7 +817,7 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           // try next book
         }
       }
-      assert.ok(absoluteRecord, "relative pointer must resolve under the run from resume.command");
+      assert.ok(absoluteRecord, "relative pointer must resolve under the run from terminal.runId");
       const reopened = await readSitianRecords(absoluteRecord);
       assert.ok(
         reopened.records.some(

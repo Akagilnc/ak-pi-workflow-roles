@@ -54,7 +54,6 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const TICKET = 708;
 
@@ -1995,27 +1994,18 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
             const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDirectory, { recursive: true });
             await writeFile(join(sessionDirectory, "session.jsonl"), "\n", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDirectory, ".."),
-              provider: "xai",
-            });
             return { code: 1, stderr: "", timedOut: false, args: [...args] };
           },
         }),
       },
     );
     assert.equal(interrupted.exitCode, 1);
-    assert.ok(interrupted.terminal?.resume, JSON.stringify(interrupted.terminal));
     stderr.length = 0;
 
     const reaskThen429 = diaristEnvelopeRunner(
       { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
       {
         afterReask: async () => {
-          await observeTyped429ViaProductionHandler({
-            runDirectory: unboundPlacement.runDirectory,
-            provider: "xai",
-          });
           await writeFile(
             join(unboundPlacement.runDirectory, "session", "session.jsonl"),
             `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,

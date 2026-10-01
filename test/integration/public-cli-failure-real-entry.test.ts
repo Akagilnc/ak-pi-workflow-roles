@@ -36,108 +36,88 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 
-test("public report publication failures retain typed errno identity", async () => {
-  // #953 clears conventional faces before rewrite, so report.json-as-directory no
-  // longer reaches writeFile. Lock artifacts/ instead — clear no-ops on absent
-  // faces; writeFile then EACCES. Audit-incomplete publication path abolished (#475).
-  const rows = [
-    {
-      label: "EACCES on report publication",
-      plant: async (runDir: string) => {
-        const artifactsDir = join(runDir, "artifacts");
-        await mkdir(artifactsDir, { recursive: true });
-        await chmod(artifactsDir, 0o555);
-        return artifactsDir;
-      },
-      seedSession: async (sessionFile: string) => {
-        await writeFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { status: "converged" },
-            },
-          })}\n`,
-          "utf8",
-        );
-      },
-      expectedCode: "EACCES",
-    },
-  ] as const;
-  for (const row of rows) {
-    await withTempHome(async (home) => {
-      const project = join(home, "proj");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const { io, stdout, stderr } = captureIo();
-      let lockedArtifactsDir: string | undefined;
-      try {
-        const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
-          {
+test("public report publication failure stays beside the accepted terminal", async () => {
+  // Lock artifacts/ so the report write fails. The host already accepted;
+  // that terminal stays, and the write failure is a cleanup diagnostic.
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    let lockedArtifactsDir: string | undefined;
+    const runId = "run-audit-artifact-errno-001";
+    try {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
-            home,
-            cwd: project,
-            createRunId: () => "run-audit-artifact-errno-001",
-            io,
-            roleTurnHost: roleTurnHostFromLegacyPiRunner({
-              packageRoot,
-              principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (args) => {
-              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-              const runDir = join(sessionDir, "..");
-              lockedArtifactsDir = await row.plant(runDir);
-              await mkdir(sessionDir, { recursive: true });
-              await row.seedSession(join(sessionDir, "session.jsonl"));
-              return {
-                code: 0,
-                stdout: "",
-                stderr: "",
-                timedOut: false,
-                args: [...args],
-                sealedAcceptance: {
-                  role: "judge" as const,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            const artifactsDir = join(runDir, "artifacts");
+            await mkdir(artifactsDir, { recursive: true });
+            await chmod(artifactsDir, 0o555);
+            lockedArtifactsDir = artifactsDir;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
                   details: { status: "converged" },
                 },
-              };
-            },
-            }),
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stdout: "",
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: {
+                role: "judge" as const,
+                details: { status: "converged" },
+              },
+            };
           },
-        );
-        assert.equal(result.exitCode, 1, row.label);
-        assert.equal(stdout.length, 1, row.label);
-        assert.equal(stderr.length, 1, row.label);
-        assert.ok(result.terminal, row.label);
-        const outcome = result.terminal!.roleOutcome;
-        assert.equal(outcome.kind, "failure", row.label);
-        if (outcome.kind !== "failure") throw new Error("expected publication failure");
-        // Must not wash publication errno into generic output absence.
-        assert.equal(outcome.cause, undefined, row.label);
-        assert.notEqual(outcome.cause, "output", row.label);
-        assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
-        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-        assert.ok(errorRef, row.label);
-        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-          cause: string;
-          identity?: { name?: string; code?: string | number };
-          diagnostic: string;
-        };
-        assert.equal(errorBody.cause, undefined, row.label);
-        assert.equal(errorBody.identity?.code, row.expectedCode, row.label);
-        assert.ok(errorBody.diagnostic.length > 0, row.label);
-      } finally {
-        if (lockedArtifactsDir !== undefined) {
-          try {
-            await chmod(lockedArtifactsDir, 0o755);
-          } catch {
-            // cleanup best-effort
-          }
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.runId, runId);
+      const bookKey = resolveBookKeyFromGit(project);
+      const sessionFile = join(
+        home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`, "session", "session.jsonl",
+      );
+      const entries = (await readFile(sessionFile, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
+      const diagnostic = entries.find((entry) => entry.customType === "ak_post_admission_cleanup_diagnostic");
+      assert.equal(typeof diagnostic?.data?.diagnostic, "string");
+      assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
+    } finally {
+      if (lockedArtifactsDir !== undefined) {
+        try {
+          await chmod(lockedArtifactsDir, 0o755);
+        } catch {
+          // cleanup best-effort
         }
       }
-    });
-  }
+    }
+  });
 });
 // Post-admission zero-exit matrix: admission succeeded, the pi child exits
 // zero, and no accepted ledger row exists — a missing session transcript, or

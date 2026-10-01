@@ -85,8 +85,6 @@ async function acceptThroughTypedRoundClosure(input: {
   return { sealed: { role: sealed.role, accepted: sealed.accepted }, pending };
 }
 import {
-  readTypedHttp429Observation,
-  renderResumeCommand,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractNavigatorFact,
@@ -408,7 +406,6 @@ test("stable factory stays inert without a role", async () => {
     "agent_end",
     "agent_settled",
     "session_shutdown",
-    "after_provider_response",
   ]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
@@ -417,114 +414,6 @@ test("stable factory stays inert without a role", async () => {
   // Observation handlers are registered but stay inert without --ak-role admission.
   assert.equal(harness.handlers.has("tool_call"), false, "tool_call");
 });
-
-test("after_provider_response production handler writes typed 429 into resumable failure Terminal", async () => {
-  // Shortest tracer: production handler → durable observation → public failure settlement → resume.
-  // Does not call recordTypedProviderHttpStatus as a stand-in for the observation seam.
-  await withActivationHome({ prefix: "ak-typed-429-obs-" }, async ({ home }) => {
-    const runId = "run-prod-obs-429";
-    const runDirectory = join(home, ".ak-roles", "books", basename(home), "runs", `${runId}@judge`);
-    const sessionDirectory = join(runDirectory, "session");
-    mkdirSync(sessionDirectory, { recursive: true });
-    const admittedRequestPath = join(runDirectory, "admitted-request.json");
-    await writeFile(admittedRequestPath, "{}\n", "utf8");
-
-    const harness = extensionHarness(undefined);
-    installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-      loadRoleSoul: async () => "judge",
-    });
-
-    const handler = harness.handlers.get("after_provider_response");
-    assert.ok(handler, "production after_provider_response handler must be registered");
-
-    // Without AK_ROLE_RUN_DIR the handler is inert.
-    await handler(
-      { type: "after_provider_response", status: 429, headers: {} },
-      { model: { provider: "openai-codex" } },
-    );
-    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-
-    const previous = process.env.AK_ROLE_RUN_DIR;
-    process.env.AK_ROLE_RUN_DIR = runDirectory;
-    try {
-      // Non-v1 provider ignored.
-      await handler(
-        { type: "after_provider_response", status: 429, headers: {} },
-        { model: { provider: "anthropic" } },
-      );
-      assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-
-      // Production typed 429 observation.
-      await handler(
-        { type: "after_provider_response", status: 429, headers: {} },
-        { model: { provider: "openai-codex" } },
-      );
-      assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
-        httpStatus: 429,
-        provider: "openai-codex",
-      });
-
-      // Later non-429 in the same attempt supersedes — latest is authoritative.
-      await handler(
-        { type: "after_provider_response", status: 500, headers: {} },
-        { model: { provider: "openai-codex" } },
-      );
-      assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-
-      // Final qualifying 429 re-arms resume observation for this attempt.
-      await handler(
-        { type: "after_provider_response", status: 429, headers: {} },
-        { model: { provider: "openai-codex" } },
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.AK_ROLE_RUN_DIR;
-      } else {
-        process.env.AK_ROLE_RUN_DIR = previous;
-      }
-    }
-
-    assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
-      httpStatus: 429,
-      provider: "openai-codex",
-    });
-
-    const terminal = await settleFailureTerminalResult(
-      {
-        role: "judge",
-        runId,
-        bookKey: basename(home),
-        projectRoot: home,
-        instruction: "observe",
-        instructionEmpty: false,
-        attachments: [],
-        runDirectory,
-        principal: { sessionDirectory, sessionFile: join(sessionDirectory, "session.jsonl") },
-        admittedRequestPath,
-      } as any,
-      { cause: "provider", diagnostic: "upstream declined this request" },
-      piDurablePrincipalAuthority,
-      { resume: { command: renderResumeCommand(runId) } },
-    );
-
-    assert.ok(terminal.resume);
-    assert.equal(terminal.resume.command, renderResumeCommand(runId));
-    assert.equal(terminal.runId, undefined);
-    assert.equal(terminal.artifacts.length, 0);
-    const outside = {
-      roleOutcome: terminal.roleOutcome,
-      navigator: terminal.navigator,
-      artifacts: terminal.artifacts,
-      runId: terminal.runId,
-    };
-    assert.equal(
-      JSON.stringify(outside).includes(runId),
-      false,
-      "run ID must not appear outside resume.command in typed Terminal regions",
-    );
-  });
-});
-
 test("#959 navigator agent_end prose exit seals without typed delivery prompt", async () => {
   // Production agent_end handler is the real entry: prose → sealed; empty → no_receipt;
   // never ak-receipt-delivery-request / typed 催交 for navigator.

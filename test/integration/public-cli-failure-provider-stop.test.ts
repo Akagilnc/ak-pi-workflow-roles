@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-// #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
+// #107 session provider-stop binding. The host's own report is the terminal.
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,8 +10,6 @@ import test from "node:test";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
@@ -389,95 +387,4 @@ test("a provider stop left in the transcript never becomes this turn's cause", a
       }
     });
   }
-});
-
-
-test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
-  const runDir = await mkdtemp(join(tmpdir(), "http-2xx-clear-"));
-  try {
-    // Single shortest real tracer: production after_provider_response only.
-    await observeTyped429ViaProductionHandler({
-      runDirectory: runDir,
-      provider: "openai-codex",
-      httpStatus: 500,
-    });
-    assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
-      httpStatus: 500,
-      provider: "openai-codex",
-    });
-    await observeTyped429ViaProductionHandler({
-      runDirectory: runDir,
-      provider: "openai-codex",
-      httpStatus: 200,
-    });
-    assert.equal(await readLatestTypedProviderHttpObservation(runDir), undefined);
-  } finally {
-    await rm(runDir, { recursive: true, force: true });
-  }
-});
-test("#307 typed HTTP non-absence failure retains the final dispatch error after resume budget", async () => {
-  // EISDIR on the typed-HTTP sidecar must reach the controlled-failure error.json;
-  // later resume attempts may fail independently before the host turn.
-  await withTempHome(async (home) => {
-    const project = join(home, "proj-typed-http-resume-once");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-typed-http-resume-once-001";
-    const { io } = captureIo();
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "typed http sidecar is a directory"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          await mkdir(sessionDir, { recursive: true });
-          // Sidecar path occupied as a directory → readFile EISDIR (non-absence).
-          await mkdir(join(runDir, "typed-provider-http.json"), { recursive: true });
-          return {
-            code: 1,
-            stderr: "provider child exited",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-          }),
-      },
-    );
-
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.resume, undefined);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.autoResumeCount, 2);
-      assert.ok(result.terminal!.roleOutcome.decisiveFacts.errorCode);
-    }
-    // The first controlled failure remains on disk even when the final terminal
-    // reports a later pre-turn error.
-    const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-    assert.ok(errorRef, "controlled failure must publish error artifact");
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;
-    assert.equal(errorBody.attempt, 1);
-    // The first attempt's error.json keeps the host's own report for that call
-    // (a bare nonzero exit, so no typed cause) and records the unreadable
-    // sidecar as this package's own fact beside it.
-    const firstError = JSON.parse(await readFile(join(dirname(errorRef.path), "error.json"), "utf8")) as {
-      cause?: string;
-      diagnostic?: string;
-      packageFact?: { sidecarReadFailure?: { name?: string; code?: string | number } };
-    };
-    assert.equal(firstError.cause, undefined);
-    // The host's own stderr survives verbatim — this is the original-report
-    // fidelity contract, not a wording check.
-    assert.equal(firstError.diagnostic, "provider child exited");
-    assert.equal(firstError.packageFact?.sidecarReadFailure?.code, "EISDIR");
-  });
 });

@@ -9,7 +9,7 @@ import { receivedDiscriminator } from "./submission-errors.ts";
 import { currentReplyRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 
-export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
+export type ComplianceNoReceipt = Partial<NoReceiptLifecycleFacts> & { status: "no-receipt"; usage?: Usage };
 /**
  * #757 / #750: no unreadable/unusable judgment on auditor replies.
  * Known three-state (converged/continue/escalate) is read for queueing only.

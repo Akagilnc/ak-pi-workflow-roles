@@ -37,7 +37,6 @@ import {
   trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -569,10 +568,6 @@ test("ak-role resume continues merger with exact session", async () => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
             return {
               code: 1,
               stderr: "quota",
@@ -583,7 +578,6 @@ test("ak-role resume continues merger with exact session", async () => {
           }),
         },
       );
-      assert.ok(first.terminal?.resume, "merger 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "merger");
     }
 

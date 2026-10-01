@@ -69,15 +69,12 @@ import {
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   clearCurrentCourt,
-  clearTypedProviderHttpObservation,
   describeErrorIdentity,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
-  renderResumeCommand,
   type CurrentCourtState,
   type RunWriterLease,
-  type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
   processCancelDiagnostic,
@@ -87,28 +84,21 @@ import {
 import { recordRunStart } from "../host-session-record.ts";
 import {
   classifyPostAdmissionFailure,
-  controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
   formatErrorCauseDetail,
   formatTerminalResult,
-  inspectJudgeSession,
   ledgerReadScope,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
-  publishedFailureErrorPath,
   presentStructuralRejection,
-  resolveAuditedRunnerFailureResolution,
-  type AuditedRunnerFailureResolution,
-  resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
+  noteSettlementFault,
   attachRecordedSubmissions,
-  rewritePublishedFailureErrorPath,
   type ControlledFailure,
   type PackageSideFact,
-  type ThrownErrorFact,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -145,11 +135,6 @@ function projectRelocatedTurnIdentity(
     }
   }
   if (result.terminal !== undefined) {
-    rewritePublishedFailureErrorPath(
-      result.terminal,
-      relocation.oldRunDirectory,
-      relocation.newRunDirectory,
-    );
     for (const artifact of result.terminal.artifacts) {
       artifact.path = rewrite(artifact.path) as string;
     }
@@ -394,15 +379,9 @@ export type ControlledFailureInput = {
    * a host that reported a diagnostic of its own keeps it.
    */
   readonly cancelName?: CatchableProcessSignal;
-  /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
-  sidecarReadFailure?: ThrownErrorFact;
-  typedHttpObservationSettled?: true;
-  typedHttpObservation?: TypedProviderHttpObservation;
   /**
-   * #836: set when the caller already attempted markRunTerminal/markRunResumable
-   * and it is what threw `thrown` — presentControlledFailure must not retry
-   * the same known-failing run-state write a second time; the caught error is
-   * already the reported cause.
+   * Set when the caller already attempted markRunTerminal and it is what threw
+   * `thrown` — presentControlledFailure must not retry that write.
    */
   skipRunStateWrite?: boolean;
   /** Public-invocation scope from the shared Host envelope (#537). */
@@ -482,30 +461,7 @@ export async function presentControlledFailure<
   terminal: TerminalResult;
 }> {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...(failureInput.typedHttpObservationSettled === true
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(failureInput.typedHttpObservation === undefined
-          ? {}
-          : { typedHttpObservation: failureInput.typedHttpObservation }),
-      }
-      : {}),
-  });
-  // The host's own report stands on its own; an unreadable sidecar is recorded
-  // beside it and never becomes the call's knownFailure.
   const knownFailure = failureInput.knownFailure;
-  const sidecarReadFailure =
-    failureInput.sidecarReadFailure ?? resumeObservation.observationReadFailure;
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    knownFailure === undefined &&
-    failureInput.knownCause === undefined &&
-    admitted.principal !== undefined
-      ? await inspectJudgeSession(authority.decode(admitted.principal).sessionFile)
-      : undefined;
   // knownFailure channel owns details when present; otherwise caller knownDetails.
   const fromKnownFailure =
     explicitInternalKnownFailureClassificationInput(knownFailure);
@@ -542,24 +498,24 @@ export async function presentControlledFailure<
     ...(failureInput.knownDiagnostic === undefined
       ? {}
       : { knownDiagnostic: failureInput.knownDiagnostic }),
-    // This package's own facts, forwarded so they are reported beside the
-    // host's report rather than dropped.
-    ...(sidecarReadFailure === undefined
-      ? {}
-      : { sidecarReadFailure }),
     ...(failureInput.signal === undefined ? {} : { signal: failureInput.signal }),
     ...(failureInput.cancelName === undefined ? {} : { cancelName: failureInput.cancelName }),
     ...(failureInput.packageFact === undefined
       ? {}
       : { packageFact: failureInput.packageFact }),
-    ...(session === undefined ? {} : { session }),
   });
 
-  // #665 / #416: typed 429 with a run principal offers resume; the host decides availability.
-  const resumable = admitted.principal !== undefined && resumeObservation.typedHttp429 !== undefined;
-
   if (persistRunState && !failureInput.skipRunStateWrite) {
-    await persistReturnedRunState(admitted);
+    try {
+      await persistReturnedRunState(admitted);
+    } catch (error) {
+      // The host failure is already classified. A run-state write stays beside it.
+      await noteSettlementFault(
+        admitted.runDirectory,
+        undefined,
+        `run-state persistence failed beside host terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
   }
 
   let publishedErrorPath: string | undefined;
@@ -567,9 +523,6 @@ export async function presentControlledFailure<
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
       recordAttemptHistory: true,
-      ...(resumable
-        ? { resume: { command: renderResumeCommand(admitted.runId) } }
-        : {}),
       ...(failureInput.invocationScopeId === undefined ||
         failureInput.invocationScopeId.length === 0
         ? {}
@@ -631,24 +584,16 @@ async function settleAfterTurnStarted<
  * Persist run-state for a result dispatchPostAdmissionTurn deferred
  * (needsPersist — station-child / resumable auto-resume loop, #416/#840):
  * that write must land outside the loop's own retried-dispatch try, but its
- * failure still settles through the single existing controlled-failure
- * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080:
- * one settlement disposition owner) — never a second hand-rolled
- * classify/artifact/Terminal (#836 r12 class 3), and never lawful/non-lawful
- * settling differently (#836 r13 class 2: a caller's io here may be a no-op,
- * so a stderr-only trace is never seen and the failure is otherwise
- * swallowed — 失败诚实宪法 真因必须落痕). Both cases settle through
- * settleAfterTurnStarted, which attaches the run's already-recorded ledger
- * submissions to the new failure terminal and returns skipAutoResume so the
- * caller presents it once and stops — never re-entering auto-resume.
+ * failure is a package note beside the terminal already settled. It does
+ * not replace that terminal or open another attempt. The note is durable
+ * because the caller's io may be a no-op.
  */
 async function settleDeferredPersist<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult,
 >(
   admitted: A,
-  authority: DurablePrincipalAuthority,
-  adapters: PostAdmissionAdapters<A, T>,
+  env: PostAdmissionEnv,
   io: CliIo,
   result: {
     exitCode: number;
@@ -661,35 +606,18 @@ async function settleDeferredPersist<
 ): Promise<typeof result> {
   if (result.needsPersist !== true || result.terminal === undefined) return result;
   const { needsPersist: _needsPersist, ...settledResult } = result;
-  const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
   try {
-    await persistReturnedRunState(admitted, lawful ? { lawful: true } : undefined);
+    await persistReturnedRunState(admitted);
     return settledResult;
   } catch (error) {
-    const failed = await settleAfterTurnStarted(
+    await recordBestEffortPostDispatchDiagnostic(
       admitted,
-      { timedOut: false, code: null, stderr: "", thrown: error, skipRunStateWrite: true },
-      adapters,
-      authority,
+      env,
+      `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
       io,
-      true,
     );
-    return { ...failed, turnDispatched: true as const, skipAutoResume: true as const };
+    return settledResult;
   }
-}
-
-/**
- * This package's own failures while handling a turn the host itself reported as
- * clean: an unreadable typed-HTTP sidecar, a stderr mirror that would not write.
- * Present when any exist, so no branch can settle a no_receipt while quietly
- * dropping them (CLAUDE.md:48 真因必须落痕).
- */
-function packageSideFailureOf(
-  resolution: AuditedRunnerFailureResolution | undefined,
-): PackageSideFact | undefined {
-  const sidecarReadFailure = resolution?.sidecarReadFailure;
-  if (sidecarReadFailure === undefined) return undefined;
-  return { sidecarReadFailure };
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -737,6 +665,12 @@ export async function dispatchPostAdmissionTurn<
       ? {} : { courtAttemptId: request.courtAttemptId }),
     ...(request.invocationScopeId === undefined || request.invocationScopeId.length === 0
       ? {} : { invocationScopeId: request.invocationScopeId }),
+    notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
+      admitted,
+      env,
+      diagnostic,
+      io,
+    ),
   };
   let pendingSettlement: "sealed" | "no_receipt" | undefined;
   /**
@@ -814,12 +748,12 @@ export async function dispatchPostAdmissionTurn<
           }
         }
       } catch (error) {
-        result = {
-          ...(await settleAfterTurnStarted(admitted,
-            withEngineDetourInvocationScope({ timedOut: false, code: null, stderr: "", thrown: error }, request.invocationScopeId),
-            adapters, env.principalAuthority, io, persistRunState)),
-          turnDispatched: true as const, ...deferredPersist,
-        };
+        await recordBestEffortPostDispatchDiagnostic(
+          admitted,
+          env,
+          `terminal publication failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          io,
+        );
       }
     }
     try {
@@ -898,7 +832,6 @@ export async function dispatchPostAdmissionTurn<
   try {
     // #987: do not pre-block or classify host dispatch from AK credential
     // catalog facts. Per-invocation runner/host evidence owns provider identity.
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
     // The authoritative host write (markRunRunning) is delayed to just before
     // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
     // pre-turn retry (beforeDispatch, continuation assembly) must not commit a host
@@ -1000,17 +933,9 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    // `result.stderr` stays live in memory for the real classification below
-    // regardless of whether this durable mirror write succeeds. A write
-    // failure here (unwritable run directory, stderr.log occupied as a
-    // directory, ...) is a real infrastructure problem and must never be
-    // dropped silently (catch-and-continue with no trace is a defect) — but
-    // it also must never become THE controlling failure and wash out a
-    // primary child signal that already arrived on `result`, or an
-    // already-sealed accepted payload (#836: a secondary failure must not
-    // overwrite an already-known cause or an already-recorded leg). It rides
-    // beside whatever the real classification below determines, and only
-    // becomes the reported failure itself when nothing else is wrong.
+    // `result.stderr` stays live in memory for host-failure settlement
+    // whether or not this mirror write succeeds. A write failure is noted.
+    // It does not replace the host terminal or an already-sealed acceptance.
     //
     // Everything below runs after the host turn genuinely started (#840 r9
     // 判词 class 1 boundary — 覆盖 executeTurn 已启动后至返回带 turnDispatched
@@ -1036,12 +961,9 @@ export async function dispatchPostAdmissionTurn<
       );
     } catch (error) {
       stderrLogWriteFailure = error;
-      // Best-effort: the turn's own stderr capture is secondary to lawful /
-      // controlled-failure settlement below, but the failure itself must
-      // still leave a real trace (失败诚实宪法 真因必须落痕) — durably, since
-      // every auto-resume attempt's io is dummyIo (#840 r9 判词 class 1). It
-      // still rides beside the classification below and, if nothing else is
-      // wrong, becomes the reported failure itself (#836).
+      // Best-effort: stderr.log is secondary to the host terminal. A write
+      // failure leaves a durable note and, on a host failure, rides in
+      // packageFact. It does not become the cause.
       await recordBestEffortPostDispatchDiagnostic(
         admitted,
         env,
@@ -1050,137 +972,51 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    // Single preview boundary (#840 r9 判词 class 1): resolving the
-    // host/runner failure facts, trySettle and its shouldPresent gate all
-    // settle through this catch. A throw (including session-file decode)
-    // still routes through settleAfterTurnStarted's TurnDispatchedFailure
-    // instead of losing turnDispatched to an uncaught throw. The facts are
-    // resolved before trySettle (#836) so an already-accepted settlement is
-    // never presented over a real current host/runner failure signal or a
-    // real stderr.log durable-write failure — both stay a real failure with
-    // the recorded payload riding beside it, not replacing it.
+    // Host facts are resolved before trySettle. A host failure skips trySettle
+    // so a later read cannot replace that report. A clean host whose settlement
+    // read throws is noted above and is not turned into a failure terminal.
+    // stderr.log and run-state writes are notes beside the host terminal.
     let settled: T | undefined;
     let settledOutcome:
       | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
       | undefined;
-    let hostSignalFailed = false;
-    let resolution: Awaited<ReturnType<typeof resolveAuditedRunnerFailureResolution>> | undefined;
-    // What the host reported for this call, held outside the try so a failure
-    // while resolving or settling cannot lose it.
+    // The host CLI's own report: timeout, declared failure, cancel, or exit.
+    // A null code is a signal death (Node close). No session or history read
+    // takes part (owner ea321c6d / 4743ade7).
+    const processCancelName = processCancelSignalName(env.signal);
+    const hostSignalFailed =
+      result.timedOut
+      || result.knownFailure !== undefined
+      || processCancelName !== undefined
+      || result.code === null
+      || result.code !== 0;
     const hostReportedFailure = result.knownFailure;
     try {
-      resolution = await resolveAuditedRunnerFailureResolution({
-        runner: result.knownFailure,
-        runDirectory: admitted.runDirectory,
-      });
-      // What the host CLI reported for this call: a timeout, its own declared
-      // failure, or a process cancel. Either is a real problem whatever else
-      // settled — a settled accepted outcome must not paper over it, and the
-      // recorded payload rides beside it on `submissions` rather than being
-      // replaced.
-      const processCancelName = processCancelSignalName(env.signal);
-      const directHostFailureSignal =
-        result.timedOut
-        || result.knownFailure !== undefined
-        || processCancelName !== undefined;
-      // The turn fails on the CLI's own report for it: that signal or its exit
-      // code. No history read and no prior-turn settlement takes part in this
-      // decision (owner ea321c6d: resume报失败为什么要去看历史？).
-      // A null code means the child was killed by a signal — Node's native close
-      // contract, and a non-normal exit. It is a failure, never a clean run that
-      // may settle as no_receipt (ADR 0052: 真失败退非零).
-      hostSignalFailed =
-        directHostFailureSignal
-        || result.code === null
-        || result.code !== 0
-        || resolution.knownFailure !== undefined;
-
-      // Settlement attaches the run's recorded history here; failure and
-      // no-receipt below attach history on their own paths.
-      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
-      // The host CLI reported this call: its exit code, its own declared
-      // failure, a timeout, or a signal. When it reported a failure, that report
-      // is this turn's outcome — a settlement, whether sealed this turn or left
-      // by an earlier one, never presents over it, and no history read has a
-      // say (owner 4743ade7: 代码凭什么要去决定cli的失败原因？). A settlement
-      // that sealed this turn keeps its receipt on submissions either way, so
-      // #836's recorded leg survives the failure terminal.
-      // A real stderr.log durable-write failure is infrastructure trouble rather
-      // than a lawful result, and never washes the recorded payload away.
-      // #855: re-read cancel after trySettle/attach awaits — a signal in this
-      // window must not land as lawful accepted.
-      const cancelAfterSettle = processCancelSignalName(env.signal);
-      if (
-        settled !== undefined
-        && shouldPresent(settled)
-        && !hostSignalFailed
-        && stderrLogWriteFailure === undefined
-        && cancelAfterSettle === undefined
-      ) {
-        // A sealed acceptance is the host's lawful outcome, but a real failure
-        // this package hit on the way there is still a fact about the run and
-        // must be reported rather than dropped on the way to exit 0.
-        const acceptedSidecarFact = resolution?.sidecarReadFailure;
-        if (acceptedSidecarFact !== undefined) {
-          const failed = await settleAfterTurnStarted(
-              admitted,
-              withEngineDetourInvocationScope({
-              timedOut: result.timedOut,
-              code: result.code,
-              stderr: result.stderr,
-              ...(result.signal === undefined ? {} : { signal: result.signal }),
-              sidecarReadFailure: acceptedSidecarFact,
-            }, request.invocationScopeId),
-            adapters,
-            env.principalAuthority,
-            io,
-            persistRunState,
-          );
-          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+      if (!hostSignalFailed) {
+        settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
+        const cancelAfterSettle = processCancelSignalName(env.signal);
+        if (
+          settled !== undefined
+          && shouldPresent(settled)
+          && cancelAfterSettle === undefined
+        ) {
+          settledOutcome = {
+            exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+            admitted,
+            terminal: settled,
+            turnDispatched: true as const,
+          };
         }
-        settledOutcome = {
-          exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
-          admitted,
-          terminal: settled,
-          turnDispatched: true as const,
-        };
       }
     } catch (error) {
-      // Settle (or its shouldPresent gate, or the failure-fact resolution
-      // above) throw is a real failure fact — never swallow into undefined.
-      // Two real facts can stand here: what the host already reported for this
-      // call, and a settlement failure that happened afterwards. Both are
-      // preserved — the host's own report stays the cause it gave, and the
-      // settlement error rides beside it as a secondary fact instead of
-      // replacing it (失败诚实宪法：接住可以，洗白不行).
-      const settledFailure = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-          // The host's own report for this call, in full: a timeout and a signal
-          // death are its facts, not something this branch may restate as
-          // `false`. The settlement error rides beside them under `thrown`, so
-          // neither fact replaces the other.
-          timedOut: result.timedOut,
-          code: result.code,
-          stderr: result.stderr,
-          ...(result.signal === undefined ? {} : { signal: result.signal }),
-          ...(processCancelSignalName(env.signal) === undefined
-            ? {}
-            : { cancelName: processCancelSignalName(env.signal) as CatchableProcessSignal }),
-          ...((resolution?.knownFailure ?? hostReportedFailure) === undefined ? {} : {
-            knownFailure: resolution?.knownFailure ?? hostReportedFailure,
-          }),
-          ...(resolution?.sidecarReadFailure === undefined
-            ? {}
-            : { sidecarReadFailure: resolution.sidecarReadFailure }),
-          thrown: error,
-        }, request.invocationScopeId),
-        adapters,
-        env.principalAuthority,
+      // The host did not fail. A settlement read here is a package fault and
+      // must not become the terminal.
+      await recordBestEffortPostDispatchDiagnostic(
+        admitted,
+        env,
+        `settlement read failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
         io,
-        persistRunState,
       );
-      return await finishAfterTurn({ ...settledFailure, turnDispatched: true as const, ...deferredPersist });
     }
     if (settledOutcome !== undefined) {
       // #855: final cancel re-read before lawful seal — settlement window may
@@ -1203,8 +1039,7 @@ export async function dispatchPostAdmissionTurn<
       }
       if (persistRunState) {
         try {
-          await persistReturnedRunState(admitted,
-            isLawfulTypedTerminalOutcome(settledOutcome.terminal.roleOutcome) ? { lawful: true } : undefined);
+          await persistReturnedRunState(admitted);
         } catch (error) {
           await recordBestEffortPostDispatchDiagnostic(
             admitted,
@@ -1224,15 +1059,6 @@ export async function dispatchPostAdmissionTurn<
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
     if (hostSignalFailed) {
-      // The audited resolution is absent when resolving or settling threw
-      // before it completed; the host's own report for this call still stands
-      // and is what the failure terminal presents (owner 4743ade7).
-      const resolutionInput = resolution === undefined
-        ? (hostReportedFailure === undefined ? {} : {
-            knownFailure: hostReportedFailure,
-          })
-        : controlledFailureInputFromResolution(resolution);
-      const processCancelName = processCancelSignalName(env.signal);
       const stderrLogWriteFact =
         stderrLogWriteFailure === undefined
           ? undefined
@@ -1247,7 +1073,7 @@ export async function dispatchPostAdmissionTurn<
           // only a fallback for when the host declared no failure of its own —
           // it must never displace words the host actually reported.
           ...(result.signal === undefined ? {} : { signal: result.signal }),
-          ...resolutionInput,
+          ...(hostReportedFailure === undefined ? {} : { knownFailure: hostReportedFailure }),
           // The cancellation is the host's own report of why this call ended;
           // it supplies the wording only when the host declared nothing else.
           ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
@@ -1266,48 +1092,6 @@ export async function dispatchPostAdmissionTurn<
           env.signal,
         ),
       );
-    }
-
-    // The turn itself was clean, but this package hit a real failure while
-    // handling it (an unreadable sidecar, a stderr mirror that would not write).
-    // Those are true facts about this run, so they are reported rather than
-    // dropped on the way to a no_receipt (CLAUDE.md:48 真因必须落痕).
-    if (packageSideFailureOf(resolution) !== undefined) {
-      const facts = packageSideFailureOf(resolution)!;
-      const failed = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          packageFact: facts,
-        }, request.invocationScopeId),
-        adapters,
-        env.principalAuthority,
-        io,
-        persistRunState,
-      );
-      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
-    }
-
-    // Nothing else was wrong, but the durable stderr mirror itself failed to
-    // write — that is the real (infrastructure) problem in this case, not a
-    // lawful absence of a receipt. Honest and loud, not silently no_receipt.
-    if (stderrLogWriteFailure !== undefined) {
-      const failed = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: stderrLogWriteFailure,
-        }, request.invocationScopeId),
-        adapters,
-        env.principalAuthority,
-        io,
-        persistRunState,
-      );
-      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     const noReceipt = await attachRecordedSubmissions(
@@ -1334,7 +1118,7 @@ export async function dispatchPostAdmissionTurn<
     }
     if (persistRunState) {
       try {
-        await persistReturnedRunState(admitted, { lawful: true });
+        await persistReturnedRunState(admitted);
       } catch (error) {
         await recordBestEffortPostDispatchDiagnostic(
           admitted,
@@ -1780,8 +1564,7 @@ export async function runPostAdmissionSeatResume<
               });
               return settleDeferredPersist(
                 loaded.admitted,
-                env.principalAuthority,
-                stationAdapters,
+                env,
                 attemptIo,
                 result,
               );
@@ -1869,8 +1652,7 @@ export function showResumeErrorPointer(
   terminal: TerminalResult | undefined,
 ): void {
   if (exitCode === 0 || terminal === undefined) return;
-  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path
-    ?? publishedFailureErrorPath(terminal);
+  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path;
   if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
 }
 
@@ -2024,7 +1806,7 @@ export async function runPostAdmissionResumable<
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       });
-      return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
+      return settleDeferredPersist(admitted, env, attemptIo, result);
     },
   });
 }

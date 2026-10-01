@@ -5,13 +5,14 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   formatFailureStderrDiagnostic,
   publishFailureArtifacts,
@@ -137,18 +138,19 @@ test("Error Artifact publication collisions retain original cause and reader-vis
   }
 });
 
-test("malformed session JSONL settles as typed session failure retaining SyntaxError identity", async () => {
+test("malformed session JSONL stays no_receipt and notes the read; it does not invent a session failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
+    const runId = "run-malformed-session-jsonl-001";
+    const { io, stdout } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "malformed session transcript"],
       {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => "run-malformed-session-jsonl-001",
+        createRunId: () => runId,
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -156,7 +158,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
-          // Invalid JSONL must not wash into cause=output generic absence.
           await writeFile(join(sessionDir, "session.jsonl"), "{not-json\n", "utf8");
           return {
             code: 0,
@@ -169,33 +170,23 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
       },
     );
 
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "session",
-      identityName: "SyntaxError",
-    });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "session");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
-      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
-      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
-    }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause: string;
-      identity?: { name?: string };
-      diagnostic: string;
-    };
-    assert.equal(errorBody.cause, "session");
-    assert.equal(errorBody.identity?.name, "SyntaxError");
-    assert.equal(errorBody.diagnostic, terminal.roleOutcome.diagnostic);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts, {});
     assert.equal(stdout.length, 1);
-    assert.equal(
-      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
-      1,
+    const runDirectory = join(
+      home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
+    const names = await readdir(join(runDirectory, "artifacts"));
+    let noted = false;
+    for (const name of names) {
+      if (!name.startsWith("post-admission-diagnostic-")) continue;
+      const body = JSON.parse(await readFile(join(runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown };
+      if (typeof body.diagnostic === "string" && body.diagnostic.length > 0) noted = true;
+    }
+    const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
+    if (sessionText.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) noted = true;
+    assert.equal(noted, true);
   });
 });
 test("unwritable run directory keeps the child diagnostic primary with a durable Error Artifact and Terminal", async () => {
@@ -277,7 +268,7 @@ test("unwritable run directory keeps the child diagnostic primary with a durable
     }
   });
 });
-test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact; an accepted turn does not silently outrun it", async () => {
+test("post-admission stderr.log EISDIR keeps the host terminal and notes the mirror write", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -336,11 +327,8 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     assert.equal(result.terminal !== undefined, true);
   });
 
-  // A turn that DID seal an accepted submission must not silently outrun a
-  // real durable-write infrastructure failure — the stderr.log mirror is not
-  // "best-effort noise" here; it is a real IO failure and must be presented
-  // loudly, with the already-accepted payload riding beside it (never lost,
-  // never presented as if nothing went wrong).
+  // A sealed acceptance stays accepted. The stderr.log mirror failure is a
+  // note beside that terminal, and the sealed payload remains on submissions.
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -390,29 +378,24 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
         }),
       },
     );
-    // Not accepted — the durable-write failure is a real problem, not noise.
-    assert.notEqual(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    if (result.terminal?.roleOutcome.kind === "failure") {
-      // The already-sealed payload rides beside the failure, never lost.
-      assert.ok(
-        result.terminal.submissions?.some(
-          (row) =>
-            typeof row === "object" && row !== null &&
-            (row as { status?: unknown }).status === "converged",
-        ),
-        JSON.stringify(result.terminal.submissions),
-      );
-    }
+    // The host accepted. stderr.log is a mirror; its write failure is a note.
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(
+      result.terminal?.submissions?.some(
+        (row) =>
+          typeof row === "object" && row !== null &&
+          (row as { status?: unknown }).status === "converged",
+      ),
+      JSON.stringify(result.terminal?.submissions),
+    );
     assert.equal(stdout.length, 1);
     const { recordFile } = resolveSitianRecordPath({
       level: "event", kind: "attempt-history", sessionParent: sealedSessionFile,
     });
     const outcomes = (await readSitianRecords(recordFile)).records.map((row) =>
       (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
-    assert.deepEqual(outcomes,
-      Array.from({ length: (result.terminal?.autoResumeCount ?? 0) + 1 }, () => "failure"),
-      "each dispatched host turn has one final attempt result");
+    assert.deepEqual(outcomes, ["accepted"]);
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {

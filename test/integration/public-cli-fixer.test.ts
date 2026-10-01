@@ -45,7 +45,6 @@ import {
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -473,10 +472,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
             return {
               code: 1,
               stderr: "quota",
@@ -487,7 +482,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
           }),
         },
       );
-      assert.ok(first.terminal?.resume, "fixer plan 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "fixer");
     }
 

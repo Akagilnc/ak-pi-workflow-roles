@@ -26,7 +26,6 @@ import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
   acquireRunWriterLease,
-  markRunResumable,
   markRunTerminal,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -37,7 +36,6 @@ import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifa
 import {
   attachRecordedSubmissions,
   presentFailureTerminal,
-  resolveControlledFailureResumeObservation,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
@@ -46,27 +44,11 @@ const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
 /**
  * Persist run-state after a host-turn result, outside the retried dispatch try.
- * Lawful settlement always seals terminal — a typed 429 observation must not
- * win (#416 成功即停). 429 only marks resumable on the controlled-failure path.
- * Write failure must escape the retried dispatch try instead of becoming a
- * synthetic host-turn terminal.
+ * The host outcome already decided the terminal. This write only seals the run.
  */
 export async function persistReturnedRunState(
-  admitted: { runDirectory: string; principal?: DurablePrincipal },
-  options?: { readonly lawful?: boolean },
+  admitted: { runDirectory: string },
 ): Promise<void> {
-  if (options?.lawful === true) {
-    await markRunTerminal(admitted.runDirectory);
-    return;
-  }
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-  });
-  const typedHttp429 = resumeObservation.typedHttp429;
-  if (admitted.principal !== undefined && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-    return;
-  }
   await markRunTerminal(admitted.runDirectory);
 }
 

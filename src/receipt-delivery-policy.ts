@@ -94,9 +94,13 @@ export function createReceiptDeliveryPolicy() {
      * delivery budget. Adopt its facts and close this budget: another prompt would
      * open an independent session, not a delivery request on the settled one.
      */
-    recordNestedNoReceipt(facts: NoReceiptLifecycleFacts) {
-      terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
-      rejectedReceipts.push(...facts.rejectedReceipts);
+    recordNestedNoReceipt(facts: Partial<NoReceiptLifecycleFacts>) {
+      if (typeof facts.terminalToolCalled === "boolean") {
+        terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
+      }
+      if (facts.rejectedReceipts !== undefined) {
+        rejectedReceipts.push(...facts.rejectedReceipts);
+      }
       deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
     },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {

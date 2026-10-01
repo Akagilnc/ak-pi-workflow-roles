@@ -40,11 +40,11 @@ export type TerminalRoleName =
   | "diarist"
   | "secretariat";
 
-export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
+export type NoReceiptTerminalOutcome = Partial<NoReceiptLifecycleFacts> & {
   kind: "no_receipt";
   role: TerminalRoleName;
   status: "no-accepted-receipt";
-  decisiveFacts: NoReceiptLifecycleFacts & Readonly<Record<string, unknown>>;
+  decisiveFacts: Partial<NoReceiptLifecycleFacts> & Readonly<Record<string, unknown>>;
 };
 
 export type TerminalRoleOutcome =
@@ -117,12 +117,6 @@ export type TerminalNavigatorFact =
       advisoryDiagnostic?: string;
     };
 
-/** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
-export type TerminalResume = {
-  /** Complete public command; run ID is revealed only here. */
-  readonly command: string;
-};
-
 /** Current English gate seat faces projected on Terminal (#478). */
 export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
@@ -174,8 +168,8 @@ export function currentReplyRows(terminal: TerminalResult | undefined): readonly
 }
 
 /**
- * One admitted Role run's typed Terminal aggregate. Resumable failures disclose
- * the run ID only inside resume.command. autoResumeCount is call-local (#416).
+ * One admitted Role run's typed Terminal aggregate.
+ * autoResumeCount is call-local (#416).
  */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
@@ -206,21 +200,13 @@ export type TerminalResult = {
   autoResumeCount?: number;
 } & (
   | {
-      /** Resumable failure: run ID appears only inside resume.command. */
-      resume: TerminalResume;
-      runId?: undefined;
-      batch?: undefined;
-    }
-  | {
       runId: string;
-      resume?: undefined;
       batch?: undefined;
     }
   | {
       /** Deterministic public batch projection; no parent Role run exists. */
       batch: "reviewer";
       runId?: undefined;
-      resume?: undefined;
     }
 );
 
@@ -313,10 +299,7 @@ export function formatTerminalResult(result: TerminalResult): string {
       }
     }
   }
-  if (result.resume !== undefined) {
-    // Resumable failure: run ID is revealed only inside the complete resume command.
-    lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
-  } else if (result.runId !== undefined) {
+  if (result.runId !== undefined) {
     lines.push(`run\t${encodeTerminalField(result.runId)}`);
   }
   if (result.autoResumeCount !== undefined) {

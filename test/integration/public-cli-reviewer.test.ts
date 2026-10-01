@@ -36,7 +36,6 @@ import {
 import {
   loadResumablePublicRole,
   markRunAdmitted,
-  markRunResumable,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
@@ -46,7 +45,6 @@ import {
   packageRoot,
   withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -1107,10 +1105,6 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    await markRunResumable(admitted.runDirectory, {
-      httpStatus: 429,
-      provider: "xai",
-    });
 
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
@@ -1193,14 +1187,9 @@ test("ak-role resume continues reviewer with fixed base", async () => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         }),
       });
-      assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "reviewer");
     }
 
@@ -1317,21 +1306,16 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-        await observeTyped429ViaProductionHandler({
-          runDirectory: join(sessionDir, ".."),
-          provider: "xai",
-        });
         return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
       }),
     });
 
     assert.equal(batch.exitCode, 1, stdout.join(""));
-    const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
-    const correctnessResume = batch.terminal?.reviewerChildren?.correctness?.resume?.command;
-    assert.equal(typeof completenessResume, "string");
-    assert.equal(typeof correctnessResume, "string");
-    const completenessRunId = completenessResume!.slice("ak-role resume ".length);
-    const correctnessRunId = correctnessResume!.slice("ak-role resume ".length);
+    const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
+    const correctnessRunId = batch.terminal?.reviewerChildren?.correctness?.runId;
+    if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
+      assert.fail("dual-lens children must disclose runId");
+    }
     assert.notEqual(completenessRunId, correctnessRunId);
     assert.equal(capturedProviders.length >= 2, true);
     for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
@@ -1409,22 +1393,20 @@ test("default dual-lens relative --project and inline --base fail closed like si
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         }),
       });
       assert.equal(batch.exitCode, 1, batchStdout.join(""));
-      const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
-      assert.equal(typeof completenessResume, "string");
+      const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
+      if (typeof completenessRunId !== "string") {
+        assert.fail("completeness child must disclose runId");
+      }
       const bookKey = resolveBookKeyFromGit(project);
       const admitted = JSON.parse(
         await readFile(
           join(
             home, ".ak-roles", "books", bookKey, "unbound", "runs",
-            `${completenessResume!.slice("ak-role resume ".length)}@reviewer`,
+            `${completenessRunId}@reviewer`,
             "admitted-request.json",
           ),
           "utf8",

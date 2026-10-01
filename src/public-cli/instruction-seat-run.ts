@@ -64,6 +64,7 @@ import {
 } from "./post-admission.ts";
 import {
   buildAutoResumeContinuationPrompt,
+  describeErrorIdentity,
   loadResumablePublicRole,
   markRunAdmitted,
   parentRunPathFromGatePointerInstruction,
@@ -73,6 +74,7 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  noteSettlementFault,
   presentStructuralRejection,
   readBoundSessionEntries,
   attachPostAuditProjection,
@@ -99,7 +101,10 @@ import {
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
   "reviewReask" | "gateReviewInstruction" | "parentRunPath"
->;
+> & {
+  /** This call already sent one status reask. The next acceptance is presented. */
+  readonly submissionStatusReasked?: true;
+};
 
 type SeatRunResult = {
   exitCode: number;
@@ -169,10 +174,10 @@ async function reaskUnreadablePostSubmissionStatus(
   io: CliIo,
 ): Promise<SeatRunResult | undefined> {
   const message = unreadablePostSubmissionStatus(admitted, terminal);
-  if (message === undefined) return undefined;
+  if (message === undefined || env.submissionStatusReasked === true) return undefined;
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
-    { ...env, autoResumeLimit: 0 },
+    { ...env, autoResumeLimit: 0, submissionStatusReasked: true },
     io,
   );
 }
@@ -887,31 +892,31 @@ async function queueConclusionFromChild(
   | undefined
 > {
   if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
-  let current = child;
-  for (;;) {
-    const terminal = await trySettlePublicSeat(
-      current,
-      env.principalAuthority,
-      undefined,
-    );
-    const status = latestQueueStatus(terminal);
-    if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
-      return { admitted: current, terminal, status };
-    }
-    const reasked = await runPublicInstructionSeatResume({
-      runId: current.runId,
-      message: officerConclusionReask(status),
-    }, env, io);
-    if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
-      return { stop: reasked };
-    }
-    const reaskedStatus = latestQueueStatus(reasked.terminal);
-    if (reaskedStatus !== undefined && QUEUE_CONCLUSIONS.has(reaskedStatus)) {
-      return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
-    }
-    if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
-    current = reasked.admitted;
+  const settled = await trySettlePublicSeat(child, env.principalAuthority, undefined);
+  const status = latestQueueStatus(settled);
+  if (settled !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
+    return { admitted: child, terminal: settled, status };
   }
+  const reasked = await runPublicInstructionSeatResume({
+    runId: child.runId,
+    message: officerConclusionReask(status),
+  }, env, io);
+  if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
+    return { stop: reasked };
+  }
+  const reaskedStatus = latestQueueStatus(reasked.terminal);
+  if (reaskedStatus !== undefined && QUEUE_CONCLUSIONS.has(reaskedStatus)) {
+    return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
+  }
+  if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
+  // One reask. A lawful terminal that still has no conclusion is the answer.
+  // Asking again spun when that terminal stayed exit 0.
+  const again = await trySettlePublicSeat(reasked.admitted, env.principalAuthority, undefined);
+  const againStatus = latestQueueStatus(again);
+  if (again !== undefined && againStatus !== undefined && QUEUE_CONCLUSIONS.has(againStatus)) {
+    return { admitted: reasked.admitted, terminal: again, status: againStatus };
+  }
+  return { stop: reasked };
 }
 
 /** Continue the parent once a child has submitted. The child words ride the existing resume. */
@@ -964,13 +969,18 @@ async function auditSubmittedRole(
   const record = accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
-  if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK },
-      { ...env, autoResumeLimit: 0 }, io);
-  }
-  if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK },
-      { ...env, autoResumeLimit: 0 }, io);
+  const statusReask = admitted.role === "secretariat" && status !== "converged" && status !== "escalate"
+    ? SECRETARIAT_STATUS_REASK
+    : admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))
+      ? COUNTERSIGN_STATUS_REASK
+      : undefined;
+  if (statusReask !== undefined) {
+    if (env.submissionStatusReasked === true) {
+      io.stdout(formatTerminalResult(turn.terminal));
+      return turn;
+    }
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: statusReask },
+      { ...env, autoResumeLimit: 0, submissionStatusReasked: true }, io);
   }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must
@@ -985,12 +995,35 @@ async function auditSubmittedRole(
     io.stdout(formatTerminalResult(turn.terminal));
     return turn;
   }
-  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
+  let rows: Awaited<ReturnType<typeof readRecordedSubmissionRows>>;
+  try {
+    rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
+  } catch (error) {
+    // The host already accepted. A later ledger read stays beside that terminal.
+    await noteSettlementFault(
+      admitted.runDirectory,
+      undefined,
+      `submission history read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
+    );
+    io.stdout(formatTerminalResult(turn.terminal));
+    return turn;
+  }
   const acceptedRow = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted");
   const toolCallId = acceptedRow?.toolCallId;
   if (toolCallId === undefined) throw new Error("accepted submission has no tool call identity");
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-  const entries = admitted.role === "doctor" ? await readBoundSessionEntries(sessionFile) : [];
+  let entries: Awaited<ReturnType<typeof readBoundSessionEntries>> = [];
+  if (admitted.role === "doctor") {
+    try {
+      entries = await readBoundSessionEntries(sessionFile);
+    } catch (error) {
+      await noteSettlementFault(
+        admitted.runDirectory,
+        undefined,
+        `doctor session read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
+  }
   const context: HostContext = {
     cwd: admitted.projectRoot,
     mode: "print",
@@ -1006,10 +1039,21 @@ async function auditSubmittedRole(
     },
     abort() {},
   };
+  const keepAcceptedBesideAuditFault = async (error: unknown): Promise<SeatRunResult> => {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      undefined,
+      `audit read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
+    );
+    if (turn.terminal !== undefined) io.stdout(formatTerminalResult(turn.terminal));
+    return turn;
+  };
   if (admitted.role === "doctor") {
     if (passedOfficer !== "auditor") {
       let lastSummon: PublicSummonResult | undefined;
-      const decision = await createPiDoctorAuditor()({
+      let decision: Awaited<ReturnType<ReturnType<typeof createPiDoctorAuditor>>>;
+      try {
+        decision = await createPiDoctorAuditor()({
         context, submission: accepted,
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
@@ -1037,6 +1081,9 @@ async function auditSubmittedRole(
           return summoned;
         },
       });
+      } catch (error) {
+        return keepAcceptedBesideAuditFault(error);
+      }
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
           runId: admitted.runId, message: readableGateItem(decision.receipt ?? decision.violations),
@@ -1076,11 +1123,15 @@ async function auditSubmittedRole(
         },
       });
     if (admitted.role === "judge") {
-      chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
-          || (passedOfficer === "notary" && subject.kind === "judge_draft"),
-        runGate,
-      });
+      try {
+        chain = await runJudgeGates({
+          gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
+            || (passedOfficer === "notary" && subject.kind === "judge_draft"),
+          runGate,
+        });
+      } catch (error) {
+        return keepAcceptedBesideAuditFault(error);
+      }
     } else {
       const subject = admitted.role === "fixer" || admitted.role === "coder"
         ? { kind: "worker_completion" as const }
@@ -1091,7 +1142,12 @@ async function auditSubmittedRole(
       if (passedOfficer === officer) {
         chain = { status: "converged", passes: [] };
       } else {
-        const pass = await runGate(subject);
+        let pass: Awaited<ReturnType<typeof runGate>>;
+        try {
+          pass = await runGate(subject);
+        } catch (error) {
+          return keepAcceptedBesideAuditFault(error);
+        }
         if (pass === undefined) throw new Error("audit gate returned no conclusion");
         officerRunId = pass.runId;
         chain = {

@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import {
   readAnalystGateCyclesFromAuditorRoles,
@@ -26,15 +26,8 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
+import { describeErrorIdentity } from "./run-lifecycle.ts";
 import {
-  isV1ResumableProvider,
-  readLatestTypedProviderHttpObservation,
-  readTypedHttp429Observation,
-  type TypedHttp429Observation,
-  type TypedProviderHttpObservation,
-} from "./run-lifecycle.ts";
-import {
-  projectEngineDetourToolUsageForPublicTerminal,
   readEngineDetourToolUsage,
   readInvocationEngineMounted,
   runDirectoryFromSessionDirectory,
@@ -80,7 +73,6 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
-import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
   uniqueErrorFallbackName,
@@ -110,7 +102,35 @@ export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
+  /**
+   * Package fault beside an already chosen terminal. The host report stays.
+   * When absent, the same artifact-file fallback used by post-admission retains the fault.
+   */
+  readonly notePackageFault?: (diagnostic: string) => void | Promise<void>;
 };
+
+/** Record a package fault without letting the note replace the terminal. */
+export async function noteSettlementFault(
+  runDirectory: string,
+  scope: SettlementCourtScope | undefined,
+  diagnostic: string,
+): Promise<void> {
+  try {
+    if (scope?.notePackageFault !== undefined) {
+      await scope.notePackageFault(diagnostic);
+      return;
+    }
+    const dir = roleRunArtifactsDirectory(runDirectory);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, `post-admission-diagnostic-${randomUUID()}.json`),
+      `${JSON.stringify({ version: 1, diagnostic, recordedAt: new Date().toISOString() }, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  } catch {
+    // A note that cannot be retained must not replace the host terminal.
+  }
+}
 
 export function ledgerReadScope(
   admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
@@ -219,13 +239,19 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   // pass courtAttemptId here — roleOutcome already carries this-court payloads
   // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
   void scope;
-  const result = withSubmissions(
-    terminal,
-    await recordedSubmissionPayloads(admitted, undefined),
-  );
-  const errorPath = privateFailureErrorPaths.get(terminal);
-  if (errorPath !== undefined) privateFailureErrorPaths.set(result, errorPath);
-  return result;
+  try {
+    return withSubmissions(
+      terminal,
+      await recordedSubmissionPayloads(admitted, undefined),
+    );
+  } catch (error) {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      scope,
+      `submission history read failed beside host terminal: ${describeErrorIdentity(error)}`,
+    );
+    return terminal;
+  }
 }
 
 /**
@@ -249,14 +275,14 @@ export async function settleHostEndedNoReceipt(
   // (#1032: 无回执如实呈 no_receipt; 单一真源).
   const recorded = await readRecordedNoReceiptFacts(coordinates.sessionFile, binding);
   if (recorded instanceof LifecycleReadFailure) {
-    // The delivery owner's record exists but could not be read or parsed. That
-    // is a real failure about this run, not an absent record: reporting a
-    // fabricated empty delivery (false / [] / exhausted) here would assert a
-    // delivery that never happened (CLAUDE.md:48 真因必须落痕; #1032 不因形状杀局).
-    throw new LifecycleReadFailure(
+    // A present record that cannot be read is not an empty delivery. Omit the
+    // facts and keep the real error beside the no_receipt terminal.
+    await noteSettlementFault(
+      admitted.runDirectory,
+      scope,
       `no-receipt lifecycle record could not be read: ${recorded.message}`,
-      { cause: recorded.error },
     );
+    return settleNoReceiptTerminal(admitted, authority, scope, undefined);
   }
   return settleNoReceiptTerminal(
     admitted,
@@ -328,13 +354,18 @@ async function settleNoReceiptTerminal(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-  facts: NoReceiptLifecycleFacts,
+  facts: NoReceiptLifecycleFacts | undefined,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const roleOutcome: TerminalRoleOutcome = {
-    kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
-    ...facts, decisiveFacts: facts,
-  };
+  const roleOutcome: TerminalRoleOutcome = facts === undefined
+    ? {
+        kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
+        decisiveFacts: {},
+      }
+    : {
+        kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
+        ...facts, decisiveFacts: facts,
+      };
   if (scope?.recordAttemptHistory === true) {
     await appendRunAttemptHistory(
       { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
@@ -368,7 +399,6 @@ import {
   type TerminalGateSeat,
   type TerminalNavigatorFact,
   type TerminalResult,
-  type TerminalResume,
   type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
@@ -412,33 +442,9 @@ export type PackageSideFact = {
   readonly timedOut?: boolean;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
-  /** The typed-HTTP sidecar could not be read; the host's report still stands. */
-  readonly sidecarReadFailure?: ThrownErrorFact;
   /** A durable stderr.log write that failed while handling this call. */
   readonly stderrLogWriteFailure?: unknown;
 };
-
-// A resumable public Terminal omits artifact paths (#108); its actual error
-// publication remains available only to the CLI's resume presentation seam.
-const privateFailureErrorPaths = new WeakMap<TerminalResult, string>();
-
-export function publishedFailureErrorPath(terminal: TerminalResult): string | undefined {
-  return privateFailureErrorPaths.get(terminal);
-}
-
-export function rewritePublishedFailureErrorPath(
-  terminal: TerminalResult,
-  oldRunDirectory: string,
-  newRunDirectory: string,
-): void {
-  const errorPath = privateFailureErrorPaths.get(terminal);
-  if (errorPath !== undefined) {
-    privateFailureErrorPaths.set(
-      terminal,
-      rewriteRunDirectoryPathValue(errorPath, oldRunDirectory, newRunDirectory) as string,
-    );
-  }
-}
 
 /**
  * Host stderr as recorded — full bytes, no flood filter, no char clip (#836).
@@ -506,30 +512,6 @@ export function presentControlledFailure(
   io.stderr(formatFailureStderrDiagnostic(failure));
 }
 
-/** Session readiness after an admitted activation attempt. */
-export type SessionReadiness =
-  | { readonly state: "missing" }
-  | { readonly state: "unreadable"; readonly diagnostic: string }
-  | { readonly state: "present" };
-
-export async function inspectJudgeSession(
-  sessionFile: string,
-): Promise<SessionReadiness> {
-  try {
-    await readFile(sessionFile, "utf8");
-    return { state: "present" };
-  } catch (error) {
-    if (isMissingPathError(error)) return { state: "missing" };
-    return {
-      state: "unreadable",
-      diagnostic:
-        error instanceof Error
-          ? error.message || error.name
-          : String(error),
-    };
-  }
-}
-
 /**
  * A caught error's identity, read structurally off the thrown value: its name
  * and its `code` when it carries one (an OS errno, typically). The errno
@@ -541,22 +523,12 @@ export type ThrownErrorIdentity = {
   readonly code?: string | number;
 };
 
-/** One caught error as a package-side fact: its identity plus the message. */
-export type ThrownErrorFact = ThrownErrorIdentity & {
-  readonly message: string;
-};
-
 function thrownIdentity(error: Error): ThrownErrorIdentity {
   const code = (error as { code?: unknown }).code;
   return {
     name: error.name,
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
   };
-}
-
-/** A caught error as a package-side fact, reusing the one identity reader. */
-function thrownFact(error: Error): ThrownErrorFact {
-  return { ...thrownIdentity(error), message: error.message };
 }
 
 function isControlledFailureCause(cause: unknown): cause is ControlledFailureCause {
@@ -698,7 +670,7 @@ function withKnownDetails(
  * Classify a controlled post-admission failure without washing original identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
  *
- * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
+ * Order: thrown → knownCause → timeout → activation (nonzero) → clean exit.
  * knownCause precedes timeout so a co-present typed provider/session identity is not
  * washed when the child also timed out. Cause is never inferred from stderr wording.
  * AggregateError concurrent leaves keep primary identity and secondary facts in details.
@@ -723,7 +695,6 @@ function hostReportedFallbackOf(input: {
 
 /** This call's package-side facts, or undefined when there are none. */
 function packageFactsOf(input: {
-  readonly sidecarReadFailure?: ThrownErrorFact;
   readonly packageFact?: PackageSideFact;
   readonly code?: number | null;
   readonly timedOut?: boolean;
@@ -732,9 +703,6 @@ function packageFactsOf(input: {
     ...(input.code === undefined ? {} : { exitCode: input.code }),
     ...(input.timedOut === true ? { timedOut: true } : {}),
     ...(input.packageFact ?? {}),
-    ...(input.sidecarReadFailure === undefined
-      ? {}
-      : { sidecarReadFailure: input.sidecarReadFailure }),
   };
   return Object.keys(facts).length === 0 ? undefined : facts;
 }
@@ -749,7 +717,6 @@ export function classifyPostAdmissionFailure(input: {
    * being washed into activation/null-exit paths that treat missing thrown as absence.
    */
   thrown?: unknown;
-  session?: SessionReadiness;
   /** Upstream-typed cause when the failure origin is already known. */
   knownCause?: ControlledFailureCause;
   /** Optional identity paired with knownCause (production channel). */
@@ -771,8 +738,6 @@ export function classifyPostAdmissionFailure(input: {
    * it only supplies fallback wording: the host's own diagnostic always wins.
    */
   readonly cancelName?: string;
-  /** This package's own auxiliary read failure; recorded, never a cause. */
-  sidecarReadFailure?: ThrownErrorFact;
   /** Further package-side facts merged under `packageFact`, never the cause. */
   packageFact?: PackageSideFact;
 }): ControlledFailure {
@@ -892,28 +857,6 @@ export function classifyPostAdmissionFailure(input: {
       packageFactsOf(input),
     );
   }
-  if (input.session?.state === "missing") {
-    return withKnownDetails(
-      {
-        cause: "session",
-        diagnostic: "role run left no readable session transcript",
-        details: { exitCode: input.code, session: "missing" },
-      },
-      input.knownDetails,
-      packageFactsOf(input),
-    );
-  }
-  if (input.session?.state === "unreadable") {
-    return withKnownDetails(
-      {
-        cause: "session",
-        diagnostic: input.session.diagnostic,
-        details: { exitCode: input.code, session: "unreadable" },
-      },
-      input.knownDetails,
-      packageFactsOf(input),
-    );
-  }
   // No typed fact confirmed a class, so none is asserted: the host exited
   // cleanly, and the package has nothing to add (host-contracts.ts:19–42: omit
   // cause and keep the original when no typed confirmation exists). A caller
@@ -1012,55 +955,10 @@ function isAbsentFacePathError(error: unknown): boolean {
 }
 
 /**
- * Preserve session-read failure identity as a typed session cause.
- * SyntaxError keeps its name so durable settlement does not wash malformed JSONL
- * into generic output absence.
- */
-function sessionReadFailure(
-  error: unknown,
-  fallbackMessage: string,
-): Error & {
-  knownCause: ControlledFailureCause;
-  failureCode?: string | number;
-} {
-  if (error instanceof SyntaxError) {
-    const failed = new SyntaxError(
-      error.message || fallbackMessage,
-    ) as SyntaxError & {
-      knownCause: ControlledFailureCause;
-      failureCode?: string | number;
-    };
-    failed.knownCause = "session";
-    return failed;
-  }
-  if (error instanceof Error) {
-    const failed = new Error(
-      error.message || error.name || fallbackMessage,
-    ) as Error & {
-      knownCause: ControlledFailureCause;
-      failureCode?: string | number;
-      code?: string | number;
-    };
-    failed.name = error.name || "Error";
-    failed.knownCause = "session";
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" || typeof code === "number") {
-      failed.failureCode = code;
-      failed.code = code;
-    }
-    return failed;
-  }
-  const failed = new Error(String(error)) as Error & {
-    knownCause: ControlledFailureCause;
-    failureCode?: string | number;
-  };
-  failed.knownCause = "session";
-  return failed;
-}
-
-/**
  * Read the exact bound Pi session file principal.
  * Does not scan the session directory for "latest" — resume identity is the file.
+ * A malformed line keeps the parser's own error. Callers that already hold a
+ * terminal note it; they do not relabel it as a host session cause.
  */
 export async function readBoundSessionEntries(
   sessionFile: string,
@@ -1068,159 +966,9 @@ export async function readBoundSessionEntries(
   const text = await readFile(sessionFile, "utf8");
   const entries: SessionEntry[] = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
-    try {
-      entries.push(JSON.parse(line) as SessionEntry);
-    } catch (error) {
-      throw sessionReadFailure(error, "malformed session JSONL");
-    }
+    entries.push(JSON.parse(line) as SessionEntry);
   }
   return entries;
-}
-
-/**
- * One audited-runner resolution: this call's own reported failure plus the
- * typed-HTTP sidecar outcome from the same read. Callers that also decide v1
- * resume must consume this once — never re-read the sidecar in
- * presentControlledFailure.
- */
-export type AuditedRunnerFailureResolution = {
-  /** What the host CLI itself reported for this call, presented as it gave it. */
-  readonly knownFailure?: RoleTurnKnownFailure;
-  /** Successful sidecar read (not absence). */
-  readonly typedHttpObservation?: TypedProviderHttpObservation;
-  /**
-   * True when the sidecar read already happened (success, absence, or a real
-   * read failure). False when the call's own report short-circuited before it.
-   */
-  readonly typedHttpObservationSettled: boolean;
-  /** The sidecar could not be read; auxiliary, and never a cause. */
-  readonly sidecarReadFailure?: ThrownErrorFact;
-};
-
-function resolutionOf(
-  knownFailure: RoleTurnKnownFailure | undefined,
-  typedHttp: {
-    readonly settled: boolean;
-    readonly observation?: TypedProviderHttpObservation;
-    readonly sidecarReadFailure?: ThrownErrorFact;
-  } = { settled: false },
-): AuditedRunnerFailureResolution {
-  return {
-    ...(knownFailure === undefined ? {} : { knownFailure }),
-    ...(typedHttp.observation === undefined ? {} : { typedHttpObservation: typedHttp.observation }),
-    ...(typedHttp.sidecarReadFailure === undefined
-      ? {}
-      : { sidecarReadFailure: typedHttp.sidecarReadFailure }),
-    typedHttpObservationSettled: typedHttp.settled,
-  };
-}
-
-/** Sole evidence-priority owner for public runners with Soul auditors. */
-export async function resolveAuditedRunnerFailureResolution(input: {
-  runner: RoleTurnKnownFailure | undefined;
-  /** Optional run directory for typed provider HTTP observation (resume/429). */
-  runDirectory?: string;
-}): Promise<AuditedRunnerFailureResolution> {
-  // This turn's outcome and its cause are what the host CLI reported for this
-  // call, and nothing else. The Pi host returns only code/stderr/timedOut, so
-  // anything richer came from the host's own declared failure; a session
-  // transcript, a bound auditor volume, a Sitian-retained stop and the
-  // run-level sidecar are history, and none of them is read to decide the cause
-  // here (owner ea321c6d: resume报失败为什么要去看历史？).
-  //
-  // The typed-HTTP sidecar is a separate observation used only for the v1 resume
-  // decision. A failure to read it is its own real fact and never replaces what
-  // the host reported.
-  let httpObservation: TypedProviderHttpObservation | undefined;
-  if (input.runDirectory !== undefined) {
-    try {
-      httpObservation = await readLatestTypedProviderHttpObservation(input.runDirectory);
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      // The sidecar is auxiliary: failing to read it never becomes this call's
-      // cause and never edits the host's report. It is recorded beside them.
-      return resolutionOf(
-        input.runner,
-        {
-          settled: true,
-          sidecarReadFailure: thrownFact(failure),
-        },
-      );
-    }
-  }
-  const typedHttp = {
-    settled: input.runDirectory !== undefined,
-    ...(httpObservation === undefined ? {} : { observation: httpObservation }),
-  };
-  // The host's report for this call, or nothing: a run whose CLI reported no
-  // failure is not given one by reading what earlier turns left behind.
-  return resolutionOf(input.runner, typedHttp);
-}
-/**
- * v1 resume observation for controlled-failure settlement — at most one sidecar read.
- * Prefer the pre-resolved outcome from resolveAuditedRunnerFailureResolution.
- * Non-absence failures never throw: they return observationReadFailure, which
- * rides as a package-side fact on the controlled-failure → error.json chain.
- */
-export async function resolveControlledFailureResumeObservation(input: {
-  readonly runDirectory: string;
-  readonly typedHttpObservationSettled?: boolean;
-  readonly typedHttpObservation?: TypedProviderHttpObservation;
-}): Promise<{
-  readonly typedHttp429?: TypedHttp429Observation;
-  /**
-   * The sidecar could not be read on this path. This package's own fact: it is
-   * never a cause, and it never stands in for what the host reported.
-   */
-  readonly observationReadFailure?: ThrownErrorFact;
-}> {
-  if (input.typedHttpObservationSettled === true) {
-    const observation = input.typedHttpObservation;
-    if (
-      observation !== undefined &&
-      observation.httpStatus === 429 &&
-      isV1ResumableProvider(observation.provider)
-    ) {
-      return {
-        typedHttp429: { httpStatus: 429, provider: observation.provider },
-      };
-    }
-    return {};
-  }
-  try {
-    const typedHttp429 = await readTypedHttp429Observation(input.runDirectory);
-    return typedHttp429 === undefined ? {} : { typedHttp429 };
-  } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error));
-    return {
-      observationReadFailure: thrownFact(failure),
-    };
-  }
-}
-
-/** Spread into presentControlledFailure failureInput from one audited resolution. */
-export function controlledFailureInputFromResolution(
-  resolution: AuditedRunnerFailureResolution,
-): {
-  knownFailure?: RoleTurnKnownFailure;
-  typedHttpObservationSettled?: true;
-  typedHttpObservation?: TypedProviderHttpObservation;
-  sidecarReadFailure?: ThrownErrorFact;
-} {
-  return {
-    ...(resolution.knownFailure === undefined ? {} : { knownFailure: resolution.knownFailure }),
-    ...(resolution.sidecarReadFailure === undefined
-      ? {}
-      : { sidecarReadFailure: resolution.sidecarReadFailure }),
-    ...(resolution.typedHttpObservationSettled
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(resolution.typedHttpObservation === undefined
-          ? {}
-          : { typedHttpObservation: resolution.typedHttpObservation }),
-      }
-      : {}),
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1488,10 +1236,9 @@ export async function extractGateFactFromSessionDirectory(
 /**
  * Attach optional gate projection onto a settled Terminal base.
  * Shared by every settle path so auditor-roles is scanned once here only.
- * `runId` is not required — resumable failures omit it by contract.
- * Gate read damage propagates with its real identity (never washed to no-gate
- * or swallowed); callers that already hold a controlled failure still surface the
- * JSONL/session cause rather than pretend the gate was absent.
+ * `runId` is optional only for a batch projection that has no parent run.
+ * Gate read damage is a package note beside the host terminal. It does not
+ * replace that terminal and it does not omit the gate without a trace.
  */
 /**
  * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
@@ -1502,7 +1249,7 @@ export async function extractGateFactFromSessionDirectory(
  * therefore cannot replace an already-formed roleOutcome (no_receipt / failure).
  */
 async function attachEngineDetourToolUsage<
-  T extends { roleOutcome: TerminalRoleOutcome; resume?: TerminalResume },
+  T extends { roleOutcome: TerminalRoleOutcome },
 >(
   base: T,
   sessionDirectory: string,
@@ -1510,13 +1257,26 @@ async function attachEngineDetourToolUsage<
     readonly runDirectory?: string;
     readonly courtAttemptId?: string;
     readonly invocationScopeId?: string;
+    readonly notePackageFault?: SettlementCourtScope["notePackageFault"];
   } = {},
 ): Promise<T> {
   const runDirectory =
     typeof gateContext.runDirectory === "string" && gateContext.runDirectory.length > 0
       ? gateContext.runDirectory
       : runDirectoryFromSessionDirectory(sessionDirectory);
-  const engineMounted = await readInvocationEngineMounted(runDirectory);
+  let engineMounted = false;
+  try {
+    engineMounted = await readInvocationEngineMounted(runDirectory);
+  } catch (error) {
+    await noteSettlementFault(
+      runDirectory,
+      gateContext.notePackageFault === undefined
+        ? undefined
+        : { notePackageFault: gateContext.notePackageFault },
+      `engine mount read failed beside host terminal: ${describeErrorIdentity(error)}`,
+    );
+    return base;
+  }
   if (!engineMounted) return base;
 
   // Public-invocation scope from the shared Host envelope (settlement scope), never
@@ -1528,22 +1288,27 @@ async function attachEngineDetourToolUsage<
       : undefined;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
-  const usage = await readEngineDetourToolUsage({
-    sessionParent: sessionFile,
-    engineMounted: true,
-    ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
-    cwd: runDirectory,
-  });
-  const projected =
-    usage === undefined
-      ? undefined
-      : projectEngineDetourToolUsageForPublicTerminal(usage, {
-          // Resumable Terminal: run ID only in resume.command — relative openable path.
-          discloseRecordFile: base.resume === undefined,
-        });
+  let usage: Awaited<ReturnType<typeof readEngineDetourToolUsage>>;
+  try {
+    usage = await readEngineDetourToolUsage({
+      sessionParent: sessionFile,
+      engineMounted: true,
+      ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
+      cwd: runDirectory,
+    });
+  } catch (error) {
+    await noteSettlementFault(
+      runDirectory,
+      gateContext.notePackageFault === undefined
+        ? undefined
+        : { notePackageFault: gateContext.notePackageFault },
+      `engine detour read failed beside host terminal: ${describeErrorIdentity(error)}`,
+    );
+    return base;
+  }
   return {
     ...base,
-    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, projected),
+    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, usage),
   };
 }
 
@@ -1564,6 +1329,7 @@ function detourGateContext(
     ...(scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
       ? {}
       : { invocationScopeId: scope.invocationScopeId }),
+    ...(scope?.notePackageFault === undefined ? {} : { notePackageFault: scope.notePackageFault }),
   };
 }
 
@@ -1572,7 +1338,6 @@ async function withOptionalGateProjection<
     roleOutcome: TerminalRoleOutcome;
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
-    resume?: TerminalResume;
   },
 >(
   base: T,
@@ -1582,6 +1347,7 @@ async function withOptionalGateProjection<
     readonly parentSessionFile?: string;
     readonly courtAttemptId?: string;
     readonly invocationScopeId?: string;
+    readonly notePackageFault?: SettlementCourtScope["notePackageFault"];
   } = {},
 ): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
@@ -1597,9 +1363,19 @@ async function withOptionalGateProjection<
 
   let next: T & { gate?: TerminalGateFact } = base;
   if (!skipGate) {
-    // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
-    const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
-    if (gate !== undefined) next = { ...base, gate };
+    try {
+      const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
+      if (gate !== undefined) next = { ...base, gate };
+    } catch (error) {
+      const runDirectory = gateContext.runDirectory ?? runDirectoryFromSessionDirectory(sessionDirectory);
+      await noteSettlementFault(
+        runDirectory,
+        gateContext.notePackageFault === undefined
+          ? undefined
+          : { notePackageFault: gateContext.notePackageFault },
+        `gate read failed beside host terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
   }
 
   return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
@@ -1799,24 +1575,29 @@ async function publishAcceptedTerminalArtifacts(
   ];
 }
 
+type LawfulSessionRead =
+  | { readonly kind: "entries"; readonly entries: SessionEntry[] }
+  | { readonly kind: "absent" }
+  | { readonly kind: "fault"; readonly error: unknown };
+
 /**
- * Read session entries for lawful settlement. Missing path → undefined (absence).
- * Malformed JSONL / other read failures throw with knownCause=session.
+ * Read session entries for lawful settlement.
+ * Missing path is absence. A present file that cannot be read is a fault,
+ * not a host cause and not an empty transcript.
  */
 async function readLawfulSettlementEntries(
   sessionFile: string,
-): Promise<SessionEntry[] | undefined> {
+): Promise<LawfulSessionRead> {
   try {
-    return await readBoundSessionEntries(sessionFile);
+    return { kind: "entries", entries: await readBoundSessionEntries(sessionFile) };
   } catch (error) {
-    // Missing path is absence of a lawful outcome; callers classify via session inspect.
-    if (isMissingPathError(error)) return undefined;
-    // Malformed JSONL and other read failures keep typed session identity.
-    throw error instanceof Error &&
-      (error as { knownCause?: unknown }).knownCause === "session"
-      ? error
-      : sessionReadFailure(error, "session unreadable");
+    if (isMissingPathError(error)) return { kind: "absent" };
+    return { kind: "fault", error };
   }
+}
+
+function entriesOf(read: LawfulSessionRead): SessionEntry[] {
+  return read.kind === "entries" ? read.entries : [];
 }
 
 async function settleResidualOutputFailure(
@@ -1844,14 +1625,20 @@ async function settleSealedSeat(
   },
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  // Residual seats read first so malformed session data retains its failure identity
-  // even when the ledger has no accepted row. Plain sealed seats read only on success.
-  const priorEntries = options.residual === undefined
-    ? undefined
-    : await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const needsEntries = options.residual !== undefined;
+  const priorRead = needsEntries
+    ? await readLawfulSettlementEntries(coordinates.sessionFile)
+    : undefined;
+  if (priorRead?.kind === "fault") {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      scope,
+      `session read failed beside settlement: ${describeErrorIdentity(priorRead.error)}`,
+    );
+  }
   const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
   if (options.residual !== undefined && roleOutcome?.kind !== "accepted") {
-    const entries = priorEntries!;
+    const entries = entriesOf(priorRead ?? { kind: "absent" });
     const scanStart = options.residual.scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
     for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
@@ -1864,14 +1651,17 @@ async function settleSealedSeat(
     return undefined;
   }
   if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) {
-    // A transcript that cannot be read is a real fact about this run, whatever
-    // the ledger holds. It is reported as this run's own session failure; it is
-    // never used to attribute a cause the host did not report.
-    if (options.residual === undefined) await readLawfulSettlementEntries(coordinates.sessionFile);
     return undefined;
   }
-  const entries = priorEntries ?? await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  return finishLawfulSeat(admitted, coordinates, entries, roleOutcome, scope);
+  const read = priorRead ?? await readLawfulSettlementEntries(coordinates.sessionFile);
+  if (read.kind === "fault") {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      scope,
+      `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
+    );
+  }
+  return finishLawfulSeat(admitted, coordinates, entriesOf(read), roleOutcome, scope);
 }
 
 async function finishLawfulSeat(
@@ -2051,7 +1841,15 @@ async function settleLawfulSeatAcceptedTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const read = await readLawfulSettlementEntries(coordinates.sessionFile);
+  if (read.kind === "fault") {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      scope,
+      `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
+    );
+  }
+  const entries = entriesOf(read);
   // #843: collector shape (ledger closed first) plus current user-turn freshness.
   // Only the ledger-owned closure establishes this turn's success. A non-error
   // toolResult may be a candidate whose nested gate continued the conversation.
@@ -2217,7 +2015,19 @@ async function applySecretariatCountersignTerminal(
   settled: TerminalResult,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  let entries: SessionEntry[] = [];
+  try {
+    entries = await readBoundSessionEntries(coordinates.sessionFile);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      await noteSettlementFault(
+        admitted.runDirectory,
+        undefined,
+        `secretariat officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
+    return settled;
+  }
   const officer = countersignTerminalFromEntries(entries);
   if (officer === undefined) return settled;
 
@@ -2262,10 +2072,19 @@ export async function attachPostAuditProjection(
   terminal: TerminalResult,
 ): Promise<TerminalResult> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
-    runDirectory: admitted.runDirectory,
-    parentSessionFile: sessionFile,
-  });
+  let gate: TerminalGateFact | undefined;
+  try {
+    gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
+      runDirectory: admitted.runDirectory,
+      parentSessionFile: sessionFile,
+    });
+  } catch (error) {
+    await noteSettlementFault(
+      admitted.runDirectory,
+      undefined,
+      `gate read failed beside host terminal: ${describeErrorIdentity(error)}`,
+    );
+  }
   const withGate = gate === undefined ? terminal : { ...terminal, gate };
   if (admitted.role !== "secretariat") return withGate;
   return applySecretariatCountersignTerminal(admitted, authority, withGate);
@@ -2499,7 +2318,6 @@ export async function settleFailureTerminalResult(
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
   options: SettlementCourtScope & {
-    readonly resume?: TerminalResume;
     readonly onErrorPublished?: (path: string) => void;
   } = {},
 ): Promise<TerminalResult> {
@@ -2507,11 +2325,24 @@ export async function settleFailureTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
-  // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = options.previewOnly === true
-    ? []
-    : await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished, options.recordAttemptHistory === true);
-  const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
+  let artifacts: TerminalArtifactRef[] = [];
+  if (options.previewOnly !== true) {
+    try {
+      artifacts = await publishFailureArtifacts(
+        admitted,
+        failure,
+        authority,
+        options.onErrorPublished,
+        options.recordAttemptHistory === true,
+      );
+    } catch (error) {
+      await noteSettlementFault(
+        admitted.runDirectory,
+        options,
+        `failure artifact publication failed beside host terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
+  }
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
@@ -2532,16 +2363,11 @@ export async function settleFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
-  // Resumable failures disclose the run ID only through resume.command (#108).
-  const terminal = await withOptionalGateProjection(
-    options.resume === undefined
-      ? { roleOutcome, navigator, artifacts, runId: admitted.runId }
-      : { roleOutcome, navigator, artifacts: [], resume: options.resume },
+  return withOptionalGateProjection(
+    { roleOutcome, navigator, artifacts, runId: admitted.runId },
     sessionDirectory,
     detourGateContext(admitted, options),
   );
-  if (options.resume !== undefined && errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
-  return terminal;
 }
 
 /**
