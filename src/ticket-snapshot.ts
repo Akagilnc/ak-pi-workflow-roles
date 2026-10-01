@@ -13,6 +13,8 @@
  */
 import { createGhApiRunner, type GhApiRunner } from "./gh-api-runner.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export type BookRepoBinding = {
   bookKey: string;
   owner: string;
@@ -90,10 +92,6 @@ export class TicketSnapshotApiError extends Error {
     this.name = "TicketSnapshotApiError";
     this.bookKey = bookKey;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function requireNonEmpty(value: string, label: string): string {

@@ -38,7 +38,7 @@ export function latestQueueStatus(terminal: TerminalResult | undefined): string 
   if (outcome.kind === "audit_escalation") return "escalate";
   if (outcome.kind !== "accepted") return undefined;
   const latest = outcome.payloads?.[outcome.payloads.length - 1];
-  if (latest !== null && typeof latest === "object" && !Array.isArray(latest)) {
+  if (isRecord(latest)) {
     const status = (latest as { status?: unknown }).status;
     if (typeof status === "string" && status.trim() !== "") return status;
   }
@@ -55,6 +55,8 @@ export function latestQueuePayload(terminal: TerminalResult | undefined): unknow
   return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
 }
 import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
+
+import { isRecord } from "./unknown-value.ts";
 
 /**
  * Shared-envelope default officer summon (ADR 0018).

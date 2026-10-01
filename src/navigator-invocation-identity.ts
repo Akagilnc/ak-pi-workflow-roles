@@ -19,6 +19,7 @@
 
 import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 import { isUuidV7, uuidv7 } from "./uuidv7.ts";
+import { isRecord } from "./unknown-value.ts";
 import { workSubjectKeysEqual } from "./work-subject-identity.ts";
 
 export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
@@ -83,7 +84,7 @@ export function extractInfrastructureFailureEvidence(error: unknown): Record<str
  * (ADR 0040 — discriminators select the branch, they do not ban extras).
  */
 export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!isRecord(value)) return false;
   const record = value as Record<string, unknown>;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
@@ -160,7 +161,7 @@ function invocationPhaseFromUnknown(value: unknown): InvocationPhase | undefined
 export function parseInvocationMarkerIdentity(
   data: unknown,
 ): InvocationMarkerIdentity | undefined {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return undefined;
+  if (!isRecord(data)) return undefined;
   const record = data as Record<string, unknown>;
   const invocationId = record.invocationId;
   if (typeof invocationId !== "string") return undefined;

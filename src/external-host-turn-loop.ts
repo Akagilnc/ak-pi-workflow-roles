@@ -12,6 +12,7 @@ import type {
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
+import { errorText } from "./unknown-value.ts";
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
@@ -103,7 +104,7 @@ export function withExternalHostCleanupFailure(
   cleanupError: unknown,
   name: string,
 ): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  const message = errorText(cleanupError);
   if (outcome.knownFailure === undefined) {
     return externalHostFailure("session", name, "dispose-failed", { cleanupError: message }, message);
   }

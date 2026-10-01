@@ -107,6 +107,16 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Authority remains required; omitted lens defaults to the parallel two-axis mode.
   assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "main"]), isUsage);
   assert.throws(
+    () =>
+      parsePublicSeatArgv("reviewer", [
+        "--base",
+        "main",
+        "--authority-ref",
+        "The system SHALL launch two workers",
+      ]),
+    isUsage,
+  );
+  assert.throws(
     () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
@@ -470,21 +480,6 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
     assert.equal(withRefs.lens, "completeness");
-    await assert.rejects(
-      () =>
-        admitReviewerInvocation({
-          principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: project,
-          instruction: "",
-          attachmentPaths: [],
-          baseRevision: "origin/main",
-          lens: "completeness",
-          authorityRefs: ["The system SHALL launch two workers"],
-          createRunId: () => "run-reviewer-admit-inline-rejected",
-        }),
-      (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
-    );
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(

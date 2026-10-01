@@ -15,9 +15,7 @@ import type {
   SitianRecord,
 } from "./sitian-contracts.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import { isRecord, errorText } from "./unknown-value.ts";
 
 /** Read a Sitian record volume with full traversal and non-destructive diagnostics. */
 export async function readSitianRecords(recordFile: string): Promise<SitianReadResult> {
@@ -53,7 +51,7 @@ export async function readSitianRecords(recordFile: string): Promise<SitianReadR
         kind: "malformed",
         line: index + 1,
         raw: line,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       });
     }
   }

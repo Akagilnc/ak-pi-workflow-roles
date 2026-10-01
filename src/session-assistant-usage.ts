@@ -7,6 +7,8 @@ import { join } from "node:path";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 export async function readAssistantUsageFromSessionFile(
   sessionFile: string,
 ): Promise<Usage | undefined> {
@@ -30,7 +32,7 @@ export async function readAssistantUsageFromSessionFile(
       });
   } catch (error) {
     throw new Error(
-      `session usage parse failed (${sessionFile}): ${error instanceof Error ? error.message : String(error)}`,
+      `session usage parse failed (${sessionFile}): ${errorText(error)}`,
       { cause: error },
     );
   }

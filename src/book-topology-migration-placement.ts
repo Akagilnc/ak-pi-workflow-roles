@@ -10,28 +10,19 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import { isUnboundRunDirectory, roleRunPlacement } from "./role-run-placement.ts";
+
+export { isUnboundRunDirectory };
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
   readBoardTicketNumber,
   readMigrationDerivedTicketNumber,
 } from "./run-ticket-number.ts";
 
+import { isRecord, isEnoent } from "./unknown-value.ts";
+
 const TICKET_NUMBER_RE = /^[1-9][0-9]*$/;
 const RUN_DIR_NAME_RE = /^([^@]+)@([^@]+)$/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Sole migration ENOENT projection — non-ENOENT must propagate. */
-export function isMigrationEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /** Book-key directories under a books root; missing root → []. */
 export async function listMigrationBookKeys(
@@ -44,7 +35,7 @@ export async function listMigrationBookKeys(
       .map((entry) => entry.name)
       .sort((a, b) => a.localeCompare(b));
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
 }
@@ -57,7 +48,7 @@ export async function listMigrationDirents(
     const entries = await readdir(directory, { withFileTypes: true });
     return [...entries].sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
 }
@@ -107,7 +98,7 @@ async function readProjectRootFromRun(
         return { projectRoot, sourcePage: page };
       }
     } catch (error) {
-      if (isMigrationEnoent(error)) continue;
+      if (isEnoent(error)) continue;
       throw error;
     }
   }
@@ -165,10 +156,6 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
       sourcePage: project.sourcePage,
     },
   };
-}
-
-export function isUnboundRunDirectory(runDirectory: string): boolean {
-  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
 }
 
 export function bookHistoricalRoots(

@@ -9,6 +9,7 @@
  */
 import { AUTO_RESUME_LIMIT } from "./public-cli/run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./public-cli/config.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;
 
@@ -68,10 +69,6 @@ export type NoReceiptLifecycleFacts = {
   attemptPointer: string;
   acceptedReceipt: false;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** Read only the facts required by Terminal consumers; persisted extensions are ignored. */
 export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycleFacts {

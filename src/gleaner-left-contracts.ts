@@ -4,6 +4,8 @@
  * No bounce / verdict channel (言不为狱). 原卷保真 (ADR 0055).
  */
 
+import { isRecord } from "./unknown-value.ts";
+
 export const GLEANER_LEFT_OUTPUT_TOOL_NAME = "ak_gleaner_left_output";
 
 /** Internal transport: comparison-base revision for the unanchored merge-candidate diff. */
@@ -26,7 +28,7 @@ export type GleanerLeftOutput = {
 };
 
 export function validateRecordedGleanerLeftOutput(value: unknown): GleanerLeftOutput {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("Gleaner-left output has no execution discriminator");
   }
   let status: unknown;

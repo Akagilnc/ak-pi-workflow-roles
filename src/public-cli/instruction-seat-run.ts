@@ -3,7 +3,8 @@
  * Seat differences are composition-root fields. An omitted reviewer lens
  * starts two ordinary single-axis runs here.
  */
-import { dirname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
+import { isUnboundRunDirectory } from "../role-run-placement.ts";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
@@ -25,6 +26,7 @@ import {
   latestQueueStatus,
 } from "../submission-gate.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
+import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
@@ -34,7 +36,7 @@ import {
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
-import { isAuditorSoulRole, readAuditorResumeBinding } from "../auditor-soul.ts";
+import { readAuditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -101,6 +103,8 @@ import {
   latestPayloadEscalated,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
+import { isRecord, errorText } from "../unknown-value.ts";
+
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
   "reviewReask" | "gateReviewInstruction" | "parentRunPath"
@@ -159,7 +163,7 @@ function unreadablePostSubmissionStatus(
   const route = POST_SUBMISSION_ROUTING[admitted.role];
   if (route === undefined) return undefined;
   const payload = terminal.roleOutcome.payloads?.at(-1);
-  const status = payload !== null && typeof payload === "object" && !Array.isArray(payload)
+  const status = isRecord(payload)
     ? (payload as Record<string, unknown>).status
     : undefined;
   return typeof status === "string" && route.statuses.has(status)
@@ -554,6 +558,45 @@ async function runOmittedLensBatch(
 }
 
 /**
+ * One same-parent lookup. Seat branches still build their own summons.
+ * A found child resumes that child; no prior run returns undefined so the caller mints.
+ */
+function resumeSameParentInstructionSeat(input: {
+  readonly env: InstructionSeatRunEnv;
+  readonly io: CliIo;
+  readonly projectRoot: string;
+  readonly role: PackagedRole;
+  readonly parentRunPath: string;
+  readonly summons: SameTicketSummonsMaterials;
+  readonly ticketNumber?: number;
+}): Promise<SeatRunResult | undefined> {
+  return tryResumeSameTicketSeatRun({
+    home: input.env.home,
+    projectRoot: input.projectRoot,
+    role: input.role,
+    parentRunPath: input.parentRunPath,
+    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+    freshSummons: input.env.freshSummons,
+    summons: input.summons,
+    resume: (runId, materials) => runPublicInstructionSeatResume(
+      { runId, ...(materials === undefined ? {} : { summons: materials }) },
+      input.env,
+      input.io,
+    ),
+  });
+}
+
+/** Re-ask words when the parent supplied them; otherwise the caller's own instruction. */
+function sameParentInstruction(
+  env: InstructionSeatRunEnv,
+  fallback: { readonly instruction: string; readonly instructionEmpty: boolean },
+): { readonly instruction: string; readonly instructionEmpty: boolean } {
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+  if (resumeInstruction === undefined) return fallback;
+  return { instruction: resumeInstruction, instructionEmpty: false };
+}
+
+/**
  * Countersign on the shared entry: gate parent resume, deferred materialization,
  * then the same one-shot settlement as every other seat.
  */
@@ -568,23 +611,20 @@ async function runCountersignBody(
       : undefined;
   if (gateParentRunPath !== undefined) {
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
+    const resumed = await resumeSameParentInstructionSeat({
+      env,
+      io,
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
-      ...(isSafePositiveTicketNumber(env.boundTicketNumber) ? { ticketNumber: env.boundTicketNumber } : {}),
-      freshSummons: env.freshSummons,
+      ...(isSafePositiveTicketNumber(env.boundTicketNumber)
+        ? { ticketNumber: env.boundTicketNumber }
+        : {}),
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
         instructionEmpty: resumeInstruction.trim() === "",
       },
-      resume: (runId, materials) => runPublicInstructionSeatResume(
-        { runId, ...(materials === undefined ? {} : { summons: materials }) },
-        env,
-        io,
-      ),
     });
     if (resumed != null) return resumed;
   }
@@ -695,49 +735,45 @@ export async function runPublicInstructionSeat(
   let auditorSubject: "judge" | "doctor" | undefined;
   let auditorSource: string | undefined;
   let auditorTicket: number | undefined;
+  let resolvedNotarySource: NotarySourceRunLocator | undefined;
   if (record.sameParent === "subject-source") {
-    if (!isAuditorSoulRole(parsed.subject)) {
+    if (parsed.subject === undefined) {
       presentStructuralRejection(new CliUsageError("auditor --subject requires judge|doctor"), io);
       return { exitCode: 2 };
     }
     auditorSubject = parsed.subject;
-    const source = typeof parsed.sourceRun === "string" ? parsed.sourceRun.trim() : "";
-    if (source === "") {
+    if (parsed.sourceRun === undefined) {
       presentStructuralRejection(new CliUsageError("auditor --source-run requires a run locator"), io);
       return { exitCode: 2 };
     }
+    const source = parsed.sourceRun;
     try {
       const resolved = await resolveNotarySourceRunLocator({ projectRoot, sourceRun: source, home: env.home });
       auditorSource = resolved.runDirectory;
       auditorTicket = await readBoardTicketNumber(resolved.runDirectory);
     } catch (error) {
-      presentStructuralRejection(new CliUsageError(error instanceof Error ? error.message : String(error)), io);
+      presentStructuralRejection(new CliUsageError(errorText(error)), io);
       return { exitCode: 2 };
     }
     if (auditorSource === undefined) return { exitCode: 2 };
     const sourceDirectory = auditorSource;
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
-      ...(resumeInstruction === undefined
-        ? { instruction: parsed.instruction ?? "", instructionEmpty: (parsed.instruction ?? "").trim() === "" }
-        : { instruction: resumeInstruction, instructionEmpty: false }),
+      ...sameParentInstruction(env, {
+        instruction: parsed.instruction ?? "",
+        instructionEmpty: (parsed.instruction ?? "").trim() === "",
+      }),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
     const resumed = await withAuditorSoulEnv({
       subject: auditorSubject,
       sourceRunDirectory: auditorSource,
-      run: () => tryResumeSameTicketSeatRun({
-        home: env.home,
+      run: () => resumeSameParentInstructionSeat({
+        env,
+        io,
         projectRoot,
         role,
         parentRunPath: sourceDirectory,
-        freshSummons: env.freshSummons,
         summons,
-        resume: (runId, materials) => runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
       }),
     });
     if (resumed != null) return resumed;
@@ -746,26 +782,21 @@ export async function runPublicInstructionSeat(
   if (record.sameParent === "gate-pointer") {
     const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
     if (parentRunPath !== undefined) {
-      const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
       const summons: SameTicketSummonsMaterials = {
         sourceRunPath: parentRunPath,
-        ...(resumeInstruction === undefined
-          ? { instruction: parsed.instruction ?? "", instructionEmpty: (parsed.instruction ?? "").trim() === "" }
-          : { instruction: resumeInstruction, instructionEmpty: false }),
+        ...sameParentInstruction(env, {
+          instruction: parsed.instruction ?? "",
+          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+        }),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };
-      const resumed = await tryResumeSameTicketSeatRun({
-        home: env.home,
+      const resumed = await resumeSameParentInstructionSeat({
+        env,
+        io,
         projectRoot,
         role,
         parentRunPath,
-        freshSummons: env.freshSummons,
         summons,
-        resume: (runId, materials) => runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
       });
       if (resumed != null) return resumed;
     }
@@ -790,31 +821,33 @@ export async function runPublicInstructionSeat(
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
-      ...(resumeInstruction === undefined ? {} : { instruction: resumeInstruction, instructionEmpty: false }),
+      ...(resumeInstruction === undefined
+        ? {}
+        : { instruction: resumeInstruction, instructionEmpty: false }),
     };
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
+    resolvedNotarySource = source;
+    const resumed = await resumeSameParentInstructionSeat({
+      env,
+      io,
       projectRoot,
       role,
       parentRunPath: source.runDirectory,
-      freshSummons: env.freshSummons,
       summons,
-      resume: (runId, materials) => runPublicInstructionSeatResume(
-        { runId, ...(materials === undefined ? {} : { summons: materials }) },
-        env,
-        io,
-      ),
     });
     if (resumed != null) return resumed;
   }
 
   let admitted: AdmittedRoleInvocation;
   try {
+    const admissionOverride = {
+      ...(auditorTicket === undefined ? {} : { assertedTicketNumber: auditorTicket }),
+      ...(resolvedNotarySource === undefined ? {} : { resolvedSourceRun: resolvedNotarySource }),
+    };
     admitted = await admitPublicRole(
       role,
       parsed,
       env,
-      auditorTicket === undefined ? undefined : { assertedTicketNumber: auditorTicket },
+      auditorTicket === undefined && resolvedNotarySource === undefined ? undefined : admissionOverride,
     );
   } catch (error) {
     const rejected = usageExit(error, io);
@@ -851,7 +884,7 @@ export async function runPublicInstructionSeat(
           timedOut: false, code: null, stderr: "", thrown: error,
         }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
       }
-      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+      if (outcome.admitted !== undefined && isUnboundRunDirectory(outcome.admitted.runDirectory)) {
         await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
       if (outcome.failedWithoutEscalate !== undefined) {
@@ -1139,7 +1172,7 @@ async function auditSubmittedRole(
     || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
   const accepted = turn.terminal.roleOutcome.payloads?.at(-1);
   if (accepted === undefined) throw new Error("accepted submission has no payload");
-  const record = accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
+  const record = isRecord(accepted)
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
   // A gate summon already owns this conclusion's reasks. The seat must not

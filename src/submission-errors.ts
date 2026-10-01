@@ -1,5 +1,6 @@
 import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
+import { isRecord } from "./unknown-value.ts";
 
 /**
  * Tool-result text the parent model sees (#753 / #750 evidence).
@@ -80,7 +81,7 @@ export function unreadableDiscriminatorNotice(field: string, received: unknown):
 
 /** The received discriminator only — never the rest of the receipt. */
 export function receivedDiscriminator(receipt: unknown, field: string): unknown {
-  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) return undefined;
+  if (!isRecord(receipt)) return undefined;
   if (!Object.hasOwn(receipt, field)) return undefined;
   return (receipt as Record<string, unknown>)[field];
 }

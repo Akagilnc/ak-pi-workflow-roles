@@ -9,6 +9,7 @@ import { receivedDiscriminator } from "./submission-errors.ts";
 import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -65,7 +66,7 @@ function readListField(value: unknown): readonly unknown[] { return Array.isArra
 
 /** Try to project a known three-state compliance decision; undefined when not converged/continue/escalate. */
 export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+  if (!isRecord(arguments_)) {
     return undefined;
   }
   const args = arguments_ as Record<string, unknown>;

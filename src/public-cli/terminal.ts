@@ -7,6 +7,7 @@
  */
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
+import type { PackagedRole } from "../packaged-role-registry.ts";
 
 export type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -22,23 +23,7 @@ export type TerminalArtifactRef = {
 };
 
 /** Public callable roles that currently produce Terminal outcomes. */
-export type TerminalRoleName =
-  | "judge"
-  | "coder"
-  | "fixer"
-  | "collector"
-  | "doctor"
-  | "reviewer"
-  | "merger"
-  | "notary"
-  | "countersign"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat";
+export type TerminalRoleName = PackagedRole;
 
 export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";

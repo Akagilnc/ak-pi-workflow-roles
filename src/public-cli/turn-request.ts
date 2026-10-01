@@ -27,6 +27,32 @@ export type ResumeModelConfig = {
   readonly thinking?: PublicThinkingLevel;
 };
 
+/**
+ * Env axes shared by every public turn projection.
+ * Callers add correlation, continuation, host, and station-only fields.
+ */
+export function projectPublicTurnAxes(env: {
+  readonly packageRoot: string;
+  readonly home: string;
+  readonly agentDir: string;
+  readonly model?: SeatModelConfig;
+  readonly engine?: string;
+  readonly engineModel?: string;
+  readonly timeoutMs?: number;
+}): Pick<
+  RoleTurnRequestProjectionOptions,
+  "packageRoot" | "home" | "agentDir" | "model" | "engine" | "engineModel" | "timeoutMs"
+> {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+  };
+}
+
 export type RoleTurnRequestProjectionOptions = {
   packageRoot: string;
   home: string;

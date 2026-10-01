@@ -6,6 +6,8 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 /** Shared, unforgeable identity for submission errors that the same session may correct. */
 const correctableSubmissionErrorBrand = Symbol("ak-roles.correctable-submission-error");
 
@@ -52,7 +54,7 @@ export type CorrectableExecuteRejectionProjection = {
 export function projectCorrectableExecuteRejection(
   error: unknown,
 ): CorrectableExecuteRejectionProjection {
-  const diagnostic = error instanceof Error ? error.message : String(error);
+  const diagnostic = errorText(error);
   if (error instanceof GatekeeperDecisionError) {
     return { diagnostic, details: { ...(error.result as Record<string, unknown>) } };
   }

@@ -49,6 +49,7 @@ import {
   type PackagedRole,
 } from "../packaged-role-registry.ts";
 import {
+  admittedReviewerBaseFault,
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
@@ -69,6 +70,8 @@ import {
   type InvocationEffectiveModel,
   type ReviewerLens,
 } from "./invocation.ts";
+
+import { isRecord, errorText, isEnoent } from "../unknown-value.ts";
 
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only).
  * @deprecated v1 429-only gate removed by #416 (owner 2026-08-22: "根本不要有限制"). Kept for compatibility; do not use for new branching.
@@ -240,8 +243,8 @@ type RoleRunStateDisk = {
 function parseSameTicketSummonsMaterials(
   raw: unknown,
 ): SameTicketSummonsMaterials | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
+  if (!isRecord(raw)) return undefined;
+  const record = raw;
   const instruction =
     typeof record.instruction === "string" ? record.instruction : undefined;
   const instructionEmpty =
@@ -255,9 +258,7 @@ function parseSameTicketSummonsMaterials(
       : undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
   if (
-    record.sourceRun !== null &&
-    typeof record.sourceRun === "object" &&
-    !Array.isArray(record.sourceRun)
+    isRecord(record.sourceRun)
   ) {
     const sr = record.sourceRun as Record<string, unknown>;
     if (
@@ -296,8 +297,8 @@ function parseSameTicketSummonsMaterials(
 }
 
 function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
+  if (!isRecord(raw)) return undefined;
+  const record = raw;
   if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
     return undefined;
   }
@@ -332,10 +333,10 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
   readonly runDirectory: string;
   readonly state: RoleRunState;
 } {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     throw new TypeError("Invalid run-state.json");
   }
-  const record = raw as Record<string, unknown>;
+  const record = raw;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
     throw new TypeError("Invalid run-state.json");
   }
@@ -389,11 +390,8 @@ async function readRoleRunStateDisk(
   };
   let resumable: TypedHttp429Observation | undefined;
   if (record.resumable !== undefined && record.resumable !== null) {
-    if (
-      typeof record.resumable === "object" &&
-      !Array.isArray(record.resumable)
-    ) {
-      const r = record.resumable as Record<string, unknown>;
+    if (isRecord(record.resumable)) {
+      const r = record.resumable;
       if (
         r.httpStatus === 429 &&
         typeof r.provider === "string" &&
@@ -701,7 +699,6 @@ export type RunWriterLease = {
 /** Kind of a writer-lease diagnostic sent on the existing sink. */
 export type WriterLeaseDiagnosticKind = "stale-reclaimed";
 
-
 /**
  * True error identity for diagnostics — name/code/message as-is, never a
  * guessed label (failure-honesty constitution).
@@ -739,7 +736,6 @@ function isProcessAlive(pid: number): boolean {
     return errorCodeOf(error) !== "ESRCH";
   }
 }
-
 
 export type WriterLockAutopsy =
   | { verdict: "absent" }
@@ -1071,10 +1067,10 @@ export async function readRunParentPath(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     return undefined;
   }
-  const record = raw as Record<string, unknown>;
+  const record = raw;
   if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
     return record.sourceRunPath;
   }
@@ -1279,7 +1275,7 @@ async function loadResumableRunRecord(
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
     );
-    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    if (isRecord(raw)) {
       const record = raw as Record<string, unknown>;
       const storedRunDirectory =
         typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
@@ -1352,9 +1348,7 @@ async function loadResumableRunRecord(
         caseRunsPath = record.caseRunsPath;
       }
       if (
-        record.caseIdentity !== null &&
-        typeof record.caseIdentity === "object" &&
-        !Array.isArray(record.caseIdentity)
+        isRecord(record.caseIdentity)
       ) {
         const ci = record.caseIdentity as Record<string, unknown>;
         if (
@@ -1372,9 +1366,7 @@ async function loadResumableRunRecord(
         sourceRunPath = record.sourceRunPath;
       }
       if (
-        record.sourceRun !== null &&
-        typeof record.sourceRun === "object" &&
-        !Array.isArray(record.sourceRun)
+        isRecord(record.sourceRun)
       ) {
         const sr = record.sourceRun as Record<string, unknown>;
         if (
@@ -1412,9 +1404,7 @@ async function loadResumableRunRecord(
         mergerInputPath = record.mergerInputPath;
       }
       if (
-        record.derived !== null &&
-        typeof record.derived === "object" &&
-        !Array.isArray(record.derived)
+        isRecord(record.derived)
       ) {
         const d = record.derived as Record<string, unknown>;
         if (
@@ -1451,9 +1441,7 @@ async function loadResumableRunRecord(
       await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
     );
     if (
-      invocationRaw !== null &&
-      typeof invocationRaw === "object" &&
-      !Array.isArray(invocationRaw)
+      isRecord(invocationRaw)
     ) {
       const rec = invocationRaw as Record<string, unknown>;
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
@@ -1477,13 +1465,7 @@ async function loadResumableRunRecord(
     ) {
       throw error;
     }
-    if (
-      !(
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code?: unknown }).code === "ENOENT"
-      )
-    ) {
+    if (!isEnoent(error)) {
       throw new CliUsageError(
         `role run invocation identity is unreadable: ${runId}`,
         { cause: error },
@@ -1582,35 +1564,15 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
   };
 }
 
-
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<
-  | "judge"
-  | "coder"
-  | "fixer"
-  | "collector"
-  | "doctor"
-  | "reviewer"
-  | "merger"
-  | "notary"
-  | "countersign"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat"
-  | undefined
-> {
+): Promise<PackagedRole | undefined> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-
 
 export type LoadedResumablePublicRole = {
   readonly admitted: AdmittedRoleInvocation;
@@ -1725,14 +1687,12 @@ function admitResumedRole(loaded: {
     }
     case "review-basis": {
       const rawBase = fields.baseRevision;
-      if (rawBase === undefined || rawBase.trim() === "") {
+      const baseFault = admittedReviewerBaseFault(rawBase);
+      if (baseFault !== undefined || rawBase === undefined) {
         throw new CliUsageError(
-          `role run admitted reviewer base revision is missing: ${runId}`,
-        );
-      }
-      if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
-        throw new CliUsageError(
-          `role run admitted reviewer base revision is damaged: ${runId}`,
+          baseFault === "damaged"
+            ? `role run admitted reviewer base revision is damaged: ${runId}`
+            : `role run admitted reviewer base revision is missing: ${runId}`,
         );
       }
       const lens = fields.lens;
@@ -1812,7 +1772,7 @@ function admitResumedRole(loaded: {
       try {
         parsedRepository = parseCollectorRepository(repositoryDisplay);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = errorText(error);
         throw new CliUsageError(detail, { cause: error });
       }
       if (parsedRepository.canonical !== repository) {

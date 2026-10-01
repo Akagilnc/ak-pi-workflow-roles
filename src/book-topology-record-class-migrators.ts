@@ -9,7 +9,6 @@
  * - malformed → unbound with exact bytes + malformedRows entry
  * - misplaced: any foreign jsonl whose kind is one of the three classes
  */
-import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 
@@ -18,7 +17,6 @@ import {
   findBookRunDirectory,
   findPlacedMigratingRun,
   findUniquePrincipalPlacedRun,
-  isMigrationEnoent,
   isTicketNumberString,
   listMigrationBookKeys,
   listMigrationDirents,
@@ -36,6 +34,9 @@ import {
 import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
 import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
+import { sha256Hex } from "./sha256.ts";
+import { isRecord, isEnoent } from "./unknown-value.ts";
+
 const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
 const ATTEMPT_HISTORY = "attempt-history";
@@ -46,10 +47,6 @@ type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof 
 type JsonLine =
   | { readonly ok: true; readonly value: Record<string, unknown>; readonly raw: string }
   | { readonly ok: false; readonly raw: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function parseJsonlLine(raw: string): JsonLine {
   try {
@@ -70,7 +67,7 @@ function lineSource(backupBooksDirectory: string, filePath: string, index: numbe
 }
 
 function stableKey(material: string): string {
-  return createHash("sha256").update(material).digest("hex").slice(0, 32);
+  return sha256Hex(material).slice(0, 32);
 }
 
 async function readJsonlLines(filePath: string): Promise<readonly string[]> {
@@ -78,7 +75,7 @@ async function readJsonlLines(filePath: string): Promise<readonly string[]> {
   try {
     text = await readFile(filePath, "utf8");
   } catch (error) {
-    if (isMigrationEnoent(error)) return [];
+    if (isEnoent(error)) return [];
     throw error;
   }
   if (text.length === 0) return [];
@@ -629,7 +626,7 @@ async function mergeOfferedIdentities(
     await stat(from);
     lines = await readJsonlLines(from);
   } catch (error) {
-    if (isMigrationEnoent(error)) return;
+    if (isEnoent(error)) return;
     throw error;
   }
   const destFile = join(destDir, OFFERED_IDENTITIES);
@@ -704,7 +701,7 @@ async function migrateHomePartitionBook(
       try {
         await stat(recordsFile);
       } catch (error) {
-        if (isMigrationEnoent(error)) continue;
+        if (isEnoent(error)) continue;
         throw error;
       }
       await migrateJsonlFileByKind(context, bookKey, writes, recordsFile, TICKET_PROVENANCE, outcomes);

@@ -27,7 +27,6 @@ import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
 
-
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
 

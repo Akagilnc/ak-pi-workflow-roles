@@ -107,19 +107,8 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
     const fieldBodies: readonly { name: string; body: unknown }[] = [
       { name: "missing-mode.json", body: { mergedPullRequests: [{ projectRoot: ISSUE_ALPHA }] } },
       {
-        name: "extra-top.json",
-        body: { mode: "sweep", mergedPullRequests: [{ projectRoot: ISSUE_ALPHA }], extra: true },
-      },
-      {
         name: "wrong-mode.json",
         body: { mode: "issue", mergedPullRequests: [{ projectRoot: ISSUE_ALPHA }] },
-      },
-      {
-        name: "entry-extra.json",
-        body: {
-          mode: "sweep",
-          mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, issueNumber: 7 }],
-        },
       },
       {
         name: "changedLines-type.json",
@@ -174,7 +163,7 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
       // ② non-UTF-8 / JSON parse failure
       { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path] },
       { name: "bad-json", argv: ["analyst", "--attach", badJsonPath] },
-      // ③ field missing / extra / wrong type
+      // ③ field missing / wrong type
       ...fieldPaths.map((f) => ({
         name: f.name,
         argv: ["analyst", "--attach", f.path] as const,
@@ -190,6 +179,29 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
         [...before.entries()].sort(),
         entry.name,
       );
+    }
+
+    const acceptedExtras: readonly { name: string; body: unknown }[] = [
+      {
+        name: "extra-top.json",
+        body: { mode: "sweep", mergedPullRequests: [{ projectRoot: ISSUE_ALPHA }], extra: true },
+      },
+      {
+        name: "entry-extra.json",
+        body: {
+          mode: "sweep",
+          mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, issueNumber: 7 }],
+        },
+      },
+    ];
+    for (const entry of acceptedExtras) {
+      const path = join(attachDir, entry.name);
+      await writeFile(path, `${JSON.stringify(entry.body)}\n`);
+      const { io, stdout } = captureIo();
+      const result = await runAkRole(["analyst", "--attach", path], { packageRoot, home, io });
+      assert.equal(result.exitCode, 0, entry.name);
+      const receipt = JSON.parse(stdout.join("")) as { mode: string };
+      assert.equal(receipt.mode, "sweep", entry.name);
     }
   });
 });
