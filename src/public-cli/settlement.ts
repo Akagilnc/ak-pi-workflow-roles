@@ -47,7 +47,6 @@ import {
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
 } from "../secretariat-contracts.ts";
 import {
-  classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
 } from "../navigator-invocation-identity.ts";
@@ -449,7 +448,11 @@ async function settleNoReceiptTerminal(
   if (scope?.previewOnly !== true) await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return withOptionalGateProjection({
     roleOutcome,
-    navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
+    navigator: await extractNavigatorFactFromAdmittedSession(
+      coordinates.sessionFile,
+      admitted.runDirectory,
+      scope,
+    ),
     artifacts: [],
     runId: admitted.runId,
   }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
@@ -501,6 +504,11 @@ export type ControlledFailure = RoleTurnKnownFailure & {
    * — an open record with no reserved keys).
    */
   readonly packageFact?: PackageSideFact;
+  /**
+   * Host stderr that is not already this failure's diagnostic. A stderr.log
+   * or artifact write can fail; the original bytes stay on this object.
+   */
+  readonly stderr?: string;
 };
 
 /**
@@ -552,7 +560,10 @@ export function formatCliDiagnostic(message: string): string {
 /** #836: full diagnostic on stderr — no first-line clip / flood filter. */
 export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
   const text = failure.diagnostic.trim().length > 0 ? failure.diagnostic : "failure";
-  return formatCliDiagnostic(text);
+  const head = formatCliDiagnostic(text);
+  const beside = failure.stderr;
+  if (beside === undefined || beside.length === 0 || beside === failure.diagnostic) return head;
+  return beside.endsWith("\n") ? `${head}${beside}` : `${head}${beside}\n`;
 }
 
 /**
@@ -1072,95 +1083,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function toolResultText(message: SessionMessage): string {
-  const content = message.content;
-  if (typeof content === "string") return content.trim();
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => {
-      if (
-        typeof part === "object" &&
-        part !== null &&
-        !Array.isArray(part) &&
-        typeof (part as { text?: unknown }).text === "string"
-      ) {
-        return (part as { text: string }).text;
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-}
-
-type BoundErroredToolCandidate = {
-  candidate: unknown;
-  diagnostic: string;
-  callIndex: number;
-};
-
-function boundErroredToolCandidate(
-  entries: readonly SessionEntry[],
-  resultIndex: number,
-  message: SessionMessage,
-  toolName: string,
-): BoundErroredToolCandidate | undefined {
-  if (message.toolName !== toolName || message.isError !== true) return undefined;
-  const bound = boundRoleToolCallForResult(entries, resultIndex, message, toolName);
-  const diagnostic = toolResultText(message);
-  return bound === undefined || diagnostic === ""
-    ? undefined
-    : { candidate: bound.candidate, diagnostic, callIndex: bound.callIndex };
-}
-
-type BoundRoleToolCall = {
-  callIndex: number;
-  candidate: unknown;
-};
-
-function boundRoleToolCallForResult(
-  entries: readonly SessionEntry[],
-  resultIndex: number,
-  message: SessionMessage,
-  outputToolName: string,
-): BoundRoleToolCall | undefined {
-  const callId = message.toolCallId;
-  if (typeof callId !== "string" || callId.trim() === "") return undefined;
-
-  const calls: BoundRoleToolCall[] = [];
-  let resultCount = 0;
-  let matchingResultIndex = -1;
-  for (let index = 0; index < entries.length; index += 1) {
-    const candidateMessage = entries[index]?.message;
-    if (
-      candidateMessage?.role === "assistant" &&
-      Array.isArray(candidateMessage.content)
-    ) {
-      for (const part of candidateMessage.content) {
-        if (!isRecord(part) || part.type !== "toolCall" || part.id !== callId) {
-          continue;
-        }
-        if (part.name !== outputToolName) return undefined;
-        calls.push({ callIndex: index, candidate: part.arguments });
-      }
-    }
-    if (
-      candidateMessage?.role === "toolResult" &&
-      candidateMessage.toolCallId === callId
-    ) {
-      resultCount += 1;
-      if (candidateMessage.toolName !== outputToolName) return undefined;
-      matchingResultIndex = index;
-    }
-  }
-
-  // A binding is an event-bound one-to-one relation, not a reverse lookup of
-  // whichever result happens to be last in the session.
-  return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex
-    && calls[0]!.callIndex < resultIndex
-    ? calls[0]
-    : undefined;
-}
-
 /**
  * #419 per-attempt process history. 史必追加，指针可覆盖；指针可以覆盖的前提是史已落。
  * Reuses the run session principal's append-only JSONL custom-entry shape
@@ -1535,6 +1457,8 @@ function extractNavigatorAttendanceFact(
  */
 async function extractNavigatorFactFromAdmittedSession(
   sessionFile: string,
+  runDirectory: string,
+  scope: SettlementCourtScope | undefined,
 ): Promise<TerminalNavigatorFact> {
   try {
     const entries = await readBoundSessionEntries(sessionFile);
@@ -1547,6 +1471,11 @@ async function extractNavigatorFactFromAdmittedSession(
         reason: "Navigator attendance is missing from the session",
       };
     }
+    await noteSettlementFault(
+      runDirectory,
+      scope,
+      `navigator session read failed beside host terminal: ${sessionFile}: ${describeErrorIdentity(error)}`,
+    );
     return {
       disposition: "unavailable",
       source: "unknown",
@@ -1697,60 +1626,21 @@ function entriesOf(read: LawfulSessionRead): SessionEntry[] {
   return read.kind === "entries" ? read.entries : [];
 }
 
-async function settleResidualOutputFailure(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope: SettlementCourtScope | undefined,
-  residual: BoundErroredToolCandidate,
-): Promise<TerminalResult> {
-  const candidate = residual.candidate;
-  return settleFailureTerminalResult(admitted, {
-    cause: "output",
-    diagnostic: residual.diagnostic,
-    details: isRecord(candidate) ? candidate : { candidate },
-  }, authority, scope ?? {});
-}
-
-/** Sealed and residual seats share one lawful terminal; only residual seats scan failed tools. */
+/** Sealed seats present the ledger. A session tool error does not invent a host failure. */
 async function settleSealedSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
   options: {
     acceptedOnly: boolean;
-    residual?: { tool: string; scan: "current-attempt" | "session" };
   },
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const needsEntries = options.residual !== undefined;
-  const priorRead = needsEntries
-    ? await readLawfulSettlementEntries(coordinates.sessionFile)
-    : undefined;
-  if (priorRead?.kind === "fault") {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `session read failed beside settlement: ${describeErrorIdentity(priorRead.error)}`,
-    );
-  }
   const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
-  if (options.residual !== undefined && roleOutcome?.kind !== "accepted") {
-    const entries = entriesOf(priorRead ?? { kind: "absent" });
-    const scanStart = options.residual.scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
-    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, options.residual.tool);
-      if (residual === undefined) continue;
-      const failed = await settleResidualOutputFailure(admitted, authority, scope, residual);
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
   if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) {
     return undefined;
   }
-  const read = priorRead ?? await readLawfulSettlementEntries(coordinates.sessionFile);
+  const read = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (read.kind === "fault") {
     await noteSettlementFault(
       admitted.runDirectory,
@@ -1782,7 +1672,7 @@ async function finishLawfulSeat(
 
 /**
  * One settlement for every registered seat. The registry `settlement` leaf
- * picks sealed ledger, sealed-or-residual, or the accepted-tool scan.
+ * picks the sealed ledger or the accepted-tool ledger.
  * Seat evidence stays on the artifact face.
  */
 async function settleSeat(
@@ -1799,9 +1689,6 @@ async function settleSeat(
   }
   return settleSealedSeat(admitted, authority, scope, {
     acceptedOnly: "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true,
-    ...(record.settlement === "residual"
-      ? { residual: { tool: record.residualTool, scan: record.residualScan } }
-      : {}),
   });
 }
 
@@ -1911,14 +1798,9 @@ async function publishDeclaredSeatArtifacts(
 }
 
 /**
- * Shared accepted-settlement skeleton for seats that scan residual tool
- * candidates then project sealed ledger outcome (#502 DRY).
+ * Accepted seats present the sealed ledger. A session tool error is not a host failure.
  * #757: sealed receipts pass through full decisiveFacts — one path, no per-seat projector.
  */
-type SeatAcceptedSettlementSpec = {
-  readonly role: TerminalRoleName;
-  readonly toolName: string;
-};
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
 function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
@@ -1934,7 +1816,6 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
 async function settleLawfulSeatAcceptedTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
@@ -1946,49 +1827,11 @@ async function settleLawfulSeatAcceptedTerminalResult(
       `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
     );
   }
-  const entries = entriesOf(read);
-  // #843: collector shape (ledger closed first) plus current user-turn freshness.
-  // Only the ledger-owned closure establishes this turn's success. A non-error
-  // toolResult may be a candidate whose nested gate continued the conversation.
-  // A current-attempt
-  // residual without that success is this turn's own failure and must not be
-  // masked by run-scoped stale acceptance (bare resume without courtAttemptId).
-  // Same-turn accept-then-bounce keeps the success marker: terminal stays
-  // accepted; rejection facts remain on payloads/gate (not latest-wins flip).
-  const scanStart = currentAttemptStartIndex(entries);
-  let thisAttemptHasSeatSuccess = false;
-  let residual: BoundErroredToolCandidate | undefined;
-  for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type === "custom" && entry.customType === "ak-role-submission-closure"
-      && isRecord(entry.data) && entry.data.toolName === spec.toolName
-      && classifyPackagedRoleTerminalResult(entry.data).kind === "accepted") {
-      thisAttemptHasSeatSuccess = true;
-    }
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== spec.toolName) continue;
-    if (message.isError === false) continue;
-    if (residual === undefined) {
-      residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        spec.toolName,
-      );
-    }
-  }
-  const roleOutcome = await sealedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
-  if (roleOutcome !== undefined && (
-    thisAttemptHasSeatSuccess || residual === undefined || (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0)
-  )) {
-    return finishLawfulSeat(admitted, coordinates, entries, roleOutcome, scope);
-  }
-  if (residual !== undefined) {
-    const failed = await settleResidualOutputFailure(admitted, authority, scope, residual);
-    return attachRecordedSubmissions(admitted, failed, scope);
-  }
-  return undefined;
+  // Ledger acceptance is the terminal. A later correctable rejection stays a
+  // payload on that acceptance; it does not become a host failure.
+  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
+  if (roleOutcome === undefined) return undefined;
+  return finishLawfulSeat(admitted, coordinates, entriesOf(read), roleOutcome, scope);
 }
 
 /** Accepted-tool seats: one scan, tool name from the composition-root record. */
@@ -2001,10 +1844,7 @@ async function trySettleAcceptedSeatTerminalResult(
   if (toolName === undefined) {
     throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
   }
-  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: admitted.role,
-    toolName,
-  }, scope);
+  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, scope);
   const record = packagedRoleMetadata(admitted.role);
   if (
     settled === undefined
@@ -2374,6 +2214,7 @@ export async function publishFailureArtifacts(
     ...(failure.details === undefined ? {} : { details: failure.details }),
     // This package's own facts, kept beside the host's report.
     ...(failure.packageFact === undefined ? {} : { packageFact: failure.packageFact }),
+    ...(failure.stderr === undefined ? {} : { stderr: failure.stderr }),
   };
 
   const errorWrite = await writeFailureJsonRetainingCause(
@@ -2423,7 +2264,11 @@ export async function settleFailureTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
+  const navigator = await extractNavigatorFactFromAdmittedSession(
+    sessionFile,
+    admitted.runDirectory,
+    options,
+  );
   let artifacts: TerminalArtifactRef[] = [];
   if (options.previewOnly !== true) {
     try {
@@ -2455,6 +2300,12 @@ export async function settleFailureTerminalResult(
   if (failure.details !== undefined) {
     decisiveFacts.secondaryEvidence = failure.details;
   }
+  if (failure.packageFact !== undefined) {
+    decisiveFacts.packageFact = failure.packageFact;
+  }
+  if (failure.stderr !== undefined) {
+    decisiveFacts.stderr = failure.stderr;
+  }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
     role: admitted.role,
@@ -2483,9 +2334,11 @@ export function presentFailureTerminal(
   io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
     if (io.omitFailureStderrDiagnostic) return;
+    const hostStderr = terminal.roleOutcome.decisiveFacts.stderr;
     io.stderr(formatFailureStderrDiagnostic({
       ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
       diagnostic: terminal.roleOutcome.diagnostic,
+      ...(typeof hostStderr === "string" && hostStderr.length > 0 ? { stderr: hostStderr } : {}),
     }));
     return;
   }

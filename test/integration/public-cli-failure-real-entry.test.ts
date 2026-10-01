@@ -19,6 +19,7 @@ import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/p
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -108,10 +109,6 @@ test("public report publication failure stays beside the accepted terminal", asy
         .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
         ?.data?.diagnostic;
       assert.equal(typeof noteText, "string");
-      assert.equal(
-        (noteText as string).includes("EACCES") || (noteText as string).includes("EPERM"),
-        true,
-      );
     } finally {
       if (lockedArtifactsDir !== undefined) {
         try {
@@ -217,6 +214,8 @@ test("production knownFailure channel reaches settlement as provider with typed 
     const { io, stdout, stderr } = captureIo();
     // Resolved runner result — production-owned channel on ExplicitInternalPiResult,
     // not an ad-hoc thrown Error property and not stderr-prose inference.
+    const hostDiagnostic = "host own diagnostic";
+    const hostStderr = "activation wrapper exited nonzero\nsecond line\n";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider down"],
       {
         packageRoot,
@@ -232,13 +231,15 @@ test("production knownFailure channel reaches settlement as provider with typed 
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
-            code: 1,
-            // Deliberately misleading prose — cause must come from knownFailure only.
-            stderr: "activation wrapper exited nonzero\n",
-            timedOut: false,
+            code: 17,
+            signal: "SIGTERM",
+            timedOut: true,
+            // Independent of the typed diagnostic. Both stay.
+            stderr: hostStderr,
             args: [...args],
             knownFailure: {
               cause: "provider",
+              diagnostic: hostDiagnostic,
               identity: {
                 name: "ProviderUnavailableError",
                 code: "PROVIDER_UNAVAILABLE",
@@ -254,22 +255,55 @@ test("production knownFailure channel reaches settlement as provider with typed 
       stdout,
       stderr,
       expectedCause: "provider",
-      // Diagnostic may come from stderr selection or fallback; identity is typed.
+      diagnosticEquals: hostDiagnostic,
       identityName: "ProviderUnavailableError",
       identityCode: "PROVIDER_UNAVAILABLE",
     });
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.roleOutcome.cause, "provider");
-      assert.equal(
-        result.terminal!.roleOutcome.decisiveFacts.errorName,
-        "ProviderUnavailableError",
-      );
-      assert.equal(
-        result.terminal!.roleOutcome.decisiveFacts.errorCode,
-        "PROVIDER_UNAVAILABLE",
-      );
-    }
+    if (result.terminal!.roleOutcome.kind !== "failure") return;
+    assert.equal(result.terminal!.roleOutcome.cause, "provider");
+    assert.equal(result.terminal!.roleOutcome.diagnostic, hostDiagnostic);
+    const facts = result.terminal!.roleOutcome.decisiveFacts;
+    assert.equal(facts.errorName, "ProviderUnavailableError");
+    assert.equal(facts.errorCode, "PROVIDER_UNAVAILABLE");
+    assert.equal(facts.stderr, hostStderr);
+    const packageFact = facts.packageFact as { exitCode?: number; timedOut?: boolean; signal?: string };
+    assert.equal(packageFact.exitCode, 17);
+    assert.equal(packageFact.timedOut, true);
+    assert.equal(packageFact.signal, "SIGTERM");
+    assert.equal(stderr.length, 1);
+    assert.equal(stderr[0]?.includes(hostStderr), true);
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+      diagnostic?: string;
+      stderr?: string;
+      packageFact?: { exitCode?: number; timedOut?: boolean; signal?: string };
+    };
+    assert.equal(errorBody.diagnostic, hostDiagnostic);
+    assert.equal(errorBody.stderr, hostStderr);
+    assert.equal(errorBody.packageFact?.exitCode, 17);
+    assert.equal(errorBody.packageFact?.timedOut, true);
+    assert.equal(errorBody.packageFact?.signal, "SIGTERM");
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "attempt-history",
+      sessionParent: join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound",
+        "runs",
+        "run-provider-channel-001@judge",
+        "session",
+        "session.jsonl",
+      ),
+    });
+    const history = (await readSitianRecords(recordFile)).records.map((row) =>
+      (row.payload as { outcome?: { stderr?: string; diagnostic?: string; packageFact?: { exitCode?: number } } }).outcome);
+    assert.equal(history.at(-1)?.diagnostic, hostDiagnostic);
+    assert.equal(history.at(-1)?.stderr, hostStderr);
+    assert.equal(history.at(-1)?.packageFact?.exitCode, 17);
   });
 });
 

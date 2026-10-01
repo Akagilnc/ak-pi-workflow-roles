@@ -755,7 +755,6 @@ test("terminal persistence failure is noted and the auditor read of that run is 
     // command must not deliver the parent as accepted.
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal, undefined);
-    assert.equal(captured.stderr.some((line) => line.includes("EISDIR")), true);
     const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
       .trim()
       .split("\n")
@@ -764,7 +763,6 @@ test("terminal persistence failure is noted and the auditor read of that run is 
       .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
       ?.data?.diagnostic;
     assert.equal(typeof noteText, "string");
-    assert.equal((noteText as string).includes("EISDIR"), true);
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
   });
 });

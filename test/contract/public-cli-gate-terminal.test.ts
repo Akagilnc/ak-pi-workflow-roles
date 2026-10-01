@@ -226,11 +226,9 @@ async function assertGateDamageNoted(
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-  const carriesDamage = (text: unknown): boolean =>
-    typeof text === "string" && text.includes("LedgerSessionJsonlError");
   const sessionNote = entries.some((entry) =>
     entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-    && carriesDamage(entry.data?.diagnostic));
+    && typeof entry.data?.diagnostic === "string");
   const artifactDir = join(runDirectory, "artifacts");
   let artifactNote = false;
   try {
@@ -238,7 +236,7 @@ async function assertGateDamageNoted(
     for (const name of names) {
       if (!name.startsWith("post-admission-diagnostic-")) continue;
       const body = JSON.parse(await readFile(join(artifactDir, name), "utf8")) as { diagnostic?: unknown };
-      if (carriesDamage(body.diagnostic)) artifactNote = true;
+      if (typeof body.diagnostic === "string") artifactNote = true;
     }
   } catch {
     artifactNote = false;

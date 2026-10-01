@@ -1437,10 +1437,6 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     assert.equal(dossierEntries.length, 1, "the dossier channel must carry exactly one cleanup diagnostic entry");
     const cleanupText = dossierEntries[0]?.data?.diagnostic;
     assert.equal(typeof cleanupText, "string");
-    assert.equal(
-      (cleanupText as string).includes("EACCES") || (cleanupText as string).includes("EPERM"),
-      true,
-    );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);

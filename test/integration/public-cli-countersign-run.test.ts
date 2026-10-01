@@ -523,14 +523,8 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         }),
       },
     );
-    assert.equal(first.exitCode, 1);
-    assert.equal(first.terminal?.roleOutcome.kind, "failure");
-    assert.equal(
-      first.terminal?.roleOutcome.kind === "failure"
-        ? first.terminal.roleOutcome.cause
-        : undefined,
-      "output",
-    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.kind, "no_receipt");
 
     const { io: resumeIo, stdout } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再试"], {
@@ -662,10 +656,8 @@ async function appendResidualBounceTurn(input: {
 }
 
 /**
- * #843: shared seat settlement — court-scoped resume (message) bounce then sealed
- * accept stays accepted; gate bounce→pass rounds keep status/findings; bare resume
- * bounce after a prior accept is not masked by run-scoped stale acceptance; reverse
- * same-turn accept then bounce keeps rejection facts on payloads/gate.
+ * #843: bounce then sealed accept stays accepted; a later bounce stays a rejection
+ * on the lawful ledger; reverse same-turn accept then bounce keeps rejection facts.
  */
 test("#843 same-attempt correctable-rejection residual does not outrank later sealed accepted",
   async () => {
@@ -874,9 +866,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "converged");
     assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, []);
 
-    // 2 / 2b / 2c) Bare resume residual bounces must stay failure — plain bounce,
-    // bound missing-isError decoy, and unbound isError:false decoy must not wash
-    // the current residual via run-scoped stale accepted.
+    // 2 / 2b / 2c) A later bounce is a rejection payload. It does not turn the
+    // host's clean exit, or a prior lawful acceptance, into a failure.
     const residualBounceCases = [
       {
         label: "bare-resume",
@@ -958,22 +949,20 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       const caseResumed = await caseRun.done;
       assert.equal(
         caseResumed.exitCode,
-        1,
+        0,
         caseRun.cap.stdout.join("") ||
           caseRun.cap.stderr.join("") ||
-          `${caseSpec.label} must stay failure`,
+          `${caseSpec.label} keeps the lawful ledger`,
       );
-      assert.equal(caseResumed.terminal?.roleOutcome.kind, "failure");
-      const errorArtifact = caseResumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-      assert.ok(errorArtifact, "presented residual failure must publish its error face");
-      const errorBody = JSON.parse(await readFile(errorArtifact.path, "utf8")) as { kind?: string; runId?: string };
-      assert.equal(errorBody.kind, "error");
-      assert.equal(errorBody.runId, runId);
-      assert.equal(
-        caseResumed.terminal?.roleOutcome.kind === "failure"
-          ? caseResumed.terminal.roleOutcome.diagnostic
-          : undefined,
-        caseSpec.body,
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "accepted");
+      const submissions = caseResumed.terminal?.submissions ?? [];
+      assert.ok(
+        submissions.some((row) =>
+          typeof row === "object" && row !== null
+          && (row as { status?: unknown }).status === "continue"
+          && (row as { fix?: { summary?: unknown } }).fix?.summary === caseSpec.summary,
+        ),
+        `${caseSpec.label} keeps the rejection on submissions`,
       );
     }
 

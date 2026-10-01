@@ -307,10 +307,7 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
-    settlement: "residual",
-    /** #836: residual scan stays on the whole host session. */
-    residualScan: "session",
-    residualTool: MERGER_OUTPUT_TOOL_NAME,
+    settlement: "sealed",
     artifactFace: {
       evidenceRole: true,
       leaves: [
@@ -625,7 +622,7 @@ export type PackagedActivationFlag = {
 };
 
 /**
- * Output tool for seats whose settlement leaf is the shared accepted-tool scan.
+ * Output tool for seats whose settlement leaf is the accepted ledger.
  * Any other settlement leaf names that seat's own reader.
  */
 export function packagedRoleAcceptedOutputTool(role: string): string | undefined {

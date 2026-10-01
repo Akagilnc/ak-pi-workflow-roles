@@ -477,7 +477,7 @@ export async function presentControlledFailure<
     failureInput.knownDetails === undefined && fromKnownFailure.knownDetails === undefined
       ? undefined
       : { ...(failureInput.knownDetails ?? {}), ...(fromKnownFailure.knownDetails ?? {}) };
-  const failure = classifyPostAdmissionFailure({
+  const classified = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
@@ -510,6 +510,9 @@ export async function presentControlledFailure<
       ? {}
       : { packageFact: failureInput.packageFact }),
   });
+  const failure = failureInput.stderr.length === 0 || failureInput.stderr === classified.diagnostic
+    ? classified
+    : { ...classified, stderr: failureInput.stderr };
 
   if (persistRunState && !failureInput.skipRunStateWrite) {
     try {

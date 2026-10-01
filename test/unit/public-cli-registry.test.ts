@@ -193,9 +193,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settleMethod: "resolving-merge-conflicts",
     phases: [null],
     outputTool: "ak_merger_output",
-    settlement: "residual",
-    residualScan: "session",
-    residualTool: "ak_merger_output",
+    settlement: "sealed",
     artifactFace: {
       evidenceRole: true,
       leaves: [
