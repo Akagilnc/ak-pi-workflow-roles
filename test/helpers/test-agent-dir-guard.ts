@@ -4,7 +4,7 @@
  * (tests override HOME). Pure helper so fixtures and generated extensions share it.
  */
 import { userInfo } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
 
 export type TestAgentDirErrorCode =
   | "AK_TEST_AGENT_DIR_REQUIRED"

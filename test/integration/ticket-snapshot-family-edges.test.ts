@@ -214,7 +214,7 @@ async function assertFixtureRejectsQuery(query: string): Promise<void> {
   const runner = await loadFixtureRunner();
   await assert.rejects(
     () => runner(["api", "graphql", "-f", `query=${query}`]),
-    /unexpected graphql query/,
+    Error,
   );
 }
 

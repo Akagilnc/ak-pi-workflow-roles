@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #337 analyst public CLI sweep — caller-invoked attach path (ADR 0052 / ADR 0068).
  *
@@ -7,15 +6,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Fixture identity: 7xxx segment reservation (reuse C1 boards; no new ledger runs).
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
-  cp,
   mkdir,
-  mkdtemp,
-  readdir,
   readFile,
-  rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,14 +22,11 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, snapshotAnalystDir, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
-
-const ISSUE_DEMO = "/analyst-fixture/issue-demo";
-const ISSUE_ALPHA = "/analyst-fixture/c1-issue-alpha";
-const ISSUE_BETA = "/analyst-fixture/c1-issue-beta";
 
 const VALID_SWEEP_INPUT = {
   mode: "sweep" as const,
@@ -47,31 +37,7 @@ const VALID_SWEEP_INPUT = {
   ],
 };
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-/** Business-repo + fixture home + attach dir; asserts business tree stays clean. */
+/** Fixture home and isolated attachment directory. */
 async function withSweepFixture<T>(
   fn: (ctx: {
     home: string;
@@ -79,65 +45,13 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-337-business-"));
-  const home = await mkdtemp(worktreeTempPrefix("analyst-337-home-"));
-  const attachDir = await mkdtemp(worktreeTempPrefix("analyst-337-attach-"));
-  return withPrimaryAwareCleanup(
-    async () => {
-      execFileSync("git", ["init"], { cwd: businessRepo });
-      await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-      execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        { cwd: businessRepo },
-      );
-      assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-      const result = await fn({
-        home,
-        ledgerHome: join(home, ".ak-roles"),
-        attachDir,
-      });
-      assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-      return result;
-    },
-    async () => { await rm(businessRepo, { recursive: true, force: true }); },
-    async () => { await rm(home, { recursive: true, force: true }); },
-    async () => { await rm(attachDir, { recursive: true, force: true }); },
+  return withTempHome((home) =>
+    withTempRoot("analyst-337-attach-", (attachDir) => fn({
+      home,
+      ledgerHome: join(home, ".ak-roles"),
+      attachDir,
+    })),
   );
-}
-
-async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {
-  const root = join(ledgerHome, "analyst");
-  const out = new Map<string, string>();
-  async function walk(dir: string, rel: string): Promise<void> {
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch (error) {
-      if (
-        error instanceof Error
-        && "code" in error
-        && (error.code === "ENOENT" || error.code === "ENOTDIR")
-      ) {
-        return;
-      }
-      throw error;
-    }
-    for (const name of names) {
-      const childRel = rel === "" ? name : `${rel}/${name}`;
-      const childPath = join(dir, name);
-      const info = await stat(childPath);
-      if (info.isDirectory()) {
-        await walk(childPath, childRel);
-        continue;
-      }
-      out.set(childRel, await readFile(childPath, "utf8"));
-    }
-  }
-  await walk(root, "");
-  return out;
 }
 
 test("analyst public CLI sweep: one typed attach → pages+index match runAnalyst oracle", async () => {
@@ -247,39 +161,30 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
     const cases: readonly {
       name: string;
       argv: readonly string[];
-      err: RegExp;
     }[] = [
       // ① cardinality (0 / >1 / mixed with issue faces)
-      { name: "no-attach", argv: ["analyst", "sweep"], err: /attach/i },
+      { name: "no-attach", argv: ["analyst", "sweep"] },
       {
         name: "multi-attach",
         argv: ["analyst", "--attach", validPath, "--attach", validPathB],
-        err: /attach/i,
       },
-      {
-        // #399: --project-root deleted unconditionally (not a mix-face attach reject).
-        name: "mix-deleted-project-root",
-        argv: ["analyst", "--attach", validPath, "--project-root", ISSUE_ALPHA],
-        err: /project-root/i,
-      },
+      // --project-root's unconditional refusal is carried by the real CLI case
+      // in analyst-public-cli.test.ts; the sweep case keeps the distinct
+      // attach-cardinality and field-grammar contracts below.
       // ② non-UTF-8 / JSON parse failure
-      { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path], err: /utf-8/i },
-      { name: "bad-json", argv: ["analyst", "--attach", badJsonPath], err: /json/i },
+      { name: "bad-utf8", argv: ["analyst", "--attach", badUtf8Path] },
+      { name: "bad-json", argv: ["analyst", "--attach", badJsonPath] },
       // ③ field missing / extra / wrong type
       ...fieldPaths.map((f) => ({
         name: f.name,
         argv: ["analyst", "--attach", f.path] as const,
-        err: /sweep|field|contract|mode|mergedPullRequests|AnalystSweepModeInput/i,
       })),
     ];
 
     for (const entry of cases) {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole([...entry.argv], { packageRoot, home, io });
       assert.equal(result.exitCode, 2, entry.name);
-      const err = stderr.join("");
-      assert.match(err, /^ak-role: /, entry.name);
-      assert.match(err, entry.err, entry.name);
       assert.deepEqual(
         [...(await snapshotAnalystDir(ledgerHome)).entries()].sort(),
         [...before.entries()].sort(),

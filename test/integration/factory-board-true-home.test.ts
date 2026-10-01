@@ -1,8 +1,7 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 整改：自 test/contract/factory-board.test.ts 按性质移出（动 owner 真 home 卷宗，
 // 不属开发内环快档）。契约不变：真 home 验收 tracer（#127 已接受轨迹、活跃腿、#130 成本对账）。
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";

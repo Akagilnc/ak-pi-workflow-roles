@@ -3,11 +3,11 @@
  * Code-collection tools (observe/bind/wait/handbook) are gone.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -18,13 +18,6 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
-
-function seedProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
-  execFileSync("git", ["config", "user.email", "collector@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Collector Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root, stdio: "ignore" });
-}
 
 function receipt(overrides: Record<string, unknown> = {}) {
   const manifest = emptyCollectorManifest();

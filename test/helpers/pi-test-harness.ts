@@ -6,10 +6,7 @@ import {
   copyFile,
   cp,
   mkdir,
-  mkdtemp,
   readFile,
-  realpath,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -27,27 +24,12 @@ import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { promisify } from "node:util";
 
 import {
-  type CredentialStore,
-  type FauxProviderHandle,
   fauxProvider,
   normalizeContext,
-  InMemoryCredentialStore,
-  type Model,
-  type Provider,
 } from "@earendil-works/pi-ai";
 import {
-  DefaultResourceLoader,
   type ExtensionContext,
-  type InlineExtension,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import {
-  resolveActivationLedgerHome,
-  resolveBookKeyFromGit,
-} from "../../src/activation-ledger.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
 
 const execFileAsync = promisify(execFile);
@@ -216,12 +198,6 @@ export interface RawPackageManifest {
 /** Explicit Internal role entrypoint (not auto-registered; ADR 0052 / #105). */
 export const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = PACKAGE_INTERNAL_ROLE_ENTRYPOINT;
 
-export async function loadRawPackageManifest(): Promise<RawPackageManifest> {
-  return JSON.parse(
-    await readFile(resolve(packageRoot, "package.json"), "utf8"),
-  ) as RawPackageManifest;
-}
-
 /**
  * Resolve the Internal role entrypoint for explicit `-e` load.
  * Package auto-registration leaves `pi.extensions` empty; callers that need the
@@ -297,6 +273,16 @@ export async function withHermeticHome<T>(
 /** Explicit git substrate for activation fixtures (ADR 0048). Not a generic home default. */
 export function seedGitRepository(cwd: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+}
+
+/** Common origin for tests of the role repository's ticket binding. */
+export function addRoleRepoOrigin(cwd: string): void {
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"], { cwd });
+}
+
+export function seedRoleRepo(cwd: string): void {
+  seedGitRepository(cwd);
+  addRoleRepoOrigin(cwd);
 }
 
 /**
@@ -532,20 +518,15 @@ export async function createMockProviderServer(
         .map((m: any) => {
           if (m.role === "system") return undefined;
           if (m.role === "tool") {
-            const isError = typeof m.content === "string"
-              ? /^Tool\s+.+ not found$|^Error:/.test(m.content.trim())
-              : false;
-            let toolName = m.name ?? "";
-            if (!toolName && typeof m.content === "string") {
-              const match = /^Tool\s+(.+)\s+not found$/i.exec(m.content.trim());
-              if (match) toolName = match[1];
-            }
+            // isError and toolName are contract fields on the tool result, not
+            // facts to sniff out of the rendered text: inferring them from the
+            // body made the structured outcome depend on diagnostic wording.
             return {
               role: "toolResult",
               toolCallId: m.tool_call_id,
-              toolName,
+              toolName: m.name ?? "",
               content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
-              isError,
+              isError: m.is_error === true,
             };
           }
           if (m.role === "assistant") {
@@ -593,38 +574,6 @@ export async function createMockProviderServer(
       }));
       const message = await stream.result();
       if (message.stopReason === "error" || message.stopReason === "aborted") {
-        if (message.errorMessage?.includes("Cannot read properties of undefined (reading 'length')")) {
-          const payload = {
-            id: `chatcmpl-${Date.now()}`,
-            object: "chat.completion.chunk",
-            created: 1,
-            model: faux.getModel().id,
-            choices: [{
-              index: 0,
-              delta: {
-                role: "assistant",
-                tool_calls: [{
-                  index: 0,
-                  id: "call-1",
-                  type: "function",
-                  function: {
-                    name: "ak_undefined_decision",
-                    arguments: "{}",
-                  },
-                }],
-              },
-              finish_reason: "tool_calls",
-            }],
-          };
-          res.writeHead(200, {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-          });
-          res.write(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`);
-          res.end();
-          return;
-        }
         // Surface provider failures as an HTTP error so the real adapter's
         // stream path records a transport failure (streamFailure) instead of a
         // flattened normal completion — preserving typed transport_failure
@@ -747,72 +696,6 @@ export async function createMockProviderServer(
 
 
 /**
- * Seed the child institutional sub-session's provider from a faux provider over
- * the real OpenAI-completions HTTP path. The child institutional session builds its
- * own child ModelRuntime that reads `<PI_CODING_AGENT_DIR>/models.json`, so tests
- * that drive `executeAuditorChild`/`runGatekeeper`/`runComplianceAudit` directly
- * must register the faux provider there. Starts a
- * mock SSE server backed by `faux`, writes the model registration, runs `run`,
- * then tears both down.
- */
-export async function withInstitutionalProviderFixture<T>(
-  faux: ReturnType<typeof fauxProvider>,
-  run: () => Promise<T>,
-): Promise<T> {
-  // Own temp agent dir at create seam first; start mock only inside the body so a
-  // failed mkdtemp never leaves a live listener, and setup throws still close it.
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  return withTempRoot("ak-institutional-agent-", async (tempAgentDir) => {
-    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-    let mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined;
-    return withPrimaryAwareCleanup(
-      async () => {
-        mock = await createMockProviderServer(faux);
-        const modelsPath = resolve(tempAgentDir, "models.json");
-        const model = faux.getModel() as {
-          id: string;
-          reasoning?: boolean;
-          thinkingLevelMap?: Record<string, string>;
-        };
-        await writeFile(modelsPath, JSON.stringify({
-          providers: {
-            [faux.provider.id]: {
-              baseUrl: mock.baseUrl,
-              api: "openai-completions",
-              apiKey: "test",
-              models: [{
-                id: model.id,
-                name: model.id,
-                api: "openai-completions",
-                // Preserve faux model reasoning / thinking map so institutional
-                // children honor Navigator :max the same way the parent session does.
-                reasoning: model.reasoning === true,
-                ...(model.thinkingLevelMap === undefined
-                  ? {}
-                  : { thinkingLevelMap: model.thinkingLevelMap }),
-                input: ["text"],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 128000,
-                maxTokens: 16384,
-                compat: { requiresToolResultName: true },
-              }],
-            },
-          },
-        }, null, 2), "utf8");
-        return await run();
-      },
-      async () => {
-        if (mock !== undefined) await mock.close();
-      },
-      async () => {
-        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      },
-    );
-  });
-}
-
-/**
  * Seed agentDir/models.json from a faux provider over the real OpenAI-completions
  * HTTP path. Institutional children (gatekeeper/auditor/evidence) resolve auth
  * from PI_CODING_AGENT_DIR/models.json after #518 S3 child-local ModelRuntime —
@@ -895,39 +778,4 @@ export async function seedAgentDirModelsJsonFromFaux(
     }
     throw error;
   }
-}
-
-export async function withAgentDirProviderFixture<T>(
-  faux: ReturnType<typeof fauxProvider>,
-  agentDir: string,
-  run: () => Promise<T>,
-): Promise<T> {
-  const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-  return withPrimaryAwareCleanup(
-    () => run(),
-    async () => {
-      await seeded.close();
-    },
-  );
-}
-
-export async function writeTestSkill(
-  home: string,
-  name: "ak-cross-m-review" | "tdd",
-): Promise<{ path: string; raw: string }> {
-  const skillDirectory = resolve(home, ".agents", "skills", name);
-  const skillPath = resolve(skillDirectory, "SKILL.md");
-  const raw = [
-    "---",
-    `name: ${name}`,
-    `description: Hermetic ${name} test method`,
-    "---",
-    "",
-    `# Hermetic ${name} method`,
-    "",
-    "Follow the test fixture's requested method.",
-  ].join("\n");
-  await mkdir(skillDirectory, { recursive: true });
-  await writeFile(skillPath, raw);
-  return { path: await realpath(skillPath), raw };
 }

@@ -89,10 +89,8 @@ test("resolveAnalystBookKey: dubious-ownership exit 128 stays loud with its real
             (error: unknown) => {
               assert.ok(error instanceof Error);
               assert.equal(error.name, "ActivationGitRepositoryRequiredError");
-              assert.ok(
-                error.message.includes("dubious ownership"),
-                "the real git cause must ride the loud carrier",
-              );
+              assert.equal((error.cause as { status?: number } | undefined)?.status, 128,
+                "the real git child failure must ride the loud carrier");
               assert.equal(
                 (error as { confirmedNonRepository?: boolean }).confirmedNonRepository,
                 false,

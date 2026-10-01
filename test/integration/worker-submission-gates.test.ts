@@ -1,7 +1,5 @@
 // #685 C1: createRecordSession host durability leg culled. C3: resume 后无二次
 // false bounce 未结 — docs/research/issue-685-c3-deleted-contract-handoff.md §C.
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -10,47 +8,27 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { runAkRole } from "../../src/public-cli/cli.ts";
-import {
-  buildNavigatorInfrastructureFailureFact,
-  FIXER_OUTPUT_TOOL_NAME,
-} from "../../src/role-runtime.ts";
-import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
-  WORKER_COMMIT_BASELINE_ENTRY_TYPE,
-  WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-  WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
-  WORKER_SUBMISSION_GATE_RECORD_KIND,
 } from "../../src/worker-submission-gates.ts";
 import {
   machineLedgerHome,
-  packageRoot,
-  resolvePackageEntrypoint,
-  seedGitRepository,
-  withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
@@ -143,15 +121,6 @@ function armThenCommit(cwd: string, home: string, message: string) {
   return gate;
 }
 
-function soleGateRecordPath(parentOrNest: SessionManager | string): string {
-  const nest = typeof parentOrNest === "string"
-    ? parentOrNest
-    : join(dirname(parentOrNest.getSessionFile()!), WORKER_SUBMISSION_GATE_RECORD_KIND);
-  const files = readdirSync(nest).filter((n) => n.endsWith(".jsonl"));
-  assert.equal(files.length, 1);
-  return join(nest, files[0]!);
-}
-
 test("unfinished reason gate bounces missing reason up to twice then accepts; reasoned unfinished free; other statuses unchanged", () => {
   const gate = createWorkerSubmissionGate();
   assert.throws(
@@ -200,7 +169,9 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
     assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
 
-    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)), /not a git repository/);
+    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)),
+      (error: unknown) => typeof error === "object" && error !== null &&
+        "status" in error && error.status === 128);
 
     await withTempGit(async (unborn, unbornHome) => {
       const g = gateWithHome(unbornHome);
@@ -398,7 +369,8 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(unreadable.hookPath, 0o000);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)),
+            (error: unknown) => (error as NodeJS.ErrnoException)?.code === "EACCES");
           assert.equal(
             hooksPathOf(root),
             unreadable.hooksDir,
@@ -415,7 +387,8 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(undeletable.hooksDir, 0o555);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)),
+            (error: unknown) => (error as NodeJS.ErrnoException)?.code === "EACCES");
         },
         async () => {
           await scrubPlanted(root, undeletable);

@@ -2,18 +2,14 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,7 +19,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
@@ -39,68 +35,11 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-merger-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function git(cwd: string, args: string[], opts: { input?: string } = {}): string {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-    ...(opts.input === undefined ? {} : { input: opts.input }),
-  }).trim();
-}
-
-function seedGitProject(root: string): void {
-  git(root, ["init", "-b", "main"]);
-  git(root, ["config", "user.email", "merger@test.local"]);
-  git(root, ["config", "user.name", "Merger Test"]);
-  git(root, ["commit", "--allow-empty", "-m", "seed"]);
-}
-
-async function materializeConflictedRepo(root: string): Promise<{
-  target: string;
-  source: string;
-  conflictPath: string;
-}> {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n", "utf8");
-  git(root, ["add", "."]);
-  git(root, ["commit", "-m", "base"]);
-  git(root, ["checkout", "-b", "source"]);
-  await writeFile(join(root, "same.txt"), "source\n", "utf8");
-  git(root, ["commit", "-am", "source"]);
-  const source = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["checkout", "main"]);
-  await writeFile(join(root, "same.txt"), "target\n", "utf8");
-  git(root, ["commit", "-am", "target"]);
-  const target = git(root, ["rev-parse", "HEAD"]);
-  try {
-    git(root, ["merge", "--no-edit", "source"]);
-    throw new Error("expected conflicting merge");
-  } catch {
-    // conflicted
-  }
-  return { target, source, conflictPath: "same.txt" };
 }
 
 function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
@@ -481,8 +420,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       );
       assert.equal(dispatched, true);
       assert.equal(result.exitCode, 0, stdout.join(""));
-      assert.match(stdout.join(""), /merger\taccepted\t/);
-      assert.match(stdout.join(""), /escalate/);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
     }
 
     // Active merge → derives materials from active merge and settles completed leaf under mocked host.
@@ -492,7 +431,6 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       const fixture = await materializeConflictedRepo(conflicted);
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
       const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "--project", conflicted, "Reconcile both intents."],
         {
           packageRoot,
@@ -504,9 +442,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
             captured = [...args];
-            capturedStdin = options.stdin;
             // Simulate completed receipt under mocked host.
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -533,8 +470,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
-      assert.match(stdout.join(""), /merger\taccepted\t/);
-      assert.match(stdout.join(""), /completed/);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
     }
   });
 });

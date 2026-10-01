@@ -5,8 +5,6 @@
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,7 +17,6 @@ import {
   lookupHostDescription,
 } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -39,11 +36,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
-  createSecretariatRoleRuntime,
 } from "../../src/role-runtime.ts";
-import {
-  sealAcceptedSubmission,
-} from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -56,20 +49,12 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   objectPayloads,
   payloadStatusSequence,
 } from "../helpers/terminal-payload.ts";
-import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
-import {
-  activationBookDirectory,
-  resolveActivationLedgerHome,
-} from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import {
-  readSitianRecords,
-  resolveSitianRecordPathInLedger,
-} from "../../src/sitian-facade.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-secretariat-", async (home) => {
@@ -99,36 +84,8 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   });
 }
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
   return { name, create: () => ({ ok: true as const, host }) };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "secretariat@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Secretariat Test"], {
-    cwd: root,
-  });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 /** Court diarist details through real accept hook (typed ticket bind or true-unbound). */
@@ -845,9 +802,10 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const gateCalls: Array<{ kind: string }> = [];
+    const hostFailure = new Error("diarist host unavailable");
     const host = secretariatHostDrivingRealTools({
       packageRoot, home, gateCalls, submissionGateHost: "codex",
-      parentDiaristRunner: async () => { throw new Error("diarist host unavailable"); },
+      parentDiaristRunner: async () => { throw hostFailure; },
       countersignSequence: [], steps: [],
     });
     const result = await runAkRole(
@@ -859,41 +817,12 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure", "failure is settled in the admitted run");
     if (result.terminal?.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal.roleOutcome.diagnostic.includes("diarist host unavailable"), true,
+      assert.equal(result.terminal.roleOutcome.diagnostic.includes(hostFailure.message), true,
         "the original host failure remains visible in the structured terminal");
     }
     assert.equal(gateCalls.length, 0);
   });
 });
-
-/** Distinct court attempt ids from ledger subject.attemptId (not row count). */
-async function distinctCourtAttemptIds(input: {
-  cwd: string;
-  home: string;
-  runId: string;
-  runDirectory: string;
-}): Promise<Set<string>> {
-  const sessionParent = join(input.runDirectory, "session", "session.jsonl");
-  const ptr = resolveSitianRecordPathInLedger(
-    {
-      level: "event",
-      kind: "candidate",
-      subject: { runId: input.runId },
-      cwd: input.cwd,
-      sessionParent,
-    },
-    resolveActivationLedgerHome(input.home),
-  );
-  const { records } = await readSitianRecords(ptr.recordFile);
-  const ids = new Set<string>();
-  for (const record of records) {
-    const subject = record.subject as { attemptId?: unknown } | undefined;
-    if (typeof subject?.attemptId === "string" && subject.attemptId.length > 0) {
-      ids.add(subject.attemptId);
-    }
-  }
-  return ids;
-}
 
 /**
  * #969 shortest adapter convergence boundary.

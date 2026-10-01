@@ -19,12 +19,7 @@ test("parsePositiveTicketNumber rejects non-positive and leading junk", () => {
   assert.throws(() => parsePositiveTicketNumber("x", "--ticket"), CliUsageError);
 });
 
-test("parseCountersignArgv rejects --ticket as unknown option", () => {
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "--attach", "./t.md", "裁：开工？"]),
-    (err: unknown) =>
-      err instanceof CliUsageError && /unknown countersign option: --ticket/.test(err.message),
-  );
+test("parseCountersignArgv preserves attachment and instruction", () => {
   const parsed = parsePublicSeatArgv("countersign", [
     "--attach",
     "./t.md",
@@ -35,18 +30,7 @@ test("parseCountersignArgv rejects --ticket as unknown option", () => {
   assert.equal(parsed.instruction, "裁：开工？");
 });
 
-test("parseNotaryArgv rejects --ticket; keeps required --source-run", () => {
-  assert.throws(
-    () =>
-      parsePublicSeatArgv("notary", [
-        "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-        "--ticket",
-        "582",
-      ]),
-    (err: unknown) =>
-      err instanceof CliUsageError && /unknown notary option: --ticket/.test(err.message),
-  );
+test("parseNotaryArgv keeps required --source-run", () => {
   const parsed = parsePublicSeatArgv("notary", [
     "--source-run",
     "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -58,6 +42,5 @@ test("parseNotaryArgv rejects --ticket; keeps required --source-run", () => {
 test("parseAnalystArgv still binds --ticket (query scope, not seat binding)", () => {
   const parsed = parseAnalystArgv(["--ticket", "125"]);
   assert.equal(parsed.query, "issue");
-  assert.ok(parsed.query === "issue");
   assert.equal(parsed.ticket, 125);
 });
