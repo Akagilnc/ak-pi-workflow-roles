@@ -2314,11 +2314,6 @@ function isGitRemoteMissing(error: unknown): boolean {
   return status === 2;
 }
 
-/** Match retained Doctor case runs roots (ADR 0017 / loadDoctorCase). */
-/** Canonical Doctor case: `<book>/<ticket>/runs`. Legacy `issues/<n>/runs` is read-only compat. */
-const DOCTOR_CASE_RUNS_PATH_PATTERN =
-  /\/\.ak-roles\/books\/[^/]+\/(?:issues\/)?([1-9]\d*)\/runs$/;
-
 /**
  * Parse a positive Issue number for public Doctor admission.
  * Leading zeros and non-integers are structural rejects.
@@ -2332,8 +2327,8 @@ export function parseDoctorIssueNumber(raw: string): number {
 
 /**
  * Resolve the retained Doctor case runs root from Issue identity.
- * Default is the #78 book locator; optional --runs must stay project-confined
- * and match Doctor case grammar for the same issue number.
+ * Default is the #78 book locator; optional --runs must stay project-confined.
+ * loadDoctorCase owns retained-root grammar at IO; admission matches its case identity.
  */
 export async function resolveDoctorCaseRunsPath(options: {
   home: string;
@@ -2385,18 +2380,6 @@ export async function resolveDoctorCaseRunsPath(options: {
     );
   }
 
-  const normalized = real.split(sep).join("/");
-  const match = normalized.match(DOCTOR_CASE_RUNS_PATH_PATTERN);
-  if (!match) {
-    throw new CliUsageError(
-      "doctor --runs must be an .ak-roles/books/<book>/<n>/runs directory",
-    );
-  }
-  if (Number(match[1]) !== options.issueNumber) {
-    throw new CliUsageError(
-      `doctor --runs issue ${match[1]} does not match --issue ${options.issueNumber}`,
-    );
-  }
   return real;
 }
 

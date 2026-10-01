@@ -11,9 +11,6 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
 import { sessionDirectoryOf } from "./role-run-placement.ts";
-
-import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
-
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
@@ -46,8 +43,6 @@ const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
 const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 const OFFICER_POINTER_FIELDS = ["sessionFile", "runDirectory"] as const;
 const SITIAN_RECORD_FIELDS = ["sessionParent"] as const;
-const SESSION_HEADER_FIELDS = ["parentSession"] as const;
-const BINDING_PARENT_FIELDS = ["sessionFile"] as const;
 
 export type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
@@ -308,47 +303,10 @@ async function rewriteSitianRecordsJsonl(
 }
 
 /**
- * Session transcript typed locators only: header.parentSession and
- * ak_auditor_parent_attempt_binding data.parent.sessionFile. Never message text.
- */
-async function rewriteSessionTranscriptBindings(
-  path: string,
-  rewrites: readonly RunDirectoryPathRewrite[],
-): Promise<void> {
-  await rewriteJsonlLines(path, (parsed) => {
-    let lineChanged = false;
-    if (parsed.type === "session" && "parentSession" in parsed) {
-      const before = parsed.parentSession;
-      rewriteRunDirectoryPathFieldsAgainstRewrites(
-        parsed,
-        SESSION_HEADER_FIELDS,
-        rewrites,
-      );
-      if (parsed.parentSession !== before) lineChanged = true;
-    } else if (
-      parsed.type === "custom" &&
-      parsed.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE &&
-      isRecord(parsed.data) &&
-      isRecord(parsed.data.parent)
-    ) {
-      const parent = parsed.data.parent;
-      const before = parent.sessionFile;
-      rewriteRunDirectoryPathFieldsAgainstRewrites(
-        parent,
-        BINDING_PARENT_FIELDS,
-        rewrites,
-      );
-      if (parent.sessionFile !== before) lineChanged = true;
-    }
-    if (!lineChanged) return undefined;
-    return { line: JSON.stringify(parsed), changed: true };
-  });
-}
-
-/**
  * Package-owned nested seams under session/ only:
- * direct-officer *.pointer.json, sitian records.jsonl,
- * session transcript typed parent bindings. Never walks attachments/ or artifacts/.
+ * direct-officer *.pointer.json and sitian records.jsonl.
+ * Native transcripts stay byte-identical (ADR 0086), including their typed bindings.
+ * Never walks attachments/ or artifacts/.
  */
 async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
@@ -374,8 +332,6 @@ async function rewriteNestedMachinePathPages(
         await rewriteOfficerPointerFile(path, rewrites);
       } else if (entry.name === "records.jsonl") {
         await rewriteSitianRecordsJsonl(path, rewrites);
-      } else if (entry.name.endsWith(".jsonl")) {
-        await rewriteSessionTranscriptBindings(path, rewrites);
       }
     }
   }

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { sha256Hex } from "./sha256.ts";
 import { isRecord } from "./unknown-value.ts";
+import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
 export const COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 export const COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
@@ -49,7 +50,7 @@ export function parseCollectorPrNumber(raw: unknown): number {
   if (typeof raw === "string" && !/^[1-9][0-9]*$/.test(raw)) fail("Collector pull request number must be a positive safe integer string");
   if (typeof raw !== "string" && typeof raw !== "number") fail("Collector pull request number is required");
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 1) fail("Collector pull request number must be a positive safe integer");
+  if (!isSafePositiveTicketNumber(value)) fail("Collector pull request number must be a positive safe integer");
   return value;
 }
 

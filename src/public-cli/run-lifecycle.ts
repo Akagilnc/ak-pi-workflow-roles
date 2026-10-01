@@ -1317,7 +1317,7 @@ async function loadResumableRunRecord(
         lens = record.lens;
       }
       // Collector — admitted repository/PR identity (#633 resume).
-      if (typeof record.prNumber === "number" && Number.isSafeInteger(record.prNumber) && record.prNumber >= 1) {
+      if (isSafePositiveTicketNumber(record.prNumber)) {
         prNumber = record.prNumber;
       }
       if (typeof record.repository === "string" && record.repository.trim() !== "") {
@@ -1336,7 +1336,7 @@ async function loadResumableRunRecord(
         waitWindowMs = record.waitWindowMs;
       }
       // Doctor — admitted single-case identity (#633 resume).
-      if (typeof record.issueNumber === "number" && Number.isSafeInteger(record.issueNumber) && record.issueNumber >= 1) {
+      if (isSafePositiveTicketNumber(record.issueNumber)) {
         issueNumber = record.issueNumber;
       }
       if (typeof record.caseRunsPath === "string" && record.caseRunsPath.trim() !== "") {
@@ -1347,9 +1347,7 @@ async function loadResumableRunRecord(
       ) {
         const ci = record.caseIdentity as Record<string, unknown>;
         if (
-          typeof ci.issueNumber === "number" &&
-          Number.isSafeInteger(ci.issueNumber) &&
-          ci.issueNumber >= 1 &&
+          isSafePositiveTicketNumber(ci.issueNumber) &&
           typeof ci.runsPath === "string" &&
           ci.runsPath.trim() !== ""
         ) {

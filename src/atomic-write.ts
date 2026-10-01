@@ -7,17 +7,19 @@
  * ledger home own confinement via ensureRealDirectoryTree (ADR 0038).
  */
 import { randomUUID } from "node:crypto";
+import type { Mode } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export async function writeFileAtomically(
   destination: string,
   contents: string | Uint8Array,
+  options?: { readonly mode?: Mode },
 ): Promise<void> {
   const parent = dirname(destination);
   const temporary = join(parent, `.atomic-write-${randomUUID()}.tmp`);
   try {
-    await writeFile(temporary, contents);
+    await writeFile(temporary, contents, options);
     await rename(temporary, destination);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => undefined);

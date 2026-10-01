@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { writeFileAtomically } from "./atomic-write.ts";
 import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
 import {
   DEFAULT_ROLE_TURN_HOST,
@@ -35,9 +36,7 @@ export function createSessionIdentityAuthority(
     async bind(principal, sessionId) {
       const target = bindingPath(principal);
       await mkdir(dirname(target), { recursive: true });
-      const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile(temporary, `${JSON.stringify({ sessionId })}\n`, { encoding: "utf8", mode: 0o600 });
-      await rename(temporary, target);
+      await writeFileAtomically(target, `${JSON.stringify({ sessionId })}\n`, { mode: 0o600 });
     },
   };
 }
