@@ -5,17 +5,17 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 
 import { isRecord } from "./unknown-value.ts";
 
-const materialSchema = Type.Object({ bytesBase64: Type.String(), sha256: Type.String() }, { additionalProperties: false });
-const checkSchema = Type.Object({ name: Type.String({ minLength: 1 }), argv: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
+const materialSchema = Type.Object({ bytesBase64: Type.String(), sha256: Type.String() });
+const checkSchema = Type.Object({ name: Type.String({ minLength: 1 }), argv: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }) });
 export const mergerInputSchema = Type.Object({
   attemptId: Type.String({ minLength: 1, description: "对账 attempt 身份（transport）" }),
   targetObjectId: Type.String({ description: "材料：target parent OID；可空" }),
   sourceObjectId: Type.String({ description: "材料：source parent OID；可空" }),
-  materials: Type.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }, { additionalProperties: false }),
+  materials: Type.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }),
   expectedConflictPaths: Type.Array(Type.String(), { description: "材料：当前未合并路径；可空" }),
   resolutionScope: Type.Array(Type.String(), { description: "材料：解析范围提示；可空" }),
   authorizedChecks: Type.Array(checkSchema),
-}, { additionalProperties: false });
+});
 // #836 r16 class 1: attemptId/report/diagnosis/mergeCommitId are LLM/human-read
 // narrative content (candidate stored as submitted) — no code branches on their
 // length. mergerInputSchema (host-authored material, not role output) is out of scope.

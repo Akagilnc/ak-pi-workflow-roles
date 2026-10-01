@@ -117,7 +117,7 @@ export type AnalystIssueModeInput = {
  * Sole sweep-mode input contract (#298/#329/#337).
  * Schema is the single definition; TS types are derived (no parallel hand shape).
  * projectRoot = string (not nonempty); changedLines optional finite non-negative;
- * 0 remains typed 空缺; no extra keys.
+ * 0 remains typed 空缺. Extra keys are not a reject reason.
  */
 export const analystSweepModeInputSchema = Type.Object(
   {
@@ -131,11 +131,9 @@ export const analystSweepModeInputSchema = Type.Object(
             Type.Number({ minimum: 0, maximum: Number.MAX_VALUE }),
           ),
         },
-        { additionalProperties: false },
       ),
     ),
   },
-  { additionalProperties: false },
 );
 
 /** Sweep-mode typed input — 已并 PR 清单 + LOC → 补算缺页 + 维护全库索引. */

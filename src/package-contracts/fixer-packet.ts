@@ -8,7 +8,7 @@ export const FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
 export const fixerPrerequisiteSchema = Type.Object({
   id: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
   requirement: Type.String({ pattern: "\\S" }),
-}, { additionalProperties: false });
+});
 
 export const fixerPrerequisitesSchema = Type.Array(fixerPrerequisiteSchema);
 export type FixerPrerequisite = Readonly<Static<typeof fixerPrerequisiteSchema>>;
@@ -49,10 +49,6 @@ function parseFailure(value: unknown): never {
   for (const entry of value) {
     if (!isRecord(entry)) {
       fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
-    }
-    const keys = Object.keys(entry);
-    if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
-      fail(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
     }
     if (
       typeof (entry as Record<string, unknown>).id !== "string" ||

@@ -99,7 +99,7 @@ export async function buildAnalystIssueModeInputFromPublicArgv(
 
 /**
  * Attachment JSON → library AnalystSweepModeInput via the sole schema (#337).
- * No parallel hand shape; rejects missing/extra/wrong-type fields only.
+ * No parallel hand shape; rejects missing or wrong-type fields only.
  */
 export function parseAnalystSweepModeInputFromJsonValue(
   value: unknown,
