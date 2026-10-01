@@ -284,11 +284,14 @@ function runCoordsFromRelativePath(relPosix: string): { readonly runId: string; 
 }
 
 /** Typed owning run for a record-class row (subject / payload / sessionParent). */
-function owningRunIdFromRecord(value: Record<string, unknown>): string | undefined {
+function owningRunIdFromRecord(
+  value: Record<string, unknown>,
+  bookRoots: readonly string[],
+): string | undefined {
   return (
     runIdFromSubject(value.subject)
     ?? runIdFromPayload(value.payload)
-    ?? runCoordsFromSessionParent(value.sessionParent)?.runId
+    ?? runCoordsFromSessionParent(value.sessionParent, bookRoots)?.runId
   );
 }
 
@@ -301,11 +304,12 @@ function isAlreadyHomeUnderOwningRun(
   withinBook: string,
   recordClass: RecordClass,
   value: Record<string, unknown>,
+  bookRoots: readonly string[],
 ): boolean {
   if (!isCanonicalRunNestedRecordFile(withinBook, recordClass)) return false;
   const pathCoords = runCoordsFromRelativePath(withinBook);
   if (pathCoords === undefined) return false;
-  const owningRunId = owningRunIdFromRecord(value);
+  const owningRunId = owningRunIdFromRecord(value, bookRoots);
   return owningRunId !== undefined && owningRunId === pathCoords.runId;
 }
 
@@ -454,7 +458,10 @@ async function placeRunOwnedLine(
     return { disposition: "unbound", source, malformed: true, malformedRaw: raw };
   }
 
-  const fromParent = runCoordsFromSessionParent(value.sessionParent);
+  const fromParent = runCoordsFromSessionParent(
+    value.sessionParent,
+    bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+  );
   const runId =
     runIdFromSubject(value.subject)
     ?? runIdFromPayload(value.payload)
@@ -787,7 +794,12 @@ async function migrateMisplacedBook(
       if (recordClass === undefined) continue;
 
       // Correct principal + canonical nest — #865 carries the file as-is.
-      if (isAlreadyHomeUnderOwningRun(withinBook, recordClass, parsed.value)) continue;
+      if (isAlreadyHomeUnderOwningRun(
+        withinBook,
+        recordClass,
+        parsed.value,
+        bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+      )) continue;
 
       const source = lineSource(context.backupBooksDirectory, filePath, index);
       if (recordClass === TICKET_PROVENANCE) {

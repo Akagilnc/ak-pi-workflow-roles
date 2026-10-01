@@ -11,7 +11,6 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
 import {
-  bookRelativeFromLedgerPath,
   formatRunLeaf,
   listBookRunContainers,
   parseRunLeaf,
@@ -440,14 +439,23 @@ export function destinationRunDirectory(
   }).runDirectory;
 }
 
-/** Extract runId@role from a sessionParent path when it points at a run session. */
+/**
+ * runId@role from a sessionParent that names a run session.
+ * Absolute paths bind only through the caller's historical book roots
+ * (live book and dated backup). A book-relative path uses those roots when
+ * present, otherwise its first `runs` segment. Unbound absolutes stay unidentified.
+ */
 export function runCoordsFromSessionParent(
   sessionParent: unknown,
+  bookRoots: readonly string[] = [],
 ): { readonly runId: string; readonly role: string } | undefined {
   if (typeof sessionParent !== "string" || sessionParent.length === 0) return undefined;
-  // Ledger absolutes include `<bookKey>`, which may be `runs`. Parse the book-relative rest.
-  const coordinated = bookRelativeFromLedgerPath(sessionParent) ?? sessionParent;
-  const segment = runsSegmentOf(coordinated);
+  if (bookRoots.length > 0) {
+    const bound = runRefFromBoundPath(sessionParent, bookRoots);
+    return bound === undefined ? undefined : parseRunLeaf(bound.leaf);
+  }
+  if (isAbsolute(sessionParent)) return undefined;
+  const segment = runsSegmentOf(sessionParent);
   if (segment === undefined) return undefined;
   return parseRunLeaf(segment.leaf);
 }

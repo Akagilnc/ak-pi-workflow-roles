@@ -14,7 +14,8 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
-import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../sitian-facade.ts";
+import { sitianReportSafe } from "../host-session-record.ts";
 
 import {
   hasFreshAttemptSubmission,
@@ -1870,8 +1871,9 @@ type AttemptHistorySource = {
 
 /**
  * Append one attempt's complete result to the run's session principal.
- * Append failure throws — callers must not overwrite a pointer artifact when
- * the history entry backing the overwrite did not land (fail closed).
+ * Session-line append failure throws — callers must not overwrite a pointer
+ * artifact when that history line did not land. The sitian mirror is declared
+ * on failure and does not replace the host terminal outcome.
  */
 export async function appendRunAttemptHistory(
   source: AttemptHistorySource,
@@ -1902,7 +1904,7 @@ export async function appendRunAttemptHistory(
     timestamp,
   });
   await appendFile(source.sessionFile, line, "utf8");
-  sitianReport({
+  sitianReportSafe({
     level: "event",
     kind: "attempt-history",
     subject: { runId: source.runId },
