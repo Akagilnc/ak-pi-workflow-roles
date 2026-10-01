@@ -27,12 +27,7 @@ export type RoleSubmissionDeclaration = {
   readonly parameters: unknown;
 };
 
-type SubmissionFace = {
-  readonly label: string;
-  readonly description: string;
-  readonly promptSnippet?: string;
-  readonly parameters: unknown;
-};
+type SubmissionFace = Omit<RoleSubmissionDeclaration, "role" | "name">;
 
 const SUBMISSION_FACE = {
   judge: {

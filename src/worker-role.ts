@@ -20,6 +20,7 @@ import {
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
+  type WorkerSubmissionGate,
 } from "./worker-submission-gates.ts";
 import {
   fixerBashSeatbeltDenyReason,
@@ -123,7 +124,7 @@ function registerWorkerSubmission(
     readonly ready: () => boolean;
     readonly phase: () => WorkerPhase | undefined;
     readonly project: (parameters: unknown, phase: WorkerPhase) => WorkerOutput;
-    readonly submissionGate: { assertAcceptable(status: string, details?: unknown): void };
+    readonly submissionGate: WorkerSubmissionGate;
     readonly hostActions: WorkerRoleHostActions;
   },
 ): void {
@@ -151,7 +152,7 @@ function registerWorkerSubmission(
 
 /** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
 function assertAcceptableThroughHost(
-  submissionGate: { assertAcceptable(status: string, details?: unknown): void },
+  submissionGate: WorkerSubmissionGate,
   status: string,
   details: unknown,
   hostActions: WorkerRoleHostActions,
