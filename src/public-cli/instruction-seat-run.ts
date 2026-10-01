@@ -11,6 +11,8 @@ import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
 import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from "../gatekeeper-role.ts";
+import { receivedDiscriminator } from "../submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES } from "../review-submission.ts";
 import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
@@ -118,7 +120,6 @@ type SeatRunResult = {
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
 const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，secretariatStatus 写明其一。";
-const COUNTERSIGN_STATUS_REASK = "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。";
 const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set([
   "planned", "completed", "refused", "partially_completed", "unfinished",
 ]);
@@ -129,11 +130,10 @@ const DOCTOR_STATUS_REASK =
   "status 不是 completed、refused 之一。请重新交卷，status 写明其一。";
 const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   readonly statuses: ReadonlySet<string>;
-  readonly reask: string;
+  readonly reask?: string;
 }>> = {
   judge: {
-    statuses: new Set(["converged", "continue", "escalate"]),
-    reask: "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。",
+    statuses: REVIEW_QUEUE_STATUSES,
   },
   coder: {
     statuses: WORKER_ROUTING_STATUSES,
@@ -163,12 +163,10 @@ function unreadablePostSubmissionStatus(
   const route = POST_SUBMISSION_ROUTING[admitted.role];
   if (route === undefined) return undefined;
   const payload = terminal.roleOutcome.payloads?.at(-1);
-  const status = isRecord(payload)
-    ? (payload as Record<string, unknown>).status
-    : undefined;
+  const status = receivedDiscriminator(payload, "status");
   return typeof status === "string" && route.statuses.has(status)
     ? undefined
-    : route.reask;
+    : route.reask ?? officerConclusionReask(status);
 }
 
 /**
@@ -243,7 +241,7 @@ function heldUnreadableTerminal(terminal: TerminalResult | undefined): boolean {
   if (terminal?.roleOutcome.kind !== "accepted") return false;
   if (latestPayloadEscalated(terminal.roleOutcome)) return false;
   const status = latestQueueStatus(terminal);
-  return status === undefined || !QUEUE_CONCLUSIONS.has(status);
+  return typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status);
 }
 
 function presentUnsettledAudit(
@@ -1006,7 +1004,6 @@ export async function runPublicInstructionSeatResume(
   return resume();
 }
 
-const QUEUE_CONCLUSIONS = new Set(["converged", "continue", "escalate"]);
 const GATE_CHILD_ROLES = new Set(["notary", "auditor", "inspector", "countersign"]);
 
 /**
@@ -1032,7 +1029,7 @@ async function queueConclusionFromChild(
       child, env.principalAuthority, await readCurrentCourt(child.runDirectory),
     );
     const status = latestQueueStatus(terminal);
-    if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
+    if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
       return { admitted: child, terminal, status };
     }
     return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
@@ -1049,7 +1046,7 @@ async function queueConclusionFromChild(
       await readCurrentCourt(current.runDirectory),
     );
     const status = latestQueueStatus(terminal);
-    if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
+    if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
       return { admitted: current, terminal, status };
     }
     const next = withUnreadableReask(budgetEnv);
@@ -1065,7 +1062,7 @@ async function queueConclusionFromChild(
       return { stop: reasked };
     }
     const reaskedStatus = latestQueueStatus(reasked.terminal);
-    if (reaskedStatus !== undefined && QUEUE_CONCLUSIONS.has(reaskedStatus)) {
+    if (typeof reaskedStatus === "string" && REVIEW_QUEUE_STATUSES.has(reaskedStatus)) {
       return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
     }
     if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
@@ -1188,7 +1185,7 @@ async function auditSubmittedRole(
     }
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK }, next, io);
   }
-  if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
+  if (admitted.role === "countersign" && (typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status))) {
     if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
     if (next === undefined) {
@@ -1196,7 +1193,7 @@ async function auditSubmittedRole(
       io.stdout(formatTerminalResult(terminal));
       return { ...turn, terminal };
     }
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK }, next, io);
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: officerConclusionReask(status) }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must

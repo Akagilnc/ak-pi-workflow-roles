@@ -354,3 +354,6 @@ export function createWorkerSubmissionGate(
     },
   };
 }
+
+/** The gate object returned above. Callers reference this instead of restating assertAcceptable. */
+export type WorkerSubmissionGate = ReturnType<typeof createWorkerSubmissionGate>;

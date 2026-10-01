@@ -1,10 +1,11 @@
-import type { RoleHost, HostContext } from "./host-contracts.ts";
+import type { RoleHost } from "./host-contracts.ts";
 import {
   MERGER_OUTPUT_TOOL_NAME,
-  mergerOutputSchema,
   validateMergerInput,
   type MergerInput,
 } from "./merger-contracts.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
 
 export { MERGER_OUTPUT_TOOL_NAME };
@@ -35,12 +36,8 @@ export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDe
       activation = { soul, input };
       if (!registered) {
         registered = true;
-        pi.registerTool({
-          name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
-          async execute(_id: string, params: unknown, _signal: AbortSignal | undefined, _update: unknown, _ctx: HostContext) {
-            if (!activation) throw new Error("校书郎未激活");
-            return { content: [], details: params, terminate: true as const };
-          },
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("merger"), {
+          readyError: () => (activation === undefined ? "校书郎未激活" : undefined),
         });
         pi.on("before_agent_start", (event) => {
           if (!activation) throw new Error("校书郎未激活");
