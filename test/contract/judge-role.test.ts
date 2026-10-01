@@ -23,9 +23,6 @@ import {
 } from "../../src/worker-role.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
-  WorkerCommitReminderError,
-} from "../../src/worker-submission-gates.ts";
-import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
@@ -1109,12 +1106,15 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
       ],
     };
     await withInstitutionalRunDir(async () => {
-      await assert.rejects(
-        tool.execute("partial", partial, undefined, undefined, Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })),
-        (error: unknown) =>
-          error instanceof WorkerCommitReminderError &&
-          error.code === "worker_commit_reminder",
+      const reminded = await tool.execute(
+        "partial",
+        partial,
+        undefined,
+        undefined,
+        Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() }),
       );
+      assert.equal(reminded.isError, true);
+      assert.equal(reminded.details?.code, "worker_commit_reminder");
       const context2 = await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed } = await acceptThroughTypedRoundClosure({
         handlers: harness.handlers,

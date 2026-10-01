@@ -448,7 +448,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               // ineligible for publication before the correction turn starts.
               output = undefined;
               prepareBatchRejected = true;
-              delivery.recordRejected(rejectedReason);
+              // The correction prompt below is the one spend for this rejection.
+              delivery.recordRejected(rejectedReason, { spend: false });
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;

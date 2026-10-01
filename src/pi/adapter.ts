@@ -19,7 +19,11 @@ import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepa
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
-import { WorkerUnfinishedReasonReminderError } from "../submission-errors.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "../submission-errors.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
@@ -119,10 +123,15 @@ function toPiToolDefinition<S extends TSchema, D>(
           projectContext(context),
         ));
       } catch (error) {
-        // The worker gate owns unfinished-reason催全. Returning the reminder
-        // here keeps one isError result so the in-process催交 counts the send
-        // once. Commit and prefix reminders stay native throws.
-        if (!(error instanceof WorkerUnfinishedReasonReminderError)) throw error;
+        // The worker gate owns these one-shot reminders. Returning them as
+        // isError keeps the code on the tool result so催交 can record the
+        // fact without spending the reminder itself. Other correctable
+        // errors stay native throws.
+        if (!(
+          error instanceof WorkerUnfinishedReasonReminderError
+          || error instanceof WorkerCommitReminderError
+          || error instanceof WorkerPrefixReminderError
+        )) throw error;
         const projected = projectCorrectableExecuteRejection(error);
         return {
           content: [{ type: "text" as const, text: projected.diagnostic }],

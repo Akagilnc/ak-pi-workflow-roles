@@ -36,6 +36,9 @@ import {
   deliveryLimitFromConfig,
   deliveryLimitFromEnv,
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  priorReceiptContinuation,
+  RECEIPT_DELIVERY_REQUEST_ENTRY,
+  receiptAttemptPointer,
 } from "./receipt-delivery-policy.ts";
 import {
   COLLECTOR_CONSTRUCTION_TOOLS,
@@ -299,7 +302,7 @@ export {
   gateOfficerForSubject,
 };
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { isOneShotWorkerReminderCode, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
 export {
@@ -1292,16 +1295,18 @@ export function createRoleRuntimeExtension(
         const code = details !== null && typeof details === "object" && "code" in details
           ? details.code
           : undefined;
-        // Unfinished-reason催全 spends on the send below. The rejection fact
-        // still belongs to this tool call. Commit and prefix reminders spend
-        // on the rejection itself.
+        // Unfinished-reason催全 and the one commit/prefix reminder spend on the
+        // send below. The rejection fact still belongs to this tool call.
+        // Counting the reminder here would occupy a催交 slot (#1132).
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
           .trim();
+        const reminderSpendsOnSend = code === "worker_unfinished_reason_reminder"
+          || isOneShotWorkerReminderCode(code);
         receiptDelivery.recordRejected(
           reason,
-          code === "worker_unfinished_reason_reminder" ? { spend: false } : undefined,
+          reminderSpendsOnSend ? { spend: false } : undefined,
         );
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
@@ -1367,7 +1372,10 @@ export function createRoleRuntimeExtension(
           if (runPointer !== undefined) {
             noReceiptRecorded = true;
             receiptDelivery.closeBudget();
-            const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+            const facts = receiptDelivery.facts({
+              runPointer,
+              attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
+            });
             envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             try {
               sitianReport({
@@ -1387,7 +1395,11 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
-        envelopeHost.appendEntry("ak-receipt-delivery-request");
+        const scopeId = ctx.invocationScopeId?.trim() ?? "";
+        envelopeHost.appendEntry(
+          RECEIPT_DELIVERY_REQUEST_ENTRY,
+          scopeId.length > 0 ? { invocationScopeId: scopeId } : undefined,
+        );
         try {
           sitianReport({
             level: "event",
@@ -1407,7 +1419,10 @@ export function createRoleRuntimeExtension(
         const runPointer = runDirectoryFromHostContext(ctx);
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+          const facts = receiptDelivery.facts({
+            runPointer,
+            attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
+          });
           envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           try {
             sitianReport({
@@ -1790,6 +1805,14 @@ export function createRoleRuntimeExtension(
         // #855: two-face waiting.jsonl write removed — fail-closed book-key + session only.
         resolveBookKeyFromGit(ctx.cwd);
         durableSessionPointer(ctx.sessionManager);
+        const scopeId = ctx.invocationScopeId?.trim() ?? "";
+        if (scopeId.length > 0) {
+          // Same public call, new process: keep sends already issued and the
+          // rejection facts. A different manual call has a different scope.
+          receiptDelivery.continueIssued(
+            priorReceiptContinuation(ctx.sessionManager.getEntries(), scopeId),
+          );
+        }
 
         // Station children (court diarist, inner-gate summons) omit navigator sidecar (#840).
         // Top-level public entry legs still attend automatically.

@@ -1352,7 +1352,9 @@ export async function dispatchPostAdmissionTurn<
         const deliveryRequest = await buildReceiptDeliveryRequest({
           admitted,
           env,
-          request,
+          // Host and the other axes already selected on this turn ride the
+          // shared projection. The pre-projection request does not have them.
+          request: turnRequest,
           issuedSoFar: issuedDeliveryRequests + 1,
         });
         issuedDeliveryRequests += 1;
@@ -1383,7 +1385,12 @@ export async function dispatchPostAdmissionTurn<
         );
         return await finishAfterTurn(
           withProcessCancelSkipAutoResume(
-            { ...settled, turnDispatched: true as const, issuedDeliveryRequests },
+            {
+              ...settled,
+              turnDispatched: true as const,
+              issuedDeliveryRequests,
+              ...deferredPersist,
+            },
             env.signal,
           ),
         );

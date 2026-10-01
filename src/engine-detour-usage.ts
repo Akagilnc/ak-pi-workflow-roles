@@ -331,15 +331,16 @@ export function sessionFileFromSessionDirectory(sessionDirectory: string): strin
 }
 
 /**
- * Mint one public-invocation scope id when an engine is mounted.
+ * Mint one public-invocation scope id.
  * Call once at the public-entry boundary — never inside the auto-resume loop.
- * The id lives on RoleTurnRequest / HostContext only (no detour sidecar file).
+ * Auto-resume reuses it; an explicit new public call, including manual resume,
+ * mints another. The id lives on RoleTurnRequest / HostContext only.
+ * Receipt facts and detour rows both use this id, including calls with no
+ * engine mounted — a missing engine must not merge two public calls.
  */
-export function mintEngineDetourInvocationScope(input: {
+export function mintEngineDetourInvocationScope(_input: {
   readonly effectiveEngine?: string;
-}): string | undefined {
-  const engine = input.effectiveEngine?.trim();
-  if (engine === undefined || engine.length === 0) return undefined;
+}): string {
   return randomUUID();
 }
 

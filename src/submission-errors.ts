@@ -50,6 +50,15 @@ export class WorkerPrefixReminderError extends Error {
   }
 }
 
+/**
+ * ADR 0066/0070 one-shot commit and prefix reminders.
+ * They stay a correction the same session may make, and they do not occupy
+ * the configured re-ask or 催交 budget (#1132).
+ */
+export function isOneShotWorkerReminderCode(code: unknown): boolean {
+  return code === "worker_commit_reminder" || code === "worker_prefix_reminder";
+}
+
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {

@@ -94,6 +94,7 @@ import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   noReceiptLifecycleFacts,
   parseNoReceiptLifecycleFacts,
+  receiptAttemptPointer,
   type NoReceiptLifecycleFacts,
 } from "../receipt-delivery-policy.ts";
 import type {
@@ -293,13 +294,40 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
  * Lifecycle fact the in-process runtime already wrote for this run and attempt.
  * Absent, malformed, or a previous attempt's bytes are not a count.
  */
+function lifecycleFactsFromEntry(entry: SessionEntry): unknown {
+  const customType = entry.customType ?? entry.message?.customType;
+  if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) return undefined;
+  return entry.data ?? entry.message?.details;
+}
+
 async function readCurrentAttemptNoReceiptFacts(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<NoReceiptLifecycleFacts | undefined> {
   const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
   if (entries === undefined) return undefined;
+  const scopeId = scope?.invocationScopeId?.trim() ?? "";
+  if (scopeId.length > 0) {
+    const pointer = receiptAttemptPointer(admitted.runDirectory, scopeId);
+    let selected: NoReceiptLifecycleFacts | undefined;
+    for (const entry of entries) {
+      const raw = lifecycleFactsFromEntry(entry);
+      if (raw === undefined) continue;
+      try {
+        const facts = parseNoReceiptLifecycleFacts(raw);
+        if (facts.runPointer !== admitted.runDirectory) continue;
+        if (facts.attemptPointer !== pointer) continue;
+        if (selected === undefined || facts.deliveryTurns >= selected.deliveryTurns) {
+          selected = facts;
+        }
+      } catch {
+        // A malformed historical entry is not this call's count.
+      }
+    }
+    return selected;
+  }
   let attemptStart = 0;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") {
@@ -308,9 +336,8 @@ async function readCurrentAttemptNoReceiptFacts(
     }
   }
   const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
-    entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
-    || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
-  const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
+    lifecycleFactsFromEntry(entry) !== undefined);
+  const raw = lifecycleEntry === undefined ? undefined : lifecycleFactsFromEntry(lifecycleEntry);
   if (raw === undefined) return undefined;
   let facts: NoReceiptLifecycleFacts;
   try {
@@ -319,7 +346,7 @@ async function readCurrentAttemptNoReceiptFacts(
     return undefined;
   }
   if (facts.runPointer !== admitted.runDirectory) return undefined;
-  if (facts.attemptPointer !== `current:${admitted.runDirectory}`) return undefined;
+  if (facts.attemptPointer !== receiptAttemptPointer(admitted.runDirectory)) return undefined;
   return facts;
 }
 
@@ -335,13 +362,13 @@ export async function settleHostEndedNoReceipt(
    */
   issuedDeliveryRequests = 0,
 ): Promise<TerminalResult> {
-  const persisted = await readCurrentAttemptNoReceiptFacts(admitted, authority);
+  const persisted = await readCurrentAttemptNoReceiptFacts(admitted, authority, scope);
   const facts = noReceiptLifecycleFacts({
     terminalToolCalled: persisted?.terminalToolCalled ?? false,
     rejectedReceipts: persisted?.rejectedReceipts ?? [],
     deliveryTurns: Math.max(issuedDeliveryRequests, persisted?.deliveryTurns ?? 0),
     runPointer: admitted.runDirectory,
-    attemptPointer: `current:${admitted.runDirectory}`,
+    attemptPointer: receiptAttemptPointer(admitted.runDirectory, scope?.invocationScopeId),
   });
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   await clearOppositeTerminalArtifactFace(admitted.runDirectory);
@@ -3254,7 +3281,7 @@ export async function settleFailureTerminalResult(
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output") {
-    const facts = await readCurrentAttemptNoReceiptFacts(admitted, authority);
+    const facts = await readCurrentAttemptNoReceiptFacts(admitted, authority, options);
     if (facts !== undefined) {
       const decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
       // #478: no_receipt is still a public Terminal — project accepted gate facts.

@@ -36,8 +36,9 @@ export function isCorrectableExecuteError(error: unknown): boolean {
 /**
  * Durable projection for correctable execute errors.
  * The ACP envelope consumes it on every correctable catch. The Pi adapter
- * consumes it for the unfinished-reason reminder, returned as an isError
- * tool result. Other Pi correctable errors stay native throws.
+ * consumes it for the one-shot commit and prefix reminders and the
+ * unfinished-reason reminder, returned as an isError tool result. Other Pi
+ * correctable errors stay native throws.
  */
 export type CorrectableExecuteRejectionProjection = {
   readonly diagnostic: string;

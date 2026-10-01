@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
@@ -41,7 +41,7 @@ import {
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 function captureIo() {
   const stdout: string[] = [];
@@ -83,6 +83,7 @@ async function setConfiguredLimit(home: string, limit: number): Promise<void> {
 
 type Turn = {
   readonly prompt: string;
+  readonly host: string | undefined;
   readonly hostSessionId: string | undefined;
   readonly kind: RoleTurnRequest["continuation"]["kind"];
 };
@@ -124,17 +125,15 @@ async function runExternalJudge(
   const seatsDispatched: string[] = [];
   let runDirectorySeen: string | undefined;
   const { io } = captureIo();
-  const host = {
+  const judgeHost = {
     async executeTurn(request: RoleTurnRequest) {
-      seatsDispatched.push(request.activation.role);
       if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
-      // Only this run's judge turns are counted as催交; review seats share the
-      // faux host and are recorded separately (they prove the audit handoff).
-      if (request.runDirectory !== runDirectorySeen || request.activation.role !== "judge") {
+      if (request.activation.role !== "judge") {
         return { code: 0, stderr: "", timedOut: false };
       }
       const turn: Turn = {
         prompt: request.continuation.prompt,
+        host: request.host,
         hostSessionId:
           request.continuation.kind === "resume" ? request.continuation.hostSessionId : undefined,
         kind: request.continuation.kind,
@@ -178,6 +177,13 @@ async function runExternalJudge(
       }
       await observe("after");
       return { code: 0, stderr: "", timedOut: false };
+    },
+  };
+  const reviewing = withPassingReviewHost(judgeHost);
+  const host = {
+    async executeTurn(request: RoleTurnRequest) {
+      seatsDispatched.push(request.activation.role);
+      return reviewing.executeTurn(request);
     },
   };
   const result = await runAkRole(
@@ -228,6 +234,9 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.equal(run.turns[0]?.kind, "initial");
     // 催交 rides a native resume of this run's own host session.
     assert.equal(run.turns[1]?.kind, "resume");
+    assert.equal(run.turns[1]?.host, "grok-build");
+    assert.equal(run.exitCode, 0);
+    assert.equal(run.terminal?.roleOutcome.kind, "accepted");
     // 票面 3：不跳审核。The audit handoff happens in the caller
     // (dispatchAdmitted → auditSubmittedRole) on the returned terminal's kind, so
     // a delivery-turn accepted must actually summon a further seat. Judge alone
@@ -285,9 +294,8 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
     const seatsDispatched: string[] = [];
     let runDirectorySeen: string | undefined;
     let turns = 0;
-    const host = {
+    const countersignHost = {
       async executeTurn(request: RoleTurnRequest) {
-        seatsDispatched.push(request.activation.role);
         if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
         if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
         turns += 1;
@@ -312,6 +320,13 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
         return { code: 0, stderr: "", timedOut: false };
       },
     };
+    const reviewing = withPassingReviewHost(countersignHost);
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        seatsDispatched.push(request.activation.role);
+        return reviewing.executeTurn(request);
+      },
+    };
     await setConfiguredLimit(home, 2);
     const { io } = captureIo();
     const result = await runAkRole(
@@ -328,6 +343,8 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       },
     );
     assert.equal(turns, 2, "first turn plus one催交 turn");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     // The催交 really sealed: the seat continued into its review chain.
     assert.ok(
       seatsDispatched.some((role) => role !== "countersign"),
@@ -872,8 +889,10 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     await setConfiguredLimit(home, 1);
     const project = await freshProject(home);
     const kinds: string[] = [];
+    let runDirectory: string | undefined;
     const host = {
       async executeTurn(request: RoleTurnRequest) {
+        runDirectory = request.runDirectory;
         kinds.push(request.continuation.kind);
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
@@ -905,6 +924,12 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.autoResumeCount, 1);
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
+    }
+    assert.ok(runDirectory !== undefined);
+    const runState = JSON.parse(await readFile(join(runDirectory!, "run-state.json"), "utf8")) as { state?: string };
+    assert.equal(runState.state, "terminal");
   });
 });
 
@@ -926,7 +951,7 @@ test("#1132: a Pi no-receipt settlement keeps the persisted delivery count", asy
           deliveryTurns: limit,
           sessionCompletion: "settled-without-accepted-receipt",
           runPointer: request.runDirectory,
-          attemptPointer: `current:${request.runDirectory}`,
+          attemptPointer: receiptAttemptPointer(request.runDirectory, request.invocationScopeId),
           acceptedReceipt: false,
         };
         await writeFile(

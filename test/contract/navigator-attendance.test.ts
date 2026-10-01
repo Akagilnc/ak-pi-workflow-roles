@@ -111,7 +111,7 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
   });
 });
 
-test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
+test("default delivery ceiling sends two Navigator corrections and then stops", async () => {
   await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -125,9 +125,9 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     const nav = await attendance(setting, harness, events, root);
     nav.prepare();
     while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    harness.rejectPrepare("root rejection one", "root rejection two");
+    harness.rejectPrepare("root rejection one", "root rejection two", "root rejection three");
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(harness.prompts(), 2, "budget exhaustion must not start another prompt");
+    assert.equal(harness.prompts(), 3, "one initial prompt plus two corrections, then stop");
     const deliveryFeed = JSON.parse(harness.promptTexts()[1] ?? "") as {
       terminalToolCalled?: boolean;
       acceptedReceipt?: boolean;
@@ -143,7 +143,9 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     assert.deepEqual(lifecycle?.data.rejectedReceipts, [
       { reason: "root rejection one", diagnosticAvailable: true },
       { reason: "root rejection two", diagnosticAvailable: true },
+      { reason: "root rejection three", diagnosticAvailable: true },
     ]);
+    assert.equal(lifecycle?.data.deliveryTurns, 2);
     assert.equal(lifecycle?.data.terminalToolCalled, true);
   });
 });

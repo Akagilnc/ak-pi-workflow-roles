@@ -168,8 +168,9 @@ function unreadablePostSubmissionStatus(
 /**
  * One more unreadable-status reask, counted against the same ceiling as the
  * other loops. The reask keeps autoResumeLimit so its own delivery and failure
- * recovery still have that budget. Exhaustion returns undefined: the caller
- * keeps the terminal it already has. ADR 0007 audit continues are not this shape.
+ * recovery still have that budget. Exhaustion is not a readable status: the
+ * caller presents the volume already in hand and does not advance review.
+ * ADR 0007 audit continues are not this shape.
  */
 function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv | undefined {
   const spent = env.unreadableReasksSpent ?? 0;
@@ -177,16 +178,37 @@ function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv 
   return { ...env, unreadableReasksSpent: spent + 1 };
 }
 
+/** Budget spent on an unreadable status. Distinct from "status is readable". */
+const UNREADABLE_REASK_EXHAUSTED = { unreadableReaskExhausted: true as const };
+
+function isUnreadableReaskExhausted(
+  value: SeatRunResult | typeof UNREADABLE_REASK_EXHAUSTED | undefined,
+): value is typeof UNREADABLE_REASK_EXHAUSTED {
+  return value === UNREADABLE_REASK_EXHAUSTED;
+}
+
+function presentOriginalVolume(
+  held: readonly string[],
+  terminal: TerminalResult | undefined,
+  io: CliIo,
+): void {
+  if (held.length > 0) {
+    for (const value of held) io.stdout(value);
+    return;
+  }
+  if (terminal !== undefined) io.stdout(formatTerminalResult(terminal));
+}
+
 async function reaskUnreadablePostSubmissionStatus(
   admitted: AdmittedRoleInvocation,
   terminal: TerminalResult | undefined,
   env: InstructionSeatRunEnv,
   io: CliIo,
-): Promise<SeatRunResult | undefined> {
+): Promise<SeatRunResult | typeof UNREADABLE_REASK_EXHAUSTED | undefined> {
   const message = unreadablePostSubmissionStatus(admitted, terminal);
   if (message === undefined) return undefined;
   const next = withUnreadableReask(env);
-  if (next === undefined) return undefined;
+  if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
     next,
@@ -385,6 +407,10 @@ async function dispatchAdmitted(
     env,
     io,
   );
+  if (isUnreadableReaskExhausted(unreadableReask)) {
+    presentOriginalVolume(held, result.terminal, io);
+    return result;
+  }
   if (unreadableReask !== undefined) return unreadableReask;
   if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
     return auditSubmittedRole(result, env, io);
@@ -856,6 +882,10 @@ export async function runPublicInstructionSeatResume(
         env,
         io,
       );
+    if (isUnreadableReaskExhausted(unreadableReask)) {
+      presentOriginalVolume(held, result.terminal, io);
+      return result;
+    }
     if (unreadableReask !== undefined) return unreadableReask;
     if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
       && result.terminal?.roleOutcome.kind === "accepted") {
@@ -1004,13 +1034,19 @@ async function auditSubmittedRole(
   if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {
     if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
-    if (next === undefined) return turn;
+    if (next === undefined) {
+      io.stdout(formatTerminalResult(turn.terminal));
+      return turn;
+    }
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
     if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
-    if (next === undefined) return turn;
+    if (next === undefined) {
+      io.stdout(formatTerminalResult(turn.terminal));
+      return turn;
+    }
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.

@@ -12,6 +12,19 @@ import { parseAutoResumeLimit } from "./public-cli/config.ts";
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;
 
+/** One in-process催交 send, tagged with the public call that issued it. */
+export const RECEIPT_DELIVERY_REQUEST_ENTRY = "ak-receipt-delivery-request" as const;
+
+/**
+ * Facts of one public call. A call with an invocation scope does not share
+ * `current:<runDirectory>` with the previous call on the same run.
+ */
+export function receiptAttemptPointer(runPointer: string, invocationScopeId?: string): string {
+  const scope = invocationScopeId?.trim() ?? "";
+  if (scope.length > 0) return `invocation:${scope}`;
+  return `current:${runPointer}`;
+}
+
 /** Child-process transport for the effective ceiling (#1132). */
 export const RECEIPT_DELIVERY_LIMIT_ENV = "AK_ROLE_RECEIPT_DELIVERY_LIMIT" as const;
 
@@ -183,5 +196,61 @@ export function createReceiptDeliveryPolicy(limit?: number) {
     facts(binding: { runPointer: string; attemptPointer: string }): NoReceiptLifecycleFacts {
       return noReceiptLifecycleFacts({ terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, ...binding });
     },
+    /**
+     * Continue a public call after the in-memory policy was rebuilt.
+     * Sends already issued spend the same budget; copied rejections keep
+     * the fact and do not spend again.
+     */
+    continueIssued(prior: {
+      readonly deliveryTurns: number;
+      readonly rejectedReceipts: readonly { reason: string }[];
+    }) {
+      for (const receipt of prior.rejectedReceipts) {
+        this.recordRejected(receipt.reason, { spend: false });
+      }
+      for (let index = 0; index < prior.deliveryTurns; index += 1) {
+        this.recordDeliveryRequest();
+      }
+    },
+  };
+}
+
+function entryRecord(entry: unknown): Record<string, unknown> | undefined {
+  return isRecord(entry) ? entry : undefined;
+}
+
+/** Sends and the latest lifecycle fact already stored for this public call. */
+export function priorReceiptContinuation(
+  entries: Iterable<unknown>,
+  invocationScopeId: string,
+): { deliveryTurns: number; rejectedReceipts: readonly { reason: string }[] } {
+  const pointer = receiptAttemptPointer("", invocationScopeId);
+  let entryTurns = 0;
+  let factTurns = 0;
+  let rejectedReceipts: readonly { reason: string }[] = [];
+  for (const entry of entries) {
+    const record = entryRecord(entry);
+    if (record === undefined) continue;
+    const message = isRecord(record.message) ? record.message : undefined;
+    const customType = record.customType ?? message?.customType;
+    const data = record.data ?? message?.details;
+    if (customType === RECEIPT_DELIVERY_REQUEST_ENTRY && isRecord(data) && data.invocationScopeId === invocationScopeId) {
+      entryTurns += 1;
+    }
+    if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) continue;
+    try {
+      const facts = parseNoReceiptLifecycleFacts(data);
+      if (facts.attemptPointer !== pointer) continue;
+      if (facts.deliveryTurns >= factTurns) {
+        factTurns = facts.deliveryTurns;
+        rejectedReceipts = facts.rejectedReceipts;
+      }
+    } catch {
+      // A malformed historical entry is not this call's count.
+    }
+  }
+  return {
+    deliveryTurns: Math.max(entryTurns, factTurns),
+    rejectedReceipts,
   };
 }

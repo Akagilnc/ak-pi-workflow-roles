@@ -11,6 +11,7 @@ import type {
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 /**
  * #1132: the closeRound re-ask loop is one of the counts that read the single
@@ -153,11 +154,14 @@ export async function driveExternalRoleTurnRounds(
   let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
   let stderr = "";
-  // #1132: first round is the initial delivery; every later round is one re-ask
-  // charged against the single configured ceiling.
-  const roundLimit = externalRoleTurnRoundLimit(request);
+  // #1132: the first round is the initial delivery. Each later counted re-ask
+  // spends the configured ceiling. The one commit reminder and the one prefix
+  // reminder are not counted re-asks (ADR 0066/0070).
+  const countedReaskLimit = deliveryLimitFromConfig(request.deliveryRequestLimit);
+  const exemptReminders = new Set<string>();
+  let countedReasks = 0;
 
-  for (let attempt = 0; attempt < roundLimit; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
 
     let round: ExternalHostRoundOutcome;
@@ -180,15 +184,22 @@ export async function driveExternalRoleTurnRounds(
       return { code: 0, stderr, timedOut: false };
     }
     if ("failure" in closure) return asFailure(closure.failure, stderr);
+    const reminderCode = closure.retry.code;
+    const exempt = isOneShotWorkerReminderCode(reminderCode) && !exemptReminders.has(reminderCode);
+    if (exempt) exemptReminders.add(reminderCode);
+    else {
+      countedReasks += 1;
+      if (countedReasks > countedReaskLimit) {
+        return asFailure({
+          cause: "output",
+          identity: { name: driver.roundLimitName, code: "round-retry-limit" },
+          ...(driver.currentSessionId() === undefined ? {} : { details: { sessionId: driver.currentSessionId() } }),
+        });
+      }
+    }
     prompt = closure.retry.message;
     driver.afterRetry?.();
   }
-
-  return asFailure({
-    cause: "output",
-    identity: { name: driver.roundLimitName, code: "round-retry-limit" },
-    ...(driver.currentSessionId() === undefined ? {} : { details: { sessionId: driver.currentSessionId() } }),
-  });
 }
 
 export function createSerializedRoleTurnHost(
