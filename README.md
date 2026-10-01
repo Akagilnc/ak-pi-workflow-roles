@@ -118,7 +118,7 @@ ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this re
 # merger — reconcile merge materials (role escalates when nothing is in progress)
 ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
-# notary — document-fidelity check on one retained source run; ticket key inherited from source-run admitted form
+# notary — direct summons with a source-run locator; duties are in souls/notary.md
 ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
 
 # inspector — direct complexity and test-quality check

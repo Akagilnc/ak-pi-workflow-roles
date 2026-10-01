@@ -108,7 +108,7 @@ ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this re
 # 校书郎——调和工作树中的 merge 材料（无进行中合并时由角色 escalate）
 ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
-# 符宝郎——文书核验一份留存 source run；票号从 source-run admitted form 继承
+# 符宝郎——以 source-run locator 直调；职掌见 souls/notary.md
 ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
 
 # 台院——直调复杂度与测试质量两轴
