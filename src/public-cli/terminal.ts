@@ -365,9 +365,15 @@ export function formatTerminalResult(result: TerminalResult): string {
       lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
     }
   } else {
-    const payloads =
-      result.roleOutcome.kind === "accepted" ||
-      result.roleOutcome.kind === "audit_escalation"
+    const directionUnsettled = result.roleOutcome.decisiveFacts?.directionUnsettled === true
+      && (result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation");
+    const fullHistory = directionUnsettled
+      && result.submissions !== undefined
+      && result.submissions.length > 0;
+    const payloads = fullHistory
+      ? result.submissions ?? []
+      : result.roleOutcome.kind === "accepted" ||
+        result.roleOutcome.kind === "audit_escalation"
         ? coalesceSubmissionRows(result.roleOutcome.payloads, result.submissions)
         : result.submissions ?? [];
     for (let i = payloads.length - 1; i >= 0; i -= 1) {

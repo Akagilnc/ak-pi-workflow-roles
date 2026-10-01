@@ -98,6 +98,7 @@ function bookDirectOfficerPointer(
   officer: GateOfficer,
   result: GatekeeperResult,
   summoned: PublicSummonResult,
+  toolCallId: string,
 ): void {
   if (
     result.status !== "converged"
@@ -122,6 +123,7 @@ function bookDirectOfficerPointer(
     ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
       ? { runDirectory: summoned.runDirectory }
       : {}),
+    ...(toolCallId.trim() === "" ? {} : { submissionToolCallId: toolCallId }),
   });
 }
 
@@ -189,6 +191,7 @@ export async function requireSubmissionGate(options: {
           projected.officer,
           gatekeeper,
           projected.summoned,
+          options.toolCallId,
         );
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);

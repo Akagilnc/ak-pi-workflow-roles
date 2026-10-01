@@ -7,6 +7,7 @@
  * records the delivery requests actually issued, never the budget
  * (零次即记零，不把额度或其他续跑次数冒充催交次数).
  */
+import { packagedRoleOutputRejectionReason } from "./navigator-invocation-identity.ts";
 import { AUTO_RESUME_LIMIT } from "./public-cli/run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./public-cli/config.ts";
 
@@ -203,10 +204,12 @@ export function createReceiptDeliveryPolicy(limit?: number) {
     continueIssued(prior: {
       readonly deliveryTurns: number;
       readonly rejectedReceipts: readonly { reason: string }[];
+      readonly terminalToolCalled?: boolean;
     }) {
       for (const receipt of prior.rejectedReceipts) {
         this.recordRejected(receipt.reason);
       }
+      if (prior.terminalToolCalled === true) terminalToolCalled = true;
       for (let index = 0; index < prior.deliveryTurns; index += 1) {
         this.recordDeliveryRequest();
       }
@@ -218,38 +221,136 @@ function entryRecord(entry: unknown): Record<string, unknown> | undefined {
   return isRecord(entry) ? entry : undefined;
 }
 
-/** Sends and the latest lifecycle fact already stored for this public call. */
+const RECEIPT_DELIVERY_PROMPT = "ak-receipt-delivery-prompt";
+
+/** Sends, observed rejections, and the latest lifecycle fact for this public call. */
+export type ReceiptContinuation = {
+  readonly deliveryTurns: number;
+  readonly rejectedReceipts: readonly { reason: string }[];
+  readonly terminalToolCalled: boolean;
+};
+
+function customTypeOf(record: Record<string, unknown>, message: Record<string, unknown> | undefined): unknown {
+  return record.customType ?? message?.customType;
+}
+
+function dataOf(record: Record<string, unknown>, message: Record<string, unknown> | undefined): unknown {
+  return record.data ?? message?.details;
+}
+
+/** Scope id carried by a delivery request or an invocation-scoped lifecycle fact. */
+function scopeTag(record: Record<string, unknown>): string | undefined {
+  const message = isRecord(record.message) ? record.message : undefined;
+  const customType = customTypeOf(record, message);
+  const data = dataOf(record, message);
+  if (
+    customType === RECEIPT_DELIVERY_REQUEST_ENTRY
+    && isRecord(data)
+    && typeof data.invocationScopeId === "string"
+    && data.invocationScopeId.trim() !== ""
+  ) {
+    return data.invocationScopeId;
+  }
+  if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) return undefined;
+  try {
+    const facts = parseNoReceiptLifecycleFacts(data);
+    const prefix = "invocation:";
+    if (!facts.attemptPointer.startsWith(prefix)) return undefined;
+    const scope = facts.attemptPointer.slice(prefix.length);
+    return scope.trim() === "" ? undefined : scope;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A later manual call starts with its own user message and has no scope tag yet.
+ * 催交 follow-up text stays inside the call that already tagged itself.
+ */
+function plainUserBoundary(record: Record<string, unknown>): boolean {
+  const message = isRecord(record.message) ? record.message : undefined;
+  if (message?.role !== "user") return false;
+  return customTypeOf(record, message) !== RECEIPT_DELIVERY_PROMPT;
+}
+
+function unionRejectionReasons(
+  observed: readonly string[],
+  snapshot: readonly { reason: string }[],
+): { reason: string }[] {
+  const remaining = new Map<string, number>();
+  for (const reason of observed) remaining.set(reason, (remaining.get(reason) ?? 0) + 1);
+  const merged = observed.map((reason) => ({ reason }));
+  for (const item of snapshot) {
+    const left = remaining.get(item.reason) ?? 0;
+    if (left > 0) remaining.set(item.reason, left - 1);
+    else merged.push({ reason: item.reason });
+  }
+  return merged;
+}
+
+/**
+ * Sends and rejections already stored for this public call.
+ * A rejection toolResult has no scope of its own: it belongs to the next
+ * scope tag of this call. A later untagged rejection, after a plain user
+ * message and before that call writes a new tag, stays with the new call.
+ * An empty lifecycle snapshot does not erase toolResults already observed.
+ */
 export function priorReceiptContinuation(
   entries: Iterable<unknown>,
   invocationScopeId: string,
-): { deliveryTurns: number; rejectedReceipts: readonly { reason: string }[] } {
+): ReceiptContinuation {
   const pointer = receiptAttemptPointer("", invocationScopeId);
   let entryTurns = 0;
   let factTurns = 0;
-  let rejectedReceipts: readonly { reason: string }[] = [];
+  let snapshotReceipts: readonly { reason: string }[] = [];
+  let snapshotTerminal = false;
+  const observed: string[] = [];
+  let pending: string[] = [];
+  let lastTag: string | undefined;
+  let plainUserAfterLastTag = false;
   for (const entry of entries) {
     const record = entryRecord(entry);
     if (record === undefined) continue;
-    const message = isRecord(record.message) ? record.message : undefined;
-    const customType = record.customType ?? message?.customType;
-    const data = record.data ?? message?.details;
-    if (customType === RECEIPT_DELIVERY_REQUEST_ENTRY && isRecord(data) && data.invocationScopeId === invocationScopeId) {
-      entryTurns += 1;
-    }
-    if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) continue;
-    try {
-      const facts = parseNoReceiptLifecycleFacts(data);
-      if (facts.attemptPointer !== pointer) continue;
-      if (facts.deliveryTurns >= factTurns) {
-        factTurns = facts.deliveryTurns;
-        rejectedReceipts = facts.rejectedReceipts;
+    const tagged = scopeTag(record);
+    if (tagged !== undefined) {
+      if (tagged === invocationScopeId) observed.push(...pending);
+      pending = [];
+      lastTag = tagged;
+      plainUserAfterLastTag = false;
+      const message = isRecord(record.message) ? record.message : undefined;
+      const customType = customTypeOf(record, message);
+      if (tagged !== invocationScopeId) continue;
+      if (customType === RECEIPT_DELIVERY_REQUEST_ENTRY) entryTurns += 1;
+      if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) continue;
+      try {
+        const facts = parseNoReceiptLifecycleFacts(dataOf(record, message));
+        if (facts.attemptPointer !== pointer) continue;
+        if (facts.deliveryTurns >= factTurns) {
+          factTurns = facts.deliveryTurns;
+          snapshotReceipts = facts.rejectedReceipts;
+          snapshotTerminal = facts.terminalToolCalled;
+        }
+      } catch {
+        // A malformed historical entry is not this call's count.
       }
-    } catch {
-      // A malformed historical entry is not this call's count.
+      continue;
     }
+    if (plainUserBoundary(record)) {
+      pending = [];
+      plainUserAfterLastTag = true;
+      continue;
+    }
+    const message = isRecord(record.message) ? record.message : undefined;
+    if (message?.role !== "toolResult") continue;
+    const reason = packagedRoleOutputRejectionReason(message);
+    if (reason === undefined) continue;
+    pending.push(reason);
   }
+  if (!plainUserAfterLastTag && lastTag === invocationScopeId) observed.push(...pending);
+  const rejectedReceipts = unionRejectionReasons(observed, snapshotReceipts);
   return {
     deliveryTurns: Math.max(entryTurns, factTurns),
     rejectedReceipts,
+    terminalToolCalled: snapshotTerminal || rejectedReceipts.length > 0,
   };
 }

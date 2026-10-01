@@ -13,18 +13,6 @@ import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
-/**
- * #1132: the closeRound re-ask loop is one of the counts that read the single
- * configured `autoResumeLimit` value. The first round is the initial delivery
- * and never a re-ask, so the loop spends at most the configured number of
- * re-ask rounds beyond it. Absent on the request = package default.
- */
-export function externalRoleTurnRoundLimit(
-  request: Pick<RoleTurnRequest, "deliveryRequestLimit">,
-): number {
-  return 1 + deliveryLimitFromConfig(request.deliveryRequestLimit);
-}
-
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
 export type ExternalHostRoundOutcome =

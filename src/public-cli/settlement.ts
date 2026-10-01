@@ -94,6 +94,7 @@ import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   noReceiptLifecycleFacts,
   parseNoReceiptLifecycleFacts,
+  priorReceiptContinuation,
   receiptAttemptPointer,
   type NoReceiptLifecycleFacts,
 } from "../receipt-delivery-policy.ts";
@@ -362,11 +363,27 @@ export async function settleHostEndedNoReceipt(
    */
   issuedDeliveryRequests = 0,
 ): Promise<TerminalResult> {
-  const persisted = await readCurrentAttemptNoReceiptFacts(admitted, authority, scope);
+  const scopeId = scope?.invocationScopeId?.trim() ?? "";
+  const persisted = scopeId.length > 0
+    ? undefined
+    : await readCurrentAttemptNoReceiptFacts(admitted, authority, scope);
+  let terminalToolCalled = persisted?.terminalToolCalled ?? false;
+  let rejectedReceipts: readonly { reason: string }[] = persisted?.rejectedReceipts ?? [];
+  let recordedTurns = persisted?.deliveryTurns ?? 0;
+  if (scopeId.length > 0) {
+    const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
+    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
+    if (entries !== undefined) {
+      const prior = priorReceiptContinuation(entries, scopeId);
+      terminalToolCalled = prior.terminalToolCalled;
+      rejectedReceipts = prior.rejectedReceipts;
+      recordedTurns = prior.deliveryTurns;
+    }
+  }
   const facts = noReceiptLifecycleFacts({
-    terminalToolCalled: persisted?.terminalToolCalled ?? false,
-    rejectedReceipts: persisted?.rejectedReceipts ?? [],
-    deliveryTurns: Math.max(issuedDeliveryRequests, persisted?.deliveryTurns ?? 0),
+    terminalToolCalled,
+    rejectedReceipts,
+    deliveryTurns: Math.max(issuedDeliveryRequests, recordedTurns),
     runPointer: admitted.runDirectory,
     attemptPointer: receiptAttemptPointer(admitted.runDirectory, scope?.invocationScopeId),
   });

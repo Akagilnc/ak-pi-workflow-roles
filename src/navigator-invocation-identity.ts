@@ -214,6 +214,38 @@ export type PackagedRoleTerminalMessage = {
 };
 
 /**
+ * Durable rejection of a packaged output tool.
+ * Unknown tools and infrastructure failures are not receipt rejections.
+ * Empty text is still a rejection. Undefined means "not this fact".
+ */
+export function packagedRoleOutputRejectionReason(message: {
+  readonly toolName?: unknown;
+  readonly isError?: unknown;
+  readonly details?: unknown;
+  readonly content?: unknown;
+}): string | undefined {
+  if (typeof message.toolName !== "string") return undefined;
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName) && message.toolName !== "ak_submission_output") {
+    return undefined;
+  }
+  if (message.isError !== true) return undefined;
+  if (classifyPackagedRoleTerminalResult(message).kind !== "nonterminal") return undefined;
+  const content = message.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (
+      typeof part === "object" && part !== null && !Array.isArray(part)
+      && (part as { type?: unknown }).type === "text"
+      && typeof (part as { text?: unknown }).text === "string"
+    ) {
+      return (part as { text: string }).text;
+    }
+    return "";
+  }).join("").trim();
+}
+
+/**
  * One shared typed terminal classifier for packaged role output toolResults.
  * Consumed by lifecycle principal completion, publicNavigatorSettlement, and
  * every public CLI role Receipt extractor. No second classifier.

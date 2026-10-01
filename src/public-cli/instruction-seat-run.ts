@@ -5,11 +5,11 @@
  */
 import { dirname, resolve, sep } from "node:path";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
-import { bookDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
+import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
-import { officerConclusionReask, gateOfficerForSubject } from "../gatekeeper-role.ts";
+import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from "../gatekeeper-role.ts";
 import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
@@ -191,6 +191,11 @@ function presentOriginalVolume(
   terminal: TerminalResult | undefined,
   io: CliIo,
 ): void {
+  // The held buffer was formatted before direction facts were attached.
+  if (terminal?.roleOutcome.decisiveFacts?.directionUnsettled === true) {
+    io.stdout(formatTerminalResult(terminal));
+    return;
+  }
   if (held.length > 0) {
     for (const value of held) io.stdout(value);
     return;
@@ -1067,7 +1072,7 @@ export async function continueParentAfterChild(
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
       const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted.role, latestQueuePayload(resolved.terminal), resolved.admitted.runId);
+      return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted, latestQueuePayload(resolved.terminal));
     }
     return runPublicInstructionSeatResume({
       runId: parentRunId,
@@ -1079,14 +1084,92 @@ export async function continueParentAfterChild(
   return result;
 }
 
+function userDialogueText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (
+      typeof part === "object" && part !== null && !Array.isArray(part)
+      && (part as { type?: unknown }).type === "text"
+      && typeof (part as { text?: unknown }).text === "string"
+    ) {
+      return (part as { text: string }).text;
+    }
+    return "";
+  }).join("");
+}
+
+/** Exact submission body already relayed to the officer. No prose match. */
+async function officerDialogueMatches(
+  env: InstructionSeatRunEnv,
+  admitted: AdmittedRoleInvocation,
+  body: string,
+): Promise<boolean> {
+  if (body.length === 0) return false;
+  if (admitted.instruction === body) return true;
+  try {
+    const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
+    const entries = await readBoundSessionEntries(sessionFile);
+    for (const entry of entries) {
+      if (entry.type !== "message" || entry.message?.role !== "user") continue;
+      return userDialogueText(entry.message.content) === body;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * A gate is already passed only when an officer run reviewed this submission
+ * and its latest queue word is converged. The resumed seat's role is not itself
+ * a pass. Unknown or unreadable evidence does not skip the gate.
+ */
+async function officerPassedCurrentSubmission(input: {
+  readonly env: InstructionSeatRunEnv;
+  readonly parentSessionFile: string;
+  readonly officer: GateOfficer;
+  readonly toolCallId: string;
+  readonly body: string;
+  readonly resumed?: AdmittedRoleInvocation;
+}): Promise<boolean> {
+  const { env, officer, body, resumed } = input;
+  if (resumed?.role === officer && await officerDialogueMatches(env, resumed, body)) return true;
+  const pointer = await readDirectOfficerRunPointer(input.parentSessionFile, officer);
+  if (pointer?.runDirectory === undefined) return false;
+  if (
+    pointer.submissionToolCallId !== undefined
+    && pointer.submissionToolCallId !== input.toolCallId
+  ) {
+    return false;
+  }
+  const officerRunId = runIdFromRunDirectory(pointer.runDirectory);
+  if (officerRunId === undefined) return false;
+  let admitted: AdmittedRoleInvocation;
+  try {
+    const loaded = await loadResumablePublicRole(
+      env.home,
+      officerRunId,
+      env.principalAuthority,
+    );
+    admitted = loaded.admitted;
+  } catch {
+    return false;
+  }
+  if (admitted.role !== officer) return false;
+  const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+  if (latestQueueStatus(terminal) !== "converged") return false;
+  if (pointer.submissionToolCallId === input.toolCallId) return true;
+  return officerDialogueMatches(env, admitted, body);
+}
+
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
 async function auditSubmittedRole(
   turn: SeatRunResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
-  passedOfficer?: PackagedRole,
+  resumedOfficer?: AdmittedRoleInvocation,
   passedReceipt?: unknown,
-  passedRunId?: string,
 ): Promise<SeatRunResult> {
   const admitted = turn.admitted;
   if (admitted === undefined || !AUDITED_ROLES.has(admitted.role)
@@ -1153,8 +1236,17 @@ async function auditSubmittedRole(
     },
     abort() {},
   };
+  const submissionBody = readableGateItem(accepted);
+  const passedThisSubmission = (officer: GateOfficer) => officerPassedCurrentSubmission({
+    env,
+    parentSessionFile: sessionFile,
+    officer,
+    toolCallId,
+    body: submissionBody,
+    ...(resumedOfficer === undefined ? {} : { resumed: resumedOfficer }),
+  });
   if (admitted.role === "doctor") {
-    if (passedOfficer !== "auditor") {
+    if (!await passedThisSubmission("auditor")) {
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
@@ -1178,6 +1270,7 @@ async function auditSubmittedRole(
           if (officerSession !== undefined) {
             bookDirectOfficerRunPointer({
               parentSessionFile: sessionFile, officer: "auditor", sessionFile: officerSession,
+              submissionToolCallId: toolCallId,
               ...(summoned.runDirectory === undefined ? {} : { runDirectory: summoned.runDirectory }),
             });
           }
@@ -1217,7 +1310,7 @@ async function auditSubmittedRole(
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     });
     let chain: Awaited<ReturnType<typeof runJudgeGates>>;
-    let officerRunId = passedRunId;
+    let officerRunId = resumedOfficer?.runId;
     const runGate = (subject: Parameters<typeof requireSubmissionGate>[0]["subject"]) =>
       requireSubmissionGate({
         context,
@@ -1234,8 +1327,7 @@ async function auditSubmittedRole(
       });
     if (admitted.role === "judge") {
       chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
-          || (passedOfficer === "notary" && subject.kind === "judge_draft"),
+        gateAlreadyConverged: async (subject) => passedThisSubmission(gateOfficerForSubject(subject)),
         runGate,
       });
     } else {
@@ -1245,7 +1337,7 @@ async function auditSubmittedRole(
           ? { kind: "secretariat_verdict" as const }
           : { kind: "countersign_verdict" as const };
       const officer = gateOfficerForSubject(subject);
-      if (passedOfficer === officer) {
+      if (await passedThisSubmission(officer)) {
         chain = { status: "converged", passes: [] };
       } else {
         const pass = await runGate(subject);
