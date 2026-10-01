@@ -236,11 +236,10 @@ export function packagedRoleOutputRejectionReason(message: {
   if (!Array.isArray(content)) return "";
   return content.map((part) => {
     if (
-      typeof part === "object" && part !== null && !Array.isArray(part)
-      && (part as { type?: unknown }).type === "text"
-      && typeof (part as { text?: unknown }).text === "string"
+      isRecord(part) && part.type === "text"
+      && typeof part.text === "string"
     ) {
-      return (part as { text: string }).text;
+      return part.text;
     }
     return "";
   }).join("").trim();

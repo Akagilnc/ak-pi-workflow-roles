@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isRecord } from "./unknown-value.ts";
 
 /** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
 export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as const;
@@ -57,12 +58,6 @@ export function bookDirectOfficerRunPointer(options: {
   return pointer;
 }
 
-function pointerRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
 /**
  * Read the one officer pointer. Missing or unreadable is not a pass:
  * the caller re-runs the gate.
@@ -72,11 +67,11 @@ export async function readDirectOfficerRunPointer(
   officer: DirectOfficerRunPointer["officer"],
 ): Promise<DirectOfficerRunPointer | undefined> {
   try {
-    const raw = pointerRecord(JSON.parse(await readFile(
+    const raw: unknown = JSON.parse(await readFile(
       join(dirname(parentSessionFile), "auditor-roles", `${officer}.pointer.json`),
       "utf8",
-    )));
-    if (raw === undefined || raw.kind !== DIRECT_OFFICER_RUN_POINTER_KIND || raw.version !== 1) {
+    ));
+    if (!isRecord(raw) || raw.kind !== DIRECT_OFFICER_RUN_POINTER_KIND || raw.version !== 1) {
       return undefined;
     }
     if (raw.officer !== officer) return undefined;

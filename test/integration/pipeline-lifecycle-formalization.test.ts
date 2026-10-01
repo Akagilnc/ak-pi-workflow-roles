@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -66,12 +66,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       },
     };
 
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const io = {
-      stdout: (t: string) => { stdout.push(t); },
-      stderr: (t: string) => { stderr.push(t); },
-    };
+    const { stdout, stderr, io } = captureIo();
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "arbitrate issue #517"],
       {

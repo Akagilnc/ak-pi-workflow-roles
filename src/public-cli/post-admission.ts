@@ -641,9 +641,6 @@ async function settleDeferredPersist<
       ...failed,
       turnDispatched: true as const,
       skipAutoResume: true as const,
-      ...(result.issuedDeliveryRequests === undefined
-        ? {}
-        : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
     };
   }
 }
@@ -675,22 +672,15 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
  * failure re-read, the shouldPresent gate, the fresh-seal check, open-court
  * cleanup, cancel re-reads, run-state persist, and the stderr mirror.
  *
- * `issuedSoFar` is how many delivery requests this run already spent, so the
- * delivery-state body reports what really went out.
+ * The caller owns the live delivery policy; the request projects its next send.
  */
 async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(input: {
   admitted: A;
   env: PostAdmissionEnv;
   request: RoleTurnRequest;
-  issuedSoFar: number;
+  receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): Promise<RoleTurnRequest> {
-  const { admitted, env, request } = input;
-  const limit = deliveryLimitFromConfig(env.autoResumeLimit);
-  // pi's existing delivery-request body, carrying the count already spent.
-  const policy = createReceiptDeliveryPolicy(limit);
-  for (let issued = 0; issued < input.issuedSoFar; issued += 1) {
-    policy.recordDeliveryRequest();
-  }
+  const { admitted, env, request, receiptDelivery } = input;
   const hostSessionId = await readStoredHostSessionId(
     env.host,
     env.principalAuthority,
@@ -700,10 +690,13 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
     ...request,
     continuation: {
       kind: "resume",
-      prompt: JSON.stringify(policy.deliveryState()),
+      prompt: JSON.stringify({
+        ...receiptDelivery.deliveryState(),
+        deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
+      }),
       ...(hostSessionId === undefined ? {} : { hostSessionId }),
     },
-    deliveryRequestLimit: limit,
+    deliveryRequestLimit: receiptDelivery.limit,
   };
 }
 
@@ -715,8 +708,6 @@ type DispatchOutcomeFor<A extends AdmittedRoleInvocation, T extends TerminalResu
   skipAutoResume?: true;
   turnDispatched?: true;
   needsPersist?: true;
-  /** Delivery requests actually issued on this run, including earlier attempts. */
-  issuedDeliveryRequests?: number;
 };
 
 /**
@@ -1069,12 +1060,8 @@ export async function dispatchPostAdmissionTurn<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
-  /**
-   * #1132: delivery requests already issued on this run. Failure recovery
-   * re-enters this dispatch; the count continues instead of restarting.
-   * Absent on a first turn = none issued.
-   */
-  issuedDeliveryRequests?: number;
+  /** Call-owned delivery policy survives every failure-recovery dispatch. */
+  receiptDelivery?: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): Promise<DispatchOutcomeFor<A, T>> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
   const persistRunState = input.persistRunState !== false;
@@ -1088,17 +1075,8 @@ export async function dispatchPostAdmissionTurn<
    * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
    */
   let afterDispatchApplied = false;
-  /**
-   * #1132: delivery requests actually issued on this run. Counted per real
-   * prompt sent — never the budget, never another loop's resumes.
-   */
-  let issuedDeliveryRequests = input.issuedDeliveryRequests ?? 0;
-  /**
-   * #1132: the one effective ceiling, resolved once per call from the caller's
-   * already-resolved configured value (never re-read here). Shared with the
-   * host adapter's own re-ask loop through the projected turn request.
-   */
-  const deliveryLimit = deliveryLimitFromConfig(env.autoResumeLimit);
+  const receiptDelivery = input.receiptDelivery ?? createReceiptDeliveryPolicy(env.autoResumeLimit);
+  let turnDispatched = false;
   // #1132: the AK-side 催交 covers hosts that do not deliver to themselves.
   // Pi runs the package role runtime in-process, and that runtime already issues
   // its own delivery requests at `agent_end` and records the real count — asking
@@ -1138,9 +1116,6 @@ export async function dispatchPostAdmissionTurn<
         )),
         turnDispatched: true as const,
         skipAutoResume: true as const,
-        ...(result.issuedDeliveryRequests === undefined
-          ? {}
-          : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
         ...deferredPersist,
       };
     }
@@ -1213,9 +1188,6 @@ export async function dispatchPostAdmissionTurn<
         )) as { exitCode: number; admitted: A; terminal: T },
         ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
         ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
-        ...(result.issuedDeliveryRequests === undefined
-          ? {}
-          : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
         ...deferredPersist,
       };
     }
@@ -1294,6 +1266,7 @@ export async function dispatchPostAdmissionTurn<
     let result: RoleTurnResult;
     try {
       recordRunStart(admitted.runDirectory);
+      turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
@@ -1344,7 +1317,7 @@ export async function dispatchPostAdmissionTurn<
     // recovery: a delivery turn that fails keeps its true cause below.
     // The delivery budget is spent HERE, at the outermost level; only when it is
     // exhausted with still no receipt does the settlement seam record no_receipt.
-    while (akSeamDeliversReceipt && issuedDeliveryRequests < deliveryLimit) {
+    while (akSeamDeliversReceipt && receiptDelivery.nextAction() === "request-delivery") {
       // Assembly sits in the same post-start catch as the host call. A throw
       // here is a started turn: resume the session, and do not count a request
       // that never reached the host.
@@ -1357,9 +1330,8 @@ export async function dispatchPostAdmissionTurn<
           // Host and the other axes already selected on this turn ride the
           // shared projection. The pre-projection request does not have them.
           request: turnRequest,
-          issuedSoFar: issuedDeliveryRequests + 1,
+          receiptDelivery,
         });
-        issuedDeliveryRequests += 1;
         // The same native-resume projection the first turn uses (host adapter owns
         // the resume; AK only hands it the request — ADR 0082).
         deliveryTurnRequest = {
@@ -1368,6 +1340,7 @@ export async function dispatchPostAdmissionTurn<
           runDirectory: admitted.runDirectory,
           ...(env.signal === undefined ? {} : { signal: env.signal }),
         };
+        receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
@@ -1390,7 +1363,6 @@ export async function dispatchPostAdmissionTurn<
             {
               ...settled,
               turnDispatched: true as const,
-              issuedDeliveryRequests,
               ...deferredPersist,
             },
             env.signal,
@@ -1435,10 +1407,7 @@ export async function dispatchPostAdmissionTurn<
             );
           }
         }
-        return await finishAfterTurn({
-          ...deliveryTurn.outcome,
-          issuedDeliveryRequests,
-        });
+        return await finishAfterTurn(deliveryTurn.outcome);
       }
     }
 
@@ -1449,7 +1418,7 @@ export async function dispatchPostAdmissionTurn<
         admitted,
         env.principalAuthority,
         noReceiptScope,
-        issuedDeliveryRequests,
+        receiptDelivery.issuedDeliveryRequests(),
       ) as T,
       noReceiptScope,
     );
@@ -1488,9 +1457,13 @@ export async function dispatchPostAdmissionTurn<
       admitted,
       terminal: noReceipt,
       turnDispatched: true as const,
-      issuedDeliveryRequests,
       ...deferredPersist,
     });
+  } catch (error) {
+    if (turnDispatched && !(error instanceof TurnDispatchedFailure)) {
+      throw new TurnDispatchedFailure(error);
+    }
+    throw error;
   } finally {
     // Public manual resume (#987) holds no package writer lease.
     if (lease !== undefined) {
@@ -1654,7 +1627,7 @@ async function runSettledAutoResumeLoop<
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
   const dispatchEnv = input.dispatchEnv ?? input.env;
-  let issuedDeliveryRequests = 0;
+  const receiptDelivery = createReceiptDeliveryPolicy(input.env.autoResumeLimit);
   return runWithAutoResumeLoop({
     admitted: input.admitted,
     principalAuthority: input.env.principalAuthority,
@@ -1677,14 +1650,11 @@ async function runSettledAutoResumeLoop<
             ...(lease === undefined ? {} : { lease }),
             adapters,
             persistRunState: false,
-            issuedDeliveryRequests,
+            receiptDelivery,
             ...(input.effectiveEngine === undefined
               ? {}
               : { effectiveEngine: input.effectiveEngine }),
           });
-          if (result.issuedDeliveryRequests !== undefined) {
-            issuedDeliveryRequests = result.issuedDeliveryRequests;
-          }
           return settleDeferredPersist(
             input.admitted,
             input.env.principalAuthority,

@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #1132 — 没交卷先回本人催交，不直接结为 no_receipt.
  *
@@ -12,7 +11,6 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * must equal the delivery requests actually issued.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,22 +41,7 @@ import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: { stdout: (t: string) => stdout.push(t), stderr: (t: string) => stderr.push(t) },
-  };
-}
-
-function seedGitProject(root: string) {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "1132@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "1132"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withSeatHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-1132-", async (home) => {

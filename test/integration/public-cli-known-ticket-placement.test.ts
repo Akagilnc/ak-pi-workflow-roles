@@ -25,7 +25,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const TICKET = 505;
 
@@ -45,13 +45,7 @@ test("#505 known ticket places every active public seat under that ticket", asyn
         return { code: 0, stderr: "", timedOut: false };
       },
     };
-    const stderr: string[] = [];
-    const io = {
-      stdout: () => {},
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    };
+    const { stderr, io } = captureIo();
     for (const record of PUBLIC_ROLE_RECORDS) {
       const result = await runAkRole(publicSeatSummonArgv(record.role, project, sourceRun, TICKET), {
         home,
