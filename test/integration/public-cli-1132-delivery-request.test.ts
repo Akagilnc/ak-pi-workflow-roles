@@ -22,14 +22,23 @@ import { randomUUID } from "node:crypto";
 import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
+import { loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 
@@ -548,4 +557,78 @@ test("#1132: a failing催交 turn is a real failure, never no_receipt", async ()
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
   });
+});
+
+// 子席结论读不出三态：回本人重问，次数与别的循环分开，用尽后留下已有终局。
+test("#1132: an unreadable gate-child conclusion reasks only up to the configured limit", async () => {
+  const sideways = {
+    role: "notary" as const,
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    details: { status: "sideways" },
+    seal: true,
+  };
+  const openNotary = (home: string, project: string, sourceRunPath: string, runId: string) =>
+    runAkRole(
+      ["new", "notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io: captureIo().io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession(sideways),
+        }),
+      },
+    );
+
+  for (const limit of [0, 1]) {
+    await withSeatHome(async (home) => {
+      await setConfiguredLimit(home, limit);
+      const project = await freshProject(home);
+      const sourceRunPath = await seedCanonicalSourceRun(home, project);
+      const notaryRunId = `1132-notary-unreadable-${limit}`;
+      const opened = await openNotary(home, project, sourceRunPath, notaryRunId);
+      assert.equal(opened.exitCode, 0, `limit ${limit} open`);
+      assert.equal(opened.terminal?.roleOutcome.kind, "accepted", `limit ${limit} open`);
+      const loaded = await loadResumablePublicRole(home, notaryRunId, piDurablePrincipalAuthority);
+      await recordAdmittedCorrelation(loaded.admitted, CANONICAL_SOURCE_RUN_ID);
+
+      let calls = 0;
+      const resumed = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", notaryRunId],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: captureIo().io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
+              calls += 1;
+              return scriptedTerminatingToolSession({
+                ...sideways,
+                toolCallId: `call_notary_${calls}`,
+              })(args, options);
+            },
+          }),
+        },
+      );
+      assert.equal(calls, limit + 1, `limit ${limit}: resume plus at most ${limit} reasks`);
+      assert.equal(resumed.exitCode, 0, `limit ${limit}`);
+      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
+      if (resumed.terminal?.roleOutcome.kind !== "accepted") return;
+      const statuses = payloadStatusSequence(resumed.terminal.roleOutcome);
+      assert.equal(statuses.at(-1), "sideways", `limit ${limit}: kept terminal stays outside the three states`);
+      assert.ok(
+        statuses.every((status) => status !== "converged" && status !== "continue" && status !== "escalate"),
+        `limit ${limit}: ${statuses.join(",")}`,
+      );
+    });
+  }
 });
