@@ -1236,7 +1236,7 @@ const ROLE_COMMAND_HELP = {
   },
   notary: {
     command: "notary",
-    summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
+    summary: "Direct Notary summons; duties: souls/notary.md. Zero prompt/attachment.",
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
       "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
