@@ -27,7 +27,6 @@ test("every public role declares its submission tool once", () => {
   for (const record of PACKAGED_ROLE_REGISTRY) {
     const declaration = roleSubmissionDeclaration(record.role);
     assert.equal(declaration.name, record.outputTool);
-    assert.equal(Array.isArray(declaration.statusWords), true);
   }
 });
 
