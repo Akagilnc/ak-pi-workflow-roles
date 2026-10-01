@@ -25,7 +25,6 @@ import type {
 } from "./host-contracts.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
-import { pickEngineAxis } from "./package-resources/engine-material.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
@@ -210,18 +209,6 @@ async function resolveSummonHome(options: PublicSummonRequest): Promise<string> 
   return packageMachineHome();
 }
 
-/** Seat axes only — no parent-env fallback (#675 / #617 DK-3 / #883). */
-function projectSeatEngine(seat: EffectiveSeat): {
-  engine?: string;
-  engineModel?: string;
-} {
-  return pickEngineAxis(seat);
-}
-
-function projectSeatHost(seat: EffectiveSeat): { host?: string } {
-  return seat.host === undefined ? {} : { host: seat.host };
-}
-
 function hostSelectionFailureFromUnknown(error: unknown): HostSelectionFailure | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   if ((error as { name?: unknown }).name !== "HostSelectionError") return undefined;
@@ -273,18 +260,17 @@ async function createSummonEnv(
   const [
     { piDurablePrincipalAuthority },
     { appendPiSessionCustomEntry },
-    { resolveRoleTurnHost },
-    { missingResolvedSeatModelMessage, resolvedSeatWithModel },
+    { openRoleSeatRuntime },
+    { missingResolvedSeatModelMessage },
   ] = await Promise.all([
     import("./pi/durable-principal.ts"),
     import("./pi/role-turn-host.ts"),
-    import("./public-cli/role-turn-host-resolution.ts"),
+    import("./public-cli/role-seat-runtime.ts"),
     import("./public-cli/config.ts"),
   ]);
   const principalAuthority = options.principalAuthority ?? piDurablePrincipalAuthority;
-  // Host first → argv (afterHost) → missing-model → provider projection (#617/#178/#840).
-  const roleTurnHost = resolveRoleTurnHost(
-    {
+  const opened = openRoleSeatRuntime({
+    resolution: {
       packageRoot: options.packageRoot,
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
@@ -293,28 +279,18 @@ async function createSummonEnv(
         : { extraPiArgs: options.extraPiArgs }),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
-    { role: options.role, seat: options.seat, principalAuthority },
-  );
-  afterHost?.();
-  const seatWithModel = resolvedSeatWithModel(options.seat);
-  if (seatWithModel === undefined) {
+    principalAuthority,
+    role: options.role,
+    seat: options.seat,
+    home: options.home,
+    ...(afterHost === undefined ? {} : { afterHost }),
+    ...(options.hostFacingModel === undefined ? {} : { hostFacingModel: options.hostFacingModel }),
+  });
+  if (!opened.ok) {
     return {
       ok: false,
       missingModelMessage: missingResolvedSeatModelMessage(options.role),
     };
-  }
-  const hostName = seatWithModel.host ?? "pi";
-  let hostFacingSelection: RoleTurnModelConfig | undefined = options.hostFacingModel;
-  if (hostFacingSelection === undefined) {
-    const { loadHostProvidersTable, projectHostFacingProvider } = await import(
-      "./public-cli/host-providers.ts"
-    );
-    hostFacingSelection = projectHostFacingProvider(
-      seatWithModel.selection,
-      hostName,
-      loadHostProvidersTable(options.home),
-      options.home,
-    );
   }
   return {
     ok: true,
@@ -324,12 +300,13 @@ async function createSummonEnv(
       agentDir: options.agentDir,
       sessionAppender: appendPiSessionCustomEntry,
       packageRoot: options.packageRoot,
-      roleTurnHost,
+      roleTurnHost: opened.roleTurnHost,
       cwd: options.cwd,
       credentials: options.credentials,
-      ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
-      ...projectSeatEngine(seatWithModel),
-      ...projectSeatHost(seatWithModel),
+      ...(opened.model === undefined ? {} : { model: opened.model }),
+      ...(opened.engine === undefined ? {} : { engine: opened.engine }),
+      ...(opened.engineModel === undefined ? {} : { engineModel: opened.engineModel }),
+      host: opened.host,
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
   };
@@ -344,16 +321,14 @@ export async function summonPublicRole(
 ): Promise<PublicSummonResult> {
   const packageRoot = resolveSummonsPackageRoot(options.packageRoot);
   const home = await resolveSummonHome(options);
-  const agentDir =
-    options.agentDir
-    ?? process.env.PI_CODING_AGENT_DIR
-    ?? join(home, ".pi", "agent");
   const {
     loadCredentialProviders,
     loadPublicCliConfig,
     resolveEffectiveSeat,
+    resolvePublicAgentDir,
     validatePublicCliConfigAxes,
   } = await import("./public-cli/config.ts");
+  const agentDir = resolvePublicAgentDir(options.agentDir, home);
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);

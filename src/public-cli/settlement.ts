@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
+import { writeHardenedArtifactFile } from "./auto-resume.ts";
 import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
@@ -156,11 +157,10 @@ export async function retainPackageFault(input: {
   let retentionFailure: string | undefined;
   const writeArtifact = async (): Promise<void> => {
     const artifactsDir = await ensureRealArtifactsDirectory(input.runDirectory);
-    await writeFile(
-      join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
-      `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
+    await writeHardenedArtifactFile(artifactsDir, "post-admission-diagnostic", {
+      version: 1,
+      ...payload,
+    });
   };
   if (input.appendSession !== undefined) {
     try {
