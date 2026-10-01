@@ -6,6 +6,12 @@ import { readFile } from "node:fs/promises";
 
 export type LedgerSessionRow = Record<string, unknown>;
 
+/** Complete Pi volume decoding: malformed EOF is an error, with no row-shape filtering. */
+export async function readStrictPiSessionJsonl(path: string): Promise<unknown[]> {
+  const text = await readFile(path, "utf8");
+  return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as unknown);
+}
+
 /**
  * Loud JSONL failure that still retains rows parsed before the bad line.
  * Callers that only need the throw keep catching Error; owners that must

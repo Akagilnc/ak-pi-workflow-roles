@@ -4,33 +4,21 @@
  */
 import type { Usage } from "@earendil-works/pi-ai";
 import { sessionFileOf } from "./role-run-placement.ts";
+import { readStrictPiSessionJsonl } from "./ledger-session-read.ts";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
 
 export async function readAssistantUsageFromSessionFile(
   sessionFile: string,
 ): Promise<Usage | undefined> {
-  const { readFile } = await import("node:fs/promises");
-  let text: string;
-  try {
-    text = await readFile(sessionFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw error;
-  }
   let rows: Array<{ type?: string; message?: { role?: string; usage?: Usage } }>;
   try {
-    rows = text
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        message?: { role?: string; usage?: Usage };
-      });
+    rows = await readStrictPiSessionJsonl(sessionFile) as typeof rows;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
+    if (!(error instanceof SyntaxError)) throw error;
     throw new Error(
-      `session usage parse failed (${sessionFile}): ${error instanceof Error ? error.message : String(error)}`,
+      `session usage parse failed (${sessionFile}): ${error.message}`,
       { cause: error },
     );
   }

@@ -15,7 +15,6 @@ import { dirname, join, relative, sep } from "node:path";
 
 import {
   bookHistoricalRoots,
-  findBookRunDirectory,
   findPlacedMigratingRun,
   findUniquePrincipalPlacedRun,
   isMigrationEnoent,
@@ -32,7 +31,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { formatRunLeaf, parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
+import { formatRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
 import { sitianSubjectTicketNumber } from "./run-ticket-number.ts";
 import {
   S4_SUBMISSION_LEDGER_KINDS,
@@ -105,16 +104,16 @@ type DestLinePlacement = {
   readonly outcomeIndex: number;
 };
 
-/** Per-destination identity cache — one read per file, O(1) subsequent checks. */
+/** Append-only placement accounting; identity merging is limited to offered-identity registries. */
 class RecordWriteCache {
-  private readonly identities = new Map<string, Set<string>>();
+  private readonly offeredIdentities = new Map<string, Set<string>>();
   /** Dest paths written as whole #901 bare volumes — legacy must not append under them. */
   private readonly bareVolumeFiles = new Set<string>();
   /** Lines currently on a dest that are still claimed `placed` in outcomes. */
   private readonly destPlacements = new Map<string, DestLinePlacement[]>();
 
   private async load(recordFile: string): Promise<Set<string>> {
-    const cached = this.identities.get(recordFile);
+    const cached = this.offeredIdentities.get(recordFile);
     if (cached !== undefined) return cached;
     const set = new Set<string>();
     for (const line of await readJsonlLines(recordFile)) {
@@ -122,13 +121,12 @@ class RecordWriteCache {
       const parsed = parseJsonlLine(line);
       if (parsed.ok && typeof parsed.value.identity === "string") set.add(parsed.value.identity);
     }
-    this.identities.set(recordFile, set);
+    this.offeredIdentities.set(recordFile, set);
     return set;
   }
 
   markBareVolume(recordFile: string): void {
     this.bareVolumeFiles.add(recordFile);
-    this.identities.set(recordFile, new Set());
   }
 
   isBareVolume(recordFile: string): boolean {
@@ -179,28 +177,23 @@ class RecordWriteCache {
   ): Promise<void> {
     await ensureDir(dirname(recordFile));
     const line = raw.endsWith("\n") ? raw : `${raw}\n`;
-    const parsed = parseJsonlLine(raw);
-    if (parsed.ok && typeof parsed.value.identity === "string") {
-      const existing = await this.load(recordFile);
-      if (!existing.has(parsed.value.identity)) {
-        existing.add(parsed.value.identity);
-        await appendFile(recordFile, line, "utf8");
-      }
-      // Identity hit skips a second physical copy, but the source row still claims
-      // this dest — register outcome below so bare replace flips every claim.
-    } else {
-      if (!this.identities.has(recordFile)) {
-        // Ensure subsequent identity loads see a live map even when first rows lack identity.
-        this.identities.set(recordFile, await this.load(recordFile));
-      }
-      await appendFile(recordFile, line, "utf8");
-    }
-    // Register outcome claims on dest even when identity skipped a write.
+    await appendFile(recordFile, line, "utf8");
+    // Every claimed placement has a physical row.
     if (options?.outcomeIndex !== undefined && !this.bareVolumeFiles.has(recordFile)) {
       const list = this.destPlacements.get(recordFile) ?? [];
       list.push({ raw, outcomeIndex: options.outcomeIndex });
       this.destPlacements.set(recordFile, list);
     }
+  }
+
+  async mergeOfferedIdentity(recordFile: string, raw: string): Promise<void> {
+    const parsed = parseJsonlLine(raw);
+    if (parsed.ok && typeof parsed.value.identity === "string") {
+      const existing = await this.load(recordFile);
+      if (existing.has(parsed.value.identity)) return;
+      existing.add(parsed.value.identity);
+    }
+    await this.append(recordFile, raw);
   }
 }
 
@@ -278,40 +271,27 @@ function isCanonicalRunNestedRecordFile(relPosix: string, recordClass: RecordCla
   return relPosix.endsWith(needle) || relPosix.endsWith(needle.slice(1));
 }
 
-function runCoordsFromRelativePath(relPosix: string): { readonly runId: string; readonly role: string } | undefined {
-  const segment = runsSegmentOf(relPosix);
-  if (segment === undefined) return undefined;
-  return parseRunLeaf(segment.leaf);
-}
-
-/** Typed owning run for a record-class row (subject / payload / sessionParent). */
-function owningRunIdFromRecord(
-  value: Record<string, unknown>,
-  bookRoots: readonly string[],
-): string | undefined {
-  return (
-    runIdFromSubject(value.subject)
-    ?? runIdFromPayload(value.payload)
-    ?? runCoordsFromSessionParent(value.sessionParent, bookRoots)?.runId
-  );
-}
-
 /**
  * Row already sits at the correct run's canonical nest — #865 carries the file.
  * Path-class alone is not enough: a submission-ledger row under run A that names
  * run B must still rehome (#866 run-principal).
  */
-function isAlreadyHomeUnderOwningRun(
+async function isAlreadyHomeUnderOwningRun(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
   withinBook: string,
   recordClass: RecordClass,
   value: Record<string, unknown>,
-  bookRoots: readonly string[],
-): boolean {
+): Promise<boolean> {
   if (!isCanonicalRunNestedRecordFile(withinBook, recordClass)) return false;
-  const pathCoords = runCoordsFromRelativePath(withinBook);
-  if (pathCoords === undefined) return false;
-  const owningRunId = owningRunIdFromRecord(value, bookRoots);
-  return owningRunId !== undefined && owningRunId === pathCoords.runId;
+  const segment = runsSegmentOf(withinBook);
+  if (segment === undefined) return false;
+  const target = await resolveRecordRunDestination(context, bookKey, value);
+  if (target?.kind !== "run") return false;
+  const source = await findPlacedMigratingRun(
+    context.booksDirectory, bookKey, segment.leaf, segment.sourceRelative,
+  );
+  return source?.runDirectory === target.runDirectory;
 }
 
 function relativePathWithinRun(relPosix: string): string | undefined {
@@ -400,6 +380,25 @@ async function resolveRunDestination(
   return { kind: "unbound-key", key: stableKey(runId) };
 }
 
+/** Shared ownership resolution for both placement and the already-home shortcut. */
+async function resolveRecordRunDestination(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
+  value: Record<string, unknown>,
+): Promise<Awaited<ReturnType<typeof resolveRunDestination>> | undefined> {
+  const fromParent = runCoordsFromSessionParent(
+    value.sessionParent,
+    bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+  );
+  const runId = runIdFromSubject(value.subject) ?? runIdFromPayload(value.payload) ?? fromParent?.runId;
+  if (runId === undefined) return undefined;
+  const role = roleFromPayload(value.payload);
+  return resolveRunDestination(context, bookKey, runId, {
+    ...(role === undefined ? {} : { role }),
+    ...(value.sessionParent === undefined ? {} : { sessionParent: value.sessionParent }),
+  });
+}
+
 async function placeTicketProvenanceLine(
   context: BookTopologyMigrationContext,
   bookKey: string,
@@ -459,24 +458,11 @@ async function placeRunOwnedLine(
     return { disposition: "unbound", source, malformed: true, malformedRaw: raw };
   }
 
-  const fromParent = runCoordsFromSessionParent(
-    value.sessionParent,
-    bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
-  );
-  const runId =
-    runIdFromSubject(value.subject)
-    ?? runIdFromPayload(value.payload)
-    ?? fromParent?.runId;
-  if (runId === undefined) {
+  const target = await resolveRecordRunDestination(context, bookKey, value);
+  if (target === undefined) {
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, category, stableKey(raw)), raw);
     return { disposition: "unbound", source };
   }
-
-  const role = roleFromPayload(value.payload);
-  const target = await resolveRunDestination(context, bookKey, runId, {
-    ...(role === undefined ? {} : { role }),
-    ...(value.sessionParent === undefined ? {} : { sessionParent: value.sessionParent }),
-  });
 
   if (target.kind === "unbound-key") {
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, category, target.key), raw);
@@ -647,7 +633,7 @@ async function mergeOfferedIdentities(
   const destFile = join(destDir, OFFERED_IDENTITIES);
   for (const raw of lines) {
     if (raw.trim() === "") continue;
-    await writes.append(destFile, raw);
+    await writes.mergeOfferedIdentity(destFile, raw);
   }
 }
 
@@ -781,11 +767,6 @@ async function migrateMisplacedBook(
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
   // backupRelPath → exact backup lines rehomed out of a source-run nest.
   // Match those bytes, not identity and not a normalized sessionParent.
-  const bookRoots = bookHistoricalRoots(
-    context.booksDirectory,
-    context.backupBooksDirectory,
-    bookKey,
-  );
   const scrubPlans = new Map<string, Set<string>>();
 
   for (const filePath of files) {
@@ -804,11 +785,12 @@ async function migrateMisplacedBook(
       if (recordClass === undefined) continue;
 
       // Correct principal + canonical nest — #865 carries the file as-is.
-      if (isAlreadyHomeUnderOwningRun(
+      if (await isAlreadyHomeUnderOwningRun(
+        context,
+        bookKey,
         withinBook,
         recordClass,
         parsed.value,
-        bookRoots,
       )) continue;
 
       const source = lineSource(context.backupBooksDirectory, filePath, index);
@@ -843,14 +825,11 @@ async function migrateMisplacedBook(
 
   // Drop rehomed lines from the source nest in dest (wrong path or wrong principal).
   for (const [withinBook, rawLines] of scrubPlans) {
-    const coords = runCoordsFromRelativePath(withinBook);
+    const segment = runsSegmentOf(withinBook);
     const withinRun = relativePathWithinRun(withinBook);
-    if (coords === undefined || withinRun === undefined) continue;
-    // Scrub plan already carries runId+role from the source leaf — keep the full identity.
-    const destRun = await findBookRunDirectory(
-      join(context.booksDirectory, bookKey),
-      coords.runId,
-      coords.role,
+    if (segment === undefined || withinRun === undefined) continue;
+    const destRun = await findPlacedMigratingRun(
+      context.booksDirectory, bookKey, segment.leaf, segment.sourceRelative,
     );
     if (destRun === undefined) continue;
     await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines);

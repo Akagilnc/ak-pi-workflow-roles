@@ -29,6 +29,7 @@ import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { formatPiSessionCustomEntry, piSessionCustomParentId } from "../pi/role-turn-host.ts";
+import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
@@ -911,16 +912,12 @@ function sessionReadFailure(
 export async function readBoundSessionEntries(
   sessionFile: string,
 ): Promise<SessionEntry[]> {
-  const text = await readFile(sessionFile, "utf8");
-  const entries: SessionEntry[] = [];
-  for (const line of text.trim().split("\n").filter(Boolean)) {
-    try {
-      entries.push(JSON.parse(line) as SessionEntry);
-    } catch (error) {
-      throw sessionReadFailure(error, "malformed session JSONL");
-    }
+  try {
+    return await readStrictPiSessionJsonl(sessionFile) as SessionEntry[];
+  } catch (error) {
+    if (error instanceof SyntaxError) throw sessionReadFailure(error, "malformed session JSONL");
+    throw error;
   }
-  return entries;
 }
 
 /**

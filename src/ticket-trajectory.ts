@@ -821,9 +821,11 @@ export async function renderTicketTrajectoryHtml(
 }
 
 function landsInLedger(ledgerRoot: string, candidate: string): boolean {
+  // mkdir may have materialized a previously dangling ledger alias since the first gate.
+  const physicalRoot = physicalPathIdentity(ledgerRoot);
   const lexical = resolve(candidate);
   const physical = physicalPathIdentity(candidate);
-  const inside = (id: string) => ledgerRoot === id || pathContainedIn(ledgerRoot, id);
+  const inside = (id: string) => physicalRoot === id || pathContainedIn(physicalRoot, id);
   return inside(lexical) || inside(physical);
 }
 
@@ -846,7 +848,7 @@ export async function assertOutputOutsideLedgers(
       ledgerRoot = await realpath(ledgerResolved);
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
-      ledgerRoot = ledgerResolved;
+      ledgerRoot = physicalPathIdentity(ledgerResolved);
     }
     ledgerRoots.push(ledgerRoot);
     if (landsInLedger(ledgerRoot, prospectiveReal) || landsInLedger(ledgerRoot, outputAbsolute)) {

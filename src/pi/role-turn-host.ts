@@ -5,7 +5,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, appendFile, readFile, realpath } from "node:fs/promises";
+import { access, appendFile, realpath } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
@@ -25,6 +25,7 @@ import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
+import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
@@ -482,11 +483,7 @@ export async function appendPiSessionCustomEntry(
   data: unknown,
 ): Promise<void> {
   const { sessionFile } = authority.decode(principal);
-  const text = await readFile(sessionFile, "utf8");
-  const entries: { id?: unknown; type?: unknown }[] = [];
-  for (const line of text.trim().split("\n").filter(Boolean)) {
-    entries.push(JSON.parse(line) as { id?: unknown; type?: unknown });
-  }
+  const entries = await readStrictPiSessionJsonl(sessionFile) as { id?: unknown; type?: unknown }[];
   const timestamp = new Date().toISOString();
   const pointerLine = formatPiSessionCustomEntry({
     customType,
