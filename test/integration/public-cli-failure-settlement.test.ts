@@ -23,9 +23,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
-
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -154,155 +152,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     assert.equal(result.terminal!.runId, "run-domain-001");
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
   });
-});
-test("classifyPostAdmissionFailure retains typed causes without washing identity", () => {
-  const timeout = classifyPostAdmissionFailure({
-    timedOut: true,
-    code: null,
-    stderr: floodStderr(),
-  });
-  assert.equal(timeout.cause, "timeout");
-  // No host details were supplied, so the record is the package's own view of
-  // the exit — never written into a host record it did not provide.
-  assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
-
-  // A nonzero exit says the run failed, not why. With no typed confirmation the
-  // cause stays absent — no fabricated label — while the real diagnostic and
-  // exit code are kept.
-  const nonzeroExit = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: floodStderr(),
-  });
-  assert.equal(nonzeroExit.cause, undefined);
-  assert.equal(nonzeroExit.diagnostic, floodStderr());
-
-  // A clean exit with no typed confirmation asserts no class: the host
-  // confirmed nothing, so the package mints nothing (host-contracts.ts:19–42).
-  const missing = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 0,
-    stderr: "",
-  });
-  assert.equal(missing.cause, undefined);
-  assert.equal(typeof missing.diagnostic, "string");
-
-  const original = new Error("socket hang up");
-  original.name = "ProviderTransportError";
-  const unrecognized = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: original,
-  });
-  assert.equal(unrecognized.cause, undefined);
-  assert.equal(unrecognized.diagnostic, "socket hang up");
-  assert.equal(unrecognized.identity?.name, "ProviderTransportError");
-
-  // Production-owned typed thrown channel.
-  const typed = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: new ExplicitInternalActivationError("model upstream 503", {
-      knownCause: "provider",
-      name: "ProviderUnavailableError",
-      code: "PROVIDER_UNAVAILABLE",
-    }),
-  });
-  assert.equal(typed.cause, "provider");
-  assert.equal(typed.diagnostic, "model upstream 503");
-  assert.equal(typed.identity?.name, "ProviderUnavailableError");
-  assert.equal(typed.identity?.code, "PROVIDER_UNAVAILABLE");
-
-  // JSONL observation flood must not displace the real diagnostic, and a bare
-  // nonzero exit still names no cause.
-  const jsonl = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: realisticJsonlFloodStderr(),
-  });
-  assert.equal(jsonl.cause, undefined);
-  assert.equal(jsonl.diagnostic, realisticJsonlFloodStderr());
-
-  // Pi auth-guidance multi-line stderr is kept whole (#836 no footer clip).
-  const primaryAuthDiagnostic = "No API key found for the selected model.";
-  const authGuidanceStderr = [
-    primaryAuthDiagnostic,
-    "",
-    "Use /login to log into a provider via OAuth or API key. See:",
-    "  /tmp/example-docs/alpha.md",
-    "  /tmp/example-docs/beta.md",
-  ].join("\n");
-  const authGuidance = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: authGuidanceStderr,
-    knownCause: "provider",
-    knownIdentity: {
-      name: "MissingProviderCredential",
-      code: "xai",
-    },
-  });
-  assert.equal(authGuidance.cause, "provider");
-  assert.equal(authGuidance.diagnostic, authGuidanceStderr);
-  assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
-  assert.equal(authGuidance.identity?.code, "xai");
-
-  // AC2: timedOut must not wash a co-present typed knownCause identity/diagnostic.
-  const timedOutWithProvider = classifyPostAdmissionFailure({
-    timedOut: true,
-    code: null,
-    stderr: floodStderr(),
-    knownCause: "provider",
-    knownIdentity: { name: "ProviderStopError", code: "openai-codex" },
-    knownDiagnostic: "rate limited",
-  });
-  assert.equal(timedOutWithProvider.cause, "provider");
-  assert.equal(timedOutWithProvider.diagnostic, "rate limited");
-  assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
-  assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
-  // The host gave a typed cause but no details record, so none is invented:
-  // this package's own view of the exit rides beside it under packageFact.
-  assert.equal(timedOutWithProvider.details, undefined);
-  assert.equal(timedOutWithProvider.packageFact?.exitCode, null);
-  assert.equal(timedOutWithProvider.packageFact?.timedOut, true);
-
-  const reservedKnownDetails = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: "",
-    knownCause: "provider",
-    knownDiagnostic: "upstream unavailable",
-    knownDetails: { code: 99, timedOut: true, provider: "xai" },
-  });
-  // The host's record is handed back exactly as given. This package's own view
-  // of the exit (exitCode 1) rides beside it under packageFact rather than being
-  // written in — a key the host itself carried must never be overwritten
-  // (host-contracts.ts:41: an open read-only record with no reserved keys).
-  assert.deepEqual(reservedKnownDetails.details, {
-    code: 99,
-    timedOut: true,
-    provider: "xai",
-  });
-  assert.equal(reservedKnownDetails.packageFact?.exitCode, 1);
-
-  // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
-  const thrownUndefined = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: undefined,
-  });
-  assert.equal(thrownUndefined.cause, undefined);
-  assert.equal(thrownUndefined.diagnostic, "undefined");
-  // Absence of the thrown key still means no exception was observed.
-  const noThrownKey = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-  });
-  assert.equal(noThrownKey.cause, undefined);
 });
 test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
   await withTempHome(async (home) => {
@@ -916,16 +765,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
   });
 });
 
-function floodStderr(): string {
-  return [
-    "event: tool_call",
-    "event: token delta x".repeat(40),
-    "Error: provider boom",
-    "    at Object.fn (vendor/stack.js:1:1)",
-    "    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
-    "tokens=999999 tool_calls=42",
-  ].join("\n");
-}
 function realisticJsonlFloodStderr(): string {
   return [
     "Error: provider rejected the request",

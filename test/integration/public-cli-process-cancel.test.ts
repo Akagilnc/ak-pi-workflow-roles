@@ -32,9 +32,8 @@ async function waitForFile(path: string, timeoutMs = 15_000): Promise<void> {
   throw new Error(`timed out waiting for ${path}`);
 }
 
-test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name and stop host child", async () => {
-  for (const signalName of CATCHABLE) {
-    await withTempRoot(`ak-process-cancel-${signalName}-`, async (home) => {
+async function runPublicCancel(signalName: (typeof CATCHABLE)[number], throwHost: boolean): Promise<void> {
+    await withTempRoot(`ak-process-cancel-${signalName}-${throwHost ? "throw-" : ""}`, async (home) => {
       seedGitRepository(home);
       const project = join(home, "proj");
       await mkdir(project, { recursive: true });
@@ -55,6 +54,7 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
           AK_TEST_PROCESS_CANCEL_CHILD_PID: childPidFile,
           AK_TEST_PROCESS_CANCEL_RESULT: resultFile,
           AK_TEST_PROCESS_CANCEL_RUN_ID: `01a0sig00-0000-7000-8000-${signalName.toLowerCase().padEnd(12, "0").slice(0, 12)}`,
+          ...(throwHost ? { AK_TEST_PROCESS_CANCEL_THROW: "1" } : {}),
         },
         home,
         agentDir,
@@ -115,21 +115,30 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
         const result = JSON.parse(await readFile(resultFile, "utf8")) as {
           exitCode: number;
           diagnostic?: string;
+          cause?: string;
           identity?: { name?: string; code?: string };
-          details?: { report?: string };
+          details?: { report?: string; owned?: string };
           packageFact?: { exitCode?: number | null; cancelName?: string; signal?: string };
           runState?: string;
           runDirectory?: string;
           turnCount?: number;
         };
         assert.notEqual(result.exitCode, 0, `${signalName}: settled exitCode`);
-        assert.equal(result.diagnostic, "HOST ORIGINAL", `${signalName}: host report stays`);
-        assert.equal(result.identity?.name, "HostReported");
-        assert.equal(result.identity?.code, "HOST");
-        assert.equal(result.details?.report, "HOST ORIGINAL");
+        if (throwHost) {
+          assert.equal(result.diagnostic, "HOST ORIGINAL THROW", `${signalName}: thrown host report stays`);
+          assert.equal(result.cause, "provider");
+          assert.equal(result.identity?.name, "HostOriginal");
+          assert.equal(result.details?.owned, "OWNED");
+          assert.equal(result.packageFact?.exitCode, null);
+        } else {
+          assert.equal(result.diagnostic, "HOST ORIGINAL", `${signalName}: host report stays`);
+          assert.equal(result.identity?.name, "HostReported");
+          assert.equal(result.identity?.code, "HOST");
+          assert.equal(result.details?.report, "HOST ORIGINAL");
+          assert.equal(result.packageFact?.exitCode, 1);
+        }
         assert.equal(Object.hasOwn(result.details ?? {}, "cancelName"), false);
         assert.equal(Object.hasOwn(result.details ?? {}, "signal"), false);
-        assert.equal(result.packageFact?.exitCode, 1);
         assert.equal(result.packageFact?.cancelName, signalName);
         assert.equal(result.runState, "terminal", `${signalName}: run-state must be terminal`);
         // #855 p1: cancel must not auto-resume-re-dispatch (principal forced available).
@@ -177,5 +186,14 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
       }
       void stdout;
     });
+}
+
+test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name and stop host child", async () => {
+  for (const signalName of CATCHABLE) {
+    await runPublicCancel(signalName, false);
   }
+});
+
+test("public entry: SIGTERM beside a thrown host report keeps that report", async () => {
+  await runPublicCancel("SIGTERM", true);
 });

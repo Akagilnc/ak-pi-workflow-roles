@@ -177,14 +177,21 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     const runDirectory = join(
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
+    const carriesSyntax = (text: unknown): boolean =>
+      typeof text === "string" && text.includes("SyntaxError");
     const names = await readdir(join(runDirectory, "artifacts"));
-    const artifactNote = names.some((name) => name.startsWith("post-admission-diagnostic-"));
+    let artifactNote = false;
+    for (const name of names) {
+      if (!name.startsWith("post-admission-diagnostic-")) continue;
+      const body = JSON.parse(await readFile(join(runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown };
+      if (carriesSyntax(body.diagnostic)) artifactNote = true;
+    }
     const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
     const sessionNote = sessionText.split("\n").some((line) => {
       if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
       const entry = JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } };
       return entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-        && typeof entry.data?.diagnostic === "string";
+        && carriesSyntax(entry.data?.diagnostic);
     });
     assert.equal(artifactNote || sessionNote, true);
   });
@@ -397,6 +404,15 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     const outcomes = (await readSitianRecords(recordFile)).records.map((row) =>
       (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
     assert.deepEqual(outcomes, ["accepted"]);
+    const noteText = (await readFile(sealedSessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+      .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
+      ?.data?.diagnostic;
+    assert.equal(typeof noteText, "string");
+    assert.equal((noteText as string).includes("EISDIR"), true);
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {

@@ -235,7 +235,10 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     assert.equal(durable?.state, "terminal");
   });
 });
-async function assertCleanupDiagnosticNoted(sessionFile: string): Promise<void> {
+async function assertCleanupDiagnosticNoted(
+  sessionFile: string,
+  identities: readonly string[],
+): Promise<void> {
   const entries = (await readFile(sessionFile, "utf8"))
     .trim()
     .split("\n")
@@ -244,8 +247,12 @@ async function assertCleanupDiagnosticNoted(sessionFile: string): Promise<void> 
   const diagnostic = entries.find(
     (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
   );
-  assert.equal(diagnostic?.customType, POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-  assert.equal(typeof diagnostic?.data?.diagnostic, "string");
+  const text = diagnostic?.data?.diagnostic;
+  assert.equal(typeof text, "string");
+  assert.equal(
+    identities.some((identity) => (text as string).includes(identity)),
+    true,
+  );
 }
 
 test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
@@ -290,7 +297,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         `${runId}@judge`,
       );
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["EACCES", "EPERM"]);
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const { recordFile } = resolveSitianRecordPath({
@@ -433,7 +440,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["EISDIR"]);
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must survive a later persist failure",
@@ -496,7 +503,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["EISDIR"]);
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -525,7 +532,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["EISDIR"]);
 
     } finally {
       await restoreArtifactsWritable();
@@ -1151,11 +1158,11 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           .split("\n")
           .filter(Boolean)
           .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-        const diagnostic = entries.find(
+        const text = entries.find(
           (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-        );
-        assert.equal(diagnostic?.customType, POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-        assert.equal(typeof diagnostic?.data?.diagnostic, "string");
+        )?.data?.diagnostic;
+        assert.equal(typeof text, "string");
+        assert.equal((text as string).includes("EISDIR"), true);
       },
       async () => {
         await lease.release();

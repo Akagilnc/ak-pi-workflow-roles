@@ -23,6 +23,7 @@ import {
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -98,6 +99,27 @@ test("public report publication failure stays beside the accepted terminal", asy
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.runId, runId);
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound",
+        "runs",
+        `${runId}@judge`,
+      );
+      const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
+        ?.data?.diagnostic;
+      assert.equal(typeof noteText, "string");
+      assert.equal(
+        (noteText as string).includes("EACCES") || (noteText as string).includes("EPERM"),
+        true,
+      );
     } finally {
       if (lockedArtifactsDir !== undefined) {
         try {

@@ -184,7 +184,11 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
         code: input.result.code,
         stderr: input.result.stderr,
         ...(input.result.signal === undefined ? {} : { signal: input.result.signal }),
-        knownDiagnostic: processCancelDiagnostic(input.cancelName),
+        // A host report already on this result stays the report. The cancel
+        // name is wording only when the host gave none.
+        ...(input.result.knownFailure === undefined
+          ? { knownDiagnostic: processCancelDiagnostic(input.cancelName) }
+          : { knownFailure: input.result.knownFailure }),
         cancelName: input.cancelName,
       },
       input.invocationScopeId,
@@ -924,11 +928,10 @@ export async function dispatchPostAdmissionTurn<
           timedOut: false,
           code: null,
           stderr: "",
+          // The thrown value is the host's report. A cancel received on this
+          // call is a second fact; it must not become a new Error in its place.
           ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
-          thrown:
-            processCancelName === undefined
-              ? error
-              : new Error(processCancelDiagnostic(processCancelName), { cause: error }),
+          thrown: error,
         }, request.invocationScopeId),
         adapters,
         env.principalAuthority,

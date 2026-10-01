@@ -73,6 +73,13 @@ const hangingHost = {
       else request.signal?.addEventListener("abort", finish, { once: true });
     });
 
+    if (process.env.AK_TEST_PROCESS_CANCEL_THROW === "1") {
+      const error = new Error("HOST ORIGINAL THROW");
+      error.name = "HostOriginal";
+      error.knownCause = "provider";
+      error.details = { owned: "OWNED" };
+      throw error;
+    }
     return {
       code: 1,
       stderr: "",
@@ -90,6 +97,7 @@ const principalAuthority = piDurablePrincipalAuthority;
 
 let exitCode = 1;
 let diagnostic;
+let cause;
 let identity;
 let details;
 let packageFact;
@@ -122,6 +130,7 @@ try {
   const outcome = result.terminal?.roleOutcome;
   if (outcome && typeof outcome === "object") {
     if ("diagnostic" in outcome) diagnostic = outcome.diagnostic;
+    if ("cause" in outcome) cause = outcome.cause;
     if ("identity" in outcome) identity = outcome.identity;
     if ("details" in outcome) details = outcome.details;
   }
@@ -132,6 +141,7 @@ try {
     packageFact = errorBody.packageFact;
     if (details === undefined) details = errorBody.details;
     if (identity === undefined) identity = errorBody.identity;
+    if (cause === undefined) cause = errorBody.cause;
     if (diagnostic === undefined) diagnostic = errorBody.diagnostic;
   }
   const settledRunId =
@@ -165,7 +175,7 @@ try {
   await mkdir(home, { recursive: true });
   await writeFile(
     resultFile,
-    `${JSON.stringify({ exitCode, diagnostic, identity, details, packageFact, runState, runDirectory, turnCount }, null, 2)}\n`,
+    `${JSON.stringify({ exitCode, diagnostic, cause, identity, details, packageFact, runState, runDirectory, turnCount }, null, 2)}\n`,
     "utf8",
   );
   process.exitCode = exitCode;
