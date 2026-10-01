@@ -21,7 +21,7 @@ const fixerOutputObject = Type.Object({
   }),
   blocker: Type.Unknown({
     description:
-      "合法阻断完成的 blocker，原样留存（如 authority_violation 及其 evidence、prerequisite_unmet 及其 prerequisiteId、evidence）。",
+      "合法阻断完成的 blocker，原样留存。可写 cause（authority_violation 或 prerequisite_unmet）、evidence；prerequisite_unmet 还可写 prerequisiteId。",
   }),
   reason: Type.Unknown({
     description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
