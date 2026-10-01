@@ -107,6 +107,11 @@ export function roleRunArtifactsDirectory(runDirectory: string): string {
   return join(runDirectory, "artifacts");
 }
 
+/** Canonical unbound placement: a run directory under `<book>/unbound/runs/`. */
+export function isUnboundRunDirectory(runDirectory: string): boolean {
+  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
+}
+
 /** The placement seam owns creation for both new runs and resumed legacy runs. */
 export function ensureRoleRunDirectory(
   ledgerHome: string,

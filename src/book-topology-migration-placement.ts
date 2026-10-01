@@ -10,7 +10,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import { isUnboundRunDirectory, roleRunPlacement } from "./role-run-placement.ts";
+
+export { isUnboundRunDirectory };
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
   readBoardTicketNumber,
@@ -165,10 +167,6 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
       sourcePage: project.sourcePage,
     },
   };
-}
-
-export function isUnboundRunDirectory(runDirectory: string): boolean {
-  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
 }
 
 export function bookHistoricalRoots(
