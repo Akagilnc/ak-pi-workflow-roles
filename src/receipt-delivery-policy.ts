@@ -131,11 +131,15 @@ export function createReceiptDeliveryPolicy(limit?: number) {
     },
     /** Infrastructure owns terminality and must never trigger receipt催交. */
     stopForInfrastructure() { accepted = true; },
-    /** A rejection consumes one budget slot. It is not a delivery request. */
-    recordRejected(reason: string) {
+    /**
+     * Record the tool rejection this turn already produced.
+     * Spends one budget slot unless the caller says the following delivery
+     * request is the spend for this same reminder.
+     */
+    recordRejected(reason: string, accounting?: { readonly spend: false }) {
       terminalToolCalled = true;
       rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
-      spend();
+      if (accounting?.spend !== false) spend();
     },
     recordDeliveryRequest() {
       deliveryTurns += 1;

@@ -1292,16 +1292,17 @@ export function createRoleRuntimeExtension(
         const code = details !== null && typeof details === "object" && "code" in details
           ? details.code
           : undefined;
-        // Unfinished-reason催全 spends on the send below. Counting the same
-        // reminder here ends the run before the accepting turn. Commit and
-        // prefix reminders still spend on the rejection.
-        if (code !== "worker_unfinished_reason_reminder") {
-          const reason = (event.content ?? [])
-            .map((part) => part.type === "text" && "text" in part ? part.text : "")
-            .join("")
-            .trim();
-          receiptDelivery.recordRejected(reason);
-        }
+        // Unfinished-reason催全 spends on the send below. The rejection fact
+        // still belongs to this tool call. Commit and prefix reminders spend
+        // on the rejection itself.
+        const reason = (event.content ?? [])
+          .map((part) => part.type === "text" && "text" in part ? part.text : "")
+          .join("")
+          .trim();
+        receiptDelivery.recordRejected(
+          reason,
+          code === "worker_unfinished_reason_reminder" ? { spend: false } : undefined,
+        );
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
       // closure. tool_result retains only infrastructure settlement.

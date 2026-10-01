@@ -1078,9 +1078,9 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
-  const deliveryPrompts: string[] = [];
-  (harness2.pi as { sendMessage?: (message: { customType: string }) => void }).sendMessage = (message) => {
-    deliveryPrompts.push(message.customType);
+  const deliveryPrompts: Array<{ customType: string; content: string }> = [];
+  (harness2.pi as { sendMessage?: (message: { customType: string; content: string }) => void }).sendMessage = (message) => {
+    deliveryPrompts.push(message);
   };
   const bounce = async (id: string) => {
     const bounced = await tool2.execute(id, bare, undefined, undefined, bounceContext(id));
@@ -1100,7 +1100,22 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     await bounce("u1");
     await bounce("u2");
     assert.equal(bounceGatekeeperProviderRequests, 0);
-    assert.deepEqual(deliveryPrompts, ["ak-receipt-delivery-prompt", "ak-receipt-delivery-prompt"]);
+    assert.deepEqual(deliveryPrompts.map((message) => message.customType), [
+      "ak-receipt-delivery-prompt",
+      "ak-receipt-delivery-prompt",
+    ]);
+    const delivered = deliveryPrompts.map((message) => JSON.parse(message.content) as {
+      terminalToolCalled: boolean;
+      deliveryTurns: number;
+      rejectedReceipts: Array<{ diagnosticAvailable: boolean }>;
+    });
+    assert.equal(delivered[0]?.terminalToolCalled, true);
+    assert.equal(delivered[0]?.deliveryTurns, 1);
+    assert.equal(delivered[0]?.rejectedReceipts.length, 1);
+    assert.equal(delivered[0]?.rejectedReceipts[0]?.diagnosticAvailable, true);
+    assert.equal(delivered[1]?.terminalToolCalled, true);
+    assert.equal(delivered[1]?.deliveryTurns, 2);
+    assert.equal(delivered[1]?.rejectedReceipts.length, 2);
     const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
       handlers: harness2.handlers,
