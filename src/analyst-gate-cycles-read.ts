@@ -39,6 +39,7 @@ import {
 } from "./ledger-session-read.ts";
 
 import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
+import { retainedRunPathsMatch } from "./role-run-relocation.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -497,7 +498,7 @@ export async function readAnalystGateCyclesFromAuditorRoles(
         if (
           options.parentSessionFile !== undefined &&
           volume.parentSessionFile !== undefined &&
-          volume.parentSessionFile !== options.parentSessionFile
+          !await retainedRunPathsMatch(volume.parentSessionFile, options.parentSessionFile)
         ) {
           continue;
         }

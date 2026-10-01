@@ -8,7 +8,17 @@
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join, relative, sep } from "node:path";
+
+import {
+  pathContainedIn,
+  resolveActivationLedgerHome,
+  tryHomeFromAkRolesPath,
+} from "./activation-ledger-topology.ts";
+import {
+  findPlacedMigratingRun,
+  runRefFromBoundPath,
+} from "./book-topology-migration-placement.ts";
 
 import { sessionDirectoryOf } from "./role-run-placement.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
@@ -62,6 +72,35 @@ export function rewriteRunDirectoryPathValue(
     return `${newRunDirectory}${value.slice(oldRunDirectory.length)}`;
   }
   return value;
+}
+
+/** Match a retained run/session locator through the existing complete placement authority. */
+export async function retainedRunPathsMatch(
+  recordedPath: unknown,
+  currentPath: string,
+): Promise<boolean> {
+  if (recordedPath === currentPath) return true;
+  if (typeof recordedPath !== "string") return false;
+  const home = tryHomeFromAkRolesPath(currentPath);
+  if (home === undefined || home.length === 0) return false;
+  const booksDirectory = join(resolveActivationLedgerHome(home), "books");
+  if (!pathContainedIn(booksDirectory, currentPath)) return false;
+  const bookKey = relative(booksDirectory, currentPath).split(sep)[0]!;
+  const bookDirectory = join(booksDirectory, bookKey);
+  const current = runRefFromBoundPath(currentPath, [bookDirectory]);
+  const recorded = runRefFromBoundPath(recordedPath, [bookDirectory]);
+  if (current === undefined || recorded === undefined || current.leaf !== recorded.leaf) return false;
+  const placed = await findPlacedMigratingRun(
+    booksDirectory,
+    bookKey,
+    recorded.leaf,
+    recorded.sourceRelative,
+  );
+  return placed !== undefined && rewriteRunDirectoryPathValue(
+    recordedPath,
+    join(bookDirectory, recorded.sourceRelative),
+    placed.runDirectory,
+  ) === currentPath;
 }
 
 /**

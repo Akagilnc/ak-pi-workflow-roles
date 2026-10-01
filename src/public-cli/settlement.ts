@@ -109,7 +109,7 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
-import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
+import { retainedRunPathsMatch, rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ARTIFACT_FILES,
@@ -1110,9 +1110,8 @@ async function loadBoundAuditorVolumes(
             : typeof header.parentSession === "string"
               ? header.parentSession
               : undefined;
-        if (boundSessionFile !== sessionFile) continue;
         if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
-        if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
+        if (!await retainedRunPathsMatch(boundSessionFile, sessionFile)) continue;
         valid.push({
           entries: entries.slice(start, end),
           parentId,
@@ -1128,9 +1127,9 @@ async function loadBoundAuditorVolumes(
   return valid;
 }
 
-function complianceFailureFromAuditorVolumes(
+async function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): RoleTurnKnownFailure | undefined {
+): Promise<RoleTurnKnownFailure | undefined> {
   for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -1139,7 +1138,8 @@ function complianceFailureFromAuditorVolumes(
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
       const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
-      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId) continue;
+      if (parent?.sessionId !== parentId || parent.attemptEntryId !== attemptEntryId) continue;
+      if (!await retainedRunPathsMatch(parent.sessionFile, sessionFile)) continue;
       // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
       if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;

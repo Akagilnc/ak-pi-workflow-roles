@@ -34,6 +34,7 @@ import { parseCollectorRepository } from "../collector-config.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
+  retainedRunPathsMatch,
   rewriteAdmittedRoleRunPage,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
@@ -1138,9 +1139,8 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (parsed === undefined || parsed.role !== input.role) continue;
     const runId = parsed.runId;
     const parentPath = await readRunParentPath(runDirectory);
-    // The parent's ticket can change after this child was admitted. Within one
-    // book the run leaf is its stable identity; directory placement is not.
-    if (parentPath !== input.parentRunPath && basename(parentPath ?? "") !== basename(input.parentRunPath)) continue;
+    // Follow the parent's retained placement without collapsing distinct book/subject bindings.
+    if (!await retainedRunPathsMatch(parentPath, input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
