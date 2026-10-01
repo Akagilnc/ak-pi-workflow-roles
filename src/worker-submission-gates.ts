@@ -156,12 +156,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** ADR 0050: a written explanation, whatever JSON shape carries the text. */
+/** ADR 0050: a written explanation, including text carried by an object key. */
 function containsWrittenReason(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.some(containsWrittenReason);
   if (typeof value === "object" && value !== null) {
-    return Object.values(value).some(containsWrittenReason);
+    return Object.entries(value).some(
+      ([key, item]) => containsWrittenReason(key) || containsWrittenReason(item),
+    );
   }
   return false;
 }
