@@ -25,7 +25,7 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（model：`--model` → 席位持久 → 官席继承；仍无则报错。host：`--host` → 席位持久 host → 包默认 `pi`）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。上呈的是审核官时，resume 该官的 runId：上呈只暂停这一席，其后的闸照常接着走。所有可调用席位（包括 Notary/符宝郎）都会将 `runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略时包不会添加续跑文本。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。全局 `--model` / `--thinking` / `--host` / `--engine` 仅覆盖本次 resume——须置于 `<runId>` 之前（放 `resume` 之前或 `resume` 与 `<runId>` 之间均可，例如 `ak-role --model xai/grok-4.5 resume 01abc…` 或 `ak-role resume --model xai/grok-4.5 01abc…`）；`<runId>` 之后的那一个 argv 恒为原样透传的 message，绝非旗位（#471）。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`；Grok CLI 原始会话留在操作员 grok 家，工厂卷宗为该 run 的司天台记录），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID 则拒绝；其余续跑失败只输出一行指向当次错误记录的指针（`续跑失败，当次错误记录：<path>`），原因看该文件。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
+`ak-role resume <runId> [message]` 续跑该次运行。旗位、原样透传的续跑 message，以及 model / host / engine 解析，以 `ak-role help resume` 与 `ak-role help config` 为准（[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。上呈的是审核官时，resume 该官的 runId：上呈只暂停这一席，其后的闸照常接着走。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。换宿主不在本文另立一条：原件复制与先前记录是否递送，见 [ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID 则拒绝；其余续跑失败只输出一行指向当次错误记录的指针（`续跑失败，当次错误记录：<path>`），原因看该文件。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
 
 全部可调用角色在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。可调用角色及其机构子腿（审刑审计、太医审计）共享进程内机构子会话接缝。
+**宿主轴：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序、`config set-host` 之后的命令面，以及机构留在哪一侧，以 `ak-role help` 与 [ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md) 为准。
 
 **推荐宿主（省 token，[#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)）：** 长腿的上下文靠宿主自带的自动压缩封顶，阈值写在各宿主自己的配置里，本包不代写、不另造压缩机制。
 
@@ -127,7 +127,7 @@ ak-role diarist --model <provider/model[:thinking]> "整理 #582、#583 自上�
 # 给事中——票庭五问；不自动传召起居郎；已有起居录先沿用录上票号，无录时自行认票并在交卷申报
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
-# 中书省——按《票面法》改票，一次调用内处理给事中封驳并重送，直至署或上呈（#924）
+# 中书省——按《票面法》改票；席位与交卷闸见下方班子表（#924、#1021）
 ak-role secretariat --model <provider/model[:thinking]> "整理 #924 票面并送庭。"
 
 # 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction

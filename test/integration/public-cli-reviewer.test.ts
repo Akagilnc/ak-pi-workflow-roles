@@ -59,7 +59,7 @@ function lawfulReviewerReceipt(
   status: "completed" | "refused" = "completed",
   options?: { readonly axisKey?: string; readonly report?: string },
 ) {
-  // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓级第 0 条).
+  // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓内 CLAUDE.md 开篇).
   const axisKey = options?.axisKey ?? lens;
   const report = options?.report ?? `${lens}-axis-report`;
   const amendments = { [axisKey]: report };
@@ -916,7 +916,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         turnCwd = options.cwd;
         // Explicit --lens shares the ticket worktree (#997).
         assert.equal(realpathSync(options.cwd), realpathSync(project));
-        // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
+        // Deliberate receipt/lens mismatch must still land (仓内 CLAUDE.md 开篇).
         return lawfulChildTurn(args, {
           lens: "completeness",
           toolCallId: "ok1",

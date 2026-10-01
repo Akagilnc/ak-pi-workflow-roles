@@ -21,7 +21,7 @@ export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 /**
  * Shared declaration fragment for model guidance (#541 / #676 C / ADR 0057).
  * Nested field declarations + descriptions only — host must not pure-shape-reject
- * the envelope (第 0 条). Runtime `failOnInfrastructureFailureDeclaration` still
+ * the envelope (仓内 CLAUDE.md 开篇). Runtime `failOnInfrastructureFailureDeclaration` still
  * recognizes a real non-empty diagnostic string as the failure declaration.
  * No required/minLength/type host gates on the declaration fragment.
  */

@@ -595,7 +595,7 @@ function createFiledOfficerRuntime(
                 ? undefined
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
             // Accept-as-is + terminate only. Shape is not an admission gate
-            // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
+            // (仓内 CLAUDE.md 开篇 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
               content: [],
               details: projected === undefined ? parameters : projected,

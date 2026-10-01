@@ -79,7 +79,7 @@ test("secretariat activation exposes only the terminating package tool (G6)", as
   assert.ok(active.includes("host_shell"));
 });
 
-test("secretariat output records any status without shape reject (第 0 条)", async () => {
+test("secretariat output records any status without shape reject (仓内 CLAUDE.md 开篇)", async () => {
   const { tools } = await activateSecretariat();
   const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c1",
@@ -110,7 +110,7 @@ test("secretariat output records any status without shape reject (第 0 条)", a
     "escalate",
   );
 
-  // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
+  // 仓内 CLAUDE.md 开篇 / #924: tool only records; non-canonical status is not code-rejected.
   const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c3",
     { secretariatStatus: "unexpected" },
