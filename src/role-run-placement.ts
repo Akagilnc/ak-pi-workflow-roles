@@ -7,6 +7,8 @@ import {
 } from "./activation-ledger-topology.ts";
 import { requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
+import { isEnoent } from "./unknown-value.ts";
+
 export type RoleRunSubject =
   | { readonly ticketNumber: number }
   | { readonly unbound: true };
@@ -18,14 +20,6 @@ export type RoleRunPlacement = {
   readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
 };
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /**
  * Sole book-level run directory walk: flat legacy `runs/` plus each
@@ -42,7 +36,7 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
     try {
       entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isMissingPathError(error)) return;
+      if (isEnoent(error)) return;
       throw error;
     }
     for (const entry of entries) {
@@ -60,7 +54,7 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
   try {
     subjects = await readdir(bookDir, { withFileTypes: true });
   } catch (error) {
-    if (isMissingPathError(error)) return out.sort();
+    if (isEnoent(error)) return out.sort();
     throw error;
   }
   for (const subject of subjects) {
@@ -105,6 +99,11 @@ export function roleRunPlacement(
 /** The single artifacts subpath definition for new and resumed role runs. */
 export function roleRunArtifactsDirectory(runDirectory: string): string {
   return join(runDirectory, "artifacts");
+}
+
+/** Canonical unbound placement: a run directory under `<book>/unbound/runs/`. */
+export function isUnboundRunDirectory(runDirectory: string): boolean {
+  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
 }
 
 /** The placement seam owns creation for both new runs and resumed legacy runs. */

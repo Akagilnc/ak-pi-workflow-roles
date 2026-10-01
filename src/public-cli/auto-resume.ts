@@ -42,6 +42,8 @@ import {
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
+import { errorText, isEnoent } from "../unknown-value.ts";
+
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
 /**
@@ -132,7 +134,7 @@ export class TurnDispatchedFailure extends Error {
   constructor(cause: unknown) {
     super(
       `settlement failed after the host turn genuinely started: ${
-        cause instanceof Error ? cause.message : String(cause)
+        errorText(cause)
       }`,
       { cause },
     );
@@ -164,7 +166,7 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
       throw new Error("run artifact retention: artifacts path is not a real directory");
     }
   } catch (error) {
-    if (!isMissingPathError(error)) throw error;
+    if (!isEnoent(error)) throw error;
     await mkdir(artifactsDir, { recursive: true });
     const created = await lstat(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
@@ -172,15 +174,6 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
     }
   }
   return artifactsDir;
-}
-
-/** ENOENT identity shared with settlement.ts's hardened audit-artifact path. */
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
 }
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */
@@ -210,7 +203,7 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
  * + O_NOFOLLOW where the platform provides it (a planted symlink is never
  * followed) — mirrors settlement.ts's own hardened artifact writers.
  */
-async function writeHardenedArtifactFile(
+export async function writeHardenedArtifactFile(
   artifactsDir: string,
   namePrefix: string,
   payload: Record<string, unknown>,

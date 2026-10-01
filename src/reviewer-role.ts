@@ -19,7 +19,6 @@ export type ReviewerRoleDependencies = {
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
-
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;

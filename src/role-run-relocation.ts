@@ -12,6 +12,8 @@ import { join, sep } from "node:path";
 
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
+import { isRecord, isEnoent } from "./unknown-value.ts";
+
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",
   "admittedRequestPath",
@@ -49,14 +51,6 @@ export type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
   readonly newRunDirectory: string;
 };
-
-function isEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /** Rewrite one path value that points at or under oldRunDirectory. */
 export function rewriteRunDirectoryPathValue(
@@ -158,16 +152,12 @@ function collectRewrites(input: {
   return out;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 /** Typed notary/source-run locator: only runDirectory is a path. */
 function rewriteSourceRunLocator(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): void {
-  if (!isPlainObject(value)) return;
+  if (!isRecord(value)) return;
   rewriteRunDirectoryPathFieldsAgainstRewrites(
     value,
     SOURCE_RUN_LOCATOR_FIELDS,
@@ -180,7 +170,7 @@ function rewriteSummonsMaterials(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): void {
-  if (!isPlainObject(value)) return;
+  if (!isRecord(value)) return;
   rewriteRunDirectoryPathFieldsAgainstRewrites(
     value,
     SUMMONS_PATH_FIELDS,
@@ -204,12 +194,12 @@ export function rewriteAdmittedRoleRunPage(
   rewriteSourceRunLocator(page.sourceRun, rewrites);
   if (Array.isArray(page.attachments)) {
     for (const attachment of page.attachments) {
-      if (isPlainObject(attachment)) {
+      if (isRecord(attachment)) {
         rewriteRunDirectoryPathFieldsAgainstRewrites(attachment, ["frozenPath"], rewrites);
       }
     }
   }
-  if (isPlainObject(page.principal)) {
+  if (isRecord(page.principal)) {
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page.principal,
       ["sessionDirectory", "sessionFile"],
@@ -224,7 +214,7 @@ async function rewriteOfficerPointerFile(
 ): Promise<void> {
   if (!existsSync(path)) return;
   const page = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (!isPlainObject(page)) return;
+  if (!isRecord(page)) return;
   // Only the typed direct-officer pointer shape — never arbitrary .pointer.json.
   if (page.kind !== "direct-officer-run-pointer") return;
   const before = JSON.stringify(page);
@@ -267,7 +257,7 @@ async function rewriteSitianRecordsJsonl(
       out.push(line);
       continue;
     }
-    if (!isPlainObject(parsed)) {
+    if (!isRecord(parsed)) {
       out.push(line);
       continue;
     }
@@ -325,7 +315,7 @@ async function rewriteSessionTranscriptBindings(
       out.push(line);
       continue;
     }
-    if (!isPlainObject(parsed)) {
+    if (!isRecord(parsed)) {
       out.push(line);
       continue;
     }
@@ -341,8 +331,8 @@ async function rewriteSessionTranscriptBindings(
     } else if (
       parsed.type === "custom" &&
       parsed.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE &&
-      isPlainObject(parsed.data) &&
-      isPlainObject(parsed.data.parent)
+      isRecord(parsed.data) &&
+      isRecord(parsed.data.parent)
     ) {
       const parent = parsed.data.parent;
       const before = parent.sessionFile;
@@ -454,7 +444,7 @@ export async function rewriteRoleRunDurablePages(input: {
       RUN_STATE_PAGE_FIELDS,
       rewrites,
     );
-    if (isPlainObject(page.principal)) {
+    if (isRecord(page.principal)) {
       rewriteRunDirectoryPathFieldsAgainstRewrites(
         page.principal,
         ["sessionDirectory", "sessionFile"],
@@ -462,7 +452,7 @@ export async function rewriteRoleRunDurablePages(input: {
       );
     }
     // Open court summons: source-run locators + frozen attachment path pointers.
-    if (isPlainObject(page.currentCourt)) {
+    if (isRecord(page.currentCourt)) {
       rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
     }
     if (JSON.stringify(page) !== before) {

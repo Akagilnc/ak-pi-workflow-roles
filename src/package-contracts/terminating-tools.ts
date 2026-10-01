@@ -36,6 +36,8 @@ import {
   type WorkerOutput,
 } from "./worker-output.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 export {
   CODER_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
@@ -114,7 +116,6 @@ export class AcceptedDetailsContractError extends CorrectableSubmissionError {
   }
 }
 
-
 /**
  * #836: status allowlist rejection deleted. Original object is the receipt.
  * Callers that need a typed view may still cast; code must not bounce on status.
@@ -123,7 +124,7 @@ export function validateAcceptedDetails(
   _toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  if (details !== null && typeof details === "object" && !Array.isArray(details)) {
+  if (isRecord(details)) {
     return details as AcceptedDetails;
   }
   // Non-object payload still records as empty object rather than rejecting.
@@ -178,18 +179,13 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     if (!Array.isArray(b) || a.length !== b.length) return false;
     return a.every((item, index) => deepEqual(item, b[index]));
   }
-  if (typeof a === "object") {
-    if (typeof b !== "object" || b === null || Array.isArray(b)) return false;
-    const aKeys = Object.keys(a as object).sort();
-    const bKeys = Object.keys(b as object).sort();
+  if (isRecord(a)) {
+    if (!isRecord(b)) return false;
+    const aKeys = Object.keys(a).sort();
+    const bKeys = Object.keys(b).sort();
     if (aKeys.length !== bKeys.length) return false;
     if (!aKeys.every((key, index) => key === bKeys[index])) return false;
-    return aKeys.every((key) =>
-      deepEqual(
-        (a as Record<string, unknown>)[key],
-        (b as Record<string, unknown>)[key],
-      )
-    );
+    return aKeys.every((key) => deepEqual(a[key], b[key]));
   }
   return false;
 }

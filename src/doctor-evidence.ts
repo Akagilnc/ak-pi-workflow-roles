@@ -4,26 +4,27 @@ import { sha256Hex } from "./sha256.ts";
 import type { DoctorCase, DoctorCaseCost, DoctorCount, DoctorEvidenceEntry } from "./doctor-contracts.ts";
 import { AcceptedDetailsContractError, acceptedFacts, isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.ts";
 
-function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+import { isRecord, isMissingPathError } from "./unknown-value.ts";
+
 async function discoverCaseFiles(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) { await walk(path, depth + 1); } else if (item.isFile() && (item.name.endsWith(".jsonl") || (item.name === "stderr.log" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
 function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
 function accumulate(metric: DoctorCount, value: number, source: string) { metric.count += value; if (value) metric.sources.push(source); }
 function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }
-function isMissingPathError(error: unknown): boolean { return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"); }
+
 async function stableRunsIdentity(root: string): Promise<string> { let cursor = root; while (true) { try { const git = await stat(resolve(cursor, ".git")); if (git.isDirectory() || git.isFile()) return relative(cursor, root).split(sep).join("/"); } catch (error) { if (!isMissingPathError(error)) throw error; } const parent = dirname(cursor); if (parent === cursor) return root; cursor = parent; } }
 
 type SessionDerivation = { session: DoctorCaseCost["sessions"][number]; turns: number; calls: number; tokens: number; statuses: DoctorCaseCost["statuses"]; commits: DoctorCaseCost["commits"] };
 function deriveSession(content: string, id: string): SessionDerivation {
   const rows: Record<string, unknown>[] = []; const degradationReasons: string[] = [];
-  for (const line of content.split("\n")) if (line.trim()) { try { const row: unknown = JSON.parse(line); if (!record(row)) { degradationReasons.push(`non-object session row in ${id}`); break; } rows.push(row); } catch (error) { if (error instanceof SyntaxError) { degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`); break; } throw error; } }
+  for (const line of content.split("\n")) if (line.trim()) { try { const row: unknown = JSON.parse(line); if (!isRecord(row)) { degradationReasons.push(`non-object session row in ${id}`); break; } rows.push(row); } catch (error) { if (error instanceof SyntaxError) { degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`); break; } throw error; } }
   const started = rows.find((row) => row.type === "session"); const startedAt = started && timestamp(started); if (!startedAt) degradationReasons.push(`Pi session header is missing: ${id}`);
   let accepted: Record<string, unknown> | undefined, observedCommit: string | undefined, turns = 0, calls = 0, tokens = 0;
   const statuses: DoctorCaseCost["statuses"] = [], commits: DoctorCaseCost["commits"] = [];
   for (const row of rows) {
-    if (row.type === "custom" && row.customType === "ak-role-submission-closure" && record(row.data) && row.data.isError === false && typeof row.data.toolName === "string" && isTerminatingToolName(row.data.toolName)) accepted = row;
-    const message = record(row.message) ? row.message : undefined;
-    if (message?.role === "assistant") { for (const part of Array.isArray(message.content) ? message.content : []) if (record(part) && part.type === "toolCall") calls++; if (typeof message.responseId === "string") { turns++; const usage = record(message.usage) ? message.usage : undefined; if (usage && typeof usage.output === "number") tokens += usage.output; } }
-    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record(message.details)) { let details; try { details = validateAcceptedDetails(message.toolName, message.details); } catch (error) { // Contract: README.md#Doctor — non-accepted terminating receipts are expected-negative evidence and are skipped; all other validation failures propagate with their cause.
+    if (row.type === "custom" && row.customType === "ak-role-submission-closure" && isRecord(row.data) && row.data.isError === false && typeof row.data.toolName === "string" && isTerminatingToolName(row.data.toolName)) accepted = row;
+    const message = isRecord(row.message) ? row.message : undefined;
+    if (message?.role === "assistant") { for (const part of Array.isArray(message.content) ? message.content : []) if (isRecord(part) && part.type === "toolCall") calls++; if (typeof message.responseId === "string") { turns++; const usage = isRecord(message.usage) ? message.usage : undefined; if (usage && typeof usage.output === "number") tokens += usage.output; } }
+    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && isRecord(message.details)) { let details; try { details = validateAcceptedDetails(message.toolName, message.details); } catch (error) { // Contract: README.md#Doctor — non-accepted terminating receipts are expected-negative evidence and are skipped; all other validation failures propagate with their cause.
         if (error instanceof AcceptedDetailsContractError) continue; throw error; } const facts = acceptedFacts(message.toolName, details); if (facts.commit && facts.commit !== observedCommit) { commits.push({ source: id, commit: facts.commit }); observedCommit = facts.commit; } /* #836 B10.3: do not wipe earlier statuses or invent a code status sentence */ if (facts.status !== undefined) { statuses.push({ source: id, status: facts.status }); } }
   }
   const acceptedAt = accepted && timestamp(accepted); const final = acceptedAt ? accepted! : rows.at(-1); const endedAt = final && timestamp(final); const wall = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : undefined;

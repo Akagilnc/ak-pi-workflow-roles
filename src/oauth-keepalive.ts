@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { errorText, isEnoent, isRecord } from "./unknown-value.ts";
+
 export const DEFAULT_OAUTH_KEEPALIVE_PROVIDERS = ["kimi-coding"] as const;
 
 export const OAUTH_KEEPALIVE_INTERVAL_MS = 60_000;
@@ -25,10 +27,6 @@ export function oauthKeepaliveSettingPath(): string {
   );
 }
 
-function isExactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Read the static keepalive provider list from the extension setting file.
  * Missing file → default ["kimi-coding"]. Malformed content fails closed.
@@ -39,7 +37,7 @@ export function readOAuthKeepaliveProviders(
 ): readonly string[] {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!isExactRecord(raw) || !Array.isArray(raw.providers)) {
+    if (!isRecord(raw) || !Array.isArray(raw.providers)) {
       throw new Error(
         "OAuth keepalive setting is malformed: expected { providers: string[] }",
       );
@@ -56,13 +54,7 @@ export function readOAuthKeepaliveProviders(
     return Object.freeze(providers);
   } catch (error) {
     // Absent optional setting uses the documented default; all other causes propagate.
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return DEFAULT_OAUTH_KEEPALIVE_PROVIDERS;
-    }
+    if (isEnoent(error)) return DEFAULT_OAUTH_KEEPALIVE_PROVIDERS;
     throw error;
   }
 }
@@ -125,12 +117,7 @@ function errorClassName(error: unknown): string {
 
 function formatWarning(providerId: string, error: unknown): string {
   const cls = errorClassName(error);
-  const detail =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : String(error);
+  const detail = errorText(error);
   return `oauth-keepalive: refresh failed for provider ${providerId} (${cls}): ${detail}`;
 }
 

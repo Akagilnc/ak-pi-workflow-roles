@@ -5,6 +5,7 @@
  */
 
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const INSPECTOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const INSPECTOR_SOURCE_RUN_FLAG = {
@@ -21,7 +22,7 @@ export type InspectorOutput =
   | { readonly status: "escalate"; readonly reason?: unknown; readonly findings?: unknown };
 
 export function validateRecordedInspectorOutput(value: unknown): InspectorOutput {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("Inspector output has no execution discriminator");
   }
   let status: unknown;

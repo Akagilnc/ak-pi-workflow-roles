@@ -12,6 +12,7 @@ import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { isRecord } from "./unknown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -166,18 +167,9 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
   return decision;
-}
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
 }
 
 /**
@@ -198,7 +190,7 @@ function projectOfficerDecision(
   fallbackStatus?: string,
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
-  const record = readRecord(decision);
+  const record = isRecord(decision) ? decision : undefined;
   const status =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
     ?? fallbackStatus;

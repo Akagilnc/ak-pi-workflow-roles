@@ -17,6 +17,8 @@ import type {
   AnalystUnreadableRun,
 } from "../analyst-page.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 export type AnalystRoundTimelineTerminal =
   | {
       readonly kind: "receipt";
@@ -65,10 +67,6 @@ export type AnalystRoundTimelineSection = {
   readonly kind: "analyst-round-timeline";
   readonly lanes: readonly AnalystRoundTimelineLane[];
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readClassCount(body: Record<string, unknown>): number | undefined {
   if (!isRecord(body.outcome)) return undefined;

@@ -6,9 +6,9 @@
  * top-level sections via directory discovery — B/C waves add family files
  * without forking the page writer or editing a shared registry list.
  */
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
+import { sha256Hex } from "./sha256.ts";
 import { writeFileAtomically } from "./atomic-write.ts";
 import {
   assertLedgerFileInsideHome,
@@ -161,7 +161,7 @@ export function analystIssuePageKey(address: AnalystIssuePageAddress): string {
   } else if (address.scopeRootIdentity !== undefined) {
     parts.push("root", physicalPathIdentity(address.scopeRootIdentity));
   }
-  return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+  return sha256Hex(parts.join("\0")).slice(0, 32);
 }
 
 export function analystIssuePagePath(

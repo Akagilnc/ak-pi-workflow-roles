@@ -27,6 +27,7 @@ import {
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
 } from "./registry.ts";
+import { isEnoent, isRecord } from "../unknown-value.ts";
 
 /** Province officers that may carry a persistent model override (#453). Registry order. */
 type ProvinceConfigRole = Extract<
@@ -134,13 +135,7 @@ export async function loadPublicCliConfig(
     const raw = await readFile(path, "utf8");
     return parsePublicCliConfig(JSON.parse(raw));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return { seats: {} };
-    }
+    if (isEnoent(error)) return { seats: {} };
     throw error;
   }
 }
@@ -481,7 +476,7 @@ function serializePublicCliConfig(config: PublicCliConfig): {
 }
 
 function parsePublicCliConfig(value: unknown): PublicCliConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("public CLI config must be an object");
   }
   const record = value as {
@@ -500,11 +495,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   // disk-shaped seats map and a memory-shaped bucket both survive.
   const unknownSeats: Record<string, unknown> = {};
   if (record.unknownSeats !== undefined) {
-    if (
-      record.unknownSeats === null ||
-      typeof record.unknownSeats !== "object" ||
-      Array.isArray(record.unknownSeats)
-    ) {
+    if (!isRecord(record.unknownSeats)) {
       throw new Error("public CLI config.unknownSeats must be an object");
     }
     Object.assign(unknownSeats, record.unknownSeats as Record<string, unknown>);
@@ -517,11 +508,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   if (record.seats === undefined) {
     return withOpaque({});
   }
-  if (
-    record.seats === null ||
-    typeof record.seats !== "object" ||
-    Array.isArray(record.seats)
-  ) {
+  if (!isRecord(record.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats: PublicCliConfig["seats"] = {};
@@ -542,7 +529,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
 }
 
 function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`config seat ${seat} must be an object`);
   }
   const raw = value as Record<string, unknown>;
@@ -825,7 +812,7 @@ export function listRolesForDisplay(
 export function credentialProvidersFromAuthData(
   data: unknown,
 ): CredentialProviders {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+  if (!isRecord(data)) {
     return { "openai-codex": false, xai: false };
   }
   const record = data as Record<string, unknown>;
@@ -835,6 +822,14 @@ export function credentialProvidersFromAuthData(
   };
 }
 
+/**
+ * Public entry agent directory: explicit value, else PI_CODING_AGENT_DIR,
+ * else `<home>/.pi/agent`. CLI and nested summons share this rule.
+ */
+export function resolvePublicAgentDir(explicit: string | undefined, home: string): string {
+  return explicit ?? process.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+}
+
 export async function loadCredentialProviders(
   agentDir: string,
 ): Promise<CredentialProviders> {
@@ -842,13 +837,7 @@ export async function loadCredentialProviders(
     const raw = await readFile(join(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return { "openai-codex": false, xai: false };
-    }
+    if (isEnoent(error)) return { "openai-codex": false, xai: false };
     throw error;
   }
 }

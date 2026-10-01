@@ -7,9 +7,9 @@
  * books/<book>/navigator/<work-subject-digest>/. Callers must not re-hash
  * subject or re-join book/navigator/digest themselves.
  */
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 
+import { sha256Hex } from "./sha256.ts";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -52,7 +52,7 @@ export function resolveNavigatorWorkSubjectPlacement(input: {
     }
   }
   ledgerHome ??= resolveActivationLedgerHome(input.home);
-  const digest = createHash("sha256").update(input.subject).digest("hex").slice(0, 32);
+  const digest = sha256Hex(input.subject).slice(0, 32);
   return {
     ledgerHome,
     sessionDir: join(
