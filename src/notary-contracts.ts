@@ -70,7 +70,7 @@ export function retainNotarySubmission(value: unknown): unknown {
  * Does not gate role admission — callers must not use this to reject a submission.
  */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("Notary output is not an object");
   }
   return value as NotaryOutput;

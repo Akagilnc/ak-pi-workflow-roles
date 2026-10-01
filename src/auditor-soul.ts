@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { isRecord } from "./unknown-value.ts";
+
 import {
   joinPackageMaterials,
   readPackageMaterial,
@@ -126,7 +128,7 @@ export async function readAuditorResumeBinding(runDirectory: string): Promise<
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  if (!isRecord(raw)) return undefined;
   const record = raw as { sourceRunPath?: unknown; auditorSubject?: unknown };
   if (typeof record.sourceRunPath !== "string" || record.sourceRunPath.trim() === "") return undefined;
   const subject = isAuditorSoulRole(record.auditorSubject)

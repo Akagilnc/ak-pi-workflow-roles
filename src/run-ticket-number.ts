@@ -8,7 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { isEnoent } from "./unknown-value.ts";
+import { isEnoent, isRecord } from "./unknown-value.ts";
 
 /** Sole on-disk page for worktree-basename ticket derivation (#865). */
 export const MIGRATION_TICKET_DERIVATION_PAGE =
@@ -63,10 +63,10 @@ async function readJsonObject(
 ): Promise<Record<string, unknown> | undefined> {
   try {
     const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    if (!isRecord(raw)) {
       return undefined;
     }
-    return raw as Record<string, unknown>;
+    return raw;
   } catch (error) {
     if (isEnoent(error)) return undefined;
     throw error;

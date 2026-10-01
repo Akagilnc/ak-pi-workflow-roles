@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SeatModelConfig } from "./config.ts";
-import { isEnoent } from "../unknown-value.ts";
+import { isEnoent, isRecord } from "../unknown-value.ts";
 
 /** host → seat-provider → host-facing provider. */
 export type HostProvidersTable = Readonly<
@@ -32,25 +32,19 @@ export function hermesProviderModelsCachePath(home: string): string {
 }
 
 export function parseHostProvidersTable(value: unknown): HostProvidersTable {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("host-providers.json must be an object");
   }
   const out: Record<string, Record<string, string>> = {};
-  for (const [host, byProvider] of Object.entries(value as Record<string, unknown>)) {
+  for (const [host, byProvider] of Object.entries(value)) {
     if (host.trim() === "") {
       throw new Error("host-providers.json host key must be non-empty");
     }
-    if (
-      byProvider === null ||
-      typeof byProvider !== "object" ||
-      Array.isArray(byProvider)
-    ) {
+    if (!isRecord(byProvider)) {
       throw new Error(`host-providers.json[${host}] must be an object`);
     }
     const providers: Record<string, string> = {};
-    for (const [seatProvider, hostProvider] of Object.entries(
-      byProvider as Record<string, unknown>,
-    )) {
+    for (const [seatProvider, hostProvider] of Object.entries(byProvider)) {
       if (seatProvider.trim() === "") {
         throw new Error(
           `host-providers.json[${host}] seat-provider key must be non-empty`,
@@ -114,14 +108,14 @@ export function listHermesProvidersForModel(
     throw error;
   }
   const raw: unknown = JSON.parse(text);
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     throw new Error(
       `hermes provider_models_cache.json must be an object: ${path}`,
     );
   }
   const found: string[] = [];
-  for (const [provider, entry] of Object.entries(raw as Record<string, unknown>)) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+  for (const [provider, entry] of Object.entries(raw)) {
+    if (!isRecord(entry)) {
       continue;
     }
     const models = (entry as { models?: unknown }).models;

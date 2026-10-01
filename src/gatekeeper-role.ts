@@ -14,6 +14,7 @@ import {
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { isRecord } from "./unknown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -179,11 +180,6 @@ function retainedReceipt(decision: unknown): unknown {
   return decision;
 }
 
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
-}
-
 /**
  * Read only the conclusion field for queueing (#753).
  * converged | continue | escalate → queue signal + raw receipt.
@@ -202,7 +198,7 @@ function projectOfficerDecision(
   fallbackStatus?: string,
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
-  const record = readRecord(decision);
+  const record = isRecord(decision) ? decision : undefined;
   const status =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
     ?? fallbackStatus;

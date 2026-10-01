@@ -735,7 +735,7 @@ export async function dispatchPostAdmissionTurn<
             continue;
           }
           const payload = row.accepted;
-          if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
+          if (!isRecord(payload)) continue;
           ticketNumber = readDeclaredTicketNumber(
             (payload as { ticketNumber?: unknown }).ticketNumber,
           );

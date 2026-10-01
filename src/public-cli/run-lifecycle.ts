@@ -242,8 +242,8 @@ type RoleRunStateDisk = {
 function parseSameTicketSummonsMaterials(
   raw: unknown,
 ): SameTicketSummonsMaterials | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
+  if (!isRecord(raw)) return undefined;
+  const record = raw;
   const instruction =
     typeof record.instruction === "string" ? record.instruction : undefined;
   const instructionEmpty =
@@ -296,8 +296,8 @@ function parseSameTicketSummonsMaterials(
 }
 
 function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
+  if (!isRecord(raw)) return undefined;
+  const record = raw;
   if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
     return undefined;
   }
@@ -332,10 +332,10 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
   readonly runDirectory: string;
   readonly state: RoleRunState;
 } {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     throw new TypeError("Invalid run-state.json");
   }
-  const record = raw as Record<string, unknown>;
+  const record = raw;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
     throw new TypeError("Invalid run-state.json");
   }
@@ -389,11 +389,8 @@ async function readRoleRunStateDisk(
   };
   let resumable: TypedHttp429Observation | undefined;
   if (record.resumable !== undefined && record.resumable !== null) {
-    if (
-      typeof record.resumable === "object" &&
-      !Array.isArray(record.resumable)
-    ) {
-      const r = record.resumable as Record<string, unknown>;
+    if (isRecord(record.resumable)) {
+      const r = record.resumable;
       if (
         r.httpStatus === 429 &&
         typeof r.provider === "string" &&
@@ -1069,10 +1066,10 @@ export async function readRunParentPath(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     return undefined;
   }
-  const record = raw as Record<string, unknown>;
+  const record = raw;
   if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
     return record.sourceRunPath;
   }

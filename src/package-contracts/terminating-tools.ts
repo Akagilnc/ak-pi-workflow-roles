@@ -179,18 +179,13 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     if (!Array.isArray(b) || a.length !== b.length) return false;
     return a.every((item, index) => deepEqual(item, b[index]));
   }
-  if (typeof a === "object") {
-    if (typeof b !== "object" || b === null || Array.isArray(b)) return false;
-    const aKeys = Object.keys(a as object).sort();
-    const bKeys = Object.keys(b as object).sort();
+  if (isRecord(a)) {
+    if (!isRecord(b)) return false;
+    const aKeys = Object.keys(a).sort();
+    const bKeys = Object.keys(b).sort();
     if (aKeys.length !== bKeys.length) return false;
     if (!aKeys.every((key, index) => key === bKeys[index])) return false;
-    return aKeys.every((key) =>
-      deepEqual(
-        (a as Record<string, unknown>)[key],
-        (b as Record<string, unknown>)[key],
-      )
-    );
+    return aKeys.every((key) => deepEqual(a[key], b[key]));
   }
   return false;
 }

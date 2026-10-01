@@ -228,7 +228,7 @@ async function readJsonlParentSession(path: string): Promise<string | undefined>
   if (line.length === 0) return undefined;
   try {
     const header: unknown = JSON.parse(line);
-    if (header === null || typeof header !== "object" || Array.isArray(header)) {
+    if (!isRecord(header)) {
       return undefined;
     }
     const parentSession = (header as { parentSession?: unknown }).parentSession;
@@ -275,7 +275,7 @@ async function findTrueVolumeParent(
   let sessionFileField: string;
   try {
     const ledger: unknown = JSON.parse(ledgerRaw);
-    if (ledger === null || typeof ledger !== "object" || Array.isArray(ledger)) {
+    if (!isRecord(ledger)) {
       return undefined;
     }
     const sessionFile = (ledger as { sessionFile?: unknown }).sessionFile;
@@ -428,7 +428,7 @@ async function readSessionFileField(path: string): Promise<string | undefined> {
       { cause: error },
     );
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error(
       `book topology migration cannot read current-session pointer at ${path}: expected a JSON object`,
     );

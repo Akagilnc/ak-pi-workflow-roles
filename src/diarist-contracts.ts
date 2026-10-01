@@ -12,6 +12,7 @@ import {
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 
@@ -43,7 +44,7 @@ export type DiaristOutput =
     };
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("Diarist output has no execution discriminator");
   }
   let status: unknown;
@@ -78,7 +79,7 @@ export function projectDiaristTicketSessions(
   if (!Array.isArray(raw)) return undefined;
   const perTicket = new Map<number, TicketProvenanceSession[]>();
   for (const entry of raw) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+    if (!isRecord(entry)) return undefined;
     const { ticketNumber, sessions: rawSessions } = entry as Record<string, unknown>;
     if (!isSafePositiveTicketNumber(ticketNumber)) return undefined;
     const sessions = projectTicketProvenanceSessions(rawSessions);

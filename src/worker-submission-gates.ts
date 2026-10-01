@@ -158,7 +158,7 @@ function uninstallPackageWorkerHooks(cwd: string): void {
 function containsWrittenReason(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.some(containsWrittenReason);
-  if (typeof value === "object" && value !== null) {
+  if (isRecord(value)) {
     return Object.entries(value).some(
       ([key, item]) => containsWrittenReason(key) || containsWrittenReason(item),
     );
@@ -167,8 +167,8 @@ function containsWrittenReason(value: unknown): boolean {
 }
 
 function unfinishedReasonPresent(details?: unknown): boolean {
-  if (typeof details !== "object" || details === null || Array.isArray(details)) return false;
-  return containsWrittenReason((details as { reason?: unknown }).reason);
+  if (!isRecord(details)) return false;
+  return containsWrittenReason(details.reason);
 }
 
 function readGateState(session: HostRecordSession): {

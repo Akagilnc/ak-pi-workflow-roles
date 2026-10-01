@@ -1,6 +1,8 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
+import { isRecord } from "../unknown-value.ts";
+
 export const FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
 
 export const fixerPrerequisiteSchema = Type.Object({
@@ -45,7 +47,7 @@ function fail(cause: unknown): never {
 function parseFailure(value: unknown): never {
   if (!Array.isArray(value)) fail(new Error("Fixer prerequisites must be a JSON array"));
   for (const entry of value) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    if (!isRecord(entry)) {
       fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
     }
     const keys = Object.keys(entry);

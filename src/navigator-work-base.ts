@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
-import { isEnoent } from "./unknown-value.ts";
+import { isEnoent, isRecord } from "./unknown-value.ts";
 
 export const NAVIGATOR_WORK_CONTEXT_BASENAME = "work-context.json";
 
@@ -74,7 +74,7 @@ export async function readNavigatorWorkBase(path: string): Promise<NavigatorWork
   } catch {
     return undefined;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  if (!isRecord(parsed)) return undefined;
   const record = parsed as Record<string, unknown>;
   if (typeof record.subject !== "string" || typeof record.authority !== "string") return undefined;
   if (record.authority.trim() === "") return undefined;
@@ -86,7 +86,7 @@ function jsonObjectFromPrompt(prompt: string): Record<string, unknown> | undefin
   if (!head.startsWith("{")) return undefined;
   try {
     const parsed: unknown = JSON.parse(head);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    if (!isRecord(parsed)) return undefined;
     return parsed as Record<string, unknown>;
   } catch {
     return undefined;

@@ -1,10 +1,13 @@
+import { Guard } from "typebox/guard";
+
 /**
  * Sole readers for a plain object, a Node errno, and an Error message.
  * Callers choose which codes count; ENOTDIR is not ENOENT.
+ * Plain objects are TypeBox `Guard.IsObjectNotArray`.
  */
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return Guard.IsObjectNotArray(value);
 }
 
 export function errnoCode(error: unknown): string | undefined {

@@ -109,7 +109,7 @@ import {
 } from "./option-definitions.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
-import { errorText } from "../unknown-value.ts";
+import { errorText, isRecord } from "../unknown-value.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -2219,8 +2219,8 @@ export async function loadAdmittedJudgeRequest(
     const raw = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
     ) as unknown;
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const record = raw as Record<string, unknown>;
+    if (!isRecord(raw)) return undefined;
+    const record = raw;
     if (!packagedPublicInstructionSubject(record.role)) return undefined;
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;

@@ -5,7 +5,7 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { isEnoent } from "./unknown-value.ts";
+import { isEnoent, isRecord } from "./unknown-value.ts";
 
 const TYPED_HTTP_FILE = "typed-provider-http.json";
 
@@ -75,7 +75,7 @@ export async function readLatestTypedProviderHttpObservation(
     throw error;
   }
   const raw: unknown = JSON.parse(text);
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     throw new Error("typed provider HTTP observation must be a JSON object");
   }
   const record = raw as Record<string, unknown>;
