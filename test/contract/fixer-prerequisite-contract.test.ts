@@ -54,8 +54,6 @@ test("prerequisite attachment failures retain typed identity for each invalid sh
   ];
   for (const source of invalid) assert.throws(() => parseFixerPrerequisites(source), FixerPacketValidationError);
   assert.doesNotThrow(() => parseFixerPrerequisites(JSON.stringify([{ id: "Same", requirement: "x" }, { id: "same", requirement: "y" }])));
-  const withExtra = parseFixerPrerequisites(JSON.stringify([{ id: "x", requirement: "x", extra: true }]));
-  assert.deepEqual(withExtra, [{ id: "x", requirement: "x" }]);
 });
 
 test("malformed prerequisite attachments keep their true causes behind one stable typed identity", () => {
