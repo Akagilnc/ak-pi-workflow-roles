@@ -825,7 +825,7 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-typed-http-resume-once-001";
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "typed http sidecar is a directory"],
       {
         packageRoot,

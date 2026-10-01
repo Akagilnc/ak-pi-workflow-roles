@@ -12,7 +12,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import test from "node:test";
@@ -462,7 +462,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const runId = "run-within-attempt-stale-429-001";
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "stale within-attempt 429"],
@@ -595,7 +595,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
     assert.ok(await readTypedHttp429Observation(runDirectory));
 
     // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     let resumeDispatches = 0;
     const second = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
@@ -1128,7 +1128,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const frozenPath = admittedBefore.attachments[0]!.frozenPath;
     const frozenSha = admittedBefore.attachments[0]!.sha256;
 
-    const { io, stdout, stderr } = captureIo();
+    const { io, stderr } = captureIo();
     let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(
       ["--model", "xai/grok-4.5:high", "resume", runId],
@@ -1484,7 +1484,7 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
     };
 
     {
-      const { io, stdout, stderr } = captureIo();
+      const { io } = captureIo();
       const unknown = await runAkRole(["resume", "--model", "test/caller-seat:high", "does-not-exist"], {
         packageRoot,
         home,
@@ -2158,7 +2158,7 @@ test("typed 429 is offered as resumable without a local session file", async () 
     seedGitProject(project);
     const runId = "run-429-no-session-file";
 
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "no session file"],
       {
         packageRoot,
@@ -2335,7 +2335,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         ["resume", runId, "one", "two"],
         ["resume", runId, "--", "extra"],
       ] as const) {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         let n = 0;
         const rejected = await runAkRole([...bad], {
           packageRoot,
@@ -2413,7 +2413,7 @@ test("public resume failures persist structured diagnostics", async () => {
         return { runDirectory, sessionFile, sessionDirectory };
       }
 
-      const deletedWorkspace = await seed({
+      await seed({
         runId: "1058-no-workspace",
         role: "secretariat",
         session: true,

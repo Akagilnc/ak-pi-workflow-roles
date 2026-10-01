@@ -59,7 +59,7 @@ function registerTool(
     label: "output",
     description: "",
     parameters: Type.Object({}),
-    execute: async (_id, params, ...rest) => execute(params),
+    execute: async (_id, params) => execute(params),
   });
   // HostContext.runDirectory is the admitted run coordinate (#879) — must sit
   // inside the ledger home so restore/append share one ownership path.

@@ -301,8 +301,6 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
       : undefined;
   const runDirectory =
     ownedExisting ?? installInstitutionalRunDir(parentInheritedSeats(model));
-  if (ownedExisting !== undefined) {
-  }
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }

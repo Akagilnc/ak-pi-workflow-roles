@@ -52,8 +52,6 @@ const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 /** #338 exclusive projectRoots (runId 6xxx books). */
 const ISSUE_ROOT = "/analyst-fixture/c338-issue-a";
 const COHORT_A_ROOT = "/analyst-fixture/c338-cohort-a";
-/** Same-book sibling root (#412 T4): shares fixture-book-c338-ca with COHORT_A_ROOT. */
-const COHORT_A_SIBLING_ROOT = "/analyst-fixture/c338-cohort-a-sibling";
 const COHORT_B_ROOT = "/analyst-fixture/c338-cohort-b";
 const MODELS_A_ROOT = "/analyst-fixture/c338-models-a";
 const MODELS_B_ROOT = "/analyst-fixture/c338-models-b";
@@ -62,7 +60,6 @@ const NEG_ROOT = "/analyst-fixture/c338-neg-broken";
 
 const ISSUE_RUN = "019ff000-6001-7000-8000-0000000006a1";
 const COHORT_A_RUN = "019ff000-6002-7000-8000-0000000006b2";
-const COHORT_A_SIBLING_RUN = "019ff000-6007-7000-8000-0000000007c4";
 const COHORT_B_RUN = "019ff000-6003-7000-8000-0000000006c3";
 const MODELS_A_RUN = "019ff000-6004-7000-8000-0000000006d4";
 const MODELS_B_RUN = "019ff000-6005-7000-8000-0000000006e5";
@@ -91,7 +88,6 @@ const NEG_ISSUE = 6699;
  */
 const ISSUE_WALL_MS = 60_000;
 const COHORT_A_WALL_MS = 30_000;
-const COHORT_A_SIBLING_WALL_MS = 90_000;
 const COHORT_B_WALL_MS = 20_000;
 const MODELS_A_WALL_MS = 40_000;
 const MODELS_B_WALL_MS = 10_000;
@@ -357,7 +353,7 @@ test("analyst #338 whole-compute failure: write-page blocked → typed terminal 
     const beforeIndex = await readFile(analystLibraryIndexPath(ledgerHome), "utf8");
     const beforePages = await listIssuePageNames(ledgerHome);
 
-    const { io, stdout, stderr } = captureIo();
+    const { io, stdout } = captureIo();
     const bookNeg = `root:${physicalPathIdentity(NEG_ROOT)}`;
     const bookA = `root:${physicalPathIdentity(COHORT_A_ROOT)}`;
     const result = await runAkRole(

@@ -9,7 +9,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";

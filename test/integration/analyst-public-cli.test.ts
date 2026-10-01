@@ -234,7 +234,7 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     // Outside isolation root is not deleted (r12/r6 outside-worktree rule).
     const nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-336-nongit-"));
     await withProcessCwd(nonGit, async () => {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
       const after = await snapshotAnalystDir(ledgerHome);

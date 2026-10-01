@@ -624,7 +624,7 @@ test("no lawful output after an older provider error settles honestly as no_rece
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
+    const { io, stdout } = captureIo();
     const result = await runAkRole(
       [
         "--model",

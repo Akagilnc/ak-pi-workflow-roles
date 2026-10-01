@@ -169,7 +169,7 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
     }
 
     if (process.platform !== "win32") {
-      const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
+      const { runner } = spawnRunnerWithIdentityCapture();
       const result = await runner(["-c", "true"], {
         cwd: childCwd,
         env: spawnEnv({
@@ -259,12 +259,6 @@ setInterval(() => {}, 1000);
 `,
     );
 
-    const host = createPiRoleTurnHost({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      timeoutMs: 750,
-      spawnRunner: createDefaultPiSpawnRunner({}),
-    });
     // Force PI_BINARY via env on the host by wrapping spawn
     const baseSpawn = createDefaultPiSpawnRunner({});
     const hostWithStub = createPiRoleTurnHost({

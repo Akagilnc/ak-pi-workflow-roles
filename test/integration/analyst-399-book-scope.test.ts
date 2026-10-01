@@ -369,7 +369,7 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
       const after = await countAnalystFiles(home);

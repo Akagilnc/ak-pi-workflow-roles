@@ -484,7 +484,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
       await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Implement the approved slice."],
         {
           packageRoot,
@@ -495,9 +494,8 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
             captured = [...args];
-            capturedStdin = options.stdin;
             return {
               code: 1,
               stderr: "forced stop before model",

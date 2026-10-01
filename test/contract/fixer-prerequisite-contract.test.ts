@@ -95,7 +95,6 @@ test("malformed prerequisite attachments keep their true causes behind one stabl
 });
 
 test("typed prerequisite blockers cross the public TypeBox schema and prerequisite-aware production validator", () => {
-  const invocation = input();
   for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
     assert.equal(Value.Check(fixerOutputSchema, candidate), true);
     assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
@@ -103,7 +102,6 @@ test("typed prerequisite blockers cross the public TypeBox schema and prerequisi
 });
 
 test("zero declarations preserve authority refusal, completed apply, and existing settlement combinations", () => {
-  const invocation = input(Object.freeze([]));
   const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
   const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
   assert.deepEqual(validateFixerOutput(authority, "plan"), authority);

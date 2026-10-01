@@ -434,7 +434,6 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       const fixture = await materializeConflictedRepo(conflicted);
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
       const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "--project", conflicted, "Reconcile both intents."],
         {
           packageRoot,
@@ -446,9 +445,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
             captured = [...args];
-            capturedStdin = options.stdin;
             // Simulate completed receipt under mocked host.
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;

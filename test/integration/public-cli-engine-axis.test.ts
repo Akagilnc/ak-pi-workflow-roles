@@ -13,7 +13,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Zero assertions on free-prose delivery wording / layout.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -338,10 +338,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
-      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
-      if (existsSync(materialOpus)) {
-      } else {
-      }
       // Override must not keep the persistent engine material path.
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: override engine is the recorded identity.
@@ -433,7 +429,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const absentPath = resolveEngineMaterialPath(packageRoot, "nope-engine");
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
       const invocation = readJudgeInvocation(home, bookKey, "engine-free-name-001");
@@ -488,7 +483,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const absentPath = resolveEngineMaterialPath(packageRoot, "company..opus");
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "company..opus");
       const invocation = readJudgeInvocation(home, bookKey, "engine-company-dots-001");
       assert.equal(invocation.engine, "company..opus");
@@ -496,7 +490,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
 
     // Syntax-illegal --engine → structural reject (exit 2), not role submission.
     {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "has/slash", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
@@ -606,7 +600,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         }, null, 2)}\n`,
         "utf8",
       );
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
@@ -642,7 +636,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
     // set-engine with syntax-illegal name rejects without writing.
     {
       const before = await loadPublicCliConfig(home);
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(
         ["config", "set-engine", "judge", "bad/name"],
         { packageRoot, home, io },
@@ -866,7 +860,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
         `ambient AK_ROLE_ENGINE leaked into child env: ${String(ambient)}`,
       );
       assertNoEngineFlagsInArgv(capturedArgs!);
-      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
     });
   } finally {
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
@@ -1236,7 +1229,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
           { packageRoot, home, io: captureIo().io },
         );
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "judge", "bad/name"],
           { packageRoot, home, io },
@@ -1246,7 +1239,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
 
       // set-engine before persistent model.
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "coder", "opus"],
           { packageRoot, home, io },
@@ -1256,7 +1249,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
 
       // Unknown seat on set-engine.
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "not-a-seat", "opus"],
           { packageRoot, home, io },
