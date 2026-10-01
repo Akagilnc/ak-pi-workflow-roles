@@ -70,6 +70,8 @@ import {
   type ReviewerLens,
 } from "./invocation.ts";
 
+import { isRecord, errorText, isEnoent } from "../unknown-value.ts";
+
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only).
  * @deprecated v1 429-only gate removed by #416 (owner 2026-08-22: "根本不要有限制"). Kept for compatibility; do not use for new branching.
  */
@@ -255,9 +257,7 @@ function parseSameTicketSummonsMaterials(
       : undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
   if (
-    record.sourceRun !== null &&
-    typeof record.sourceRun === "object" &&
-    !Array.isArray(record.sourceRun)
+    isRecord(record.sourceRun)
   ) {
     const sr = record.sourceRun as Record<string, unknown>;
     if (
@@ -701,7 +701,6 @@ export type RunWriterLease = {
 /** Kind of a writer-lease diagnostic sent on the existing sink. */
 export type WriterLeaseDiagnosticKind = "stale-reclaimed";
 
-
 /**
  * True error identity for diagnostics — name/code/message as-is, never a
  * guessed label (failure-honesty constitution).
@@ -739,7 +738,6 @@ function isProcessAlive(pid: number): boolean {
     return errorCodeOf(error) !== "ESRCH";
   }
 }
-
 
 export type WriterLockAutopsy =
   | { verdict: "absent" }
@@ -1279,7 +1277,7 @@ async function loadResumableRunRecord(
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
     );
-    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    if (isRecord(raw)) {
       const record = raw as Record<string, unknown>;
       const storedRunDirectory =
         typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
@@ -1352,9 +1350,7 @@ async function loadResumableRunRecord(
         caseRunsPath = record.caseRunsPath;
       }
       if (
-        record.caseIdentity !== null &&
-        typeof record.caseIdentity === "object" &&
-        !Array.isArray(record.caseIdentity)
+        isRecord(record.caseIdentity)
       ) {
         const ci = record.caseIdentity as Record<string, unknown>;
         if (
@@ -1372,9 +1368,7 @@ async function loadResumableRunRecord(
         sourceRunPath = record.sourceRunPath;
       }
       if (
-        record.sourceRun !== null &&
-        typeof record.sourceRun === "object" &&
-        !Array.isArray(record.sourceRun)
+        isRecord(record.sourceRun)
       ) {
         const sr = record.sourceRun as Record<string, unknown>;
         if (
@@ -1412,9 +1406,7 @@ async function loadResumableRunRecord(
         mergerInputPath = record.mergerInputPath;
       }
       if (
-        record.derived !== null &&
-        typeof record.derived === "object" &&
-        !Array.isArray(record.derived)
+        isRecord(record.derived)
       ) {
         const d = record.derived as Record<string, unknown>;
         if (
@@ -1451,9 +1443,7 @@ async function loadResumableRunRecord(
       await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
     );
     if (
-      invocationRaw !== null &&
-      typeof invocationRaw === "object" &&
-      !Array.isArray(invocationRaw)
+      isRecord(invocationRaw)
     ) {
       const rec = invocationRaw as Record<string, unknown>;
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
@@ -1477,13 +1467,7 @@ async function loadResumableRunRecord(
     ) {
       throw error;
     }
-    if (
-      !(
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code?: unknown }).code === "ENOENT"
-      )
-    ) {
+    if (!isEnoent(error)) {
       throw new CliUsageError(
         `role run invocation identity is unreadable: ${runId}`,
         { cause: error },
@@ -1582,7 +1566,6 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
   };
 }
 
-
 export async function peekRoleRunRole(
   home: string,
   runId: string,
@@ -1610,7 +1593,6 @@ export async function peekRoleRunRole(
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-
 
 export type LoadedResumablePublicRole = {
   readonly admitted: AdmittedRoleInvocation;
@@ -1812,7 +1794,7 @@ function admitResumedRole(loaded: {
       try {
         parsedRepository = parseCollectorRepository(repositoryDisplay);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = errorText(error);
         throw new CliUsageError(detail, { cause: error });
       }
       if (parsedRepository.canonical !== repository) {

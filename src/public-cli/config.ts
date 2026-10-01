@@ -27,6 +27,7 @@ import {
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
 } from "./registry.ts";
+import { isEnoent } from "../unknown-value.ts";
 
 /** Province officers that may carry a persistent model override (#453). Registry order. */
 type ProvinceConfigRole = Extract<
@@ -134,13 +135,7 @@ export async function loadPublicCliConfig(
     const raw = await readFile(path, "utf8");
     return parsePublicCliConfig(JSON.parse(raw));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return { seats: {} };
-    }
+    if (isEnoent(error)) return { seats: {} };
     throw error;
   }
 }
@@ -842,13 +837,7 @@ export async function loadCredentialProviders(
     const raw = await readFile(join(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return { "openai-codex": false, xai: false };
-    }
+    if (isEnoent(error)) return { "openai-codex": false, xai: false };
     throw error;
   }
 }

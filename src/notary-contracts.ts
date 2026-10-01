@@ -5,6 +5,8 @@
  */
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "./review-submission.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export const NOTARY_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const NOTARY_SOURCE_RUN_FLAG = {
   name: "ak-notary-source-run",
@@ -41,10 +43,6 @@ export type NotaryOutput =
       readonly findings?: unknown;
     };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Recognize one lawful explicit Notary release (converged | continue | escalate).
  * #753: no field rewrite — submitted params retained as-is (no disposition forge,
@@ -52,7 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefined {
   // #836: no field drop
-  return (typeof value === "object" && value !== null && !Array.isArray(value))
+  return (isRecord(value))
     ? (value as NotaryOutput)
     : undefined;
 }

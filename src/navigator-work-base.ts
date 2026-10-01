@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
+import { isEnoent } from "./unknown-value.ts";
 
 export const NAVIGATOR_WORK_CONTEXT_BASENAME = "work-context.json";
 
@@ -51,9 +52,7 @@ export async function persistNavigatorWorkBase(
     const current = await readFile(path, "utf8");
     if (current === next) return path;
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
-      throw error;
-    }
+    if (!isEnoent(error)) throw error;
   }
   await writeFileAtomically(path, next);
   return path;
@@ -66,9 +65,7 @@ export async function readNavigatorWorkBase(path: string): Promise<NavigatorWork
   try {
     text = await readFile(canonical, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
-    }
+    if (isEnoent(error)) return undefined;
     throw error;
   }
   let parsed: unknown;

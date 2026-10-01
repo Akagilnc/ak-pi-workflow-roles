@@ -8,17 +8,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { isEnoent } from "./unknown-value.ts";
+
 /** Sole on-disk page for worktree-basename ticket derivation (#865). */
 export const MIGRATION_TICKET_DERIVATION_PAGE =
   "migration-ticket-derivation.json" as const;
-
-function isEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /** Sole safe-positive ticket invariant (bind / admission / placement / readers). */
 export function isSafePositiveTicketNumber(value: unknown): value is number {

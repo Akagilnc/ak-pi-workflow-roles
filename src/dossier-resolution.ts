@@ -9,6 +9,8 @@ import { resolve } from "node:path";
 
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export const AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR" as const;
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate" as const;
 
@@ -75,10 +77,6 @@ export function resolveAuditDossier(
     return { status: "incomplete", observation: { kind: "missing-dossier" } };
   }
   return { status: "ok", runDirectory };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 type AuditSubjectContext = { sessionManager: { getEntries?(): Iterable<unknown> } };

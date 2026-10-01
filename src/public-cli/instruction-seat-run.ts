@@ -98,6 +98,8 @@ import {
   latestPayloadEscalated,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
+import { isRecord, errorText } from "../unknown-value.ts";
+
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
   "reviewReask" | "gateReviewInstruction" | "parentRunPath"
@@ -156,7 +158,7 @@ function unreadablePostSubmissionStatus(
   const route = POST_SUBMISSION_ROUTING[admitted.role];
   if (route === undefined) return undefined;
   const payload = terminal.roleOutcome.payloads?.at(-1);
-  const status = payload !== null && typeof payload === "object" && !Array.isArray(payload)
+  const status = isRecord(payload)
     ? (payload as Record<string, unknown>).status
     : undefined;
   return typeof status === "string" && route.statuses.has(status)
@@ -624,7 +626,7 @@ export async function runPublicInstructionSeat(
       auditorSource = resolved.runDirectory;
       auditorTicket = await readBoardTicketNumber(resolved.runDirectory);
     } catch (error) {
-      presentStructuralRejection(new CliUsageError(error instanceof Error ? error.message : String(error)), io);
+      presentStructuralRejection(new CliUsageError(errorText(error)), io);
       return { exitCode: 2 };
     }
     if (auditorSource === undefined) return { exitCode: 2 };
@@ -970,7 +972,7 @@ async function auditSubmittedRole(
     || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
   const accepted = turn.terminal.roleOutcome.payloads?.at(-1);
   if (accepted === undefined) throw new Error("accepted submission has no payload");
-  const record = accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
+  const record = isRecord(accepted)
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
   if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {

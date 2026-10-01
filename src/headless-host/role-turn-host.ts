@@ -36,10 +36,11 @@ import {
   headlessTurnArgs,
   isClaudePrintDescription,
   isCodexExecDescription,
-  isPlainObject,
   type HeadlessHostDescription,
 } from "./description.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../package-contracts/navigator-output.ts";
+
+import { errorText, isRecord } from "../unknown-value.ts";
 
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
@@ -68,7 +69,7 @@ export type HeadlessCliResult = Readonly<{
  * envelope without stream-json `type`). Intermediate stream-json events are not.
  */
 function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
-  if (!isPlainObject(value)) return false;
+  if (!isRecord(value)) return false;
   const record = value as HeadlessCliResult & { type?: unknown };
   return record.type === undefined
     || record.type === "result"
@@ -131,11 +132,11 @@ function createCodexExecTurnObserver(): {
 
   return {
     observe(value) {
-      if (!isPlainObject(value)) return;
+      if (!isRecord(value)) return;
       const type = typeof value.type === "string" ? value.type : undefined;
       if (type === "thread.started" && typeof value.thread_id === "string" && value.thread_id !== "") {
         threadId = value.thread_id;
-      } else if (type === "item.completed" && isPlainObject(value.item)) {
+      } else if (type === "item.completed" && isRecord(value.item)) {
         if (value.item.type === "agent_message" && typeof value.item.text === "string") {
           finalMessage = value.item.text;
         }
@@ -161,7 +162,7 @@ function createCodexExecTurnObserver(): {
 
 function formatCodexFailurePayload(payload: unknown): string {
   if (typeof payload === "string" && payload.trim() !== "") return payload;
-  if (isPlainObject(payload)) {
+  if (isRecord(payload)) {
     if (typeof payload.message === "string" && payload.message.trim() !== "") return payload.message;
     try {
       return JSON.stringify(payload);
@@ -198,7 +199,7 @@ function resolveGitCommonDir(cwd: string): string | undefined {
       encoding: "utf8",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorText(error);
     throw new Error(`git rev-parse --git-common-dir failed: ${message}`);
   }
   if (result.error !== undefined) {
@@ -487,7 +488,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ...(gitCommonDir === undefined ? {} : { writableRoots: [gitCommonDir] }),
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = errorText(error);
             return {
               status: "terminal",
               result: failure("session", "HeadlessArgvFailure", "argv-failed", { diagnostic: message }, message),
@@ -559,7 +560,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           } catch (error) {
             if (childExited) exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
             if (isHostAbortedError(error)) throw error;
-            const message = error instanceof Error ? error.message : String(error);
+            const message = errorText(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {
               return {
@@ -604,7 +605,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               } catch (error) {
                 // The host failure remains primary; retain persistence failure as
                 // secondary typed evidence instead of replacing the terminal.
-                sessionBindingDiagnostic = error instanceof Error ? error.message : String(error);
+                sessionBindingDiagnostic = errorText(error);
               }
             }
 

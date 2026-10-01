@@ -36,6 +36,8 @@ import {
   type WorkerOutput,
 } from "./worker-output.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 export {
   CODER_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
@@ -114,7 +116,6 @@ export class AcceptedDetailsContractError extends CorrectableSubmissionError {
   }
 }
 
-
 /**
  * #836: status allowlist rejection deleted. Original object is the receipt.
  * Callers that need a typed view may still cast; code must not bounce on status.
@@ -123,7 +124,7 @@ export function validateAcceptedDetails(
   _toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  if (details !== null && typeof details === "object" && !Array.isArray(details)) {
+  if (isRecord(details)) {
     return details as AcceptedDetails;
   }
   // Non-object payload still records as empty object rather than rejecting.

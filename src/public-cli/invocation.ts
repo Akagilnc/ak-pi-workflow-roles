@@ -109,6 +109,8 @@ import {
 } from "./option-definitions.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
+import { errorText } from "../unknown-value.ts";
+
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
   readonly provenancePath: string;
@@ -1561,7 +1563,7 @@ export async function admitPublicRole(
         try {
           explicitPrNumber = parseCollectorPrNumber(parsed.prNumber);
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
+          const detail = errorText(error);
           throw new CliUsageError(detail, { cause: error });
         }
       }
@@ -1571,7 +1573,7 @@ export async function admitPublicRole(
         try {
           repository = parseCollectorRepository(parsed.repo);
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
+          const detail = errorText(error);
           throw new CliUsageError(detail, { cause: error });
         }
       } else {
@@ -1585,7 +1587,7 @@ export async function admitPublicRole(
           manifestCanonicalJson = manifest.canonicalJson;
         } catch (error) {
           throw new CliUsageError(
-            error instanceof Error ? error.message : String(error),
+            errorText(error),
             { cause: error },
           );
         }
@@ -1647,7 +1649,7 @@ export async function admitPublicRole(
             });
           } catch (error) {
             if (error instanceof CliUsageError) throw error;
-            const detail = error instanceof Error ? error.message : String(error);
+            const detail = errorText(error);
             throw new CliUsageError(detail, { cause: error });
           }
           if (parsed.runs === undefined) {
@@ -1665,7 +1667,7 @@ export async function admitPublicRole(
             caseRunsPath = await realpath(caseRunsPath);
           } catch (error) {
             if (error instanceof CliUsageError) throw error;
-            const detail = error instanceof Error ? error.message : String(error);
+            const detail = errorText(error);
             throw new CliUsageError(
               `doctor case could not be constructed from retained evidence: ${detail}`,
               { cause: error },
@@ -2260,7 +2262,7 @@ export type AdmitFixerInvocationOptions = {
 
 function parsePositivePrOption(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
-  try { return parseCollectorPrNumber(raw); } catch (error) { throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error }); }
+  try { return parseCollectorPrNumber(raw); } catch (error) { throw new CliUsageError(errorText(error), { cause: error }); }
 }
 function parseRepoOption(raw: string | undefined): string {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
@@ -2308,7 +2310,7 @@ export function resolveGitHubRemoteRepository(
   try {
     return parseCollectorRepository(ownerRepo);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorText(error);
     throw new CliUsageError(detail, { cause: error });
   }
 }
@@ -2393,7 +2395,7 @@ export async function resolveDoctorCaseRunsPath(options: {
   try {
     real = await realpath(resolved);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorText(error);
     throw new CliUsageError(
       `doctor --runs is not a readable retained runs root: ${detail}`,
       { cause: error },
@@ -2414,7 +2416,6 @@ export async function resolveDoctorCaseRunsPath(options: {
   }
   return real;
 }
-
 
 export type AdmitReviewerInvocationOptions = {
   home: string;

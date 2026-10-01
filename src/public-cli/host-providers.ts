@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SeatModelConfig } from "./config.ts";
+import { isEnoent } from "../unknown-value.ts";
 
 /** host → seat-provider → host-facing provider. */
 export type HostProvidersTable = Readonly<
@@ -79,13 +80,7 @@ export function loadHostProvidersTable(home: string): HostProvidersTable {
     const raw = readFileSync(path, "utf8");
     return parseHostProvidersTable(JSON.parse(raw) as unknown);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return {};
-    }
+    if (isEnoent(error)) return {};
     throw error;
   }
 }
@@ -115,13 +110,7 @@ export function listHermesProvidersForModel(
   try {
     text = readFileSync(path, "utf8");
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return [];
-    }
+    if (isEnoent(error)) return [];
     throw error;
   }
   const raw: unknown = JSON.parse(text);

@@ -17,6 +17,8 @@ import {
 } from "./submission-errors.ts";
 import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
+import { isRecord } from "./unknown-value.ts";
+
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
@@ -150,10 +152,6 @@ function uninstallPackageWorkerHooks(cwd: string): void {
     clear(resolve(gitDir, "config.worktree"));
     rmOwnedDir(resolve(gitDir, HOOKS_DIR));
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** ADR 0050: a written explanation, including text carried by an object key. */

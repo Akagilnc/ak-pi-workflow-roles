@@ -121,6 +121,8 @@ import {
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
 
+import { isRecord, errorText } from "../unknown-value.ts";
+
 function projectRelocatedTurnIdentity(
   request: RoleTurnRequest,
   result: { readonly terminal?: TerminalResult },
@@ -136,7 +138,7 @@ function projectRelocatedTurnIdentity(
   mutableRequest.runDirectory = admitted.runDirectory;
   mutableRequest.principal = admitted.principal;
   const activation = mutableRequest.activation;
-  if (activation !== null && typeof activation === "object" && !Array.isArray(activation)) {
+  if (isRecord(activation)) {
     for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath", "requestManifestPath"] as const) {
       const record = activation as Record<string, unknown>;
       if (field in record) record[field] = rewrite(record[field]);
@@ -1779,7 +1781,7 @@ async function presentResumeFailurePointer(
       cause.thrownCause = formatErrorCauseDetail(thrown.cause);
     }
     presentStructuralRejection({
-      message: thrown instanceof Error ? thrown.message : String(thrown),
+      message: errorText(thrown),
       cause,
     }, io);
   }
