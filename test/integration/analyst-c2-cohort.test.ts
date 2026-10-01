@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #330 analyst-C2 — cohort contrast output tracer.
  *
@@ -17,11 +16,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * admits only invocation.ticketNumber-matching runs.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -30,10 +26,7 @@ import type {
   AnalystCohortOptionalMetric,
   AnalystCohortRoleStats,
 } from "../../src/analyst-cohort.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
+import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const ISSUE_201_ROOT = "/analyst-fixture/c2-issue-201";
 const ISSUE_202_ROOT = "/analyst-fixture/c2-issue-202";
@@ -112,37 +105,6 @@ const present = (value: number): AnalystCohortOptionalMetric => ({
   value,
 });
 
-function gitPorcelain(cwd: string): string {
-  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
-    cwd,
-    encoding: "utf8",
-  });
-}
-
-async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c2-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    const result = await fn(businessRepo);
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  });
-}
-
-async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("analyst-c2-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    return await fn(home);
-  });
-}
-
 function roleStats(
   group: AnalystCohortGroupResult,
   role: string,
@@ -151,239 +113,233 @@ function roleStats(
 }
 
 test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; vacancy + merged ratios", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      // Persist issue pages (issue mode) carrying typed issueNumber;
-      // real entry also maintains the unique issueNumber→projectRoot index rows.
-      const page201 = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_201_ROOT,
+  await withTempHome(async (home) => {
+    // Persist issue pages (issue mode) carrying typed issueNumber;
+    // real entry also maintains the unique issueNumber→projectRoot index rows.
+    const page201 = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_201_ROOT,
+      issueNumber: 201,
+    }, { home });
+    const page202 = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_202_ROOT,
+      issueNumber: 202,
+    }, { home });
+    const page203 = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_203_ROOT,
+      issueNumber: 203,
+    }, { home });
+
+    assert.equal(page201.mode, "issue");
+    assert.equal(page201.page.issueNumber, 201);
+    assert.equal(page202.page.issueNumber, 202);
+    assert.equal(page203.page.issueNumber, 203);
+
+    // Sanity: C2-exclusive runIds landed on the right pages.
+    assert.deepEqual(
+      page201.page.legs.map((leg) => leg.runId).sort(),
+      [RUN_201_CODER_1, RUN_201_CODER_2, RUN_201_JUDGE].sort(),
+    );
+    assert.deepEqual(
+      page202.page.legs.map((leg) => leg.runId),
+      [RUN_202_CODER],
+    );
+    assert.deepEqual(
+      page203.page.legs.map((leg) => leg.runId).sort(),
+      [RUN_203_CODER, RUN_203_JUDGE].sort(),
+    );
+
+    // Library index rows were produced by the issue-mode entry above
+    // (issueNumber→projectRoot). No hand-written index; 204 has no row.
+    const result = await runAnalyst({
+      mode: "cohort",
+      groups: [
+        {
+          groupLabel: "before",
+          issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
+        },
+        {
+          groupLabel: "after",
+          issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
+        },
+      ],
+    }, { home });
+
+    assert.equal(result.mode, "cohort");
+    assert.equal(result.groups.length, 2);
+
+    const before = result.groups[0]!;
+    const after = result.groups[1]!;
+
+    // Group labels retained as typed input.
+    assert.equal(before.groupLabel, "before");
+    assert.equal(after.groupLabel, "after");
+
+    // Issue join: present rows vs typed vacancy (204 missing from index).
+    assert.deepEqual(before.issues, [
+      {
         issueNumber: 201,
-      }, { home });
-      const page202 = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_202_ROOT,
+        status: "present",
+        bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
+        projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
+      },
+      {
         issueNumber: 202,
-      }, { home });
-      const page203 = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_203_ROOT,
+        status: "present",
+        bookKey: `root:${physicalPathIdentity(ISSUE_202_ROOT)}`,
+        projectRoot: physicalPathIdentity(ISSUE_202_ROOT),
+      },
+    ]);
+    assert.deepEqual(after.issues, [
+      {
         issueNumber: 203,
-      }, { home });
+        status: "present",
+        bookKey: `root:${physicalPathIdentity(ISSUE_203_ROOT)}`,
+        projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
+      },
+      { issueNumber: 204, status: "absent", bookKey: absentRef(204).bookKey },
+    ]);
 
-      assert.equal(page201.mode, "issue");
-      assert.equal(page201.page.issueNumber, 201);
-      assert.equal(page202.page.issueNumber, 202);
-      assert.equal(page203.page.issueNumber, 203);
+    // ---- before group hand values ----
+    const beforeCoder = roleStats(before, "coder");
+    assert.ok(beforeCoder, "before lists coder");
+    assert.deepEqual(beforeCoder.convergenceRounds, [2, 1]);
+    assert.deepEqual(beforeCoder.convergenceRoundsMedian, present(1.5));
+    assert.deepEqual(beforeCoder.firstPassRate, present(1));
+    assert.deepEqual(beforeCoder.successRate, present(2 / 3));
 
-      // Sanity: C2-exclusive runIds landed on the right pages.
-      assert.deepEqual(
-        page201.page.legs.map((leg) => leg.runId).sort(),
-        [RUN_201_CODER_1, RUN_201_CODER_2, RUN_201_JUDGE].sort(),
-      );
-      assert.deepEqual(
-        page202.page.legs.map((leg) => leg.runId),
-        [RUN_202_CODER],
-      );
-      assert.deepEqual(
-        page203.page.legs.map((leg) => leg.runId).sort(),
-        [RUN_203_CODER, RUN_203_JUDGE].sort(),
-      );
+    const beforeJudge = roleStats(before, "judge");
+    assert.ok(beforeJudge, "before lists judge");
+    assert.deepEqual(beforeJudge.convergenceRounds, [1]);
+    assert.deepEqual(beforeJudge.convergenceRoundsMedian, present(1));
+    assert.deepEqual(beforeJudge.firstPassRate, present(1));
+    assert.deepEqual(beforeJudge.successRate, present(1));
 
-      // Library index rows were produced by the issue-mode entry above
-      // (issueNumber→projectRoot). No hand-written index; 204 has no row.
-      const result = await runAnalyst({
-        mode: "cohort",
-        groups: [
-          {
-            groupLabel: "before",
-            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
-          },
-          {
-            groupLabel: "after",
-            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
-          },
-        ],
-      }, { home });
+    assert.deepEqual(before.reworkRatio, present(0.25));
+    assert.deepEqual(before.medianWallMs, present(25_000));
+    // C2 fixtures carry no auditor-roles — gate-cycle fold stays empty (not absent-as-0).
+    assert.deepEqual(before.gateCyclesByOfficer, []);
 
-      assert.equal(result.mode, "cohort");
-      assert.equal(result.groups.length, 2);
+    // ---- after group hand values (204 vacant, does not contribute) ----
+    const afterCoder = roleStats(after, "coder");
+    assert.ok(afterCoder, "after lists coder");
+    assert.deepEqual(afterCoder.convergenceRounds, [1]);
+    assert.deepEqual(afterCoder.convergenceRoundsMedian, present(1));
+    assert.deepEqual(afterCoder.firstPassRate, present(1));
+    assert.deepEqual(afterCoder.successRate, present(1));
 
-      const before = result.groups[0]!;
-      const after = result.groups[1]!;
+    const afterJudge = roleStats(after, "judge");
+    assert.ok(afterJudge, "after lists judge");
+    assert.deepEqual(afterJudge.convergenceRounds, [1]);
+    assert.deepEqual(afterJudge.convergenceRoundsMedian, present(1));
+    assert.deepEqual(afterJudge.firstPassRate, present(1));
+    assert.deepEqual(afterJudge.successRate, present(1));
 
-      // Group labels retained as typed input.
-      assert.equal(before.groupLabel, "before");
-      assert.equal(after.groupLabel, "after");
+    assert.deepEqual(after.reworkRatio, present(0));
+    assert.deepEqual(after.medianWallMs, present(24_000));
+    assert.deepEqual(after.gateCyclesByOfficer, []);
 
-      // Issue join: present rows vs typed vacancy (204 missing from index).
-      assert.deepEqual(before.issues, [
+    // Cohort is a query product — no second parse of runs, no page rewrite.
+    // Re-run yields identical typed output (pure read of persisted pages/index).
+    const again = await runAnalyst({
+      mode: "cohort",
+      groups: [
         {
-          issueNumber: 201,
-          status: "present",
-          bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
-          projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
+          groupLabel: "before",
+          issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
         },
         {
-          issueNumber: 202,
-          status: "present",
-          bookKey: `root:${physicalPathIdentity(ISSUE_202_ROOT)}`,
-          projectRoot: physicalPathIdentity(ISSUE_202_ROOT),
+          groupLabel: "after",
+          issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
         },
-      ]);
-      assert.deepEqual(after.issues, [
-        {
-          issueNumber: 203,
-          status: "present",
-          bookKey: `root:${physicalPathIdentity(ISSUE_203_ROOT)}`,
-          projectRoot: physicalPathIdentity(ISSUE_203_ROOT),
-        },
-        { issueNumber: 204, status: "absent", bookKey: absentRef(204).bookKey },
-      ]);
-
-      // ---- before group hand values ----
-      const beforeCoder = roleStats(before, "coder");
-      assert.ok(beforeCoder, "before lists coder");
-      assert.deepEqual(beforeCoder.convergenceRounds, [2, 1]);
-      assert.deepEqual(beforeCoder.convergenceRoundsMedian, present(1.5));
-      assert.deepEqual(beforeCoder.firstPassRate, present(1));
-      assert.deepEqual(beforeCoder.successRate, present(2 / 3));
-
-      const beforeJudge = roleStats(before, "judge");
-      assert.ok(beforeJudge, "before lists judge");
-      assert.deepEqual(beforeJudge.convergenceRounds, [1]);
-      assert.deepEqual(beforeJudge.convergenceRoundsMedian, present(1));
-      assert.deepEqual(beforeJudge.firstPassRate, present(1));
-      assert.deepEqual(beforeJudge.successRate, present(1));
-
-      assert.deepEqual(before.reworkRatio, present(0.25));
-      assert.deepEqual(before.medianWallMs, present(25_000));
-      // C2 fixtures carry no auditor-roles — gate-cycle fold stays empty (not absent-as-0).
-      assert.deepEqual(before.gateCyclesByOfficer, []);
-
-      // ---- after group hand values (204 vacant, does not contribute) ----
-      const afterCoder = roleStats(after, "coder");
-      assert.ok(afterCoder, "after lists coder");
-      assert.deepEqual(afterCoder.convergenceRounds, [1]);
-      assert.deepEqual(afterCoder.convergenceRoundsMedian, present(1));
-      assert.deepEqual(afterCoder.firstPassRate, present(1));
-      assert.deepEqual(afterCoder.successRate, present(1));
-
-      const afterJudge = roleStats(after, "judge");
-      assert.ok(afterJudge, "after lists judge");
-      assert.deepEqual(afterJudge.convergenceRounds, [1]);
-      assert.deepEqual(afterJudge.convergenceRoundsMedian, present(1));
-      assert.deepEqual(afterJudge.firstPassRate, present(1));
-      assert.deepEqual(afterJudge.successRate, present(1));
-
-      assert.deepEqual(after.reworkRatio, present(0));
-      assert.deepEqual(after.medianWallMs, present(24_000));
-      assert.deepEqual(after.gateCyclesByOfficer, []);
-
-      // Cohort is a query product — no second parse of runs, no page rewrite.
-      // Re-run yields identical typed output (pure read of persisted pages/index).
-      const again = await runAnalyst({
-        mode: "cohort",
-        groups: [
-          {
-            groupLabel: "before",
-            issues: [issueRef(ISSUE_201_ROOT, 201), issueRef(ISSUE_202_ROOT, 202)],
-          },
-          {
-            groupLabel: "after",
-            issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
-          },
-        ],
-      }, { home });
-      assert.deepEqual(again, result);
-    });
+      ],
+    }, { home });
+    assert.deepEqual(again, result);
   });
 });
 
 test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/∞ stand-in)", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      // No issue-mode production → no index rows → every issue is vacancy.
-      const result = await runAnalyst({
-        mode: "cohort",
-        groups: [
-          { groupLabel: "left", issues: [absentRef(901), absentRef(902)] },
-          { groupLabel: "right", issues: [absentRef(903)] },
-        ],
-      }, { home });
+  await withTempHome(async (home) => {
+    // No issue-mode production → no index rows → every issue is vacancy.
+    const result = await runAnalyst({
+      mode: "cohort",
+      groups: [
+        { groupLabel: "left", issues: [absentRef(901), absentRef(902)] },
+        { groupLabel: "right", issues: [absentRef(903)] },
+      ],
+    }, { home });
 
-      assert.equal(result.mode, "cohort");
-      const left = result.groups[0]!;
-      const right = result.groups[1]!;
+    assert.equal(result.mode, "cohort");
+    const left = result.groups[0]!;
+    const right = result.groups[1]!;
 
-      assert.equal(left.groupLabel, "left");
-      assert.deepEqual(left.issues, [
-        { issueNumber: 901, status: "absent", bookKey: absentRef(901).bookKey },
-        { issueNumber: 902, status: "absent", bookKey: absentRef(902).bookKey },
-      ]);
-      assert.deepEqual(left.byRole, []);
-      assert.deepEqual(left.reworkRatio, ABSENT);
-      assert.deepEqual(left.medianWallMs, ABSENT);
-      assert.deepEqual(left.gateCyclesByOfficer, []);
+    assert.equal(left.groupLabel, "left");
+    assert.deepEqual(left.issues, [
+      { issueNumber: 901, status: "absent", bookKey: absentRef(901).bookKey },
+      { issueNumber: 902, status: "absent", bookKey: absentRef(902).bookKey },
+    ]);
+    assert.deepEqual(left.byRole, []);
+    assert.deepEqual(left.reworkRatio, ABSENT);
+    assert.deepEqual(left.medianWallMs, ABSENT);
+    assert.deepEqual(left.gateCyclesByOfficer, []);
 
-      assert.equal(right.groupLabel, "right");
-      assert.deepEqual(right.issues, [
-        { issueNumber: 903, status: "absent", bookKey: absentRef(903).bookKey },
-      ]);
-      assert.deepEqual(right.byRole, []);
-      assert.deepEqual(right.reworkRatio, ABSENT);
-      assert.deepEqual(right.medianWallMs, ABSENT);
-      assert.deepEqual(right.gateCyclesByOfficer, []);
-    });
+    assert.equal(right.groupLabel, "right");
+    assert.deepEqual(right.issues, [
+      { issueNumber: 903, status: "absent", bookKey: absentRef(903).bookKey },
+    ]);
+    assert.deepEqual(right.byRole, []);
+    assert.deepEqual(right.reworkRatio, ABSENT);
+    assert.deepEqual(right.medianWallMs, ABSENT);
+    assert.deepEqual(right.gateCyclesByOfficer, []);
   });
 });
 
 test("analyst C2 cohort: index hit + page missing recomputes via sole kernel (not washed to absent)", async () => {
-  await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
-      // Real entry produces page + unique index row.
-      const produced = await runAnalyst({
-        mode: "issue",
-        projectRoot: ISSUE_201_ROOT,
+  await withTempHome(async (home) => {
+    // Real entry produces page + unique index row.
+    const produced = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_201_ROOT,
+      issueNumber: 201,
+    }, { home });
+    const expectedWall = produced.page.totalElapsedMs;
+    const expectedRuns = produced.page.legs.map((leg) => leg.runId).sort();
+    // Remove page, keep index row — #338 compute-if-missing must restore it.
+    await rm(produced.pagePath);
+
+    const result = await runAnalyst({
+      mode: "cohort",
+      groups: [
+        { groupLabel: "left", issues: [issueRef(ISSUE_201_ROOT, 201)] },
+        { groupLabel: "right", issues: [absentRef(999)] },
+      ],
+    }, { home });
+
+    assert.equal(result.mode, "cohort");
+    assert.deepEqual(result.groups[0]!.issues, [
+      {
         issueNumber: 201,
-      }, { home });
-      const expectedWall = produced.page.totalElapsedMs;
-      const expectedRuns = produced.page.legs.map((leg) => leg.runId).sort();
-      // Remove page, keep index row — #338 compute-if-missing must restore it.
-      await rm(produced.pagePath);
-
-      const result = await runAnalyst({
-        mode: "cohort",
-        groups: [
-          { groupLabel: "left", issues: [issueRef(ISSUE_201_ROOT, 201)] },
-          { groupLabel: "right", issues: [absentRef(999)] },
-        ],
-      }, { home });
-
-      assert.equal(result.mode, "cohort");
-      assert.deepEqual(result.groups[0]!.issues, [
-        {
-          issueNumber: 201,
-          status: "present",
-          bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
-          projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
-        },
-      ]);
-      // Right group index-miss stays typed vacancy (not a compute target);
-      // the vacancy carries the requested bookKey (U4) so cross-book same
-      // numbers stay self-describing.
-      assert.deepEqual(result.groups[1]!.issues, [
-        { issueNumber: 999, status: "absent", bookKey: absentRef(999).bookKey },
-      ]);
-      // Page restored through sole writer entry.
-      const restored = JSON.parse(
-        await readFile(produced.pagePath, "utf8"),
-      ) as { totalElapsedMs: number; legs: readonly { runId: string }[] };
-      assert.equal(restored.totalElapsedMs, expectedWall);
-      assert.deepEqual(
-        restored.legs.map((leg) => leg.runId).sort(),
-        expectedRuns,
-      );
-    });
+        status: "present",
+        bookKey: `root:${physicalPathIdentity(ISSUE_201_ROOT)}`,
+        projectRoot: physicalPathIdentity(ISSUE_201_ROOT),
+      },
+    ]);
+    // Right group index-miss stays typed vacancy (not a compute target);
+    // the vacancy carries the requested bookKey (U4) so cross-book same
+    // numbers stay self-describing.
+    assert.deepEqual(result.groups[1]!.issues, [
+      { issueNumber: 999, status: "absent", bookKey: absentRef(999).bookKey },
+    ]);
+    // Page restored through sole writer entry.
+    const restored = JSON.parse(
+      await readFile(produced.pagePath, "utf8"),
+    ) as { totalElapsedMs: number; legs: readonly { runId: string }[] };
+    assert.equal(restored.totalElapsedMs, expectedWall);
+    assert.deepEqual(
+      restored.legs.map((leg) => leg.runId).sort(),
+      expectedRuns,
+    );
   });
 });

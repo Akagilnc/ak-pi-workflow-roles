@@ -17,23 +17,22 @@ export { validateRecordedGleanerLeftOutput };
 
 // #836 r16 class 1: pointer/statement are LLM/human-read narrative content — no
 // code branches on their presence.
-/** 左拾遗弹章交卷形状。 */
+// #1134: `status` alone is the trajectory field (src/gleaner-left-contracts.ts:38
+// recognizes completed to settle); its word rides the description. findings is
+// narrative content declared name + semantic description only — the array type
+// and the nested pointer/statement object shape are deleted, because the package
+// declaration IS the host's pre-dispatch validator. An empty findings list stays
+// a lawful completion; an omitted one is now expressible too.
 export const gleanerLeftOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
         description: "completed",
       }),
-      findings: Type.Array(
-        Type.Object(
-          {
-            pointer: Type.Optional(Type.String({ description: "文件/行指针" })),
-            statement: Type.Optional(Type.String({ description: "疑点陈述" })),
-          },
-          { additionalProperties: true, description: "一条弹章" },
-        ),
-        { description: "弹章列表；空列表合法完局" },
-      ),
+      findings: Type.Unknown({
+        description:
+          "弹章列表；每条可含 pointer（文件/行指针）与 statement（疑点陈述），原样留存。空列表合法完局；机器不判弹章是否成立。",
+      }),
     }),
   ),
 );

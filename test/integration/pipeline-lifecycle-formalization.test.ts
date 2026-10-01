@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -29,10 +28,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     await configurePassingReviewSeats(home);
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "cli@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "CLI Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
 
     let fauxHostCalled = false;
     let receivedRequest: RoleTurnRequest | undefined;

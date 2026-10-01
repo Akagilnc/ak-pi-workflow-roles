@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Owner 2026-08-23 (immediate order, no separate ticket): a dispatch that exits
  * by throwing must not bypass the auto-resume retry mechanism.
@@ -22,13 +21,13 @@ import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../.
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-dispatch-throw-", fn);
 }
-function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 
 type LoopDispatchResult={exitCode:number;terminal?:TerminalResult};
 
@@ -99,6 +98,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
     const callsRef={n:0};
     const leases:boolean[]=[];
+    const causes=["boom-attempt-1","boom-attempt-2","boom-final"];
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
@@ -108,7 +108,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch:alwaysThrowingDispatch(callsRef,[`boom-attempt-${1}`,`boom-attempt-${2}`,`boom-final`],leases),
+      dispatch:alwaysThrowingDispatch(callsRef,causes,leases),
     });
     const terminal=result.terminal as TerminalResult;
 
@@ -146,10 +146,17 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     // (d) loud failure carries the LAST true error + artifact pointers; no fabricated class (#881).
     if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
     assert.equal(terminal.roleOutcome.cause, undefined);
-    assert.match(terminal.roleOutcome.diagnostic,/boom-final/);
+    // The terminal must carry the actual final injected cause, not a prior attempt
+    // or an empty diagnostic; no generated diagnostic template is frozen.
+    assert.ok(terminal.roleOutcome.diagnostic.includes(causes.at(-1)!));
     const filesFromFacts=terminal.roleOutcome.decisiveFacts.dispatchErrorFiles as readonly string[];
     assert.equal(filesFromFacts.length,3);
     assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());
+    const lastFile=terminal.roleOutcome.decisiveFacts.lastDispatchErrorFile;
+    assert.equal(lastFile,filesFromFacts.at(-1));
+    const lastRecord=JSON.parse(await readFile(lastFile as string,"utf8")) as {attempt?:number;error?:string};
+    assert.equal(lastRecord.attempt,callsRef.n-1);
+    assert.ok(lastRecord.error?.includes(causes.at(-1)!));
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
     // #953: history stays on submissions; failure.payloads is not the history face.
     assert.equal(

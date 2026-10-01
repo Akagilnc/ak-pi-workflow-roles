@@ -12,11 +12,12 @@ test("declaration routes its Error identity to the host; non-declaration is a no
   // Declaration → the SAME diagnostic Error identity reaches the host seam.
   let received: unknown;
   let receivedToolCallId: string | undefined;
+  const hostFailure = new Error("host fail invoked");
   const hostActions = {
     failInfrastructure(error: unknown, _ctx: unknown, toolCallId?: string): never {
       received = error;
       receivedToolCallId = toolCallId;
-      throw new Error("host fail invoked");
+      throw hostFailure;
     },
   };
   assert.throws(
@@ -27,7 +28,7 @@ test("declaration routes its Error identity to the host; non-declaration is a no
         { cwd: "/x" },
         "call-1",
       ),
-    /host fail invoked/,
+    (error: unknown) => error === hostFailure,
   );
   assert.ok(received instanceof Error);
   assert.equal((received as Error).message, "host boom");

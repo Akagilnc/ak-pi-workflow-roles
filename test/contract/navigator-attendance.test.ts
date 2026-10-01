@@ -11,11 +11,8 @@ import {
 } from "../../src/navigator-attendance.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -69,14 +66,14 @@ test("Navigator early prepare from parent start; settle feeds result for output"
     harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
     await Promise.resolve();
     assert.equal(settled, false);
-    await harness.tool().execute("prepare", proseAdvice(), undefined, undefined, {} as never);
+    const advice = proseAdvice();
+    await harness.tool().execute("prepare", advice, undefined, undefined, {} as never);
     harness.release();
     await waiting;
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "advice");
     assert.equal(events[0].routePlaybookReadFailure, "ENOENT: missing playbook");
-    assert.equal(typeof events[0].prose, "string");
-    assert.ok(events[0].prose.trim().length > 0);
+    assert.equal(events[0].prose, advice.prose);
     const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement");
     assert.equal((invocation as any).data.invocationId, events[0].invocationId);
@@ -104,12 +101,13 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     harness.rejectPrepare("root parameters must be an object");
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("corrected-prepare", proseAdvice(), undefined, undefined, {} as never);
+    const advice = proseAdvice();
+    await harness.tool().execute("corrected-prepare", advice, undefined, undefined, {} as never);
     harness.release();
     await waiting;
     assert.equal(harness.prompts(), 2);
     assert.equal(events[0]?.disposition, "advice");
-    assert.ok(typeof events[0]?.prose === "string" && events[0].prose.trim().length > 0);
+    assert.equal(events[0]?.prose, advice.prose);
   });
 });
 

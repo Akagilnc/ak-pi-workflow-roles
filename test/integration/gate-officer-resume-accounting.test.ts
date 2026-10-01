@@ -37,22 +37,13 @@ import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedRoleRepo as seedGitProject } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-
-function seedGitProject(root: string): void {
-  seedGitRepository(root);
-  execFileSync(
-    "git",
-    ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-    { cwd: root },
-  );
-}
 
 function iso(ms: number): string {
   return new Date(Date.parse("2026-09-08T00:00:00.000Z") + ms).toISOString();

@@ -156,10 +156,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** ADR 0050: a written explanation, including text carried by an object key. */
+function containsWrittenReason(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some(containsWrittenReason);
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).some(
+      ([key, item]) => containsWrittenReason(key) || containsWrittenReason(item),
+    );
+  }
+  return false;
+}
+
 function unfinishedReasonPresent(details?: unknown): boolean {
-  if (typeof details !== "object" || details === null) return false;
-  const reason = (details as { reason?: unknown }).reason;
-  return typeof reason === "string" && reason.trim().length > 0;
+  if (typeof details !== "object" || details === null || Array.isArray(details)) return false;
+  return containsWrittenReason((details as { reason?: unknown }).reason);
 }
 
 function readGateState(session: HostRecordSession): {

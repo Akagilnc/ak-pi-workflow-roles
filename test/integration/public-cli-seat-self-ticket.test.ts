@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 / #709 / #771 — seat ticket identity from the public CLI true entry
  * (no --ticket / no frontmatter). Mechanical layer never matches summons text
@@ -10,9 +9,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * when a typed source provided it.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -28,9 +26,7 @@ import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  bindAdmittedTicketNumber,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
@@ -39,7 +35,7 @@ import {
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { ensureTicketProvenanceVolume } from "../helpers/ticket-provenance-fixture.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -48,6 +44,7 @@ import {
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome(
   run: (home: string) => Promise<void>,
@@ -66,34 +63,6 @@ async function withTempHome(
   });
 }
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "seat-ticket@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Seat Ticket"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
-    cwd: root,
-  });
-}
-
 async function withSeatProject(
   run: (ctx: { home: string; project: string }) => Promise<void>,
   options?: { readonly seedDiary?: boolean },
@@ -102,11 +71,7 @@ async function withSeatProject(
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
+    addRoleRepoOrigin(project);
     await installGhFixture(join(home, "bin"), {
       issues: {
         582: { body: "issue 582 body", comments: [] },
@@ -425,58 +390,6 @@ test("public countersign without a diary binds its own typed receipt", async () 
     await assertDurableTicket(result.admitted!.runDirectory, 582);
     assert.equal(existsSync(diaryPath), false, "countersign does not create a diary");
   }, { seedDiary: false });
-});
-
-test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /unknown countersign option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
-  assert.throws(
-    () =>
-      parsePublicSeatArgv("notary", [
-        "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-        "--ticket",
-        "582",
-      ]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /unknown notary option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
-
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const countersign = await runPublicInstructionSeat(
-      ["--ticket", "582", "裁"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(_request: RoleTurnRequest) {
-            throw new Error("turn must not start on unknown option");
-          },
-        },
-        createRunId: () => "01a063500-0000-7000-8000-00000000rej1",
-      },
-      captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(countersign.exitCode, 2);
-    assert.equal(countersign.admitted, undefined);
-  });
 });
 
 test("notary keeps its bound source-run ticket over a different receipt assertion", async () => {

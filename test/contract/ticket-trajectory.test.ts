@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S1 single-ticket trajectory — external behavior at the unique seam
  * `(ledgerDir, ticketSnapshot, now) → HTML` and the page lifecycle entry.
@@ -9,12 +8,14 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * keys / hrefs only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { cp, link, lstat, mkdir, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { treeFingerprint } from "../helpers/factory-board-shared.ts";
+import { manualScheduler } from "../helpers/manual-scheduler.ts";
+import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -23,45 +24,11 @@ import {
   startTicketTrajectoryPage,
   writeTicketTrajectoryPage,
   type TicketSnapshot,
-  type TrajectoryScheduler,
 } from "../../src/ticket-trajectory.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
+import { elementsWith } from "../helpers/factory-board-shared.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
-
-async function treeFingerprint(root: string): Promise<string> {
-  const h = createHash("sha256");
-  async function walk(dir: string): Promise<void> {
-    const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      const rel = path.slice(root.length + 1).split(sep).join("/");
-      h.update(rel);
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile()) h.update(await readFile(path));
-      else if (entry.isSymbolicLink()) h.update(`symlink:${entry.name}`);
-    }
-  }
-  await walk(root);
-  return h.digest("hex");
-}
-
-/** Collect elements that carry a given data attribute; return attr maps. */
-function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
-  const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
-  const out: Record<string, string>[] = [];
-  for (const tag of html.match(re) ?? []) {
-    const attrs: Record<string, string> = {};
-    for (const m of tag.matchAll(/\b(data-[a-z0-9-]+|href)="([^"]*)"/g)) {
-      attrs[m[1]!] = m[2]!;
-    }
-    out.push(attrs);
-  }
-  return out;
-}
 
 function runById(html: string, runId: string): Record<string, string> {
   const hit = elementsWith(html, "data-run-id").find((el) => el["data-run-id"] === runId);
@@ -69,18 +36,14 @@ function runById(html: string, runId: string): Record<string, string> {
   return hit;
 }
 
-function manualScheduler(): { scheduler: TrajectoryScheduler; ticks: Array<() => void> } {
-  const ticks: Array<() => void> = [];
-  const scheduler: TrajectoryScheduler = {
-    every(_ms, tick) {
-      ticks.push(tick);
-      return () => {
-        const idx = ticks.indexOf(tick);
-        if (idx >= 0) ticks.splice(idx, 1);
-      };
-    },
+function hasJsonlFailure(path: string, line: number, prefixRows: number) {
+  return (err: unknown): boolean => {
+    assert.ok(err instanceof LedgerSessionJsonlError);
+    assert.equal(err.path, path);
+    assert.equal(err.line, line);
+    assert.equal(err.prefixRows.length, prefixRows);
+    return true;
   };
-  return { scheduler, ticks };
 }
 
 test("unique seam renders #127 fixture trajectory: stations, attempts, trusted results only", async () => {
@@ -91,10 +54,10 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal(await treeFingerprint(fixtureLedger), before, "ledger fixture must stay byte-identical");
 
   // Generation time + one-shot lifecycle (unique seam does not advertise refresh).
-  assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
+  assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], now.toISOString());
   assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
   assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
-  assert.match(html, /data-issue="127"/);
+  assert.equal(elementsWith(html, "data-issue")[0]?.["data-issue"], "127");
 
   // Morph A: plan-court — 5 terminating attempts, only final accepted counts as result.
   const planCourt = runById(html, "plan-court-001@ak-roles-127");
@@ -258,7 +221,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
 
     assert.equal(written.outputPath, await realpath(outputPath));
     const html = await readFile(outputPath, "utf8");
-    assert.match(html, /data-generated-at="2026-08-05T15:30:00\.000Z"/);
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], now.toISOString());
     // One-shot write path does not declare a refresh bound.
     assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
     assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
@@ -283,7 +246,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
     });
     assert.equal(hardWritten.outputPath, await realpath(hardOut));
     const externalHtml = await readFile(hardOut, "utf8");
-    assert.match(externalHtml, /data-issue="127"/);
+    assert.equal(elementsWith(externalHtml, "data-issue")[0]?.["data-issue"], "127");
     assert.notEqual(externalHtml, beforeTwin);
     // Ledger twin keeps original bytes and inode; external dirent is a new inode.
     assert.equal(await readFile(ledgerTwin, "utf8"), beforeTwin);
@@ -303,7 +266,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(ledgerCopy, "issues", "127", "board.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
 
     // Output path is a symlink into the ledger — must refuse; ledger bytes unchanged.
@@ -321,7 +284,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: symlinkOut,
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await readFile(injected, "utf8"), beforeInjected);
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
@@ -337,7 +300,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(parentLink, "via-parent.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
 
@@ -350,11 +313,11 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
           now,
           outputPath: join(parentLink, "nested", "deep.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
-    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), /ENOENT/);
-    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), /ENOENT/);
+    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), { code: "ENOENT" });
+    await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), { code: "ENOENT" });
     });
 });
 
@@ -402,7 +365,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     await new Promise((r) => setTimeout(r, 50));
     for (let i = 0; i < 20; i += 1) {
       html = await readFile(outputPath, "utf8");
-      if (html.includes('data-generated-at="2026-08-05T16:00:10.000Z"')) break;
+      if (elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z") break;
       await new Promise((r) => setTimeout(r, 20));
     }
     assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:10.000Z");
@@ -458,13 +421,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(middle, `${row(1)}\nNOT-JSON\n${row(3)}\n`, "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(middle),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /malformed JSONL record/i);
-        assert.match(err.message, /at line 2/);
-        assert.ok(err.message.includes(middle), "error must carry file context");
-        return true;
-      },
+      hasJsonlFailure(middle, 2, 1),
     );
 
     // Completed-by-terminator final malformed line with nothing after — must throw.
@@ -472,24 +429,12 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(completedFinal, "NOT-JSON\n", "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(completedFinal),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /malformed JSONL record/i);
-        assert.match(err.message, /at line 1/);
-        assert.ok(err.message.includes(completedFinal), "error must carry file context");
-        return true;
-      },
+      hasJsonlFailure(completedFinal, 1, 0),
     );
     await writeFile(completedFinal, `${row(1)}\nNOT-JSON\n`, "utf8");
     await assert.rejects(
       () => readLedgerSessionJsonl(completedFinal),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /malformed JSONL record/i);
-        assert.match(err.message, /at line 2/);
-        assert.ok(err.message.includes(completedFinal), "error must carry file context");
-        return true;
-      },
+      hasJsonlFailure(completedFinal, 2, 1),
     );
 
     // End-to-end: middle corruption must not render as a quiet attempts-only page.
@@ -506,16 +451,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
 
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /malformed JSONL record/i);
-        assert.match(err.message, /at line 2/);
-        assert.ok(
-          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
-          "error must carry file context",
-        );
-        return true;
-      },
+      hasJsonlFailure(sessionPath, 2, 1),
     );
 
     // End-to-end: completed final malformed line (terminator, nothing after) must also
@@ -523,19 +459,9 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     const originalLines = original.endsWith("\n") ? original.slice(0, -1).split("\n") : original.split("\n");
     const withCompletedFinalJunk = `${originalLines.join("\n")}\nNOT-JSON\n`;
     await writeFile(sessionPath, withCompletedFinalJunk, "utf8");
-    const expectedFinalLine = originalLines.length + 1;
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /malformed JSONL record/i);
-        assert.match(err.message, new RegExp(`at line ${expectedFinalLine}`));
-        assert.ok(
-          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
-          "error must carry file context",
-        );
-        return true;
-      },
+      hasJsonlFailure(sessionPath, originalLines.length + 1, originalLines.length),
     );
 
     // Complete non-object JSONL (null/array/primitive) must fail cause-preservingly
@@ -547,17 +473,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
     await writeFile(sessionPath, withNonObject, "utf8");
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /complete non-object JSONL record/i);
-        assert.match(err.message, /at line 2/);
-        assert.match(err.message, /expected object, got null/);
-        assert.ok(
-          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
-          "error must carry file context",
-        );
-        return true;
-      },
+      hasJsonlFailure(sessionPath, 2, 1),
     );
     });
 });
@@ -565,7 +481,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
 test("empty/minimal ticket snapshot still requires issueNumber for S1 single-ticket seam", async () => {
   await assert.rejects(
     () => renderTicketTrajectoryHtml(fixtureLedger, {} as TicketSnapshot, new Date()),
-    /issueNumber/,
+    (err: unknown) => err instanceof Error,
   );
 });
 

@@ -4,6 +4,7 @@
  *  2) escalate → resume "<ruling>" → same runId converged
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,6 +59,7 @@ test("publicCliJudgeWithoutModelOrSeatFailsBeforeTurn", async () => {
     assert.equal(result.exitCode, 2);
     assert.equal(result.terminal, undefined);
     assert.equal(turns.count, 0);
+    assert.equal(existsSync(join(home, ".ak-roles", "books")), false, "no run is admitted");
   }, { prefix: "ak-p0-no-model-" });
 });
 

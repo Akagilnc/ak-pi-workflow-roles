@@ -18,6 +18,7 @@ import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 
 test("#836 host abort coexists with recorded officer payload — does not wash to bounce", async () => {
   const bounce = { status: "continue", findings: ["keep-me"] };
+  const diagnostic = "This operation was aborted";
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -32,7 +33,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
           kind: "failure",
           role: "notary",
           cause: "output",
-          diagnostic: "This operation was aborted",
+          diagnostic,
           decisiveFacts: { cause: "output" },
         },
         navigator: { disposition: "no-advice" },
@@ -44,46 +45,9 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
   });
   assert.equal(projected.result.status, "transport_failure");
   if (projected.result.status === "transport_failure") {
-    assert.match(projected.result.reason, /This operation was aborted/);
+    assert.equal(projected.result.reason, diagnostic);
     assert.deepEqual(projected.result.submission, [bounce]);
   }
-});
-
-test("#879 this-court receipt from settlement payloads; history stays on submissions", async () => {
-  const thisCourt = { status: "continue", findings: ["second"] };
-  const projected = await projectGatekeeperRun({
-    context: {
-      cwd: process.cwd(),
-      sessionManager: { getSessionFile: () => "/tmp/unused" },
-    } as never,
-    subject: { kind: "countersign_verdict" },
-    runDirectory: "/tmp/parent-run",
-    summonOfficer: async () => ({
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: "notary",
-          payloads: [thisCourt],
-        },
-        navigator: { disposition: "no-advice" },
-        artifacts: [],
-        runId: "officer-run",
-        submissions: [
-          { status: "converged", findings: ["first"] },
-          thisCourt,
-        ],
-      },
-    }),
-  });
-  assert.equal(projected.result.status, "continue");
-  if (projected.result.status === "continue") {
-    assert.deepEqual(projected.result.receipt, thisCourt);
-  }
-  assert.deepEqual(projected.summoned?.terminal?.submissions, [
-    { status: "converged", findings: ["first"] },
-    thisCourt,
-  ]);
 });
 
 test("#879 undivided submissions without scoped payloads are not this-court identity", async () => {

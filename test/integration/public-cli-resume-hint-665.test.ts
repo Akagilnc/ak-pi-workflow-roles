@@ -1,11 +1,10 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #665 — 429 failure terminal resume hint is seat-uniform.
  * Seam: presentControlledFailure (post-admission). Principal available +
  * typed 429 → resume; no per-seat hasLawful / isResumableRole fork.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";

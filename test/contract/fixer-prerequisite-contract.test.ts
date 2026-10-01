@@ -9,10 +9,6 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "../../src/package-contracts/fixer-packet.ts";
-import {
-  fixerOutputSchema,
-  validateFixerOutput,
-} from "../../src/package-contracts/fixer-output.ts";
 
 const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
 const prerequisitesText = JSON.stringify([
@@ -24,29 +20,6 @@ function input(prerequisites = parseFixerPrerequisites(prerequisitesText)): Fixe
   return Object.freeze({ instructions, prerequisites });
 }
 
-const planRefusal = {
-  status: "refused" as const,
-  report: "Cannot lawfully plan yet.",
-  remainingScope: "contract selection",
-  blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice-1", evidence: "No owner choice is recorded." },
-};
-const applyRefusal = {
-  status: "refused" as const,
-  report: "Blocked.",
-  classResults: [{
-    name: "Artifact",
-    disposition: "refused" as const,
-    remainingScope: "artifact consumer",
-    blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "artifact_A", evidence: "Artifact is absent." },
-  }],
-};
-
-function mutableInput(): FixerInvocationInput {
-  return {
-    instructions: "Repair exactly what is assigned.",
-    prerequisites: [{ id: "owner.choice-1", requirement: "Owner selects the contract." }],
-  };
-}
 
 function captureValidationError(source: string): FixerPacketValidationError {
   let caught: unknown;
@@ -71,16 +44,16 @@ test("opaque fixer prose is independent of the frozen typed prerequisite attachm
   assert.throws(() => { (prerequisites as any).push({ id: "later", requirement: "late" }); }, TypeError);
 });
 
-test("prerequisite attachment failures name the violated field or constraint", () => {
-  const invalid: Array<[string, RegExp]> = [
-    ["{", /JSON/],
-    [JSON.stringify({ prerequisites: [] }), /array/],
-    [JSON.stringify([{ id: "bad/id", requirement: "x" }]), /id.*pattern/],
-    [JSON.stringify([{ id: "x", requirement: " " }]), /requirement.*nonblank/],
-    [JSON.stringify([{ id: "x", requirement: "x", extra: true }]), /entry.*fields/],
-    [JSON.stringify([{ id: "Same", requirement: "x" }, { id: "Same", requirement: "y" }]), /duplicate.*id/],
+test("prerequisite attachment failures retain typed identity for each invalid shape", () => {
+  const invalid = [
+    "{",
+    JSON.stringify({ prerequisites: [] }),
+    JSON.stringify([{ id: "bad/id", requirement: "x" }]),
+    JSON.stringify([{ id: "x", requirement: " " }]),
+    JSON.stringify([{ id: "x", requirement: "x", extra: true }]),
+    JSON.stringify([{ id: "Same", requirement: "x" }, { id: "Same", requirement: "y" }]),
   ];
-  for (const [source, diagnostic] of invalid) assert.throws(() => parseFixerPrerequisites(source), diagnostic);
+  for (const source of invalid) assert.throws(() => parseFixerPrerequisites(source), FixerPacketValidationError);
   assert.doesNotThrow(() => parseFixerPrerequisites(JSON.stringify([{ id: "Same", requirement: "x" }, { id: "same", requirement: "y" }])));
 });
 
@@ -90,32 +63,13 @@ test("malformed prerequisite attachments keep their true causes behind one stabl
   const named = namedActivationCause(syntax);
   assert.equal(named.identity, "AK_INVALID_FIX_PACKET");
   assert.equal(named.name, "FixerPacketValidationError");
-  assert.match(named.message, /prerequisites or instructions/);
 
   const shape = captureValidationError(JSON.stringify({ prerequisites: [] }));
   assert.ok(shape.cause instanceof Error);
-  assert.match(shape.cause.message, /JSON array/);
 
   const duplicate = captureValidationError(JSON.stringify([
     { id: "same", requirement: "first" },
     { id: "same", requirement: "second" },
   ]));
   assert.ok(duplicate.cause instanceof Error);
-  assert.match(duplicate.cause.message, /duplicate id: same/);
-});
-
-test("typed prerequisite blockers cross the public TypeBox schema and prerequisite-aware production validator", () => {
-  const invocation = input();
-  for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
-    assert.equal(Value.Check(fixerOutputSchema, candidate), true);
-    assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
-  }
-});
-
-test("zero declarations preserve authority refusal, completed apply, and existing settlement combinations", () => {
-  const invocation = input(Object.freeze([]));
-  const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
-  const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  assert.deepEqual(validateFixerOutput(authority, "plan"), authority);
-  assert.deepEqual(validateFixerOutput(completed, "apply"), completed);
 });

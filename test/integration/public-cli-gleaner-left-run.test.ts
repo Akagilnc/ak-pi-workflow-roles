@@ -1,12 +1,10 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
  * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -27,35 +25,10 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-gleaner-left-", scenario);
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "gleaner-left@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Gleaner Left Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
 }
 
 function scriptedGleanerLeftSession(details: unknown) {
@@ -72,10 +45,12 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    // Each negative carries the other gleaner-left precondition, so the
+    // targeted rule is the only one that can reject it.
     assert.throws(() => parsePublicSeatArgv("gleaner-left", []), (error: unknown) => {
       return error instanceof CliUsageError;
     });
-    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus"]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus", "--base", "HEAD"]), (error: unknown) => {
       return error instanceof CliUsageError;
     });
 
