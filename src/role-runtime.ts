@@ -33,6 +33,7 @@ import { engineSessionMaterialFromOptions } from "./package-resources/engine-mat
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import {
   createReceiptDeliveryPolicy,
+  deliveryLimitFromConfig,
   deliveryLimitFromEnv,
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
 } from "./receipt-delivery-policy.ts";
@@ -447,7 +448,7 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; deliveryRequestLimit?: number; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
@@ -997,7 +998,15 @@ function lastAssistantProse(
 
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
+  /**
+   * Effective ceiling already resolved for this turn (#1132). Absent only on
+   * the Pi child, whose env is that same resolved value projected by the host.
+   */
+  deliveryRequestLimit?: number,
 ): (envelopeHost: RoleEnvelopeHost) => void {
+  const deliveryLimit = deliveryRequestLimit === undefined
+    ? deliveryLimitFromEnv(process.env)
+    : deliveryLimitFromConfig(deliveryRequestLimit);
   return (envelopeHost) => {
     let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
@@ -1064,11 +1073,9 @@ export function createRoleRuntimeExtension(
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
     const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionGateNonPassResult>();
     let engineDetourRegistered = false;
-    // #288 primary-session thin adapter. The policy is the sole budget owner;
-    // terminating-tool rejections and mechanical delivery requests share two turns.
-    // #1132: the one configured ceiling, read once from the child env the AK
-    // execution seam resolved. Never re-read per turn.
-    let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
+    // #288 primary-session thin adapter. The policy is the sole budget owner.
+    // #1132: one ceiling for this turn, closed over from the execution seam.
+    let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
     let noReceiptRecorded = false;
     // Public-run fetch observation.
     let priorFetch: typeof globalThis.fetch | undefined;
@@ -1344,14 +1351,12 @@ export function createRoleRuntimeExtension(
           return;
         }
         // Attended with neither tool nor prose → honest no_receipt (not typed 催交).
-        // Exhaust delivery budget without sending the typed prompt so facts() stays lawful.
+        // Close the budget without sending prompts; the fact stays the real count.
         if (!noReceiptRecorded) {
           const runPointer = runDirectoryFromHostContext(ctx);
           if (runPointer !== undefined) {
             noReceiptRecorded = true;
-            while (receiptDelivery.nextAction() === "request-delivery") {
-              receiptDelivery.recordDeliveryRequest();
-            }
+            receiptDelivery.closeBudget();
             const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
             envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             try {
@@ -1493,6 +1498,7 @@ export function createRoleRuntimeExtension(
         },
       },
       hostActions,
+      { unfinishedReasonBounceLimit: deliveryLimit },
     );
     const coder = createCoderRoleRuntime(
       roleHost,
@@ -1506,6 +1512,7 @@ export function createRoleRuntimeExtension(
         },
       },
       hostActions,
+      { unfinishedReasonBounceLimit: deliveryLimit },
     );
     const reviewer = createReviewerRoleRuntime(
       roleHost,
@@ -1719,7 +1726,7 @@ export function createRoleRuntimeExtension(
       roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       activeCollector = undefined;
-      receiptDelivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
+      receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
       noReceiptRecorded = false;
       pendingNavigatorPresentation = undefined;
       navigatorActivation += 1;
@@ -1849,6 +1856,7 @@ export function createRoleRuntimeExtension(
             subject: work.subject,
             authority: work.authority,
             invocationId,
+            deliveryRequestLimit: deliveryLimit,
             ...(contextError === undefined ? {} : { contextError }),
             onEvent: (navigatorEvent, report) => {
               if (activation === navigatorActivation && !navigatorDeliveryClosed) {

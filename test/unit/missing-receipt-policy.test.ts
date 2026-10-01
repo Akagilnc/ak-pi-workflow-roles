@@ -18,7 +18,8 @@ test("shared receipt delivery policy accepts after zero, one, or two delivery tu
   assert.equal(exhausted.nextAction(), "request-delivery");
   exhausted.recordDeliveryRequest();
   assert.equal(exhausted.nextAction(), "no-receipt");
-  assert.equal(exhausted.facts({ runPointer: "/run", attemptPointer: "attempt-1" }).deliveryTurns, 2);
+  // The rejection spent a slot. Only the delivery request is a send.
+  assert.equal(exhausted.facts({ runPointer: "/run", attemptPointer: "attempt-1" }).deliveryTurns, 1);
 
 });
 

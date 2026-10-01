@@ -62,7 +62,6 @@ export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import {
   createReceiptDeliveryPolicy,
-  deliveryLimitFromEnv,
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
 } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
@@ -158,6 +157,8 @@ export type NavigatorAttendanceOptions = {
   contextError?: unknown;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
+  /** Effective ceiling already resolved for this turn (#1132). */
+  deliveryRequestLimit?: number;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
@@ -422,12 +423,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          // #1132: same one configured ceiling as the role runtime.
-          const delivery = createReceiptDeliveryPolicy(deliveryLimitFromEnv(process.env));
+          // #1132: the ceiling this turn already resolved. Absent = package default.
+          const delivery = createReceiptDeliveryPolicy(options.deliveryRequestLimit);
           // Production prose arrives only via nested summon → prepare tool.execute
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).
-          const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
+          const promptAllowingRejectedPrepare = async (text: string) => {
             await persistNavigatorWorkBase(activeSession.recordPointer(), { subject, authority });
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -453,25 +454,22 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             if (promptFailure !== undefined) throw promptFailure;
             const sessionNoReceipt = activeSession.noReceipt?.();
             if (sessionNoReceipt !== undefined) {
-              // This session already settled without an accepted receipt on its own
-              // budget; one more prompt opens an independent summon, not a delivery
-              // request on the settled session (#675).
+              // This session already settled without an accepted receipt. Adopt
+              // the count it actually issued and stop (#675 / #1132).
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }
-            if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
-          await promptAllowingRejectedPrepare(request, false);
+          await promptAllowingRejectedPrepare(request);
           // Bound output only: correction after rejected prepare. Early ready-wait
           // does not 催交 final advice (owner: prepare then wait for settlement feed).
           if (boundSettlement !== undefined) {
             while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()), true);
+              delivery.recordDeliveryRequest();
+              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
             }
             if (output === undefined && delivery.nextAction() === "request-delivery") {
-              while (delivery.nextAction() === "request-delivery") {
-                delivery.recordDeliveryRequest();
-              }
+              delivery.closeBudget();
             }
             if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
               const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });

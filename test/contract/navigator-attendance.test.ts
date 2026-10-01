@@ -330,6 +330,7 @@ test("a session that settled without a receipt is not re-summoned for delivery",
     assert.equal(lifecycle.length, 1);
     const facts = (lifecycle[0] as any).data;
     assert.equal(facts.terminalToolCalled, true);
+    assert.equal(facts.deliveryTurns, 0);
     assert.deepEqual(facts.rejectedReceipts, [
       { reason: "no typed candidate batch", diagnosticAvailable: true },
     ]);

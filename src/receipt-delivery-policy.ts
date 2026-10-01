@@ -112,9 +112,16 @@ export function noReceiptLifecycleFacts(
 export function createReceiptDeliveryPolicy(limit?: number) {
   const deliveryLimit = deliveryLimitFromConfig(limit);
   let accepted = false;
+  let closed = false;
   let terminalToolCalled = false;
+  /** Requests actually sent. Rejections and a nested close do not invent sends. */
   let deliveryTurns = 0;
+  /** Stop counter. Separate from the issued-count fact (#1132). */
+  let budgetSpent = 0;
   const rejectedReceipts: { reason: string; diagnosticAvailable: boolean }[] = [];
+  const spend = (): void => {
+    if (budgetSpent < deliveryLimit) budgetSpent += 1;
+  };
   return {
     /** The effective ceiling this budget spends (#1132 — never re-read). */
     limit: deliveryLimit,
@@ -124,27 +131,36 @@ export function createReceiptDeliveryPolicy(limit?: number) {
     },
     /** Infrastructure owns terminality and must never trigger receipt催交. */
     stopForInfrastructure() { accepted = true; },
+    /** A rejection consumes one budget slot. It is not a delivery request. */
     recordRejected(reason: string) {
       terminalToolCalled = true;
       rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
-      deliveryTurns = Math.min(deliveryLimit, deliveryTurns + 1);
+      spend();
     },
     recordDeliveryRequest() {
-      deliveryTurns = Math.min(deliveryLimit, deliveryTurns + 1);
+      deliveryTurns += 1;
+      spend();
     },
     /**
-     * A nested session settled without an accepted receipt after spending its own
-     * delivery budget. Adopt its facts and close this budget: another prompt would
-     * open an independent session, not a delivery request on the settled one.
+     * Stop asking. The issued count stays whatever was actually sent (#1132 —
+     * do not fill the remainder up to the ceiling).
+     */
+    closeBudget() { closed = true; },
+    /**
+     * A nested session settled without an accepted receipt. Adopt the count it
+     * actually issued and close: another prompt would open an independent
+     * session, not a delivery request on the settled one.
      */
     recordNestedNoReceipt(facts: NoReceiptLifecycleFacts) {
       terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
       rejectedReceipts.push(...facts.rejectedReceipts);
-      deliveryTurns = deliveryLimit;
+      deliveryTurns = facts.deliveryTurns;
+      closed = true;
     },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {
       if (accepted) return "accepted";
-      return deliveryTurns < deliveryLimit ? "request-delivery" : "no-receipt";
+      if (closed) return "no-receipt";
+      return budgetSpent < deliveryLimit ? "request-delivery" : "no-receipt";
     },
     /** Delivery requests actually issued so far (#1132). */
     issuedDeliveryRequests(): number {

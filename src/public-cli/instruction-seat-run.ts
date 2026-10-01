@@ -14,6 +14,7 @@ import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
+import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
@@ -164,6 +165,18 @@ function unreadablePostSubmissionStatus(
     : route.reask;
 }
 
+/**
+ * One more unreadable-status reask, counted against the same ceiling as the
+ * other loops. The reask keeps autoResumeLimit so its own delivery and failure
+ * recovery still have that budget. Exhaustion returns undefined: the caller
+ * keeps the terminal it already has. ADR 0007 audit continues are not this shape.
+ */
+function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv | undefined {
+  const spent = env.unreadableReasksSpent ?? 0;
+  if (spent >= deliveryLimitFromConfig(env.autoResumeLimit)) return undefined;
+  return { ...env, unreadableReasksSpent: spent + 1 };
+}
+
 async function reaskUnreadablePostSubmissionStatus(
   admitted: AdmittedRoleInvocation,
   terminal: TerminalResult | undefined,
@@ -172,9 +185,11 @@ async function reaskUnreadablePostSubmissionStatus(
 ): Promise<SeatRunResult | undefined> {
   const message = unreadablePostSubmissionStatus(admitted, terminal);
   if (message === undefined) return undefined;
+  const next = withUnreadableReask(env);
+  if (next === undefined) return undefined;
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, message },
-    { ...env, autoResumeLimit: 0 },
+    next,
     io,
   );
 }
@@ -974,12 +989,14 @@ async function auditSubmittedRole(
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
   if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK },
-      { ...env, autoResumeLimit: 0 }, io);
+    const next = withUnreadableReask(env);
+    if (next === undefined) return turn;
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
-    return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK },
-      { ...env, autoResumeLimit: 0 }, io);
+    const next = withUnreadableReask(env);
+    if (next === undefined) return turn;
+    return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must

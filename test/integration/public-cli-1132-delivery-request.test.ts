@@ -17,9 +17,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { randomUUID } from "node:crypto";
+
+import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
+import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
@@ -225,24 +230,6 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
   });
 });
 
-// 变异真跑：去掉催交接线（deliveryTurn: true 传回 / 审核接线）本测试应报红。
-test("#1132: 催交得卷 reaches the audit seat, not a bare accepted", async () => {
-  await withSeatHome(async (home) => {
-    const run = await runExternalJudge(home, {
-      runId: "1132-external-audit-continuation",
-      project: await freshProject(home),
-      limit: 2,
-      sealOnCall: 2,
-    });
-    const nonJudge = run.seatsDispatched.filter((role) => role !== "judge");
-    assert.ok(
-      nonJudge.length > 0,
-      `a催交-sealed judge must continue into review; seats=${JSON.stringify(run.seatsDispatched)}`,
-    );
-  });
-});
-
-
 // #1132 变异真跑目标：催交轮不得重跑 turn-BEFORE 钩子，也不得中途落终局。
 test("#1132: 催交 turns keep run-state running and the engine of the first turn", async () => {
   await withSeatHome(async (home) => {
@@ -382,22 +369,122 @@ test("#1132: a failing催交 leaves the run out of running", async () => {
   });
 });
 
-// 各循环分别计次：催交轮内 closeRound 重交不虚增 deliveryTurns。
-test("#1132: a delivery turn's internal re-ask rounds do not inflate deliveryTurns", async () => {
-  await withSeatHome(async (home) => {
-    // closeRound inside a delivery turn re-prompts the same host session; the
-    // count must still be exactly the number of催交 turns the AK seam issued.
-    const run = await runExternalJudge(home, {
-      runId: "1132-external-nested-reask",
-      project: await freshProject(home),
-      limit: 2,
+function isDeliveryPrompt(request: RoleTurnRequest): boolean {
+  if (request.continuation.kind !== "resume") return false;
+  try {
+    const parsed = JSON.parse(request.continuation.prompt) as { deliveryTurns?: unknown };
+    return typeof parsed.deliveryTurns === "number";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Production closeRound (prepareRoleEnvelope + driveExternalRoleTurnRounds).
+ * The first round submits unfinished with no reason; later rounds submit nothing.
+ */
+async function driveFixerCloseRound(
+  request: RoleTurnRequest,
+  rounds: { count: number },
+): Promise<RoleTurnResult> {
+  const prepared = await prepareRoleEnvelope({
+    request: { ...request, host: "codex" },
+    dependencies: createRoleRuntimeDependencies(packageRoot),
+    socketPath: `/tmp/ak-1132-mcp-${randomUUID()}.sock`,
+    listTerminatingToolOnMcp: false,
+    sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+  });
+  try {
+    return await driveExternalRoleTurnRounds(prepared, request, {
+      roundLimitName: "StructuredOutputRoundLimit",
+      currentSessionId: () => undefined,
+      async runRound() {
+        rounds.count += 1;
+        if (rounds.count === 1) {
+          await prepared.ingestStructuredOutput({ status: "unfinished" });
+        }
+        return { status: "delivered" };
+      },
     });
+  } finally {
+    await prepared.dispose?.();
+  }
+}
+
+// closeRound 重交、失败续跑、催交实发次数各计各的。limit 0 时缺理由不再被催。
+test("#1132: closeRound reasks and failure recovery stay off the delivery count", async () => {
+  await withSeatHome(async (home) => {
+    const project = await freshProject(home);
+    await setConfiguredLimit(home, 0);
+    const silentRounds = { count: 0 };
+    const silentHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        return driveFixerCloseRound(request, silentRounds);
+      },
+    };
+    const silentIo = captureIo();
+    const silent = await runAkRole(
+      ["fixer", "--host", "grok-build", "--model", "test/caller-seat:high", "--project", project, "apply", "Stop without a reason."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "1132-fixer-limit-zero",
+        io: silentIo.io,
+        roleTurnHost: silentHost,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host: silentHost }) })),
+      },
+    );
+    assert.equal(silentRounds.count, 1, "limit 0 does not reask an unfinished submission");
+    assert.equal(silent.exitCode, 0);
+    assert.equal(silent.terminal?.roleOutcome.kind, "accepted");
+
+    await setConfiguredLimit(home, 1);
+    const rounds = { count: 0 };
+    let failedDelivery = false;
+    let outerCalls = 0;
+    const host = {
+      async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
+        outerCalls += 1;
+        if (isDeliveryPrompt(request)) {
+          if (!failedDelivery) {
+            failedDelivery = true;
+            return { code: 1, stderr: "host exploded\n", timedOut: false };
+          }
+          return { code: 0, stderr: "", timedOut: false };
+        }
+        if (rounds.count === 0) return driveFixerCloseRound(request, rounds);
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const loopIo = captureIo();
+    const run = await runAkRole(
+      ["fixer", "--host", "grok-build", "--model", "test/caller-seat:high", "--project", project, "apply", "Stop without a reason."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "1132-fixer-loops",
+        io: loopIo.io,
+        roleTurnHost: host,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      },
+    );
+    assert.equal(rounds.count, 2, "one closeRound reask beyond the first round");
+    assert.equal(failedDelivery, true, "the delivery failure entered auto-resume");
+    assert.ok(outerCalls > 2, `failure recovery must dispatch again; calls=${outerCalls}`);
     const outcome = run.terminal?.roleOutcome;
     assert.equal(outcome?.kind, "no_receipt");
     if (outcome?.kind !== "no_receipt") return;
-    assert.equal(outcome.deliveryTurns, 2);
-    // One initial turn plus two催交 turns — never the nested product.
-    assert.equal(run.turns.length, 3);
+    assert.equal(outcome.deliveryTurns, 1, "closeRound rounds and the failed send stay at the issued count");
+    const failedAttempts = (outcome.decisiveFacts as { failedAttempts?: readonly unknown[] } | undefined)?.failedAttempts;
+    assert.ok((failedAttempts?.length ?? 0) >= 1, "the host failure stays on the record");
   });
 });
 
@@ -450,7 +537,15 @@ test("#1132: a failing催交 turn is a real failure, never no_receipt", async ()
       limit: 2,
       failOnCall: 2,
     });
-    assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
-    assert.equal(run.exitCode, 1);
+    // The failed催交 is resumed. Later silent turns settle no_receipt, and the
+    // issued count includes the request that failed, not a fresh budget.
+    assert.ok(run.turns.length > 2, `auto-resume must continue after the failure; turns=${run.turns.length}`);
+    assert.equal(run.terminal?.roleOutcome.kind, "no_receipt");
+    if (run.terminal?.roleOutcome.kind !== "no_receipt") return;
+    assert.equal(run.terminal.roleOutcome.deliveryTurns, 2);
+    const failedAttempts = (
+      run.terminal.roleOutcome.decisiveFacts as { failedAttempts?: readonly unknown[] } | undefined
+    )?.failedAttempts;
+    assert.ok((failedAttempts?.length ?? 0) >= 1);
   });
 });

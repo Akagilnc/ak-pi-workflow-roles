@@ -174,6 +174,7 @@ export function createFixerRoleRuntime(
   pi: RoleHost,
   dependencies: FixerRoleDependencies,
   hostActions: WorkerRoleHostActions,
+  options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;
@@ -181,10 +182,11 @@ export function createFixerRoleRuntime(
   let prerequisitesPath: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  // #1132: ADR 0050 缺理由催全次数 from the one configured value, read once here
-  // from the child env the AK seam resolved. Absent = package default.
+  // #1132: ADR 0050 缺理由催全次数. The in-process seam passes the value it
+  // already resolved; the Pi child has only the env that seam projected.
   const submissionGate = createWorkerSubmissionGate({
-    unfinishedReasonBounceLimit: deliveryLimitFromEnv(process.env),
+    unfinishedReasonBounceLimit: options?.unfinishedReasonBounceLimit
+      ?? deliveryLimitFromEnv(process.env),
   });
 
   pi.registerFlag(
@@ -296,15 +298,16 @@ export function createCoderRoleRuntime(
   pi: RoleHost,
   dependencies: CoderRoleDependencies,
   hostActions: WorkerRoleHostActions,
+  options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let task: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  // #1132: ADR 0050 缺理由催全次数 from the one configured value, read once here
-  // from the child env the AK seam resolved. Absent = package default.
+  // #1132: same resolved ceiling as the fixer gate. Absent = Pi child env.
   const submissionGate = createWorkerSubmissionGate({
-    unfinishedReasonBounceLimit: deliveryLimitFromEnv(process.env),
+    unfinishedReasonBounceLimit: options?.unfinishedReasonBounceLimit
+      ?? deliveryLimitFromEnv(process.env),
   });
 
   pi.registerFlag("ak-coder-task", {

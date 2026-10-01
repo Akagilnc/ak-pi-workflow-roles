@@ -33,7 +33,6 @@ import { readStoredHostSessionId } from "../session-identity.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
-  RECEIPT_DELIVERY_LIMIT_ENV,
 } from "../receipt-delivery-policy.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
@@ -318,6 +317,11 @@ export type PostAdmissionEnv = {
   principalAuthority: DurablePrincipalAuthority;
   sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
+  /**
+   * Unreadable-status reasks already issued on this chain (#1132). Each reask
+   * keeps this env's autoResumeLimit; the counter is the only thing that moves.
+   */
+  unreadableReasksSpent?: number;
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -614,15 +618,8 @@ async function settleDeferredPersist<
   authority: DurablePrincipalAuthority,
   adapters: PostAdmissionAdapters<A, T>,
   io: CliIo,
-  result: {
-    exitCode: number;
-    admitted: A;
-    terminal?: T;
-    skipAutoResume?: true;
-    turnDispatched?: true;
-    needsPersist?: true;
-  },
-): Promise<typeof result> {
+  result: DispatchOutcomeFor<A, T>,
+): Promise<DispatchOutcomeFor<A, T>> {
   if (result.needsPersist !== true || result.terminal === undefined) return result;
   const { needsPersist: _needsPersist, ...settledResult } = result;
   const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
@@ -638,7 +635,14 @@ async function settleDeferredPersist<
       io,
       true,
     );
-    return { ...failed, turnDispatched: true as const, skipAutoResume: true as const };
+    return {
+      ...failed,
+      turnDispatched: true as const,
+      skipAutoResume: true as const,
+      ...(result.issuedDeliveryRequests === undefined
+        ? {}
+        : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
+    };
   }
 }
 
@@ -664,11 +668,10 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
  * turn is an ordinary host turn on this same run/session: this builds the
  * host-neutral resume request (the adapter's stored native session id, ADR 0082;
  * pi's existing delivery-state content reused verbatim — no new prompt wording,
- * no new host capability) and re-enters `dispatchPostAdmissionTurn`. That keeps
- * ONE post-turn settlement authority (ADR 0080) shared by both turns, so a
- * delivery turn gets exactly what the first turn gets: the runner/host failure
- * re-read, the shouldPresent gate, the fresh-seal check, open-court cleanup,
- * cancel re-reads, run-state persist, and the stderr mirror.
+ * no new host capability). The caller settles it through the same
+ * `settleCompletedHostTurn` the first turn uses (ADR 0080): the runner/host
+ * failure re-read, the shouldPresent gate, the fresh-seal check, open-court
+ * cleanup, cancel re-reads, run-state persist, and the stderr mirror.
  *
  * `issuedSoFar` is how many delivery requests this run already spent, so the
  * delivery-state body reports what really went out.
@@ -702,7 +705,7 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
   };
 }
 
-/** The one dispatch-result shape shared by the outer dispatch and a催交 turn. */
+/** The one dispatch-result shape. */
 type DispatchOutcomeFor<A extends AdmittedRoleInvocation, T extends TerminalResult> = {
   exitCode: number;
   admitted: A;
@@ -710,6 +713,8 @@ type DispatchOutcomeFor<A extends AdmittedRoleInvocation, T extends TerminalResu
   skipAutoResume?: true;
   turnDispatched?: true;
   needsPersist?: true;
+  /** Delivery requests actually issued on this run, including earlier attempts. */
+  issuedDeliveryRequests?: number;
 };
 
 /**
@@ -1063,44 +1068,17 @@ export async function dispatchPostAdmissionTurn<
   effectiveEngine?: string;
   persistRunState?: boolean;
   /**
-   * #1132: delivery requests already spent on this run. Carried into the
-   * recursive 催交 turn so `deliveryTurns` records what actually went out, not
-   * the budget. Absent on a first turn = none spent.
+   * #1132: delivery requests already issued on this run. Failure recovery
+   * re-enters this dispatch; the count continues instead of restarting.
+   * Absent on a first turn = none issued.
    */
   issuedDeliveryRequests?: number;
-  /**
-   * #1132: this turn is a 没交卷催交 rather than the first turn. Its outcome is
-   * the run's outcome — never retried by the caller's failure loop into a
-   * lawful no_receipt.
-   */
-  deliveryTurn?: boolean;
-}): Promise<{
-  exitCode: number;
-  admitted: A;
-  terminal?: T;
-  skipAutoResume?: true;
-  turnDispatched?: true;
-  needsPersist?: true;
-}> {
+}): Promise<DispatchOutcomeFor<A, T>> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
   const persistRunState = input.persistRunState !== false;
   const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
-  // #1132: a 催交 turn does NOT run a delivery loop of its own. It settles its
-  // own turn (no_receipt when still silent) and hands that back; the caller that
-  // issued the request owns the budget and issues the next one. Without this
-  // the recursion nests one loop per level and multiplies the count
-  // (N×(1+N)+首轮) instead of counting each request once.
-  const deliveryTurnOutcome = input.deliveryTurn === true;
-  type DispatchOutcome = {
-    exitCode: number;
-    admitted: A;
-    terminal?: T;
-    skipAutoResume?: true;
-    turnDispatched?: true;
-    needsPersist?: true;
-  };
   /**
    * Once-only post-host-turn hook (Diarist bind/relocate, etc.) under the still-held
    * writer lease. Every exit after the host turn has started must pass here before
@@ -1110,8 +1088,7 @@ export async function dispatchPostAdmissionTurn<
   let afterDispatchApplied = false;
   /**
    * #1132: delivery requests actually issued on this run. Counted per real
-   * prompt sent on the same run/session — never the budget, never another
-   * loop's resumes. A 催交 turn inherits the count its caller already spent.
+   * prompt sent — never the budget, never another loop's resumes.
    */
   let issuedDeliveryRequests = input.issuedDeliveryRequests ?? 0;
   /**
@@ -1127,7 +1104,7 @@ export async function dispatchPostAdmissionTurn<
   // CLI) have no such in-child loop, so the AK execution seam owns it for them.
   const akSeamDeliversReceipt =
   env.host !== undefined && env.host !== "" && env.host !== DEFAULT_ROLE_TURN_HOST;
-  const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
+  const finishAfterTurn = async (result: DispatchOutcomeFor<A, T>): Promise<DispatchOutcomeFor<A, T>> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
     // #855: re-read cancel before afterDispatch finalization — never present
@@ -1159,6 +1136,9 @@ export async function dispatchPostAdmissionTurn<
         )),
         turnDispatched: true as const,
         skipAutoResume: true as const,
+        ...(result.issuedDeliveryRequests === undefined
+          ? {}
+          : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
         ...deferredPersist,
       };
     }
@@ -1231,6 +1211,9 @@ export async function dispatchPostAdmissionTurn<
         )) as { exitCode: number; admitted: A; terminal: T },
         ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
         ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
+        ...(result.issuedDeliveryRequests === undefined
+          ? {}
+          : { issuedDeliveryRequests: result.issuedDeliveryRequests }),
         ...deferredPersist,
       };
     }
@@ -1381,19 +1364,22 @@ export async function dispatchPostAdmissionTurn<
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
         // its true cause, through the one settlement authority (ADR 0080).
+        // The turn started, so the caller's loop resumes instead of replaying
+        // the initial payload. The issued count survives that re-entry.
+        const settled = await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope(
+            { timedOut: false, code: null, stderr: "", thrown: error },
+            request.invocationScopeId,
+          ),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        );
         return await finishAfterTurn(
           withProcessCancelSkipAutoResume(
-            await settleAfterTurnStarted(
-              admitted,
-              withEngineDetourInvocationScope(
-                { timedOut: false, code: null, stderr: "", thrown: error },
-                request.invocationScopeId,
-              ),
-              adapters,
-              env.principalAuthority,
-              io,
-              persistRunState,
-            ),
+            { ...settled, turnDispatched: true as const, issuedDeliveryRequests },
             env.signal,
           ),
         );
@@ -1438,12 +1424,7 @@ export async function dispatchPostAdmissionTurn<
         }
         return await finishAfterTurn({
           ...deliveryTurn.outcome,
-          // #1132: a催交 that failed carries the run's real failure; never let
-          // the caller's retry loop drain it into a lawful no_receipt.
-          ...(deliveryTurn.outcome.terminal !== undefined
-            && !isLawfulTypedTerminalOutcome(deliveryTurn.outcome.terminal.roleOutcome)
-            ? { skipAutoResume: true as const }
-            : {}),
+          issuedDeliveryRequests,
         });
       }
     }
@@ -1494,6 +1475,7 @@ export async function dispatchPostAdmissionTurn<
       admitted,
       terminal: noReceipt,
       turnDispatched: true as const,
+      issuedDeliveryRequests,
       ...deferredPersist,
     });
   } finally {
@@ -1865,6 +1847,7 @@ export async function runPostAdmissionSeatResume<
   try {
     if (env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
+      let issuedDeliveryRequests = 0;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
       // One public call → one detour scope across in-place auto-resume dispatches.
@@ -1922,10 +1905,14 @@ export async function runPostAdmissionSeatResume<
                 ...(lease === undefined ? {} : { lease }),
                 adapters: stationAdapters,
                 persistRunState: false,
+                issuedDeliveryRequests,
                 ...(input.effectiveEngine === undefined
                   ? {}
                   : { effectiveEngine: input.effectiveEngine }),
               });
+              if (result.issuedDeliveryRequests !== undefined) {
+                issuedDeliveryRequests = result.issuedDeliveryRequests;
+              }
               return settleDeferredPersist(
                 loaded.admitted,
                 env.principalAuthority,
@@ -2138,6 +2125,7 @@ export async function runPostAdmissionResumable<
 }> {
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
+  let issuedDeliveryRequests = 0;
 
   // One public call → one detour scope across in-place auto-resume dispatches.
   const invocationScopeId = mintEngineDetourInvocationScope({
@@ -2169,9 +2157,13 @@ export async function runPostAdmissionResumable<
         ...(lease === undefined ? {} : { lease }),
         adapters,
         persistRunState: false,
+        issuedDeliveryRequests,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       });
+      if (result.issuedDeliveryRequests !== undefined) {
+        issuedDeliveryRequests = result.issuedDeliveryRequests;
+      }
       return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
     },
   });
