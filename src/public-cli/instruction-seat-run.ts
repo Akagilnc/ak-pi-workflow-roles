@@ -974,7 +974,7 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume({
       runId: parentRunId,
       message: readableGateItem(latestQueuePayload(resolved.terminal)),
-    }, { ...env, autoResumeLimit: 0 }, io);
+    }, { ...env, unreadableReasksSpent: 0 }, io);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1047,6 +1047,7 @@ async function auditSubmittedRole(
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
+        ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
           const summoned = await summonPublicRole({
@@ -1076,7 +1077,14 @@ async function auditSubmittedRole(
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
           runId: admitted.runId, message: readableGateItem(decision.receipt ?? decision.violations),
-        }, { ...env, autoResumeLimit: 0 }, io);
+        }, { ...env, unreadableReasksSpent: 0 }, io);
+      }
+      if (decision.status === "received") {
+        if (lastSummon?.terminal === undefined) {
+          throw new Error("doctor audit kept an unreadable reply with no terminal");
+        }
+        io.stdout(formatTerminalResult(lastSummon.terminal));
+        return { exitCode: 0, terminal: lastSummon.terminal };
       }
       if (decision.status !== "converged") {
         if (lastSummon?.terminal !== undefined) {
@@ -1105,6 +1113,7 @@ async function auditSubmittedRole(
         toolCallId,
         submission: accepted,
         summonOfficer,
+        ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         hostActions: {
           failInfrastructure(error): never { throw error; },
@@ -1142,6 +1151,22 @@ async function auditSubmittedRole(
         };
       }
     }
+    if (chain.status === "needs_reask") {
+      const held = chain.passes.at(-1);
+      const heldRunId = held?.runId
+        ?? (held?.runDirectory === undefined
+          ? undefined : runIdFromRunDirectory(held.runDirectory));
+      if (heldRunId !== undefined) {
+        const officer = await loadResumablePublicRole(env.home, heldRunId, env.principalAuthority);
+        const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
+        if (terminal === undefined) throw new Error("unreadable audit has no terminal result");
+        io.stdout(formatTerminalResult(terminal));
+        return { exitCode: 0, terminal };
+      }
+      if (turn.terminal === undefined) throw new Error("unreadable audit has no terminal result");
+      io.stdout(formatTerminalResult(turn.terminal));
+      return { exitCode: 0, terminal: turn.terminal };
+    }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);
       const escalatedRunId = escalation?.runId
@@ -1158,7 +1183,7 @@ async function auditSubmittedRole(
       return runPublicInstructionSeatResume({
         runId: admitted.runId,
         message: readableGateItem(chain.passes.at(-1)?.receipt),
-      }, { ...env, autoResumeLimit: 0 }, io);
+      }, { ...env, unreadableReasksSpent: 0 }, io);
     }
     if (admitted.role === "secretariat") {
       const pass = chain.passes.at(-1);

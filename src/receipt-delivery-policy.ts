@@ -147,14 +147,15 @@ export function createReceiptDeliveryPolicy(limit?: number) {
      */
     closeBudget() { closed = true; },
     /**
-     * A nested session settled without an accepted receipt. Adopt the count it
-     * actually issued and close: another prompt would open an independent
-     * session, not a delivery request on the settled one.
+     * A nested session settled without an accepted receipt. Close so this layer
+     * does not open another prompt on that session. The issued count stays the
+     * larger of the two seams: a nested zero must not wipe prompts this layer
+     * already sent, and adding the two counts would bill one send twice.
      */
     recordNestedNoReceipt(facts: NoReceiptLifecycleFacts) {
       terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
       rejectedReceipts.push(...facts.rejectedReceipts);
-      deliveryTurns = facts.deliveryTurns;
+      deliveryTurns = Math.max(deliveryTurns, facts.deliveryTurns);
       closed = true;
     },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {

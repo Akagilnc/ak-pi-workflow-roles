@@ -236,6 +236,11 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
     );
     assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
+    assert.ok(run.runDirectory !== undefined);
+    const runState = JSON.parse(
+      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal");
   });
 });
 
@@ -264,32 +269,6 @@ test("#1132: 催交 turns keep run-state running and the engine of the first tur
     // is forwarded; a dropped parameter would blank it on the re-dispatch).
     const engines = new Set(observed.map((seen) => JSON.stringify(seen.effectiveEngine)));
     assert.equal(engines.size, 1, `engine must not change across turns: ${JSON.stringify(observed)}`);
-  });
-});
-
-// #1132 r3：催交得卷这条主路径必须把 run 落终局。
-test("#1132: a 催交 that obtains a receipt leaves the run terminal", async () => {
-  await withSeatHome(async (home) => {
-    const run = await runExternalJudge(home, {
-      runId: "1132-external-seal-terminal",
-      project: await freshProject(home),
-      limit: 2,
-      sealOnCall: 2,
-    });
-    assert.equal(run.turns.length, 2, "first turn plus one催交 turn");
-    // The催交 really did produce a receipt: the judge continued into the review
-    // chain (a bare accepted would stop at the judge — #1050 未经台院).
-    assert.ok(
-      run.seatsDispatched.some((role) => role !== "judge"),
-      `催交得卷必须继续进审核；seats=${JSON.stringify(run.seatsDispatched)}`,
-    );
-    assert.ok(run.runDirectory !== undefined);
-    // The ledger holds the receipt, so run-state must be terminal too —
-    // otherwise every later resume entry (ADR 0080) reads a finished run as live.
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
-    ) as { state: string };
-    assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
 
@@ -631,4 +610,146 @@ test("#1132: an unreadable gate-child conclusion reasks only up to the configure
       );
     });
   }
+});
+
+// 审核封驳续跑仍用配置里的催交额度，不把这一轮的上限改成 0。
+test("#1132: an audit continue resumes the submitted seat with its delivery budget", async () => {
+  await withSeatHome(async (home) => {
+    await setConfiguredLimit(home, 2);
+    const project = await freshProject(home);
+    const judgeRunId = "1132-audit-continue-budget";
+    let judgeCalls = 0;
+    const seatsDispatched: string[] = [];
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        seatsDispatched.push(request.activation.role);
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        await writeFile(
+          coordinates.sessionFile,
+          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+          "utf8",
+        );
+        if (request.activation.role === "judge") {
+          judgeCalls += 1;
+          if (judgeCalls === 1) {
+            await sealAcceptedSubmission({
+              cwd: request.cwd,
+              runId: runIdFromRunDirectory(request.runDirectory)!,
+              runDirectory: request.runDirectory,
+              role: "judge",
+              details: { status: "continue" },
+              toolCallId: "judge-continue",
+              home: request.home,
+            });
+          }
+          return { code: 0, stderr: "", timedOut: false };
+        }
+        if (request.activation.role === "notary") {
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            runId: runIdFromRunDirectory(request.runDirectory)!,
+            runDirectory: request.runDirectory,
+            role: "notary",
+            details: { status: "continue" },
+            toolCallId: "notary-continue",
+            home: request.home,
+          });
+        }
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--host", "grok-build", "--project", project, "go"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => judgeRunId,
+        io,
+        roleTurnHost: host,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      },
+    );
+    assert.ok(seatsDispatched.includes("notary"), JSON.stringify(seatsDispatched));
+    assert.equal(judgeCalls, 4, `audit continue must keep the configured delivery budget; seats=${JSON.stringify(seatsDispatched)}`);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+    if (result.terminal?.roleOutcome.kind !== "no_receipt") return;
+    assert.equal(result.terminal.roleOutcome.deliveryTurns, 2);
+  });
+});
+
+// 读不出三态的审核召唤用尽配置次数后留下该回执，不把父席再送去改。
+test("#1132: an unreadable audit officer stops at the ceiling without resuming the parent", async () => {
+  await withSeatHome(async (home) => {
+    await setConfiguredLimit(home, 0);
+    const project = await freshProject(home);
+    let judgeCalls = 0;
+    let notaryCalls = 0;
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        await writeFile(
+          coordinates.sessionFile,
+          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+          "utf8",
+        );
+        if (request.activation.role === "judge") {
+          judgeCalls += 1;
+          if (judgeCalls === 1) {
+            await sealAcceptedSubmission({
+              cwd: request.cwd,
+              runId: runIdFromRunDirectory(request.runDirectory)!,
+              runDirectory: request.runDirectory,
+              role: "judge",
+              details: { status: "continue" },
+              toolCallId: "judge-continue",
+              home: request.home,
+            });
+          }
+          return { code: 0, stderr: "", timedOut: false };
+        }
+        if (request.activation.role === "notary") {
+          notaryCalls += 1;
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            runId: runIdFromRunDirectory(request.runDirectory)!,
+            runDirectory: request.runDirectory,
+            role: "notary",
+            details: { status: "sideways" },
+            toolCallId: `notary-sideways-${notaryCalls}`,
+            home: request.home,
+          });
+        }
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const result = await runAkRole(
+      ["judge", "--host", "grok-build", "--project", project, "go"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "1132-audit-unreadable-stop",
+        io: captureIo().io,
+        roleTurnHost: host,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      },
+    );
+    assert.equal(judgeCalls, 1, "parent is not resumed for revision");
+    assert.equal(notaryCalls, 1, "limit 0 is the first summon and no reask");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    if (result.terminal?.roleOutcome.kind !== "accepted") return;
+    assert.equal(payloadStatusSequence(result.terminal.roleOutcome).at(-1), "sideways");
+  });
 });

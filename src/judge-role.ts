@@ -31,10 +31,10 @@ export async function runJudgeGates(input: {
     readonly runDirectory?: string;
   } | void>;
 }): Promise<{
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: "converged" | "continue" | "escalate" | "needs_reask";
   readonly passes: readonly {
     readonly subject: GatekeeperSubject;
-    readonly status: "converged" | "continue" | "escalate";
+    readonly status: "converged" | "continue" | "escalate" | "needs_reask";
     readonly receipt: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
@@ -42,7 +42,7 @@ export async function runJudgeGates(input: {
 }> {
   const passes: {
     subject: GatekeeperSubject;
-    status: "converged" | "continue" | "escalate";
+    status: "converged" | "continue" | "escalate" | "needs_reask";
     receipt: unknown;
     runId?: string;
     runDirectory?: string;
@@ -51,8 +51,22 @@ export async function runJudgeGates(input: {
     if (await input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
     const status = pass?.status;
-    if (pass === undefined || (status !== "converged" && status !== "continue" && status !== "escalate")) {
+    if (pass === undefined || (
+      status !== "converged" && status !== "continue" && status !== "escalate" && status !== "needs_reask"
+    )) {
       throw new Error("judge gate returned no conclusion");
+    }
+    if (status === "needs_reask") {
+      return {
+        status,
+        passes: [{
+          subject,
+          status,
+          receipt: pass.receipt,
+          ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+          ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+        }],
+      };
     }
     passes.push({
       subject,

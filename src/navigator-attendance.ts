@@ -454,8 +454,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             if (promptFailure !== undefined) throw promptFailure;
             const sessionNoReceipt = activeSession.noReceipt?.();
             if (sessionNoReceipt !== undefined) {
-              // This session already settled without an accepted receipt. Adopt
-              // the count it actually issued and stop (#675 / #1132).
+              // This session already settled without an accepted receipt. Keep the
+              // larger issued count and stop; a nested zero must not wipe prompts
+              // this layer already sent (#675 / #1132).
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }

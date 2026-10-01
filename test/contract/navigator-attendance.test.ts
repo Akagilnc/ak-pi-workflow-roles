@@ -338,6 +338,32 @@ test("a session that settled without a receipt is not re-summoned for delivery",
   });
 });
 
+test("a delivery prompt already sent keeps its count when the nested session reports zero", async () => {
+  await withTempRoot("navigator-nested-keeps-sent-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, root);
+    harness.rejectPrepare("prepare shape rejected");
+    harness.settleWithoutReceipt("nested settled without a receipt");
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2);
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.find((entry: any) => entry?.customType === "ak-no-receipt-lifecycle") as any;
+    assert.equal(lifecycle?.data.deliveryTurns, 1);
+    assert.deepEqual(
+      lifecycle?.data.rejectedReceipts?.map((item: { reason?: string }) => item.reason),
+      ["prepare shape rejected", "nested settled without a receipt"],
+    );
+  });
+});
+
 test("#959 missing host binary diagnostic reaches terminal.navigator.reason", async () => {
   // 怎么验#2: missing binary → headless knownFailure → public failure terminal
   // (summonPublicRole / instruction-seat) → attendance unavailable → extractNavigatorFact.

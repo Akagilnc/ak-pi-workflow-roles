@@ -39,9 +39,6 @@ export function sessionHarness() {
       prompts += 1;
       promptTexts.push(text);
       providerFailure = undefined;
-      noReceipt = sessionNoReceipts.shift();
-      // A session that settled without an accepted receipt returns its turn.
-      if (noReceipt !== undefined) return;
       const rejected = rejectedPrepareReasons.shift();
       if (rejected !== undefined) {
         const id = `rejected-prepare-${prompts}`;
@@ -49,6 +46,9 @@ export function sessionHarness() {
         entries.push({ type: "message", message: { role: "toolResult", toolCallId: id, toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: rejected }] } });
         throw new Error(rejected);
       }
+      noReceipt = sessionNoReceipts.shift();
+      // A session that settled without an accepted receipt returns its turn.
+      if (noReceipt !== undefined) return;
       const transport = transportFailures.shift();
       if (transport !== undefined) {
         providerFailure = { source: "transport", cause: "transport" };
