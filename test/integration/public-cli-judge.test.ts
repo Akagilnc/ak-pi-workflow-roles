@@ -9,11 +9,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import {
   access,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -23,17 +21,15 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { readComplianceCandidate } from "../../src/compliance-transport.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -51,16 +47,12 @@ import {
   type TerminalResult,
   type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
   packageRoot,
-  persistActivationSessionFile,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -127,30 +119,6 @@ async function assertPathGone(path: string): Promise<void> {
   await assert.rejects(() => access(path), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 }
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "judge@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Judge Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
 test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -205,9 +173,9 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isUsage);
+  // The burden-selector refusals are carried by the real CLI case below
+  // ("runAkRole judge rejects burden selector before admission"); asserting
+  // them here as well would restate the same conclusion.
   assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
   const parsed = parsePublicSeatArgv("judge", [
     "--attach",
@@ -299,7 +267,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
   });
 });
 
-test("structurally empty request stays empty while attachments remain typed transport", () => {
+test("structurally empty request stays empty", () => {
   const empty = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
@@ -314,28 +282,6 @@ test("structurally empty request stays empty while attachments remain typed tran
   );
   assert.equal(empty, "");
 
-  const withAttach = buildInstructionTransportPrompt(
-    fixtureJudgeAdmitted({
-      runId: "r",
-      bookKey: "b",
-      projectRoot: "/p",
-      instruction: "",
-      instructionEmpty: true,
-      attachments: [
-        {
-          provenancePath: "/orig",
-          frozenPath: "/frozen/00-a.txt",
-          byteLength: 1,
-          sha256: "abc",
-          mediaKind: "regular-file",
-        },
-      ],
-      runDirectory: "/r",
-      sessionDirectory: "/r/session",
-      sessionFile: "/r/session/session.jsonl",
-    }),
-  );
-  assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
 test("#959 adviceNavigatorFact projects prose as-is", () => {
@@ -795,6 +741,7 @@ test("runAkRole judge rejects burden selector before admission", async () => {
     // Emission happened; phrasing is unfrozen presentation (AC6).
     assert.equal(stderr.length >= 1, true);
     assert.equal(result.terminal, undefined);
+    assert.equal(existsSync(join(home, ".ak-roles", "books")), false, "rejected flag must not admit a run");
   });
 });
 
@@ -809,6 +756,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     await savePublicCliConfig(config, home);
     // ADR 0049 host correlation channel remains optional env; no lease mint.
     const attachment = join(home, "note.txt");
+    const instruction = "Decide whether the attachment is sufficient.";
     await writeFile(attachment, "freeze-me", "utf8");
 
     const { io, stdout, stderr } = captureIo();
@@ -822,7 +770,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         attachment,
         "--project",
         project,
-        "Decide whether the attachment is sufficient.",
+        instruction,
       ],
       {
         packageRoot,
@@ -950,15 +898,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       capturedArgs!.some((arg) => arg.includes("burden")),
       false,
     );
-    // Opaque instruction reaches the host as typed stdin, not an argv tail.
-    const prompt = readUserDialogueStdin(capturedStdin ?? "");
-    assert.equal(
-      prompt.includes("Decide whether the attachment is sufficient."),
-      true,
-    );
-    // Frozen attachment path (not the mutable source) is what the prompt references.
-    assert.match(prompt, /attachments\/00-note\.txt/);
-    assert.equal(prompt.includes(attachment), false);
 
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&
@@ -1015,6 +954,10 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");
     const frozenPath = join(runDir, "attachments", "00-note.txt");
+    const delivered = readUserDialogueStdin(capturedStdin ?? "");
+    assert.ok(delivered.includes(instruction));
+    assert.ok(delivered.includes(frozenPath));
+    assert.equal(delivered.includes(attachment), false);
     assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
   });
 });

@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -65,11 +65,8 @@ async function runPublicCancel(signalName: (typeof CATCHABLE)[number], throwHost
         env,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      let stdout = "";
       let stderr = "";
-      child.stdout?.setEncoding("utf8").on("data", (c) => {
-        stdout += c;
-      });
+      child.stdout?.resume();
       child.stderr?.setEncoding("utf8").on("data", (c) => {
         stderr += c;
       });
@@ -184,7 +181,6 @@ async function runPublicCancel(signalName: (typeof CATCHABLE)[number], throwHost
           }
         }
       }
-      void stdout;
     });
 }
 

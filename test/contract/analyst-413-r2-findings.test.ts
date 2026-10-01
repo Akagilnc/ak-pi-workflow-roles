@@ -16,8 +16,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -33,8 +33,6 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-const ABSENT_METRIC = { status: "absent" as const };
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
@@ -54,16 +52,11 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
       await writeFile(indexPath, `${JSON.stringify(shape)}\n`, "utf8");
       await assert.rejects(
         () => readAnalystLibraryIndexPage(join(home, ".ak-roles")),
-        (error: Error) => {
-          assert.match(
-            error.message,
-            /library-index at .* is malformed/,
-            `shape ${JSON.stringify(shape)} must be rejected at the boundary`,
-          );
-          assert.ok(
-            error.message.includes(indexPath),
-            "rejection must carry the file path",
-          );
+        (error: unknown) => {
+          // The rejection's visible identity is this index file. A downstream
+          // crash on the passed-through value does not name it. Subclass is fine.
+          assert.ok(error instanceof Error);
+          assert.ok(error.message.includes(indexPath));
           return true;
         },
         `pre-fix passthrough returned ${JSON.stringify(shape)} to consumers`,

@@ -1,17 +1,14 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   realpath,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,11 +26,9 @@ import {
   resolveNotarySourceRunLocator,
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   argvFlagValue,
@@ -48,35 +43,11 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { treeFingerprint } from "../helpers/factory-board-shared.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-notary-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "notary@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Notary Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 /** Project-tree fake projection — must be rejected by public locator. */
@@ -161,26 +132,17 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
   });
 });
 
-test("notary argv rejects caller prompt and attachment projection", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("notary", ["--source-run", "x@judge", "please bounce lightly"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("notary", ["--attach", "./note.md", "--source-run", "x@judge"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("notary", []),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-
+test("notary public entry rejects caller prompt, attachment and ticket override", async () => {
+  // The CLI half below binds the same parser through runAkRole, so a direct
+  // parsePublicSeatArgv assertion here would restate the same conclusion.
   // Public CLI structural exit for the same input contract.
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    const before = await treeFingerprint(bookPath);
     const { io } = captureIo();
     const withPrompt = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath, "caller framing must not admit"],
       { home, packageRoot, cwd: project, io },
@@ -193,6 +155,13 @@ test("notary argv rejects caller prompt and attachment projection", async () => 
     );
     assert.equal(withAttach.exitCode, 2);
     assert.equal(withAttach.terminal, undefined);
+
+    const withTicket = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath, "--ticket", "582"],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(withTicket.exitCode, 2);
+    assert.equal(withTicket.terminal, undefined);
+    assert.equal(await treeFingerprint(bookPath), before, "rejected inputs must not admit a run");
   });
 });
 
@@ -201,6 +170,8 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    assert.equal(existsSync(bookPath), false);
     const { io } = captureIo();
 
     const missing = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", join(project, "no-such-run@judge")],
@@ -232,6 +203,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     );
     assert.equal(projected.exitCode, 2);
     assert.equal(projected.terminal, undefined);
+    assert.equal(existsSync(bookPath), false, "rejected locators must not admit a run");
 
     // Unit seam: same failures surface as NotarySourceRunError before CLI wrap.
     await assert.rejects(
@@ -250,9 +222,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
           sourceRun: projection,
           home,
         }),
-      (error: unknown) =>
-        error instanceof NotarySourceRunError &&
-        error.message.includes("machine-ledger book"),
+      (error: unknown) => error instanceof NotarySourceRunError,
     );
   });
 });
@@ -308,6 +278,8 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       TypeError,
     );
 
+    const bookPath = join(home, ".ak-roles", "books", bookKey);
+    const before = await treeFingerprint(bookPath);
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;
     const rejectedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", bare], {
@@ -324,6 +296,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     );
     assert.equal(rejectedPath.exitCode, 2);
     assert.equal(rejectedPath.terminal, undefined);
+    assert.equal(await treeFingerprint(bookPath), before, "invalid retained identity must not admit a run");
 
     await assert.rejects(
       () =>
@@ -332,9 +305,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
           sourceRun: bare,
           home,
         }),
-      (error: unknown) =>
-        error instanceof NotarySourceRunError &&
-        error.message.includes("retained run-state identity"),
+      (error: unknown) => error instanceof NotarySourceRunError,
     );
   });
 });
@@ -383,12 +354,14 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     assert.equal(admittedBare.exitCode, 0);
     assert.ok(admittedBare.terminal);
     assert.equal(admittedBare.terminal.roleOutcome.kind, "accepted");
+    const beforeProjection = await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project)));
 
     const rejectedProjection = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", projection],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejectedProjection.exitCode, 2);
     assert.equal(rejectedProjection.terminal, undefined);
+    assert.equal(await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), beforeProjection);
 
     // Locator consumes retained identity, not the full resumable run record.
     const statePath = join(sourceRunPath, "run-state.json");
@@ -552,8 +525,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-          void args;
+            piRunner: async () => {
           throw new Error("provider disconnected");
         },
           }),
@@ -587,13 +559,12 @@ test("default judge public path admits no notary seat intake (observable run)", 
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
           dispatchedArgs = args;
           const sessionFile = flagValue(args, "--session");
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, "", "utf8");
-          void options;
           return {
             code: 1,
             timedOut: false,

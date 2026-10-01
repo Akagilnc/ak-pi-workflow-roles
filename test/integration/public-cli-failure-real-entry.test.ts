@@ -1,17 +1,12 @@
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
@@ -27,16 +22,13 @@ import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-c
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
-import { exitCodeForTerminalOutcome, formatFailureStderrDiagnostic, isLawfulTypedTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,
-  multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
-import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 
 test("public report publication failure stays beside the accepted terminal", async () => {
   // Lock artifacts/ so the report write fails. The host already accepted;

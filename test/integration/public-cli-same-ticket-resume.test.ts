@@ -49,7 +49,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import {
   packageRoot,
-  seedGitRepository,
+  seedRoleRepo as seedGitProject,
 } from "../helpers/pi-test-harness.ts";
 import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import {
@@ -76,15 +76,6 @@ type SeenTurn = {
   courtAttemptId?: string;
   prompt: string;
 };
-
-function seedGitProject(root: string): void {
-  seedGitRepository(root);
-  execFileSync(
-    "git",
-    ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-    { cwd: root },
-  );
-}
 
 function runIdFromDirectory(runDirectory: string): string {
   const base = runDirectory.split(/[\\/]/).pop() ?? "";
@@ -753,7 +744,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
 test("#675/#637 public auditor: same-parent re-summons resume prior run under live seat axes", async () => {
   const scratch = await openNotaryScratch("home-auditor-");
   try {
-    const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
+    const { home, project, firstSourcePath, io, credentials } = scratch;
     // Auditor resume key is --source-run parent path (#747), not ticket number.
     assert.equal(
       (
@@ -974,7 +965,6 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       2,
       "same-ticket distinct parent must leave two auditor run directories",
     );
-    void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
@@ -984,7 +974,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
 test("#724 public new: same-ticket mint stays; explicit new mints fresh; later auto-resume tracks latest", async () => {
   const scratch = await openNotaryScratch("home-new-");
   try {
-    const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
+    const { home, project, firstSourcePath, io, credentials } = scratch;
     const seen: SeenTurn[] = [];
     const inner = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1069,7 +1059,6 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest same-parent leg");
     assert.equal(seen[2]!.runDirectory, freshRunDirectory);
     assert.notEqual(seen[2]!.runId, firstRunId);
-    void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
   }

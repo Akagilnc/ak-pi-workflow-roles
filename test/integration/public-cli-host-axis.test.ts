@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
   activationBookDirectory,
@@ -21,7 +20,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };

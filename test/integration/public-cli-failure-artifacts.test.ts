@@ -1,20 +1,19 @@
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
 import { access, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
-  formatFailureStderrDiagnostic,
   publishFailureArtifacts,
   settleHostEndedNoReceipt,
   trySettlePublicSeat,
@@ -30,7 +29,6 @@ import {
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,
-  multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
 
 // #107 公开入口——Error Artifact 耐久性与 provider 身份家族（#420 整改拆分第二片）。
@@ -415,7 +413,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     assert.equal((noteText as string).includes("EISDIR"), true);
   });
 });
-test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {
+test("multiline thrown diagnostic keeps full artifact identity", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -457,20 +455,11 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.diagnostic, multiline);
-      assert.equal(terminal.roleOutcome.diagnostic.includes("\n"), true);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       diagnostic: string;
     };
     assert.equal(errorBody.diagnostic, multiline);
-    // stderr presentation is exactly one nonblank line, no stack/event/token flood.
-    // Do not assert selected diagnostic prose on stderr (AC6) — durable identity is above.
-    const presented = stderr[0]!;
-    assert.ok(presented.includes(multiline));
-    const helper = formatFailureStderrDiagnostic({
-      diagnostic: multiline,
-    });
-    assert.ok(helper.includes(multiline));
   });
 });
 test("a Judge turn that sealed no receipt reports the host CLI's own nonzero exit", async () => {
@@ -654,7 +643,7 @@ test("no lawful output after an older provider error settles honestly as no_rece
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
+    const { io, stdout } = captureIo();
     const result = await runAkRole(
       [
         "--model",

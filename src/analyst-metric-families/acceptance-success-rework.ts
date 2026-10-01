@@ -9,7 +9,7 @@
  * - success rate den = success-eligible accepted legs (no-receipt out; planned out)
  * - planned = plan-duty acceptance; never success numerator or denominator
  */
-import type { AnalystReadableRunFacts, AnalystRunTerminalFace } from "../analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts, type AnalystRunTerminalFace } from "../analyst-ledger.ts";
 import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 import { packagedAnalystTerminal } from "../packaged-role-registry.ts";
@@ -97,10 +97,6 @@ export type AnalystAcceptanceSuccessReworkSection = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function wallMsFromSpan(span: { readonly startedAt: string; readonly endedAt: string }): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
 }
 
 /** Locate collector groups array: receipt.groups or top-level groups. */
@@ -235,7 +231,7 @@ function projectLegs(runs: readonly AnalystReadableRunFacts[]): AnalystAcceptanc
       book: run.book,
       role: run.role,
       startedAt: run.frameSpan.startedAt,
-      wallMs: wallMsFromSpan(run.frameSpan),
+      wallMs: run.frameSpan.wallMs,
       terminalLabel: mapped.terminalLabel,
       accepted: mapped.accepted,
       success: mapped.success,
@@ -247,11 +243,7 @@ function projectLegs(runs: readonly AnalystReadableRunFacts[]): AnalystAcceptanc
   }
 
   // Stable page order: book, role, runId (match A1 leg sort).
-  return legs.sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    if (a.role !== b.role) return a.role.localeCompare(b.role);
-    return a.runId.localeCompare(b.runId);
-  });
+  return legs.sort(compareAnalystLegs);
 }
 
 function aggregateByRole(legs: readonly AnalystAcceptanceLeg[]): AnalystRoleAcceptanceStats[] {
@@ -302,12 +294,10 @@ function aggregateByRole(legs: readonly AnalystAcceptanceLeg[]): AnalystRoleAcce
   });
 }
 
-function reworkLens(legs: readonly AnalystAcceptanceLeg[]): AnalystReworkLens {
+function reworkLens(legs: readonly AnalystAcceptanceLeg[], totalWallMs: number): AnalystReworkLens {
   let reworkWallMs = 0;
-  let totalWallMs = 0;
   let reworkLegCount = 0;
   for (const leg of legs) {
-    totalWallMs += leg.wallMs;
     if (leg.rework) {
       reworkWallMs += leg.wallMs;
       reworkLegCount += 1;
@@ -331,7 +321,7 @@ export function buildAcceptanceSuccessReworkSection(
     kind: "analyst-acceptance-success-rework",
     legs,
     byRole: aggregateByRole(legs),
-    rework: reworkLens(legs),
+    rework: reworkLens(legs, sumAnalystRunWallMs(runs)),
   };
 }
 

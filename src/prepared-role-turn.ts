@@ -60,6 +60,14 @@ export function renderSystemPromptOverride(authority: {
   return renderAgentStartMaterials(authority.body, authority.materials);
 }
 
+export async function resolveBoundHostSessionId(
+  request: RoleTurnRequest,
+  identity: SessionIdentityAuthority,
+): Promise<string | undefined> {
+  const explicit = request.continuation.kind === "resume" ? request.continuation.hostSessionId : undefined;
+  return explicit !== undefined && explicit !== "" ? explicit : identity.load(request.principal);
+}
+
 export type SessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;

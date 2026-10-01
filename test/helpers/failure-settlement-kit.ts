@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { withTempRoot } from "./primary-aware-cleanup.ts";
-import { join } from "node:path";
 
 import {
   exitCodeForTerminalOutcome,

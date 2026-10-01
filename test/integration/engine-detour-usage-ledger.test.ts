@@ -22,7 +22,6 @@ import {
   ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
-  readEngineDetourToolUsage,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";

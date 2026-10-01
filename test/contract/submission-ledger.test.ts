@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
@@ -58,7 +57,7 @@ function registerTool(
     label: "output",
     description: "",
     parameters: Type.Object({}),
-    execute: async (_id, params, ...rest) => execute(params),
+    execute: async (_id, params) => execute(params),
   });
   // HostContext.runDirectory is the admitted run coordinate (#879) — must sit
   // inside the ledger home so restore/append share one ownership path.
@@ -265,7 +264,12 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
     }, coderTool, "coder");
     await assert.rejects(
       host.tool().execute("coder-infra", params, undefined, undefined, host.context),
-      (error: unknown) => error instanceof Error && error.message === "disk full",
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, "InfrastructureFailure");
+        assert.equal(error.message, params.infrastructureFailure.diagnostic);
+        return true;
+      },
     );
     assert.equal(ran, 0);
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
@@ -372,7 +376,7 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
     } as unknown as HostContext;
     await assert.rejects(
       bare.tool().execute("no-id", {}, undefined, undefined, context),
-      /提交账需要已受理的 run 身份/,
+      Error,
     );
   });
 });

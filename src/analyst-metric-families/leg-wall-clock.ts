@@ -6,7 +6,7 @@
  * Registers by file drop under analyst-metric-families/ (A2 discovery).
  */
 import { medianNumber } from "../analyst-median.ts";
-import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
 /** One readable leg's session-frame wall clock (first usable → last usable). */
@@ -31,19 +31,12 @@ export type AnalystLegWallClockSection = {
   readonly totalElapsedMs: number;
 };
 
-function frameSpanWallMs(span: {
-  readonly startedAt: string;
-  readonly endedAt: string;
-}): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
-}
-
 function projectEntry(facts: AnalystReadableRunFacts): AnalystLegWallClockEntry {
   return {
     runId: facts.runId,
     book: facts.book,
     role: facts.role,
-    wallMs: frameSpanWallMs(facts.frameSpan),
+    wallMs: facts.frameSpan.wallMs,
   };
 }
 
@@ -52,9 +45,7 @@ function compareRankingDesc(
   b: AnalystLegWallClockEntry,
 ): number {
   if (b.wallMs !== a.wallMs) return b.wallMs - a.wallMs;
-  if (a.book !== b.book) return a.book.localeCompare(b.book);
-  if (a.role !== b.role) return a.role.localeCompare(b.role);
-  return a.runId.localeCompare(b.runId);
+  return compareAnalystLegs(a, b);
 }
 
 /** Discovered by analyst-metric-families loader (default export). */
@@ -74,14 +65,11 @@ const legWallClockFamily: AnalystMetricFamilyModule = {
       return undefined;
     }
 
-    let totalElapsedMs = 0;
-    for (const wallMs of walls) totalElapsedMs += wallMs;
-
     const section: AnalystLegWallClockSection = {
       kind: "analyst-leg-wall-clock",
       ranking,
       medianWallMs,
-      totalElapsedMs,
+      totalElapsedMs: sumAnalystRunWallMs(input.runs),
     };
     return { legWallClock: section };
   },

@@ -1,17 +1,13 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #633 abolish one-shot — collector/doctor/notary/inspector resume through the
  * public resume entry: same session principal reopened, each seat settles its
  * own typed terminal. Shortest deterministic four-seat dispatch-table coverage.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   mkdir,
-  mkdtemp,
   appendFile,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -47,6 +43,7 @@ import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -55,37 +52,7 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 
 
 
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "resume-four-seats@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Resume Four Seats"], {
-    cwd: root,
-  });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
 const DOCTOR_ISSUE_NUMBER = 5;
-
-const DOCTOR_ISSUE = { issueNumber: DOCTOR_ISSUE_NUMBER } as const;
 
 type SeatTracerSpec = {
   readonly role: TerminalRoleName;

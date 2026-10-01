@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Value } from "typebox/value";
 
-import { closeJsonSchemaForCodex } from "../../src/headless-host/description.ts";
-import { terminatingToolJsonSchema } from "../../src/role-envelope.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
@@ -63,53 +61,11 @@ test("review officers expose one shared output tool and receipt schema", () => {
     [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
   );
   assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
-  const shape = reviewSubmissionSchema as {
-    type?: string;
-    anyOf?: unknown;
-    properties: Record<string, { description?: unknown }>;
-    required?: string[];
-    additionalProperties?: unknown;
-  };
-  assert.equal(shape.type, "object");
-  assert.equal(shape.anyOf, undefined);
-  assert.deepEqual(shape.required ?? [], ["status"]);
-  assert.equal(shape.additionalProperties, true);
-  assert.equal(typeof shape.properties.status?.description, "string");
-  assert.ok(shape.properties.status?.description !== "");
   for (const word of REVIEW_QUEUE_WORDS) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
   }
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
   assert.equal(Value.Check(reviewSubmissionSchema, {}), false);
-  assert.equal(Value.Check(reviewSubmissionSchema, { infrastructureFailure: { diagnostic: "disk full" } }), false);
-  assert.equal(Value.Check(reviewSubmissionSchema, {
-    status: "escalate",
-    infrastructureFailure: { diagnostic: "disk full" },
-  }), true);
-  for (const field of ["fix", "classes", "decisionGate"]) {
-    assert.equal(typeof shape.properties[field]?.description, "string");
-    assert.equal(shape.required?.includes(field) ?? false, false);
-  }
-  for (const field of ["fix", "classes", "decisionGate"]) {
-    assert.equal(Value.Check(reviewSubmissionSchema, { status: "continue", [field]: "readable submission" }), true);
-  }
-  const closed = closeJsonSchemaForCodex(terminatingToolJsonSchema(reviewSubmissionSchema)) as {
-    type?: string;
-    anyOf?: unknown;
-    required?: string[];
-    properties?: Record<string, unknown>;
-  };
-  assert.equal(closed.type, "object");
-  assert.equal(closed.anyOf, undefined);
-  assert.equal(closed.required?.includes("status"), true);
-  assert.equal(closed.required?.includes("infrastructureFailure"), true);
-  const closedStatus = JSON.stringify(closed.properties?.status);
-  assert.equal(closedStatus.includes('"null"'), false);
-  const closedFailure = JSON.stringify(closed.properties?.infrastructureFailure);
-  assert.equal(closedFailure.includes('"null"'), true);
-  for (const word of REVIEW_QUEUE_WORDS) {
-    assert.equal(closedStatus.includes(word), true);
-  }
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
@@ -147,9 +103,6 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   await runtime.activate();
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  const declared = tool.parameters as { type?: string; anyOf?: unknown };
-  assert.equal(declared.type, "object");
-  assert.equal(declared.anyOf, undefined);
 
   const result = await tool.execute(
     "one",

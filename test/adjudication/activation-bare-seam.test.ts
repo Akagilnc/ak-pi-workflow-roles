@@ -6,7 +6,6 @@ import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   ActivationGitRepositoryRequiredError,
-  createRoleRuntimeExtension,
   type ActivationTraceRecord,
 } from "../../src/role-runtime.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
@@ -14,7 +13,6 @@ import {
   activationBookKeyFor,
   activationExtensionContext,
   machineLedgerHome,
-  persistActivationSessionFile,
   seedGitRepository,
   withActivationHome,
   withHermeticHome,

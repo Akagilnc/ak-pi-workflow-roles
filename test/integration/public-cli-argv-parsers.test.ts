@@ -1,17 +1,12 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 自 public-cli-{coder,collector,doctor,fixer,engine-axis} 抽出 parser/resolver 案；
 // #672 按文件真实资源归 integration（含 Git 子进程与临时目录），非快档。
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { mkdtemp as mkdtempFs } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { sampleCompletedDoctorOutput } from "../helpers/doctor-fixtures.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
@@ -23,18 +18,12 @@ import {
   setPersistentSeatEngine,
 } from "../../src/public-cli/config.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-parsers-", scenario);
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "parser@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Parser Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {

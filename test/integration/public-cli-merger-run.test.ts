@@ -1,5 +1,6 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -10,8 +11,8 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { appendFile, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
@@ -29,7 +30,7 @@ import {
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
@@ -37,12 +38,11 @@ import {
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
-  createMinimalHost,
-  roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { Type } from "typebox";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync("git", args, {
@@ -52,27 +52,8 @@ const git = (cwd: string, args: string[], input?: string) =>
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
 
-function seedGitProject(root: string): void {
-  git(root, ["init", "-b", "main"]);
-  git(root, ["config", "user.name", "Public Table Test"]);
-  git(root, ["config", "user.email", "public-table@test.local"]);
-  git(root, ["commit", "--allow-empty", "-m", "seed"]);
-}
-
 async function conflictedRepository(root: string) {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n");
-  git(root, ["add", "."]);
-  git(root, ["commit", "-m", "base"]);
-  git(root, ["checkout", "-b", "source"]);
-  await writeFile(join(root, "same.txt"), "source\n");
-  git(root, ["commit", "-am", "source"]);
-  const source = git(root, ["rev-parse", "HEAD"]);
-  git(root, ["checkout", "main"]);
-  await writeFile(join(root, "same.txt"), "target\n");
-  git(root, ["commit", "-am", "target"]);
-  const target = git(root, ["rev-parse", "HEAD"]);
-  assert.throws(() => git(root, ["merge", "--no-edit", "source"]));
+  const { source, target } = await materializeConflictedRepo(root);
   const blob = git(root, ["hash-object", "-w", "--stdin"], "resolved\n");
   const index = join(root, "expected-index");
   const indexEnv = { ...process.env, GIT_INDEX_FILE: index };
@@ -116,23 +97,6 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
     seedGitProject(project);
     return await run(home, project);
   });
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
 }
 
 async function seedNotarySourceRun(home: string, project: string): Promise<string> {

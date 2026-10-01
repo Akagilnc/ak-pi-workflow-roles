@@ -1,14 +1,12 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -17,21 +15,17 @@ import assert from "node:assert/strict";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   createWorkerSubmissionGate,
@@ -41,33 +35,10 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-coder-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "coder@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Coder Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
@@ -433,7 +404,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
       await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Implement the approved slice."],
         {
           packageRoot,
@@ -444,9 +414,8 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+            piRunner: async (args) => {
             captured = [...args];
-            capturedStdin = options.stdin;
             return {
               code: 1,
               stderr: "forced stop before model",
@@ -853,8 +822,6 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
     assert.equal(captured![captured!.indexOf("--provider") + 1], "no-such-provider");
     assert.equal(captured![captured!.indexOf("--model") + 1], "no-such-model");
     assert.equal(captured!.includes("--thinking"), false);
-    // The dispatch happened with the real provider/model and no thinking flag,
-    // and the run failed; the diagnostic's wording is not the contract.
     assert.notEqual(result.exitCode, 0);
   });
 });

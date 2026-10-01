@@ -1,6 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -9,22 +8,20 @@ import assert from "node:assert/strict";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
 import {
   admitPublicRole,
@@ -36,37 +33,13 @@ import {
 } from "../../src/public-cli/terminal.ts";
 import {
   packageRoot,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-fixer-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "fixer@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Fixer Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 
@@ -122,10 +95,8 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
           attachmentPaths: [],
           prerequisitesPath: badPrereq,
         }),
-      (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        /prerequisite/i.test(error.message),
+      (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE" &&
+        error.cause instanceof FixerPacketValidationError,
     );
 
     const goodPrereq = join(home, "good-prereq.json");

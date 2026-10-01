@@ -15,7 +15,7 @@ import {
   ensureRealDirectoryTree,
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
-import type { AnalystReadableRunFacts } from "./analyst-ledger.ts";
+import { compareAnalystLegs, sumAnalystRunWallMs, type AnalystReadableRunFacts } from "./analyst-ledger.ts";
 import { loadAnalystIssueMetricFamilies } from "./analyst-metric-families.ts";
 import { composeAnalystMetricFamilySections } from "./analyst-metric-family.ts";
 
@@ -187,14 +187,10 @@ export function analystIssuePageAddressFromPage(
 }
 
 function sortLegs(legs: readonly AnalystLegEntry[]): AnalystLegEntry[] {
-  return [...legs].sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    if (a.role !== b.role) return a.role.localeCompare(b.role);
-    return a.runId.localeCompare(b.runId);
-  });
+  return [...legs].sort(compareAnalystLegs);
 }
 
-function sortUnreadable(
+export function sortUnreadable(
   unreadable: readonly AnalystUnreadableRun[],
 ): AnalystUnreadableRun[] {
   return [...unreadable].sort((a, b) => {
@@ -260,13 +256,6 @@ export function computeAnalystMsPerKLines(
   };
 }
 
-function frameSpanWallMs(span: {
-  readonly startedAt: string;
-  readonly endedAt: string;
-}): number {
-  return Date.parse(span.endedAt) - Date.parse(span.startedAt);
-}
-
 /**
  * Σ readable wall clocks + max end-frame across ALL runs (C1 efficiency / index).
  * Unreadable runs never enter totalElapsedMs; their available lastFrameAt still
@@ -279,10 +268,9 @@ export function summarizeAnalystRunEfficiency(
   readonly totalElapsedMs: number;
   readonly lastActivityAt: AnalystOptionalTimestamp;
 } {
-  let totalElapsedMs = 0;
+  const totalElapsedMs = sumAnalystRunWallMs(runs);
   let latestEndedAt: string | undefined;
   for (const run of runs) {
-    totalElapsedMs += frameSpanWallMs(run.frameSpan);
     const endedAt = run.frameSpan.endedAt;
     if (latestEndedAt === undefined || endedAt > latestEndedAt) {
       latestEndedAt = endedAt;

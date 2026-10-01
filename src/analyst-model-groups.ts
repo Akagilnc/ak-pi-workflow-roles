@@ -11,7 +11,7 @@
 import { buildAcceptanceSuccessReworkSection } from "./analyst-metric-families/acceptance-success-rework.ts";
 import type { AnalystReadableRunFacts } from "./analyst-ledger.ts";
 import { medianNumber } from "./analyst-median.ts";
-import type { AnalystUnreadableRun } from "./analyst-page.ts";
+import { sortUnreadable, type AnalystUnreadableRun } from "./analyst-page.ts";
 
 /** One raw model group with rates over legs in that group. */
 export type AnalystModelGroupRow = {
@@ -72,15 +72,6 @@ function displayNameFor(
   if (combinationMapping === undefined) return rawGroupKey;
   const aliased = combinationMapping[rawGroupKey];
   return aliased === undefined ? rawGroupKey : aliased;
-}
-
-function sortUnreadable(
-  unreadable: readonly AnalystUnreadableRun[],
-): AnalystUnreadableRun[] {
-  return [...unreadable].sort((a, b) => {
-    if (a.book !== b.book) return a.book.localeCompare(b.book);
-    return a.runId.localeCompare(b.runId);
-  });
 }
 
 /**

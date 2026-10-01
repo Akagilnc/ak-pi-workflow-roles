@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test, { after } from "node:test";
 import { promisify } from "node:util";
@@ -26,7 +26,6 @@ const CANONICAL_APACHE_2_0 = await readFile(
 const HOST_PEERS = [
   "@earendil-works/pi-ai",
   "@earendil-works/pi-coding-agent",
-  "typebox",
 ] as const;
 
 interface ExtractedPack {

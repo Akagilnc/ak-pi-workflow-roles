@@ -9,8 +9,6 @@ import {
   mkdir,
   readdir,
   readFile,
-  rename,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -924,6 +922,8 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
                 return {
                   status: "completed",
                   ticketNumber: TICKET,
+                  // Strict-schema hosts (codex) must emit every key; single ticket sends null.
+                  ticketSessions: null,
                   sessions: [
                     {
                       path: fixture.path,
@@ -1951,7 +1951,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
   });
 });
 
-test("ak-role resume points at an after-dispatch diarist relocation", async () => {
+test("ak-role resume persists an after-dispatch diarist relocation at the ticket placement", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -2015,6 +2015,9 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
         },
       },
     );
+    // #1058: clear the interrupted run's output so the pointer read below is
+    // the one this resume hands the caller.
+    stderr.length = 0;
     const resumed = await runAkRole(
       ["resume", "--model", "test/caller-seat:high", runId],
       {
@@ -2029,7 +2032,8 @@ test("ak-role resume points at an after-dispatch diarist relocation", async () =
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
     const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
-    assert.ok(stderr.join("").includes(errorPath));
+    // The resumed caller must be pointed at the relocated run's error record.
+    assert.ok(stderr.join("").includes(errorPath), `resume must point at the relocated error record: ${stderr.join("")}`);
     const error = JSON.parse(await readFile(errorPath, "utf8")) as {
       kind?: unknown;
       runId?: unknown;

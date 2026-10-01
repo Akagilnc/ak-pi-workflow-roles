@@ -2,13 +2,8 @@
  * Engine-generic one-shot subprocess detour (#357 T2 / ADR 0069).
  * Spawn once; no retry, hang surface, or per-engine branch.
  * Material body is LLM data — this module only executes argv the model assembled.
- * Large prompt bodies stage through a seam-owned temp file (never argv) so
- * collectors avoid spawn E2BIG / ENAMETOOLONG (engine-dispatch / #582).
  */
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 /** Package-owned detour tool name (settlement whitelist + session principal). */
 export const ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour" as const;
@@ -26,12 +21,6 @@ export const ENGINE_FLAG_NAME = "ak-engine" as const;
 
 /** Request-scoped engine model flag on RoleHost (#883). Empty = no model. */
 export const ENGINE_MODEL_FLAG_NAME = "ak-engine-model" as const;
-
-/**
- * Argv placeholder replaced by a seam-owned temp prompt file path when
- * `stagedPrompt` is set. Exactly one argv entry must equal this token.
- */
-export const ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>" as const;
 
 /** Non-empty trimmed engine name, else undefined. */
 export function normalizeEngineName(engine: string | undefined): string | undefined {
@@ -73,12 +62,6 @@ export type EngineDetourRunInput = Readonly<{
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
-  /**
-   * Large prompt body owned by this seam. Written to a temp file; the sole argv
-   * entry equal to ENGINE_DETOUR_STAGED_PROMPT_TOKEN is replaced with that path.
-   * File is unlinked after the child settles (success or failure).
-   */
-  stagedPrompt?: string;
 }>;
 
 function abortReasonError(signal: AbortSignal): Error {
@@ -92,28 +75,13 @@ function abortReasonError(signal: AbortSignal): Error {
   return error;
 }
 
-function resolveArgvWithStagedPrompt(
-  argv: readonly string[],
-  stagedPath: string,
-): string[] {
-  let replaced = 0;
-  const out = argv.map((part) => {
-    if (part !== ENGINE_DETOUR_STAGED_PROMPT_TOKEN) return part;
-    replaced += 1;
-    return stagedPath;
-  });
-  if (replaced !== 1) {
-    throw new Error(
-      `劳务引擎 stagedPrompt 需要 argv 中恰好一个 ${ENGINE_DETOUR_STAGED_PROMPT_TOKEN}（实际 ${replaced}）`,
-    );
-  }
-  return out;
-}
-
-async function spawnEngineDetourOnce(
-  input: Omit<EngineDetourRunInput, "stagedPrompt"> & {
-    readonly argv: readonly string[];
-  },
+/**
+ * Run one engine subprocess. First argv element is the executable (PATH lookup).
+ * stdio: ignore stdin, pipe stdout+stderr. No shell, no retry, no hang timer.
+ * AbortSignal cancels the child immediately via an explicit listener (reason preserved).
+ */
+export async function runEngineDetourOnce(
+  input: EngineDetourRunInput,
 ): Promise<EngineDetourResult> {
   if (input.argv.length === 0) {
     throw new Error("劳务引擎 argv 不得为空");
@@ -175,55 +143,6 @@ async function spawnEngineDetourOnce(
       succeed({ code: code ?? 1, stdout, stderr });
     });
   });
-}
-
-/**
- * Run one engine subprocess. First argv element is the executable (PATH lookup).
- * stdio: ignore stdin, pipe stdout+stderr. No shell, no retry, no hang timer.
- * AbortSignal cancels the child immediately via an explicit listener (reason preserved).
- * Optional stagedPrompt: seam owns temp-file lifecycle for large bodies (ADR 0069).
- */
-export async function runEngineDetourOnce(
-  input: EngineDetourRunInput,
-): Promise<EngineDetourResult> {
-  if (input.stagedPrompt === undefined) {
-    return spawnEngineDetourOnce(input);
-  }
-  const stagingDir = await mkdtemp(join(tmpdir(), "ak-engine-detour-"));
-  const stagedPath = join(stagingDir, "prompt.txt");
-  let result: EngineDetourResult;
-  let runError: unknown;
-  try {
-    await writeFile(stagedPath, input.stagedPrompt, "utf8");
-    const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
-    result = await spawnEngineDetourOnce({
-      argv,
-      cwd: input.cwd,
-      ...(input.env === undefined ? {} : { env: input.env }),
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
-  } catch (error) {
-    runError = error;
-  }
-  // Cleanup is seam-owned and fail-closed: never wash rm failure into success
-  // (失败诚实). force only covers already-absent nodes, not permission/IO faults.
-  try {
-    await rm(stagingDir, { recursive: true, force: true });
-  } catch (cleanupError) {
-    if (runError !== undefined) {
-      throw new Error(
-        `劳务引擎 stagedPrompt 清理失败（原运行错误保留为 cause）: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        { cause: runError },
-      );
-    }
-    throw cleanupError instanceof Error
-      ? cleanupError
-      : new Error(String(cleanupError));
-  }
-  if (runError !== undefined) {
-    throw runError instanceof Error ? runError : new Error(String(runError));
-  }
-  return result!;
 }
 
 /** Failure predicate: nonzero exit OR stdout trim-empty (including whitespace-only). */

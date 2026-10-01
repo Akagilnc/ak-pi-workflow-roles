@@ -777,9 +777,10 @@ export async function runPublicInstructionSeat(
         }, seatAdapters(admitted, env), env.principalAuthority, io, true,
           packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
+      // The diarist's escalation pauses only the diarist's own run; call order
+      // belongs to the caller, so the Secretariat still takes its own turn.
       if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
         io.stdout(formatTerminalResult(outcome.terminal));
-        return { exitCode: 0, admitted, terminal: outcome.terminal };
       }
     }
     return dispatchAdmitted(admitted, env, io);

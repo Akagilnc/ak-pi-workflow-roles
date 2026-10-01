@@ -319,7 +319,7 @@ function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
   }
   return {
     models,
-    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt },
+    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt, wallMs: endedMs - startedMs },
     partialFirstFrameAt: { status: "present", at: span.startedAt },
     partialLastFrameAt: { status: "present", at: span.endedAt },
   };
@@ -329,6 +329,8 @@ function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
 export type AnalystRunFrameSpan = {
   readonly startedAt: string;
   readonly endedAt: string;
+  /** Validated wall clock, computed once when the session span is admitted. */
+  readonly wallMs: number;
 };
 
 /**
@@ -370,6 +372,23 @@ export type AnalystReadableRunFacts = {
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
+
+/** Total wall clock for exactly the readable runs supplied by the caller. */
+export function sumAnalystRunWallMs(runs: readonly AnalystReadableRunFacts[]): number {
+  let total = 0;
+  for (const run of runs) total += run.frameSpan.wallMs;
+  return total;
+}
+
+/** Shared identity order for readable legs and their page/metric projections. */
+export function compareAnalystLegs(
+  a: Pick<AnalystReadableRunFacts, "book" | "role" | "runId">,
+  b: Pick<AnalystReadableRunFacts, "book" | "role" | "runId">,
+): number {
+  if (a.book !== b.book) return a.book.localeCompare(b.book);
+  if (a.role !== b.role) return a.role.localeCompare(b.role);
+  return a.runId.localeCompare(b.runId);
+}
 
 export type AnalystScopedRunScan = {
   /** Readable in-scope runs with retained typed facts (A2). */

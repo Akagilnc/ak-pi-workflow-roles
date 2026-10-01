@@ -13,11 +13,14 @@ import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-cont
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
+  externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
+  withExternalHostCleanupFailure,
 } from "../external-host-turn-loop.ts";
 import {
   renderSystemPromptOverride,
+  resolveBoundHostSessionId,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
@@ -48,26 +51,6 @@ export type HeadlessRoleTurnHostConfig = Readonly<{
   env?: NodeJS.ProcessEnv;
 }>;
 
-function failure(
-  cause: "activation" | "session" | "output" | "provider",
-  name: string,
-  code: string,
-  details?: Readonly<Record<string, unknown>>,
-  diagnostic?: string,
-): RoleTurnResult {
-  return {
-    code: null,
-    stderr: "",
-    timedOut: false,
-    knownFailure: {
-      cause,
-      identity: { name, code },
-      ...(diagnostic === undefined ? {} : { diagnostic }),
-      ...(details === undefined ? {} : { details }),
-    },
-  };
-}
-
 /** One headless CLI result envelope (stream-json last line, or single json doc). */
 export type HeadlessCliResult = Readonly<{
   session_id?: string;
@@ -93,39 +76,18 @@ function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
 }
 
 /**
- * Parse Claude host stdout into the result envelope.
- * Production uses `--output-format stream-json` (#811 live records); last-result
- * line is the typed receipt. A single-document `json` body still parses so a
- * misconfigured description yields a typed miss rather than a silent empty parse.
- * Callers must not retain the full stream — only the rolling result candidate.
+ * Parse the rolling result-candidate line retained by spawnHeadlessTurn.
+ * The full stream is delivered live, not passed to this parser.
  */
 export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | undefined {
   const trimmed = stdout.trim();
   if (trimmed === "") return undefined;
   try {
-    const single = JSON.parse(trimmed) as unknown;
-    if (isHeadlessResultCandidate(single)) return single;
+    const value = JSON.parse(trimmed) as unknown;
+    return isHeadlessResultCandidate(value) ? value : undefined;
   } catch {
-    // fall through
+    return undefined;
   }
-  // stream-json: keep the last result line (structured_output / is_error live here).
-  let last: HeadlessCliResult | undefined;
-  for (const line of trimmed.split("\n")) {
-    const text = line.trim();
-    if (text === "") continue;
-    try {
-      const value = JSON.parse(text) as unknown;
-      if (!isPlainObject(value)) continue;
-      const record = value as HeadlessCliResult & { type?: unknown };
-      // Multi-line stream: only explicit result / structured_output lines (not bare objects).
-      if (record.type === "result" || record.structured_output !== undefined) {
-        last = record;
-      }
-    } catch {
-      // skip non-JSON noise lines
-    }
-  }
-  return last;
 }
 
 /**
@@ -380,21 +342,6 @@ function spawnHeadlessTurn(options: {
   });
 }
 
-/** Success→dispose failure; existing failure keeps primary cause + cleanup detail. */
-function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-  if (outcome.knownFailure === undefined) {
-    return failure("session", "HeadlessDisposeFailure", "dispose-failed", { cleanupError: message }, message);
-  }
-  return {
-    ...outcome,
-    knownFailure: {
-      ...outcome.knownFailure,
-      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
-    },
-  };
-}
-
 function terminalFromSpawned(
   spawned: { code: number | null; stderr: string; timedOut: boolean },
   knownFailure: NonNullable<RoleTurnResult["knownFailure"]>,
@@ -469,12 +416,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
       // Public explicit resume already read the stored native id. Auto-resume omits it.
-      const explicitHostSessionId = request.continuation.kind === "resume"
-        ? request.continuation.hostSessionId
-        : undefined;
-      let sessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
-        ? explicitHostSessionId
-        : await config.sessionIdentity.load(request.principal);
+      let sessionId = await resolveBoundHostSessionId(request, config.sessionIdentity);
       if (request.continuation.kind === "resume" && (sessionId === undefined || sessionId === "")) {
         outcome = failure(
           "session",
@@ -821,7 +763,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       try {
         await prepared.dispose?.();
       } catch (cleanupError) {
-        outcome = withCleanupFailure(outcome, cleanupError);
+        outcome = withExternalHostCleanupFailure(outcome, cleanupError, "HeadlessDisposeFailure");
       }
     }
     return outcome;

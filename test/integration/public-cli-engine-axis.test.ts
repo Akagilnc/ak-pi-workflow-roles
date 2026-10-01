@@ -3,7 +3,6 @@ import {
   roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiaristPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -13,15 +12,13 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Zero assertions on free-prose delivery wording / layout.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { AK_ROLE_ENGINE_ENV } from "../../src/engine-detour.ts";
 import {
-  engineSessionMaterialFromOptions,
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -43,6 +40,8 @@ import {
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -79,23 +78,6 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-engine-axis-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
 }
 
 const credentials = { "openai-codex": true, xai: true } as const;
@@ -199,7 +181,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     const bad = await loadPublicCliConfig(home);
     assert.throws(
       () => validatePublicCliConfigAxes(bad, packageRoot),
-      /config seat judge engine is illegal: has\/slash/,
+      Error,
     );
 
     // Well-formed name without packaged notes is accepted at validate seam.
@@ -252,10 +234,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
 
     // Seed persistent model so set-engine is legal.
     const seed = captureIo();
@@ -357,10 +336,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
-      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
-      if (existsSync(materialOpus)) {
-      } else {
-      }
       // Override must not keep the persistent engine material path.
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: override engine is the recorded identity.
@@ -452,7 +427,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const absentPath = resolveEngineMaterialPath(packageRoot, "nope-engine");
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
       const invocation = readJudgeInvocation(home, bookKey, "engine-free-name-001");
@@ -507,7 +481,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const absentPath = resolveEngineMaterialPath(packageRoot, "company..opus");
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "company..opus");
       const invocation = readJudgeInvocation(home, bookKey, "engine-company-dots-001");
       assert.equal(invocation.engine, "company..opus");
@@ -515,12 +488,11 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
 
     // Syntax-illegal --engine → structural reject (exit 2), not role submission.
     {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "has/slash", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /illegal engine name/);
     }
 
     // Backslash separator and parent traversal still reject at the public entry.
@@ -530,14 +502,12 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         { packageRoot, home, cwd: project, credentials, io: slash.io },
       );
       assert.equal(slashResult.exitCode, 2);
-      assert.match(slash.stderr.join(""), /illegal engine name/);
 
       const escape = captureIo();
       const escapeResult = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "../escape", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io: escape.io },
       );
       assert.equal(escapeResult.exitCode, 2);
-      assert.match(escape.stderr.join(""), /illegal engine name/);
 
       const setEscape = captureIo();
       const setEscapeResult = await runAkRole(
@@ -545,7 +515,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         { packageRoot, home, io: setEscape.io },
       );
       assert.equal(setEscapeResult.exitCode, 2);
-      assert.match(setEscape.stderr.join(""), /illegal engine name/);
     }
 
     // Reviewer command with --engine is admitted at the call-request seam (#378).
@@ -629,12 +598,11 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         }, null, 2)}\n`,
         "utf8",
       );
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /config seat judge engine is illegal/);
     }
 
     // set-engine with free name (no notes) writes successfully.
@@ -666,13 +634,12 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
     // set-engine with syntax-illegal name rejects without writing.
     {
       const before = await loadPublicCliConfig(home);
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(
         ["config", "set-engine", "judge", "bad/name"],
         { packageRoot, home, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /illegal engine name/);
       const after = await loadPublicCliConfig(home);
       assert.equal(after.seats.judge?.engine, before.seats.judge?.engine);
     }
@@ -715,10 +682,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
 
     await runAkRole(
       ["config", "set", "fixer", "openai-codex/gpt-5.6-sol:high"],
@@ -840,14 +804,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
     await withTempHome(async (home) => {
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
-      execFileSync("git", ["init", "-b", "main"], { cwd: project });
-      execFileSync("git", ["config", "user.email", "engine@test.local"], {
-        cwd: project,
-      });
-      execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
-        cwd: project,
-      });
+      seedGitProject(project);
 
       const seed = captureIo();
       const setModel = await runAkRole(
@@ -901,7 +858,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
         `ambient AK_ROLE_ENGINE leaked into child env: ${String(ambient)}`,
       );
       assertNoEngineFlagsInArgv(capturedArgs!);
-      const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
     });
   } finally {
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
@@ -910,33 +866,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
 });
 
 // --- #391 E4: table-driven full PUBLIC_CALLABLE_ROLES + negative table ------------
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-async function materializeConflictedRepo(root: string): Promise<void> {
-  seedGitProject(root);
-  await writeFile(join(root, "same.txt"), "base\n", "utf8");
-  execFileSync("git", ["add", "."], { cwd: root });
-  execFileSync("git", ["commit", "-m", "base"], { cwd: root });
-  execFileSync("git", ["checkout", "-b", "source"], { cwd: root });
-  await writeFile(join(root, "same.txt"), "source\n", "utf8");
-  execFileSync("git", ["commit", "-am", "source"], { cwd: root });
-  execFileSync("git", ["checkout", "main"], { cwd: root });
-  await writeFile(join(root, "same.txt"), "target\n", "utf8");
-  execFileSync("git", ["commit", "-am", "target"], { cwd: root });
-  try {
-    execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root });
-    throw new Error("expected conflicting merge");
-  } catch (error) {
-    if (error instanceof Error && error.message === "expected conflicting merge") throw error;
-    // conflicted
-  }
-}
 
 /**
  * Minimal argv per callable role so the run reaches piRunner (shared fixture).
@@ -1280,9 +1209,13 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
 
       // analyst --engine structural refuse (stable exit semantics; no prose lock).
       {
+        // --ticket 1 is a lawful analyst request, so the refused --engine is the
+        // only illegal input: a second bad token (e.g. --issue) would let the
+        // run reject for that reason instead and keep this case green when the
+        // engine gate stops firing.
         const { io } = captureIo();
         const result = await runAkRole(
-          ["analyst", "--engine", "opus", "--issue", "1"],
+          ["analyst", "--engine", "opus", "--ticket", "1"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);
@@ -1294,35 +1227,32 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
           { packageRoot, home, io: captureIo().io },
         );
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "judge", "bad/name"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);
-        assert.match(stderr.join(""), /illegal engine name/);
       }
 
       // set-engine before persistent model.
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "coder", "opus"],
           { packageRoot, home, io },
         );
         assert.notEqual(result.exitCode, 0);
-        assert.match(stderr.join(""), /no persistent model/);
       }
 
       // Unknown seat on set-engine.
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["config", "set-engine", "not-a-seat", "opus"],
           { packageRoot, home, io },
         );
         assert.notEqual(result.exitCode, 0);
-        assert.match(stderr.join(""), /unknown engine-axis seat/);
       }
     });
   },
@@ -1336,10 +1266,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
     const OPAQUE_MODEL = "cursor-grok-4.6-high";
