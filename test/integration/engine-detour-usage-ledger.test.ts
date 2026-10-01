@@ -14,7 +14,6 @@
  * separate boundaries (distinct contracts, prior judge order).
  */
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
 import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,34 +29,24 @@ import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.t
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-
-/** Open a run-relative sitian pointer once terminal.runId names the owning run. */
-async function absoluteDetourRecord(home: string, runId: string): Promise<string> {
-  const bookRunsRoot = join(home, ".ak-roles", "books");
-  for (const book of readdirSync(bookRunsRoot)) {
-    const candidate = join(
-      bookRunsRoot,
-      book,
-      "unbound",
-      "runs",
-      `${runId}@judge`,
-      ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
-    );
-    try {
-      await readFile(candidate);
-      return candidate;
-    } catch {
-      // next book
-    }
-  }
-  throw new Error(`run-relative pointer did not resolve for ${runId}`);
-}
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+
+/** Reopen the volume named by the delivered run id and record pointer. */
+async function readDeliveredDetourVolume(
+  home: string,
+  runId: string,
+  recordFile: string,
+) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  assert.ok(runDirectory, runId);
+  return readSitianRecords(join(runDirectory, recordFile));
+}
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import {
   sealAcceptedSubmission,
@@ -524,7 +513,12 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         // UTF-8 non-ASCII byte length through the real tool → sitian → decisiveFacts path
         assert.equal(usage.calls[0]?.stdoutByteLength, ECHO_STDOUT_BYTES);
         assert.equal(typeof usage.calls[0]?.durationMs, "number");
-        const opened = await readSitianRecords(await absoluteDetourRecord(home, `r-${row.label}`));
+        assert.ok(result.terminal.runId, row.label);
+        const opened = await readDeliveredDetourVolume(
+          home,
+          result.terminal.runId,
+          usage.calls[0]!.recordPointer.recordFile,
+        );
         assert.ok(
           opened.records.some(
             (r) =>
@@ -623,7 +617,12 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       assert.equal(result.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
       const usage = usageOf(result.terminal);
       assert.equal(usage?.callCount, 1);
-      const openedHost = await readSitianRecords(await absoluteDetourRecord(home, runId));
+      assert.ok(result.terminal?.runId);
+      const openedHost = await readDeliveredDetourVolume(
+        home,
+        result.terminal.runId,
+        usage!.calls[0]!.recordPointer.recordFile,
+      );
       const hostRow = openedHost.records.find(
         (r) => r.identity === usage!.calls[0]!.recordPointer.identity,
       );
@@ -816,9 +815,16 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
         false,
         "engineDetourToolUsage decisiveFacts must not re-disclose runId",
       );
-      // Relative pointer reopens once the run directory is known from terminal.runId.
-      const absoluteRecord = await absoluteDetourRecord(home, runId);
-      const reopened = await readSitianRecords(absoluteRecord);
+      // Relative pointer reopens from the delivered run id and record file.
+      const deliveredRunId = first.terminal?.runId;
+      const deliveredRecord = firstUsage?.calls[0]?.recordPointer.recordFile;
+      assert.ok(deliveredRunId);
+      assert.ok(deliveredRecord);
+      const reopened = await readDeliveredDetourVolume(
+        home,
+        deliveredRunId,
+        deliveredRecord,
+      );
       assert.ok(
         reopened.records.some(
           (r) => r.identity === firstUsage?.calls[0]?.recordPointer.identity,
