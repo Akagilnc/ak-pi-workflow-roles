@@ -442,9 +442,38 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
 import { sitianReport } from "../sitian-facade.ts";
 
+/** Last non-session entry id. Session headers are not parents of custom lines. */
+export function piSessionCustomParentId(
+  entries: readonly { id?: unknown; type?: unknown }[],
+): string | null {
+  let parentId: string | null = null;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+  }
+  return parentId;
+}
+
+/** One Pi custom JSONL line: type, customType, data, id, parentId, timestamp. */
+export function formatPiSessionCustomEntry(input: {
+  readonly customType: string;
+  readonly data: unknown;
+  readonly parentId: string | null;
+  readonly timestamp: string;
+}): string {
+  return `${JSON.stringify({
+    type: "custom",
+    customType: input.customType,
+    data: input.data,
+    id: randomUUID(),
+    parentId: input.parentId,
+    timestamp: input.timestamp,
+  })}\n`;
+}
+
 /**
  * Append one custom JSONL entry to the durable principal's session file.
  * Pi session codec only — AK artifact O_EXCL retention stays in public-cli.
+ * Read is raw JSON.parse (SyntaxError propagates). Sitian full-traversal stays elsewhere.
  */
 export async function appendPiSessionCustomEntry(
   authority: DurablePrincipalAuthority,
@@ -454,20 +483,17 @@ export async function appendPiSessionCustomEntry(
 ): Promise<void> {
   const { sessionFile } = authority.decode(principal);
   const text = await readFile(sessionFile, "utf8");
-  let parentId: string | null = null;
+  const entries: { id?: unknown; type?: unknown }[] = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
-    const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    entries.push(JSON.parse(line) as { id?: unknown; type?: unknown });
   }
   const timestamp = new Date().toISOString();
-  const pointerLine = `${JSON.stringify({
-    type: "custom",
+  const pointerLine = formatPiSessionCustomEntry({
     customType,
     data,
-    id: randomUUID(),
-    parentId,
+    parentId: piSessionCustomParentId(entries),
     timestamp,
-  })}\n`;
+  });
   await appendFile(sessionFile, pointerLine, "utf8");
   sitianReport({
     level: "event",

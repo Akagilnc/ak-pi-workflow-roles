@@ -10,6 +10,8 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
+import { sessionDirectoryOf } from "./role-run-placement.ts";
+
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
 const ADMITTED_PAGE_FIELDS = [
@@ -238,16 +240,24 @@ async function rewriteOfficerPointerFile(
   }
 }
 
-async function rewriteSitianRecordsJsonl(
+type JsonlLineEdit = { readonly line: string; readonly changed: boolean };
+
+/**
+ * Shared JSONL rewrite: keep empty lines, unparseable lines, and non-objects.
+ * `edit` returns undefined to keep the original bytes. A line may be
+ * re-stringified (`changed: false`) without forcing a write; the file is
+ * rewritten only when some line reports `changed: true`.
+ * Parse failures stay on the line. This is not a record-write swallow.
+ */
+async function rewriteJsonlLines(
   path: string,
-  rewrites: readonly RunDirectoryPathRewrite[],
+  edit: (parsed: Record<string, unknown>) => JsonlLineEdit | undefined,
 ): Promise<void> {
   if (!existsSync(path)) return;
   const raw = await readFile(path, "utf8");
   if (raw.length === 0) return;
   const endsWithNewline = raw.endsWith("\n");
   const lines = raw.split("\n");
-  // split keeps a trailing empty slot when file ends with \n — preserve it.
   let changed = false;
   const out: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -271,18 +281,13 @@ async function rewriteSitianRecordsJsonl(
       out.push(line);
       continue;
     }
-    if (!("sessionParent" in parsed)) {
+    const edited = edit(parsed);
+    if (edited === undefined) {
       out.push(line);
       continue;
     }
-    const before = parsed.sessionParent;
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      parsed,
-      SITIAN_RECORD_FIELDS,
-      rewrites,
-    );
-    if (parsed.sessionParent !== before) changed = true;
-    out.push(JSON.stringify(parsed));
+    if (edited.changed) changed = true;
+    out.push(edited.line);
   }
   if (!changed) return;
   const body = out.join("\n");
@@ -293,6 +298,25 @@ async function rewriteSitianRecordsJsonl(
   );
 }
 
+async function rewriteSitianRecordsJsonl(
+  path: string,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): Promise<void> {
+  await rewriteJsonlLines(path, (parsed) => {
+    if (!("sessionParent" in parsed)) return undefined;
+    const before = parsed.sessionParent;
+    rewriteRunDirectoryPathFieldsAgainstRewrites(
+      parsed,
+      SITIAN_RECORD_FIELDS,
+      rewrites,
+    );
+    return {
+      line: JSON.stringify(parsed),
+      changed: parsed.sessionParent !== before,
+    };
+  });
+}
+
 /**
  * Session transcript typed locators only: header.parentSession and
  * ak_auditor_parent_attempt_binding data.parent.sessionFile. Never message text.
@@ -301,34 +325,7 @@ async function rewriteSessionTranscriptBindings(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  if (!existsSync(path)) return;
-  const raw = await readFile(path, "utf8");
-  if (raw.length === 0) return;
-  const endsWithNewline = raw.endsWith("\n");
-  const lines = raw.split("\n");
-  let changed = false;
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    if (line === "" && i === lines.length - 1 && endsWithNewline) {
-      out.push("");
-      continue;
-    }
-    if (line.trim() === "") {
-      out.push(line);
-      continue;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      out.push(line);
-      continue;
-    }
-    if (!isPlainObject(parsed)) {
-      out.push(line);
-      continue;
-    }
+  await rewriteJsonlLines(path, (parsed) => {
     let lineChanged = false;
     if (parsed.type === "session" && "parentSession" in parsed) {
       const before = parsed.parentSession;
@@ -353,16 +350,9 @@ async function rewriteSessionTranscriptBindings(
       );
       if (parent.sessionFile !== before) lineChanged = true;
     }
-    if (lineChanged) changed = true;
-    out.push(lineChanged ? JSON.stringify(parsed) : line);
-  }
-  if (!changed) return;
-  const body = out.join("\n");
-  await writeFile(
-    path,
-    endsWithNewline && !body.endsWith("\n") ? `${body}\n` : body,
-    "utf8",
-  );
+    if (!lineChanged) return undefined;
+    return { line: JSON.stringify(parsed), changed: true };
+  });
 }
 
 /**
@@ -374,7 +364,7 @@ async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  const sessionRoot = join(pagesDirectory, "session");
+  const sessionRoot = sessionDirectoryOf(pagesDirectory);
   async function walk(directory: string): Promise<void> {
     let entries;
     try {

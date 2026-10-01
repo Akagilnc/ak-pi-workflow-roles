@@ -171,7 +171,10 @@ function volumeDestinationFile(
   if (destRun === undefined) {
     return join(booksDirectory, bookKey, "unbound", kind, fileName);
   }
-  return join(destRun.runDirectory, "session", kind, fileName);
+  const volume = sitianRunVolumeDirectory(destRun.runDirectory, kind);
+  return fileName === SITIAN_RECORDS_LEAF
+    ? sitianVolumeRecordsFile(volume)
+    : join(volume, fileName);
 }
 
 async function placedRunForLeaf(
@@ -412,15 +415,13 @@ async function migrateWorkerSubmissionGate(
           inspected.leaf,
           inspected.sourceRelative,
         );
-      const dest = destRun !== undefined && name === SITIAN_RECORDS_LEAF
-        ? sitianVolumeRecordsFile(sitianRunVolumeDirectory(destRun.runDirectory, kind))
-        : volumeDestinationFile(
-          booksDirectory,
-          bookKey,
-          destRun,
-          kind,
-          name,
-        );
+      const dest = volumeDestinationFile(
+        booksDirectory,
+        bookKey,
+        destRun,
+        kind,
+        name,
+      );
       await mkdir(dirname(dest), { recursive: true });
       await cp(sourcePath, dest, { preserveTimestamps: true });
       // One outcome per volume keeps the entries closure; bad rows attach below.

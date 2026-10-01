@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
-import { sitianReport } from "./sitian-facade.ts";
+import { sitianReportSafe } from "./host-session-record.ts";
 import {
   NavigatorUnavailableError,
   navigatorProviderFailureFromPublicTerminal,
@@ -286,18 +286,14 @@ export function createNativeNavigatorSessionFactory(deps?: {
       routePlaybookReadFailure: () => routePlaybookReadFailure,
       appendEntry: (customType, data) => {
         sessionManager.appendCustomEntry(customType, data);
-        try {
-          sitianReport({
-            level: "event",
-            kind: "attendance",
-            cwd: context.cwd,
-            sessionParent: sessionManager.getSessionFile(),
-            payload: { customType, data },
-            source: "navigator-public-session",
-          });
-        } catch {
-          // best-effort
-        }
+        sitianReportSafe({
+          level: "event",
+          kind: "attendance",
+          cwd: context.cwd,
+          sessionParent: sessionManager.getSessionFile(),
+          payload: { customType, data },
+          source: "navigator-public-session",
+        });
       },
       entries: () => sessionManager.getEntries(),
       setModel: async (next, nextThinking) => {

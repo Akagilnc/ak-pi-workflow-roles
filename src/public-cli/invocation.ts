@@ -50,6 +50,7 @@ import {
 } from "../packaged-role-registry.ts";
 import {
   isSafePositiveTicketNumber,
+  parseTicketNumber,
   readBoardTicketNumber,
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
@@ -766,20 +767,22 @@ export async function recordLaunchedRolePackageIdentity(
   });
 }
 
+/** Trim, then the shared ticket spelling. Callers keep their own diagnostic text. */
+function rejectUnlessTicketNumber(raw: string, message: string): number {
+  const parsed = parseTicketNumber(raw.trim());
+  if (parsed === undefined) throw new CliUsageError(message);
+  return parsed;
+}
+
 /** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
   raw: string,
   flag: string,
 ): number {
-  const trimmed = raw.trim();
-  if (!ANALYST_TICKET_NUMBER_PATTERN.test(trimmed)) {
-    throw new CliUsageError(`${flag} must be a positive integer, got ${raw}`);
-  }
-  const value = Number(trimmed);
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new CliUsageError(`${flag} must be a positive integer, got ${raw}`);
-  }
-  return value;
+  return rejectUnlessTicketNumber(
+    raw,
+    `${flag} must be a positive integer, got ${raw}`,
+  );
 }
 
 /**
@@ -1619,11 +1622,7 @@ export async function admitPublicRole(
         requireOptionPath("--project", parsed.project);
       }
       const issueNumber = parsed.issueNumber ?? Number.NaN;
-      if (
-        !Number.isInteger(issueNumber) ||
-        issueNumber < 1 ||
-        !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(issueNumber))
-      ) {
+      if (parseTicketNumber(issueNumber) === undefined) {
         throw new CliUsageError(
           `doctor --issue must be a positive integer, got ${issueNumber}`,
         );
@@ -2323,9 +2322,6 @@ function isGitRemoteMissing(error: unknown): boolean {
   return status === 2;
 }
 
-/** Positive Issue number grammar shared with Doctor case path identity. */
-const DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
-
 /** Match retained Doctor case runs roots (ADR 0017 / loadDoctorCase). */
 /** Canonical Doctor case: `<book>/<ticket>/runs`. Legacy `issues/<n>/runs` is read-only compat. */
 const DOCTOR_CASE_RUNS_PATH_PATTERN =
@@ -2336,13 +2332,10 @@ const DOCTOR_CASE_RUNS_PATH_PATTERN =
  * Leading zeros and non-integers are structural rejects.
  */
 export function parseDoctorIssueNumber(raw: string): number {
-  const trimmed = raw.trim();
-  if (!DOCTOR_ISSUE_NUMBER_PATTERN.test(trimmed)) {
-    throw new CliUsageError(
-      `doctor --issue must be a positive integer, got ${raw}`,
-    );
-  }
-  return Number(trimmed);
+  return rejectUnlessTicketNumber(
+    raw,
+    `doctor --issue must be a positive integer, got ${raw}`,
+  );
 }
 
 /**
@@ -2490,8 +2483,6 @@ export type AdmitMergerInvocationOptions = {
   assertedTicketNumber?: number;
 };
 
-const ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
-
 /**
  * Parse a positive ticket / issue number for public analyst admission.
  * Leading zeros and non-integers are structural rejects (same face as #176).
@@ -2501,20 +2492,10 @@ export function parseAnalystTicketNumber(
   raw: string,
   flag: string = "--ticket",
 ): number {
-  const trimmed = raw.trim();
-  if (!ANALYST_TICKET_NUMBER_PATTERN.test(trimmed)) {
-    throw new CliUsageError(
-      `analyst ${flag} must be a positive integer, got ${raw}`,
-    );
-  }
-  const value = Number(trimmed);
-  // Digit-only strings beyond MAX_SAFE_INTEGER round or become Infinity — reject.
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new CliUsageError(
-      `analyst ${flag} must be a positive integer, got ${raw}`,
-    );
-  }
-  return value;
+  return rejectUnlessTicketNumber(
+    raw,
+    `analyst ${flag} must be a positive integer, got ${raw}`,
+  );
 }
 
 /**
@@ -2548,7 +2529,7 @@ export function parseAnalystCohortIssueToken(
   const sep = trimmed.lastIndexOf(":");
   if (sep > 0) {
     const rhs = trimmed.slice(sep + 1);
-    if (ANALYST_TICKET_NUMBER_PATTERN.test(rhs)) {
+    if (parseTicketNumber(rhs) !== undefined) {
       const bookKey = trimmed.slice(0, sep);
       if (bookKey.trim() === "") {
         throw new CliUsageError(

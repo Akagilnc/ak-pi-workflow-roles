@@ -37,17 +37,21 @@ export function parseTicketNumber(value: unknown): number | undefined {
   return isSafePositiveTicketNumber(parsed) ? parsed : undefined;
 }
 
-/** Ticket-provenance directory id from a sitian subject, when the subject is a ticket. */
-export function ticketNumberFromSitianSubject(subject: unknown): string | undefined {
+/** Ticket number carried by a sitian subject, when the subject is a ticket. */
+export function sitianSubjectTicketNumber(subject: unknown): number | undefined {
   if (typeof subject === "string" || typeof subject === "number") {
-    const parsed = parseTicketNumber(subject);
-    return parsed === undefined ? undefined : String(parsed);
+    return parseTicketNumber(subject);
   }
   if (subject !== null && typeof subject === "object" && !Array.isArray(subject)) {
-    const parsed = parseTicketNumber((subject as { ticketNumber?: unknown }).ticketNumber);
-    return parsed === undefined ? undefined : String(parsed);
+    return parseTicketNumber((subject as { ticketNumber?: unknown }).ticketNumber);
   }
   return undefined;
+}
+
+/** Ticket-provenance directory id from a sitian subject, when the subject is a ticket. */
+export function ticketNumberFromSitianSubject(subject: unknown): string | undefined {
+  const parsed = sitianSubjectTicketNumber(subject);
+  return parsed === undefined ? undefined : String(parsed);
 }
 
 /**

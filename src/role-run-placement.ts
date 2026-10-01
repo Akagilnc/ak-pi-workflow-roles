@@ -1,9 +1,12 @@
 import { readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
+  pathContainedIn,
+  resolveActivationLedgerHome,
+  tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import { requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
@@ -65,8 +68,10 @@ export function runDirectoryFromSessionDirectory(sessionDirectory: string): stri
 }
 
 /**
- * First `runs` segment. The next segment is the run leaf.
+ * First `runs` segment of a **book-relative** path. The next segment is the run leaf.
  * A later directory that is also named `runs` is inside the run, not another leaf.
+ * Absolute ledger paths and `<bookKey>/...` books-root paths are a different
+ * coordinate: a book key may itself be `runs`. Translate those before calling.
  */
 export function runsSegmentOf(path: string): {
   readonly index: number;
@@ -79,6 +84,23 @@ export function runsSegmentOf(path: string): {
   const leaf = parts[index + 1];
   if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
   return { index, leaf, sourceRelative: parts.slice(0, index + 2).join("/") };
+}
+
+/**
+ * `<ledgerHome>/books/<bookKey>/<rest>` → `<rest>`.
+ * Undefined when the path is not strictly inside that books root.
+ * The book key is not part of the book-relative coordinate.
+ */
+export function bookRelativeFromLedgerPath(path: string): string | undefined {
+  const packageHome = tryHomeFromAkRolesPath(path);
+  if (packageHome === undefined || packageHome.length === 0) return undefined;
+  const booksRoot = join(resolveActivationLedgerHome(packageHome), "books");
+  const candidate = resolve(path);
+  if (!pathContainedIn(booksRoot, candidate)) return undefined;
+  const rel = relative(booksRoot, candidate).split(sep).join("/");
+  const slash = rel.indexOf("/");
+  if (slash <= 0) return undefined;
+  return rel.slice(slash + 1);
 }
 
 /**

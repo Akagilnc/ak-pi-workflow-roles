@@ -27,6 +27,7 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
+import { formatPiSessionCustomEntry, piSessionCustomParentId } from "../pi/role-turn-host.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
@@ -1877,10 +1878,8 @@ export async function appendRunAttemptHistory(
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
   const entries = await readBoundSessionEntries(source.sessionFile);
-  let parentId: string | null = null;
   let priorEntries = 0;
   for (const entry of entries) {
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
     if (
       entry.type === "custom" &&
       entry.customType === ATTEMPT_HISTORY_ENTRY_TYPE
@@ -1896,28 +1895,24 @@ export async function appendRunAttemptHistory(
     recordedAt: timestamp,
     outcome,
   };
-  const line = `${JSON.stringify({
-    type: "custom",
+  const line = formatPiSessionCustomEntry({
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
     data: attemptData,
-    id: randomUUID(),
-    parentId,
+    parentId: piSessionCustomParentId(entries),
     timestamp,
-  })}\n`;
+  });
   await appendFile(source.sessionFile, line, "utf8");
-  try {
-    sitianReport({
-      level: "event",
-      kind: "attempt-history",
-      subject: { runId: source.runId },
-      sessionParent: source.sessionFile,
-      payload: {
-        type: ATTEMPT_HISTORY_ENTRY_TYPE,
-        ...attemptData,
-      },
-      source: "settlement",
-    });
-  } catch {}
+  sitianReport({
+    level: "event",
+    kind: "attempt-history",
+    subject: { runId: source.runId },
+    sessionParent: source.sessionFile,
+    payload: {
+      type: ATTEMPT_HISTORY_ENTRY_TYPE,
+      ...attemptData,
+    },
+    source: "settlement",
+  });
 }
 
 function parseNavigatorAttendanceDetails(

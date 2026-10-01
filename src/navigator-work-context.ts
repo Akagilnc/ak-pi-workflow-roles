@@ -5,6 +5,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { sessionDirectoryOf } from "./role-run-placement.ts";
+
 import { loadDoctorCase } from "./doctor-evidence.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import {
@@ -68,7 +70,7 @@ export async function loadNavigatorWorkContext(
   const publicRunDir = runDirectoryFromHostContext(options.context);
   const currentSessionDir = options.context.sessionManager.getSessionDir();
   const isBoundPublicRun = publicRunDir !== undefined
-    && resolve(currentSessionDir) === resolve(publicRunDir, "session");
+    && resolve(currentSessionDir) === resolve(sessionDirectoryOf(publicRunDir));
   if (subjectMode === "public-instruction" && isBoundPublicRun) {
     let admitted;
     try {

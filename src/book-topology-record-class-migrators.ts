@@ -25,7 +25,6 @@ import {
   runCoordsFromSessionParent,
   runIdFromSubject,
   runRefFromBoundPath,
-  ticketNumberFromSubject,
 } from "./book-topology-migration-placement.ts";
 import {
   reconcileMigrationPartition,
@@ -34,6 +33,7 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { formatRunLeaf, parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
+import { sitianSubjectTicketNumber } from "./run-ticket-number.ts";
 import {
   S4_SUBMISSION_LEDGER_KINDS,
   sitianRunVolumeDirectory,
@@ -409,17 +409,15 @@ async function placeTicketProvenanceLine(
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
     return { disposition: "unbound", source, malformed: true, malformedRaw: raw };
   }
-  const ticketNumber = ticketNumberFromSubject(value.subject);
+  const ticketNumber = sitianSubjectTicketNumber(value.subject);
   if (ticketNumber === undefined) {
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
     return { disposition: "unbound", source };
   }
-  // Live topology (docs/dossier-topology.md): ticket root holds records.jsonl.
-  const dest = join(
-    context.booksDirectory,
+  const dest = ticketProvenanceRecordFile(
+    dirname(context.booksDirectory),
     bookKey,
     String(ticketNumber),
-    "records.jsonl",
   );
   // Never append legacy SitianRecord under a bare #901 volume (header must stay first).
   if (writes.isBareVolume(dest)) {
@@ -657,7 +655,7 @@ async function ticketNumbersInVolume(volumeDir: string): Promise<number[]> {
     const parsed = parseJsonlLine(raw);
     if (!parsed.ok) continue;
     if (recordClassOfKind(parsed.value.kind) !== TICKET_PROVENANCE) continue;
-    const ticketNumber = ticketNumberFromSubject(parsed.value.subject);
+    const ticketNumber = sitianSubjectTicketNumber(parsed.value.subject);
     if (ticketNumber === undefined || seen.has(ticketNumber)) continue;
     seen.add(ticketNumber);
     out.push(ticketNumber);
@@ -672,7 +670,11 @@ async function mergeCompanionsFromVolume(
   writes: RecordWriteCache,
 ): Promise<void> {
   for (const ticketNumber of await ticketNumbersInVolume(volumeDir)) {
-    const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
+    const destDir = dirname(ticketProvenanceRecordFile(
+      dirname(context.booksDirectory),
+      bookKey,
+      String(ticketNumber),
+    ));
     await ensureDir(destDir);
     await mergeOfferedIdentities(destDir, volumeDir, writes);
   }

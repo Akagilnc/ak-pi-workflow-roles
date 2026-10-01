@@ -33,6 +33,7 @@ import {
   uniqueRunLeafExistsInBook,
 } from "./book-topology-migration-placement.ts";
 import { parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
+import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -168,36 +169,27 @@ function parseParentRunBoundToMigration(
     return undefined;
   }
 
-  const segment = runsSegmentOf(rel);
-  if (segment === undefined || segment.index < 1) return undefined;
+  // rel is books-root-relative: `<bookKey>/...`. The book key is its own coordinate.
   const parts = rel.split("/").filter((part) => part.length > 0);
-  const runsIndex = segment.index;
-  const leafName = segment.leaf;
-  const before = parts.slice(0, runsIndex);
-  let bookKey: string | undefined;
-  if (before.length === 1) {
-    bookKey = before[0];
-  } else if (
-    before.length === 2
-    && (before[1] === "unbound" || (before[1] !== undefined && isTicketNumberString(before[1])))
-  ) {
-    bookKey = before[0];
-  } else if (
-    before.length === 3
-    && before[1] === "issues"
-    && before[2] !== undefined
-    && isTicketNumberString(before[2])
-  ) {
-    // Legacy issues/<ticket>/runs/<leaf> bound to this book.
-    bookKey = before[0];
-  }
-  if (bookKey === undefined) return undefined;
-  const leaf = parseRunLeaf(leafName);
+  const bookKey = parts[0];
+  if (bookKey === undefined || parts.length < 2) return undefined;
+  const segment = runsSegmentOf(parts.slice(1).join("/"));
+  if (segment === undefined) return undefined;
+  const before = parts.slice(1, 1 + segment.index);
+  const flat = before.length === 0;
+  const subjectNest = before.length === 1
+    && (before[0] === "unbound" || (before[0] !== undefined && isTicketNumberString(before[0])));
+  const issuesNest = before.length === 2
+    && before[0] === "issues"
+    && before[1] !== undefined
+    && isTicketNumberString(before[1]);
+  if (!flat && !subjectNest && !issuesNest) return undefined;
+  const leaf = parseRunLeaf(segment.leaf);
   if (leaf === undefined) return undefined;
   return {
     bookKey,
-    leafName,
-    sourceRelative: parts.slice(1, runsIndex + 2).join("/"),
+    leafName: segment.leaf,
+    sourceRelative: segment.sourceRelative,
     runId: leaf.runId,
     role: leaf.role,
   };
@@ -591,7 +583,7 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
           outcomes.push({ disposition: "unbound", source });
           continue;
         }
-        const destNest = join(destination.runDirectory, "session", AUDITOR_ROLES_PARTITION);
+        const destNest = sitianRunVolumeDirectory(destination.runDirectory, AUDITOR_ROLES_PARTITION);
         await copyVolumeIntoNest(sourcePath, historicalVolume, destNest);
 
         const historicalParents = historicalRunDirectoriesFor(

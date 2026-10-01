@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
 import {
+  bookRelativeFromLedgerPath,
   formatRunLeaf,
   listBookRunContainers,
   parseRunLeaf,
@@ -64,10 +65,6 @@ export async function listMigrationDirents(
     if (isMigrationEnoent(error)) return [];
     throw error;
   }
-}
-
-export function ticketNumberFromUnknown(value: unknown): number | undefined {
-  return parseTicketNumber(value);
 }
 
 export function isTicketNumberString(value: string): boolean {
@@ -279,12 +276,11 @@ function destPathFromSourceRelative(
   bookKey: string,
   sourceRelative: string,
 ): string | undefined {
+  const segment = runsSegmentOf(sourceRelative);
+  if (segment === undefined) return undefined;
   const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
-  const runsIndex = parts.indexOf("runs");
-  if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
-  const leaf = parts[runsIndex + 1];
-  const before = parts.slice(0, runsIndex);
-  if (leaf === undefined) return undefined;
+  const before = parts.slice(0, segment.index);
+  const leaf = segment.leaf;
   // Legacy issues/<ticket>/runs/<leaf> → canonical <ticket>/runs/<leaf>.
   if (
     before.length === 2
@@ -449,7 +445,9 @@ export function runCoordsFromSessionParent(
   sessionParent: unknown,
 ): { readonly runId: string; readonly role: string } | undefined {
   if (typeof sessionParent !== "string" || sessionParent.length === 0) return undefined;
-  const segment = runsSegmentOf(sessionParent);
+  // Ledger absolutes include `<bookKey>`, which may be `runs`. Parse the book-relative rest.
+  const coordinated = bookRelativeFromLedgerPath(sessionParent) ?? sessionParent;
+  const segment = runsSegmentOf(coordinated);
   if (segment === undefined) return undefined;
   return parseRunLeaf(segment.leaf);
 }
@@ -459,13 +457,5 @@ export function runIdFromSubject(subject: unknown): string | undefined {
   if (isRecord(subject) && typeof subject.runId === "string" && subject.runId.length > 0) {
     return subject.runId;
   }
-  return undefined;
-}
-
-export function ticketNumberFromSubject(subject: unknown): number | undefined {
-  if (typeof subject === "string" || typeof subject === "number") {
-    return ticketNumberFromUnknown(subject);
-  }
-  if (isRecord(subject)) return ticketNumberFromUnknown(subject.ticketNumber);
   return undefined;
 }
