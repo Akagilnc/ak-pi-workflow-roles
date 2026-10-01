@@ -6,6 +6,7 @@ import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-cont
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
+  disposeExternalRoleTurn,
   externalHostFailure as failure,
   raceAgainstHostAbort,
 } from "../external-host-turn-loop.ts";
@@ -433,15 +434,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           });
         }
       }
-      try {
-        await prepared.dispose?.();
-      } catch (cleanupError) {
-        await retainPackageFault({
-          runDirectory: request.runDirectory,
-          diagnostic: `host dispose failed beside host terminal: ${describeErrorIdentity(cleanupError)}`,
-          error: cleanupError,
-        });
-      }
+      outcome = await disposeExternalRoleTurn(prepared, request, outcome);
     }
     return outcome;
   });

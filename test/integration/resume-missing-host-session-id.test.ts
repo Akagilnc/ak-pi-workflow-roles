@@ -93,7 +93,7 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   assert.equal(methods.includes("session/prompt"), false);
 });
 
-test("ACP successful turn keeps the host result when dispose fails", async (t) => {
+test("ACP successful turn preserves host facts and carries required disposal failure", async (t) => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-acp-cleanup-", runName: "run@acp" });
   t.after(() => ledger.dispose());
   const runDirectory = ledger.runDirectory;
@@ -123,19 +123,20 @@ test("ACP successful turn keeps the host result when dispose fails", async (t) =
       terminatingToolName: "ak_judge_output",
       async ingestStructuredOutput() {},
       async closeRound() { return { accepted: true as const }; },
-      async dispose() { throw Object.assign(new Error("cleanup failed"), { code: "ECLEAN" }); },
+      async dispose() { throw Object.assign(new Error("ledger flush failed"), { code: "ELEDGER" }); },
     }),
   });
   const result = await host.executeTurn({
     ...baseRequest(runDirectory),
     continuation: { kind: "resume", prompt: "continue", hostSessionId: "bound-session" },
   });
-  assert.equal(result.knownFailure, undefined);
+  assert.deepEqual(result.knownFailure?.identity, { name: "Error", code: "ELEDGER" });
+  assert.equal(result.knownFailure?.cause, undefined);
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "HOST STDERR\n");
   const notes = await packageNotes(runDirectory);
   assert.deepEqual(notes.map((note) => note.failure?.identity?.code).sort(),
-    ["ECANCEL", "ECLEAN", "ECLOSE", "ECONNECTION"]);
+    ["ECANCEL", "ECLOSE", "ECONNECTION", "ELEDGER"]);
 });
 
 test("#1091 headless resume without bound session id reports missing; never binds", async (t) => {

@@ -5,7 +5,7 @@
  * returns; their flush failure is a dispose terminal failure, not washed.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,6 +19,12 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
+import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 /** Stage one pending attendance so session_shutdown will book a package entry. */
 function withStagedShutdownAttendance(
@@ -185,55 +191,60 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
   });
 });
 
-test("#959 session_shutdown durable flush failure surfaces from dispose", async () => {
-  // Real entry: prepareRoleEnvelope → session_start stages attendance via onEvent →
-  // dispose emits session_shutdown (no closeRound, so agent_settled cannot pre-flush).
-  // Readonly principal forces the shutdown-path append to fail; dispose must throw the
-  // typed durable failure (mutation: drain-before-shutdown → missing rejection).
-  await withTempEnvelopeHome("shutdown-fail", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          judge: { provider: "provider", model: "model" },
-          navigator: { provider: "provider", model: "model" },
-        },
-      }, null, 2)}\n`,
-    );
-    const base = createRoleRuntimeDependencies(packageRoot);
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(sessionDir),
-        activation: { role: "judge" },
-        methods: [],
-        continuation: { kind: "initial", prompt: "shutdown flush failure probe" },
-        cwd: packageRoot,
-        home,
-        agentDir: join(home, "agent"),
-        runDirectory,
+test("#1032 shutdown durable failure reaches the public terminal without replacing host facts", async () => {
+  await withTempEnvelopeHome("shutdown-fail", async ({ home, socketPath }) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    seedGitProject(project);
+    await writeFile(join(home, ".ak-roles", "public-cli.json"), JSON.stringify({
+      autoResumeLimit: 0,
+      seats: { navigator: { provider: "provider", model: "model" } },
+    }));
+    const binary = join(home, "fake-claude");
+    await writeFile(binary, `#!/usr/bin/env node
+for await (const chunk of process.stdin) {}
+process.stderr.write("HOST STDERR\\n");
+process.exit(0);
+`);
+    await chmod(binary, 0o755);
+    const description = lookupHeadlessHostDescription("claude");
+    assert.ok(description);
+    const identity = createSessionIdentityAuthority(piDurablePrincipalAuthority, description.sessionBindingFile);
+    let actualRunDirectory = "";
+    const host = createHeadlessRoleTurnHost({
+      description, hostName: "claude", binary, sessionIdentity: identity,
+      prepare: async (request) => {
+        actualRunDirectory = request.runDirectory;
+        const sessionFile = identity.resolveSessionFile(request.principal);
+        const prepared = await prepareRoleEnvelope({
+          request,
+          dependencies: withStagedShutdownAttendance(createRoleRuntimeDependencies(packageRoot), request.runDirectory),
+          socketPath, sessionFile,
+        });
+        return {
+          ...prepared,
+          async dispose() {
+            // Inject a filesystem fault, not a mocked disposal result. The real
+            // shutdown handler and required append must own the failure.
+            await poisonSessionFileWrite(sessionFile);
+            await prepared.dispose?.();
+          },
+        };
       },
-      dependencies: withStagedShutdownAttendance(base, runDirectory),
-      socketPath,
-      sessionFile,
     });
-    try {
-      // Writable during prepare (invocation marker); poison before dispose flush.
-      await poisonSessionFileWrite(sessionFile);
-      await assert.rejects(
-        async () => prepared.dispose?.(),
-        (error: unknown) => {
-          assert.equal(
-            typeof error === "object" && error !== null
-              ? (error as { code?: unknown }).code
-              : undefined,
-            "durable-session-write-failed",
-          );
-          return true;
-        },
-      );
-    } finally {
-      // Already disposed (or failed mid-dispose); second call is a no-op.
-      await prepared.dispose?.().catch(() => undefined);
-    }
+    const captured = captureIo();
+    const result = await runAkRole([
+      "judge", "--host", "claude", "--model", "openai-codex/gpt-5.6-sol:high", "probe",
+    ], {
+      packageRoot, home, cwd: project, io: captured.io,
+      credentials: { "openai-codex": true, xai: false },
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [{ name: "claude", create: () => ({ ok: true, host }) }],
+    });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.terminal?.roleOutcome.decisiveFacts?.errorCode, "durable-session-write-failed");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.packageFact, { exitCode: 0 });
+    assert.equal(await readFile(join(actualRunDirectory, "stderr.log"), "utf8"), "HOST STDERR\n");
   });
 });

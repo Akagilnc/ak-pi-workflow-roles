@@ -13,6 +13,7 @@ import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-cont
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
+  disposeExternalRoleTurn,
   externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
@@ -621,6 +622,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               try {
                 await config.sessionIdentity.bind(request.principal, observation.threadId);
               } catch (error) {
+                if (observation.failureDiagnostic === undefined) throw error;
                 await noteBeside(error, "session bind failed beside host terminal");
               }
             }
@@ -660,18 +662,20 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           const envelope = parseHeadlessCliStdout(spawned.stdout);
           if (envelope === undefined) return terminalFromSpawned(spawned);
 
-          // Bind the host-reported session id (authoritative for --resume).
-          // A bind failure stays beside the host report; it does not replace it.
+          const hostReportedFailure = envelope.is_error === true
+            || (typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_"));
+          // Required binding fails a clean result; an actual host error stays primary.
           if (typeof envelope.session_id === "string" && envelope.session_id !== "") {
             sessionId = envelope.session_id;
             try {
               await config.sessionIdentity.bind(request.principal, sessionId);
             } catch (error) {
+              if (!hostReportedFailure) throw error;
               await noteBeside(error, "session bind failed beside host terminal");
             }
           }
 
-          if (envelope.is_error === true || (typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_"))) {
+          if (hostReportedFailure) {
             const diagnostic = typeof envelope.result === "string"
               ? envelope.result
               : Array.isArray(envelope.errors)
@@ -698,7 +702,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           } catch (error) {
             await retainPackageFault({
               runDirectory: request.runDirectory,
-              diagnostic: `receipt handling failed beside host terminal: ${describeErrorIdentity(error)}`,
+              diagnostic: `required turn handling failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
             return terminalFromSpawned(spawned,
@@ -727,15 +731,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       }
       }
     } finally {
-      try {
-        await prepared.dispose?.();
-      } catch (cleanupError) {
-        await retainPackageFault({
-          runDirectory: request.runDirectory,
-          diagnostic: `host dispose failed beside host terminal: ${describeErrorIdentity(cleanupError)}`,
-          error: cleanupError,
-        });
-      }
+      outcome = await disposeExternalRoleTurn(prepared, request, outcome);
     }
     return outcome;
   });

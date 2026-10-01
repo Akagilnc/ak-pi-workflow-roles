@@ -25,7 +25,7 @@ import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
-import { retainPackageFault } from "../public-cli/settlement.ts";
+import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 
 
@@ -305,6 +305,7 @@ export function createDefaultPiSpawnRunner(options: {
       };
       parentSignal?.addEventListener("abort", terminateForParentAbort, { once: true });
       const packageErrors: unknown[] = [];
+      let identityFailure: RoleTurnKnownFailure | undefined;
       let identityRecorded: Promise<void> = Promise.resolve();
       child.once("spawn", () => {
         hasSpawned = true;
@@ -318,7 +319,10 @@ export function createDefaultPiSpawnRunner(options: {
         ) {
           identityRecorded = Promise.resolve().then(() =>
             options.recordLaunchedPiIdentity!(runDirectory, piIdentity),
-          ).catch((error) => { packageErrors.push(error); });
+          ).catch((error) => {
+            packageErrors.push(error);
+            identityFailure = projectThrownFailureLeaf(error);
+          });
         }
       });
       child.stderr.setEncoding("utf8").on("data", (chunk) => {
@@ -364,6 +368,9 @@ export function createDefaultPiSpawnRunner(options: {
             stderr,
             timedOut,
             ...(closeSignal === null ? {} : { signal: closeSignal }),
+            ...(code === 0 && !timedOut && closeSignal === null && identityFailure !== undefined
+              ? { knownFailure: identityFailure }
+              : {}),
           });
         })();
       });

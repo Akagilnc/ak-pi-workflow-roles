@@ -1426,26 +1426,27 @@ export function createRoleRuntimeExtension(
       // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
-      if (presentation !== undefined) {
-        try {
+      try {
+        if (presentation !== undefined) {
+          // Required attendance persistence must reach its failure owner, not be
+          // discarded as cleanup or merged with an existing host report.
           await envelopeHost.sendMessage({
             customType: NAVIGATOR_EVENT_TYPE,
             content: formatNavigatorReport(presentation.report),
             display: true,
             details: presentation.event,
           }, { triggerTurn: false });
-        } catch {
-          // Teardown must not mask the original role failure cause.
         }
+      } finally {
+        // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
+        // parent court for 43–270s after unavailable was already projected (#959 reopen).
+        const attendanceToDispose = navigatorAttendance;
+        navigatorAttendance = undefined;
+        pendingNavigatorSettlement = undefined;
+        disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
+        pendingInfrastructureFailures.clear();
+        pendingSubmissionNonPassByToolCallId.clear();
       }
-      // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
-      // parent court for 43–270s after unavailable was already projected (#959 reopen).
-      const attendanceToDispose = navigatorAttendance;
-      navigatorAttendance = undefined;
-      pendingNavigatorSettlement = undefined;
-      disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
-      pendingInfrastructureFailures.clear();
-      pendingSubmissionNonPassByToolCallId.clear();
     });
 
     const hostActions = {

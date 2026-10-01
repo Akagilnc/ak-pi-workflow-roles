@@ -199,6 +199,29 @@ export async function driveExternalRoleTurnRounds(
   return result;
 }
 
+/** Required envelope shutdown fails a clean host result; an existing host
+ * failure stays primary. Ordinary cleanup is handled at its owning seam. */
+export async function disposeExternalRoleTurn(
+  prepared: Pick<PreparedRoleTurn, "dispose">,
+  request: Pick<RoleTurnRequest, "runDirectory">,
+  outcome: RoleTurnResult,
+): Promise<RoleTurnResult> {
+  try {
+    await prepared.dispose?.();
+  } catch (error) {
+    await retainPackageFault({
+      runDirectory: request.runDirectory,
+      diagnostic: `required envelope shutdown failed beside host terminal: ${describeErrorIdentity(error)}`,
+      error,
+    });
+    if (outcome.code === 0 && !outcome.timedOut && outcome.signal === undefined
+      && outcome.knownFailure === undefined) {
+      return { ...outcome, knownFailure: projectThrownFailureLeaf(error) };
+    }
+  }
+  return outcome;
+}
+
 export function createSerializedRoleTurnHost(
   execute: (request: RoleTurnRequest) => Promise<RoleTurnResult>,
 ): RoleTurnHost {
