@@ -82,4 +82,3 @@ test("malformed prerequisite attachments keep their true causes behind one stabl
   assert.ok(duplicate.cause instanceof Error);
   assert.match(duplicate.cause.message, /duplicate id: same/);
 });
-
