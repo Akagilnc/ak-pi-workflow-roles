@@ -922,6 +922,8 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
                 return {
                   status: "completed",
                   ticketNumber: TICKET,
+                  // Strict-schema hosts (codex) must emit every key; single ticket sends null.
+                  ticketSessions: null,
                   sessions: [
                     {
                       path: fixture.path,

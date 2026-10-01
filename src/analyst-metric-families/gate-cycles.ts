@@ -9,7 +9,7 @@ import type {
   AnalystGateCycleOrigin,
   AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
-import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
+import { compareAnalystLegs, type AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
 export type AnalystGateCyclesRoundRow = {
@@ -73,12 +73,6 @@ function projectLeg(facts: AnalystReadableRunFacts): AnalystGateCyclesLeg {
   };
 }
 
-function compareLegs(a: AnalystGateCyclesLeg, b: AnalystGateCyclesLeg): number {
-  if (a.book !== b.book) return a.book.localeCompare(b.book);
-  if (a.role !== b.role) return a.role.localeCompare(b.role);
-  return a.runId.localeCompare(b.runId);
-}
-
 type OfficerAccum = {
   rounds: number;
   bounceCount: number;
@@ -132,7 +126,7 @@ const gateCyclesFamily: AnalystMetricFamilyModule = {
   id: "gate-cycles",
   contribute(input) {
     if (input.runs.length === 0) return undefined;
-    const legs = input.runs.map(projectLeg).sort(compareLegs);
+    const legs = input.runs.map(projectLeg).sort(compareAnalystLegs);
     const section: AnalystGateCyclesSection = {
       kind: "analyst-gate-cycles",
       legs,

@@ -26,7 +26,6 @@ const CANONICAL_APACHE_2_0 = await readFile(
 const HOST_PEERS = [
   "@earendil-works/pi-ai",
   "@earendil-works/pi-coding-agent",
-  "typebox",
 ] as const;
 
 interface ExtractedPack {

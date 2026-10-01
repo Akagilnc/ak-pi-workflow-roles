@@ -162,6 +162,7 @@ test("analyst B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall
     frameSpan: {
       startedAt: "2026-08-01T00:00:10.000Z",
       endedAt: "2026-08-01T00:00:20.000Z",
+      wallMs: 10_000,
     },
     toolIntervals: [
       {

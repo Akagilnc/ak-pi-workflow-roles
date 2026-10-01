@@ -4,17 +4,10 @@
  * Claude print-mode and codex exec differ enough that #752 host-specific
  * assembly lives here as sibling helpers — not a third unified abstraction.
  */
-import { join } from "node:path";
-
-type HeadlessHostBase = Readonly<{
-  /** Binary path segments relative to the operator home. */
-  binaryFromHome: readonly string[];
-  /** Durable session-id binding filename beside the session principal. */
-  sessionBindingFile: string;
-}>;
+import type { HostIdentityDescription } from "../host-descriptions.ts";
 
 /** Claude Code print-mode (#645). */
-export type ClaudePrintHostDescription = HeadlessHostBase & Readonly<{
+export type ClaudePrintHostDescription = HostIdentityDescription & Readonly<{
   protocol: "claude-print";
   /**
    * Host-native print-mode flags that never change per turn (no prompt).
@@ -48,7 +41,7 @@ export type ClaudePrintHostDescription = HeadlessHostBase & Readonly<{
  * Protocol differences (JSONL, resume subcommand, schema file, `-c` MCP) stay
  * in codex-specific helpers — description only carries identity + binary path.
  */
-export type CodexExecHostDescription = HeadlessHostBase & Readonly<{
+export type CodexExecHostDescription = HostIdentityDescription & Readonly<{
   protocol: "codex-exec";
 }>;
 
@@ -64,14 +57,6 @@ export function isCodexExecDescription(
   description: HeadlessHostDescription,
 ): description is CodexExecHostDescription {
   return description.protocol === "codex-exec";
-}
-
-/** Absolute agent binary for one operator home. */
-export function resolveHeadlessBinary(
-  description: HeadlessHostDescription,
-  operatorHome: string,
-): string {
-  return join(operatorHome, ...description.binaryFromHome);
 }
 
 /**

@@ -70,10 +70,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function wallMsFromSpan(startedAt: string, endedAt: string): number {
-  return Date.parse(endedAt) - Date.parse(startedAt);
-}
-
 function readClassCount(body: Record<string, unknown>): number | undefined {
   if (!isRecord(body.outcome)) return undefined;
   if (!isRecord(body.outcome.decisiveFacts)) return undefined;
@@ -113,7 +109,7 @@ function projectRunRow(facts: AnalystReadableRunFacts): AnalystRoundTimelineRunR
     role: facts.role,
     startedAt,
     endedAt,
-    wallMs: wallMsFromSpan(startedAt, endedAt),
+    wallMs: facts.frameSpan.wallMs,
     terminal: projectTerminal(facts),
   };
 }

@@ -871,10 +871,12 @@ export function createDiaristRoleRuntime(
             await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
         }
-        const singleSessions = submitted && !Object.hasOwn(submitted, "ticketSessions")
+        // Strict-schema hosts emit ticketSessions: null for a single ticket.
+        const multiTicket = submitted?.ticketSessions != null;
+        const singleSessions = submitted && !multiTicket
           ? projectDiaristSessions(parameters)
           : undefined;
-        const ticketSessions = submitted && Object.hasOwn(submitted, "ticketSessions")
+        const ticketSessions = submitted && multiTicket
           ? projectDiaristTicketSessions(submitted)
           : singleSessions === undefined
             ? undefined

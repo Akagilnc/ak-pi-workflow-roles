@@ -2,11 +2,13 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
+  externalHostFailure as failure,
   raceAgainstHostAbort,
+  withExternalHostCleanupFailure,
 } from "../external-host-turn-loop.ts";
 
 import {
@@ -19,6 +21,7 @@ import {
 } from "../package-contracts/navigator-output.ts";
 import {
   renderSystemPromptOverride,
+  resolveBoundHostSessionId,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
@@ -95,41 +98,6 @@ export type AcpRoleTurnHostConfig = Readonly<{
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
   prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
 }>;
-
-function failure(
-  cause: "activation" | "session" | "output",
-  name: string,
-  code: string,
-  details?: Readonly<Record<string, unknown>>,
-  diagnostic?: string,
-): RoleTurnResult {
-  return {
-    code: null,
-    stderr: "",
-    timedOut: false,
-    knownFailure: {
-      cause,
-      identity: { name, code },
-      ...(diagnostic === undefined ? {} : { diagnostic }),
-      ...(details === undefined ? {} : { details }),
-    },
-  };
-}
-
-/** Success→dispose failure; existing failure keeps primary cause + cleanup detail. */
-function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-  if (outcome.knownFailure === undefined) {
-    return failure("session", "AcpDisposeFailure", "dispose-failed", { cleanupError: message }, message);
-  }
-  return {
-    ...outcome,
-    knownFailure: {
-      ...outcome.knownFailure,
-      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
-    },
-  };
-}
 
 type RpcReply = { readonly id?: unknown; readonly method?: unknown; readonly params?: unknown; readonly result?: unknown; readonly error?: unknown };
 
@@ -259,7 +227,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let sessionOpened = false;
     let accepted = false;
     const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
-    // Mutable so dispose failure can outrank a clean turn (headless withCleanupFailure face).
+    // Mutable so dispose failure can outrank a clean turn.
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     try {
       if (prepared.mcpServers.length === 0) {
@@ -324,10 +292,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         };
         let sessionReady = true;
         if (request.continuation.kind === "resume") {
-          const explicitHostSessionId = request.continuation.hostSessionId;
-          const boundSessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
-            ? explicitHostSessionId
-            : await config.sessionIdentity.load(request.principal);
+          const boundSessionId = await resolveBoundHostSessionId(request, config.sessionIdentity);
           if (boundSessionId !== undefined && boundSessionId !== "") {
             sessionId = boundSessionId;
             sessionId = await loadSession(boundSessionId);
@@ -446,7 +411,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       try {
         await prepared.dispose?.();
       } catch (cleanupError) {
-        outcome = withCleanupFailure(outcome, cleanupError);
+        outcome = withExternalHostCleanupFailure(outcome, cleanupError, "AcpDisposeFailure");
       }
     }
     return outcome;

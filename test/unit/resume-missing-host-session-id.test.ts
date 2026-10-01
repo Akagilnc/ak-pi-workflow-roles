@@ -1,5 +1,5 @@
 /**
- * #1091: host adapters report missing resume identity; never mint a new session.
+ * #1091/#1033: host adapters retain resume identity and cleanup failure contracts.
  * Seams: createAcpRoleTurnHost / createHeadlessRoleTurnHost executeTurn(resume).
  */
 import assert from "node:assert/strict";
@@ -63,14 +63,57 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
       async closeRound() {
         return { accepted: true as const };
       },
+      async dispose() {
+        throw new Error("cleanup failed");
+      },
     }),
   });
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "AcpSessionFailure");
+  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
   assert.equal(methods.includes("session/new"), false);
   assert.equal(methods.includes("session/load"), false);
   assert.equal(methods.includes("session/prompt"), false);
+});
+
+test("ACP successful turn reports dispose failure instead of success", async () => {
+  const runDirectory = "/tmp/ak-1033-acp-cleanup";
+  const host = createAcpRoleTurnHost({
+    hostName: "hermes",
+    modelPassing: "argv",
+    sessionIdentity: {
+      async load() { throw new Error("explicit resume must not load binding"); },
+      async bind() {},
+      resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+    },
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/load") return { sessionId: "bound-session" };
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    prepare: async () => ({
+      mcpServers: [{ name: "ak-probe", type: "stdio" }],
+      systemPrompt: { body: "probe", materials: [] },
+      prompt: "continue",
+      jsonSchema: { type: "object" },
+      terminatingToolName: "ak_judge_output",
+      async ingestStructuredOutput() {},
+      async closeRound() { return { accepted: true as const }; },
+      async dispose() { throw new Error("cleanup failed"); },
+    }),
+  });
+  const result = await host.executeTurn({
+    ...baseRequest(runDirectory),
+    continuation: { kind: "resume", prompt: "continue", hostSessionId: "bound-session" },
+  });
+  assert.equal(result.knownFailure?.cause, "session");
+  assert.equal(result.knownFailure?.identity?.code, "dispose-failed");
+  assert.equal(result.knownFailure?.identity?.name, "AcpDisposeFailure");
+  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
 });
 
 test("#1091 headless resume without bound session id reports missing; never binds", async () => {
