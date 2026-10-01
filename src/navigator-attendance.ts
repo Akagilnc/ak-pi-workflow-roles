@@ -449,7 +449,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               output = undefined;
               prepareBatchRejected = true;
               // The correction prompt below is the one spend for this rejection.
-              delivery.recordRejected(rejectedReason, { spend: false });
+              delivery.recordRejected(rejectedReason);
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;

@@ -1251,6 +1251,7 @@ export async function runAkRole(
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
         && current.terminal?.roleOutcome.kind === "accepted"
+        && current.terminal.roleOutcome.decisiveFacts?.directionUnsettled !== true
         && !latestPayloadEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;

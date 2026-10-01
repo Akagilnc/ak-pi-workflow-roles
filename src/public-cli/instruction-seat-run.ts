@@ -166,11 +166,10 @@ function unreadablePostSubmissionStatus(
 }
 
 /**
- * One more unreadable-status reask, counted against the same ceiling as the
- * other loops. The reask keeps autoResumeLimit so its own delivery and failure
- * recovery still have that budget. Exhaustion is not a readable status: the
- * caller presents the volume already in hand and does not advance review.
- * ADR 0007 audit continues are not this shape.
+ * One more unreadable-status reask. This loop has its own counter and reads
+ * the same autoResumeLimit as the other loops. Exhaustion is not a readable
+ * status: the caller presents the volumes already in hand and does not advance
+ * review. ADR 0007 audit continues are not this shape.
  */
 function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv | undefined {
   const spent = env.unreadableReasksSpent ?? 0;
@@ -197,6 +196,52 @@ function presentOriginalVolume(
     return;
   }
   if (terminal !== undefined) io.stdout(formatTerminalResult(terminal));
+}
+
+/** Runtime fact beside the original volume. Payloads stay as submitted. */
+function withUnsettledDirection(
+  parent: TerminalResult,
+  officer?: TerminalResult,
+): TerminalResult {
+  const outcome = parent.roleOutcome;
+  if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return parent;
+  const officerOutcome = officer?.roleOutcome;
+  const officerPayloads = officerOutcome !== undefined
+    && officerOutcome.kind !== "no_receipt"
+    ? officerOutcome.payloads
+    : undefined;
+  return {
+    ...parent,
+    roleOutcome: {
+      ...outcome,
+      decisiveFacts: {
+        ...(outcome.decisiveFacts ?? {}),
+        directionUnsettled: true,
+        subsequentAudit: "incomplete",
+        ...(officerOutcome === undefined ? {} : { officerRole: officerOutcome.role }),
+        ...(officer?.runId === undefined ? {} : { officerRunId: officer.runId }),
+        ...(officerPayloads === undefined ? {} : { officerPayloads }),
+      },
+    },
+  };
+}
+
+function heldUnreadableTerminal(terminal: TerminalResult | undefined): boolean {
+  if (terminal?.roleOutcome.kind !== "accepted") return false;
+  if (latestPayloadEscalated(terminal.roleOutcome)) return false;
+  const status = latestQueueStatus(terminal);
+  return status === undefined || !QUEUE_CONCLUSIONS.has(status);
+}
+
+function presentUnsettledAudit(
+  parent: TerminalResult,
+  officer: TerminalResult | undefined,
+  io: CliIo,
+): TerminalResult {
+  const terminal = withUnsettledDirection(parent, officer);
+  io.stdout(formatTerminalResult(terminal));
+  if (officer !== undefined) io.stdout(formatTerminalResult(officer));
+  return terminal;
 }
 
 async function reaskUnreadablePostSubmissionStatus(
@@ -408,8 +453,11 @@ async function dispatchAdmitted(
     io,
   );
   if (isUnreadableReaskExhausted(unreadableReask)) {
-    presentOriginalVolume(held, result.terminal, io);
-    return result;
+    const terminal = result.terminal === undefined
+      ? undefined
+      : withUnsettledDirection(result.terminal);
+    presentOriginalVolume(held, terminal, io);
+    return terminal === undefined ? result : { ...result, terminal };
   }
   if (unreadableReask !== undefined) return unreadableReask;
   if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
@@ -883,8 +931,11 @@ export async function runPublicInstructionSeatResume(
         io,
       );
     if (isUnreadableReaskExhausted(unreadableReask)) {
-      presentOriginalVolume(held, result.terminal, io);
-      return result;
+      const terminal = result.terminal === undefined
+        ? undefined
+        : withUnsettledDirection(result.terminal);
+      presentOriginalVolume(held, terminal, io);
+      return terminal === undefined ? result : { ...result, terminal };
     }
     if (unreadableReask !== undefined) return unreadableReask;
     if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
@@ -991,7 +1042,24 @@ export async function continueParentAfterChild(
   }
   const admitted = loaded.admitted;
   const resolved = await queueConclusionFromChild(child, env, io);
-  if (resolved !== undefined && "stop" in resolved) return resolved.stop;
+  if (resolved !== undefined && "stop" in resolved) {
+    const stopped = resolved.stop;
+    if (
+      stopped.exitCode === 0
+      && heldUnreadableTerminal(stopped.terminal)
+      && stopped.terminal !== undefined
+    ) {
+      const parentTerminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+      if (
+        parentTerminal?.roleOutcome.kind === "accepted"
+        || parentTerminal?.roleOutcome.kind === "audit_escalation"
+      ) {
+        const terminal = presentUnsettledAudit(parentTerminal, stopped.terminal, io);
+        return { exitCode: 0, admitted, terminal };
+      }
+    }
+    return stopped;
+  }
   if (resolved !== undefined && resolved.status === "escalate") {
     return { exitCode: 0, admitted: resolved.admitted, terminal: resolved.terminal };
   }
@@ -1035,8 +1103,9 @@ async function auditSubmittedRole(
     if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
     if (next === undefined) {
-      io.stdout(formatTerminalResult(turn.terminal));
-      return turn;
+      const terminal = withUnsettledDirection(turn.terminal);
+      io.stdout(formatTerminalResult(terminal));
+      return { ...turn, terminal };
     }
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK }, next, io);
   }
@@ -1044,8 +1113,9 @@ async function auditSubmittedRole(
     if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
     if (next === undefined) {
-      io.stdout(formatTerminalResult(turn.terminal));
-      return turn;
+      const terminal = withUnsettledDirection(turn.terminal);
+      io.stdout(formatTerminalResult(terminal));
+      return { ...turn, terminal };
     }
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK }, next, io);
   }
@@ -1124,8 +1194,9 @@ async function auditSubmittedRole(
         if (lastSummon?.terminal === undefined) {
           throw new Error("doctor audit kept an unreadable reply with no terminal");
         }
-        io.stdout(formatTerminalResult(lastSummon.terminal));
-        return { exitCode: 0, terminal: lastSummon.terminal };
+        if (turn.terminal === undefined) throw new Error("doctor submission has no terminal");
+        const terminal = presentUnsettledAudit(turn.terminal, lastSummon.terminal, io);
+        return { exitCode: 0, admitted, terminal };
       }
       if (decision.status !== "converged") {
         if (lastSummon?.terminal !== undefined) {
@@ -1194,10 +1265,11 @@ async function auditSubmittedRole(
       }
     }
     if (chain.status === "needs_reask") {
-      const terminal = chain.passes.at(-1)?.terminal;
-      if (terminal === undefined) throw new Error("unreadable audit has no terminal result");
-      io.stdout(formatTerminalResult(terminal));
-      return { exitCode: 0, terminal };
+      const officerTerminal = chain.passes.at(-1)?.terminal;
+      if (officerTerminal === undefined) throw new Error("unreadable audit has no terminal result");
+      if (turn.terminal === undefined) throw new Error("audited submission has no terminal");
+      const terminal = presentUnsettledAudit(turn.terminal, officerTerminal, io);
+      return { exitCode: 0, admitted, terminal };
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);

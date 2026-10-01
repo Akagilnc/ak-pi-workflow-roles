@@ -806,8 +806,21 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
       assert.equal(notaryCalls, limit + 1, `limit ${limit}`);
       assert.equal(result.exitCode, 0, `limit ${limit}`);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
+      assert.equal(result.terminal?.roleOutcome.role, "judge", `limit ${limit}`);
       if (result.terminal?.roleOutcome.kind !== "accepted") return;
-      assert.equal(payloadStatusSequence(result.terminal.roleOutcome).at(-1), "sideways");
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["continue"]);
+      const facts = result.terminal.roleOutcome.decisiveFacts as {
+        directionUnsettled?: boolean;
+        subsequentAudit?: string;
+        officerRole?: string;
+        officerRunId?: string;
+        officerPayloads?: readonly { status?: string }[];
+      };
+      assert.equal(facts.directionUnsettled, true);
+      assert.equal(facts.subsequentAudit, "incomplete");
+      assert.equal(facts.officerRole, "notary");
+      assert.equal(typeof facts.officerRunId, "string");
+      assert.equal(facts.officerPayloads?.at(-1)?.status, "sideways");
     });
   }
 });
@@ -872,7 +885,12 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       assert.equal(calls.secretariat, 1, `limit ${limit}`);
       assert.equal(calls.countersign, limit + 1, `limit ${limit}`);
       assert.equal(opened.exitCode, 0, `limit ${limit}`);
-      const officerRunId = opened.terminal?.runId;
+      assert.equal(opened.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
+      const openedFacts = opened.terminal?.roleOutcome.kind === "accepted"
+        ? opened.terminal.roleOutcome.decisiveFacts as { officerRunId?: string; directionUnsettled?: boolean }
+        : undefined;
+      assert.equal(openedFacts?.directionUnsettled, true, `limit ${limit}`);
+      const officerRunId = openedFacts?.officerRunId;
       assert.equal(typeof officerRunId, "string", `limit ${limit}`);
       const beforeResume = calls.countersign ?? 0;
       const resumed = await runAkRole(["resume", officerRunId!], env);

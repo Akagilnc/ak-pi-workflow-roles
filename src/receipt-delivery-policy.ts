@@ -145,14 +145,13 @@ export function createReceiptDeliveryPolicy(limit?: number) {
     /** Infrastructure owns terminality and must never trigger receipt催交. */
     stopForInfrastructure() { accepted = true; },
     /**
-     * Record the tool rejection this turn already produced.
-     * Spends one budget slot unless the caller says the following delivery
-     * request is the spend for this same reminder.
+     * Record the rejection this turn already produced.
+     * The fact does not spend a budget. The seam that sends the next prompt
+     * owns that count.
      */
-    recordRejected(reason: string, accounting?: { readonly spend: false }) {
+    recordRejected(reason: string) {
       terminalToolCalled = true;
       rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
-      if (accounting?.spend !== false) spend();
     },
     recordDeliveryRequest() {
       deliveryTurns += 1;
@@ -206,7 +205,7 @@ export function createReceiptDeliveryPolicy(limit?: number) {
       readonly rejectedReceipts: readonly { reason: string }[];
     }) {
       for (const receipt of prior.rejectedReceipts) {
-        this.recordRejected(receipt.reason, { spend: false });
+        this.recordRejected(receipt.reason);
       }
       for (let index = 0; index < prior.deliveryTurns; index += 1) {
         this.recordDeliveryRequest();

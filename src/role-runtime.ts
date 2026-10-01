@@ -302,7 +302,7 @@ export {
   gateOfficerForSubject,
 };
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-import { isOneShotWorkerReminderCode, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
 export {
@@ -1291,23 +1291,13 @@ export function createRoleRuntimeExtension(
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
-        const details = event.details;
-        const code = details !== null && typeof details === "object" && "code" in details
-          ? details.code
-          : undefined;
-        // Unfinished-reason催全 and the one commit/prefix reminder spend on the
-        // send below. The rejection fact still belongs to this tool call.
-        // Counting the reminder here would occupy a催交 slot (#1132).
+        // The rejection fact stays on this tool call.催交 budget moves only
+        // when agent_end sends the delivery prompt (#1132).
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
           .trim();
-        const reminderSpendsOnSend = code === "worker_unfinished_reason_reminder"
-          || isOneShotWorkerReminderCode(code);
-        receiptDelivery.recordRejected(
-          reason,
-          reminderSpendsOnSend ? { spend: false } : undefined,
-        );
+        receiptDelivery.recordRejected(reason);
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
       // closure. tool_result retains only infrastructure settlement.
