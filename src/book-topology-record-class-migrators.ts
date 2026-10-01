@@ -15,6 +15,7 @@ import { dirname, join, relative, sep } from "node:path";
 
 import {
   bookHistoricalRoots,
+  canonicalRunSessionParent,
   findBookRunDirectory,
   findPlacedMigratingRun,
   findUniquePrincipalPlacedRun,
@@ -732,12 +733,28 @@ function normalizeJsonlRaw(raw: string): string {
   return raw.endsWith("\n") ? raw : `${raw}\n`;
 }
 
-/** Rewrite dest file without the given exact raw lines (drop wrong-nest copies after rehome). */
+/**
+ * Key shared by a backup row and the copy the runs migrator already rewrote.
+ * That rewrite replaces a run-directory prefix in sessionParent and
+ * re-stringifies every sessionParent line in the file. Bytes no longer match.
+ * The run leaf plus the path inside the run still does.
+ */
+function scrubLineKey(raw: string, bookRoots: readonly string[]): string {
+  const parsed = parseJsonlLine(raw);
+  if (!parsed.ok) return normalizeJsonlRaw(raw);
+  if (typeof parsed.value.sessionParent === "string") {
+    parsed.value.sessionParent = canonicalRunSessionParent(parsed.value.sessionParent, bookRoots);
+  }
+  return JSON.stringify(parsed.value);
+}
+
+/** Drop rehomed rows from the copied source nest. Other rows in the file stay. */
 async function scrubRawLinesFromFile(
   recordFile: string,
-  rawLines: ReadonlySet<string>,
+  keys: ReadonlySet<string>,
+  bookRoots: readonly string[],
 ): Promise<void> {
-  if (rawLines.size === 0) return;
+  if (keys.size === 0) return;
   const lines = await readJsonlLines(recordFile);
   if (lines.length === 0) return;
   const kept: string[] = [];
@@ -745,7 +762,7 @@ async function scrubRawLinesFromFile(
   for (const raw of lines) {
     if (raw.trim() === "") continue;
     const normalized = normalizeJsonlRaw(raw);
-    if (rawLines.has(normalized)) {
+    if (keys.has(scrubLineKey(raw, bookRoots))) {
       changed = true;
       continue;
     }
@@ -774,8 +791,13 @@ async function migrateMisplacedBook(
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
-  // backupRelPath → exact raw lines rehomed out of a source-run nest (wrong path or wrong principal).
-  // Match by line bytes, not identity — rows without identity must still leave the lying source copy.
+  // backupRelPath → rehomed rows. Key is the move-invariant line, not backup bytes
+  // and not identity: rows without identity must still leave the source copy.
+  const bookRoots = bookHistoricalRoots(
+    context.booksDirectory,
+    context.backupBooksDirectory,
+    bookKey,
+  );
   const scrubPlans = new Map<string, Set<string>>();
 
   for (const filePath of files) {
@@ -798,7 +820,7 @@ async function migrateMisplacedBook(
         withinBook,
         recordClass,
         parsed.value,
-        bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+        bookRoots,
       )) continue;
 
       const source = lineSource(context.backupBooksDirectory, filePath, index);
@@ -826,7 +848,7 @@ async function migrateMisplacedBook(
           set = new Set<string>();
           scrubPlans.set(withinBook, set);
         }
-        set.add(normalizeJsonlRaw(raw));
+        set.add(scrubLineKey(raw, bookRoots));
       }
     }
   }
@@ -843,7 +865,7 @@ async function migrateMisplacedBook(
       coords.role,
     );
     if (destRun === undefined) continue;
-    await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines);
+    await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines, bookRoots);
   }
 }
 
