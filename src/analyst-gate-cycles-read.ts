@@ -40,6 +40,7 @@ import {
 
 import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 import { retainedRunPathsMatch } from "./role-run-relocation.ts";
+import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -498,7 +499,7 @@ export async function readAnalystGateCyclesFromAuditorRoles(
         if (
           options.parentSessionFile !== undefined &&
           volume.parentSessionFile !== undefined &&
-          !await retainedRunPathsMatch(volume.parentSessionFile, options.parentSessionFile)
+          !await retainedRunPathsMatch(volume.parentSessionFile, options.parentSessionFile, runDirectoryOfSessionFile(options.parentSessionFile))
         ) {
           continue;
         }

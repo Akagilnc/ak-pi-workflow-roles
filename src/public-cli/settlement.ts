@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { sessionFileIn, sessionFileOf } from "../role-run-placement.ts";
+import { runDirectoryOfSessionFile, sessionFileIn, sessionFileOf } from "../role-run-placement.ts";
 import { sitianVolumeDirectory } from "../sitian-appender.ts";
 
 import {
@@ -1111,7 +1111,7 @@ async function loadBoundAuditorVolumes(
               ? header.parentSession
               : undefined;
         if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
-        if (!await retainedRunPathsMatch(boundSessionFile, sessionFile)) continue;
+        if (!await retainedRunPathsMatch(boundSessionFile, sessionFile, runDirectoryOfSessionFile(sessionFile))) continue;
         valid.push({
           entries: entries.slice(start, end),
           parentId,
@@ -1139,7 +1139,7 @@ async function complianceFailureFromAuditorVolumes(
       const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
       if (parent?.sessionId !== parentId || parent.attemptEntryId !== attemptEntryId) continue;
-      if (!await retainedRunPathsMatch(parent.sessionFile, sessionFile)) continue;
+      if (!await retainedRunPathsMatch(parent.sessionFile, sessionFile, runDirectoryOfSessionFile(sessionFile))) continue;
       // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
       if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;

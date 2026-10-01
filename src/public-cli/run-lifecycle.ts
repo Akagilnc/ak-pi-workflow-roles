@@ -1140,7 +1140,7 @@ export async function findLatestRunIdForSeatTicket(input: {
     const runId = parsed.runId;
     const parentPath = await readRunParentPath(runDirectory);
     // Follow the parent's retained placement without collapsing distinct book/subject bindings.
-    if (!await retainedRunPathsMatch(parentPath, input.parentRunPath)) continue;
+    if (!await retainedRunPathsMatch(parentPath, input.parentRunPath, input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
