@@ -158,19 +158,22 @@ export async function retainPackageFault(input: {
     ...(Object.hasOwn(input, "error") ? { failure: projectThrownFailureLeaf(input.error) } : {}),
   };
   let retentionFailure: string | undefined;
-  const writeArtifact = async (): Promise<void> => {
+  const writeArtifact = async (appendFailure?: ControlledFailure): Promise<void> => {
     const artifactsDir = await ensureRealArtifactsDirectory(input.runDirectory);
     await writeHardenedArtifactFile(artifactsDir, "post-admission-diagnostic", {
       version: 1,
       ...payload,
+      ...(appendFailure === undefined ? {} : { retentionFailure: appendFailure }),
     });
   };
   if (input.appendSession !== undefined) {
     try {
       await input.appendSession(payload);
     } catch (appendError) {
+      retentionFailure =
+        `post-dispatch diagnostic session append failed (best-effort continue): dossier=${describeErrorIdentity(appendError)}`;
       try {
-        await writeArtifact();
+        await writeArtifact(projectThrownFailureLeaf(appendError));
       } catch (artifactError) {
         retentionFailure =
           `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
@@ -674,12 +677,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
       identity: error.failureCode !== undefined && identity.code === undefined
         ? { ...identity, code: error.failureCode }
         : identity,
-      details: {
-        ...(typeof error.details === "object" && error.details !== null
-          ? error.details as Record<string, unknown>
-          : error.details === undefined ? {} : { priorDetails: error.details }),
-        error: serializeThrownValue(error),
-      },
+      details: error.details === undefined ? { error: serializeThrownValue(error) } : error.details,
     };
   }
   if (error instanceof Error) {
@@ -699,8 +697,8 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
 
 /**
  * Concurrent thrown failures (host + cleanup, etc.):
- * primary leaf owns cause/diagnostic/identity; remaining leaves stay as
- * details.concurrentFailures so neither fact covers the other.
+ * The typed report (or first leaf) owns cause/diagnostic/identity/details.
+ * Additional leaves ride under the existing independent package exception fact.
  */
 function classifyThrownFailure(error: unknown): ControlledFailure {
   if (!(error instanceof AggregateError)) {
@@ -711,32 +709,18 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
     // Empty aggregate — retain the aggregate shell rather than invent a cause.
     return projectThrownFailureLeaf(error);
   }
-  const primary = projectThrownFailureLeaf(leaves[0]);
-  if (leaves.length === 1) {
-    return primary;
-  }
-  const priorConcurrent = Array.isArray(primary.details?.concurrentFailures)
-    ? primary.details.concurrentFailures
-    : [];
-  const concurrentFailures = [
-    ...priorConcurrent,
-    ...leaves.slice(1).map((leaf) => {
-      const secondary = projectThrownFailureLeaf(leaf);
-      return {
-        ...(secondary.cause === undefined ? {} : { cause: secondary.cause }),
-        diagnostic: secondary.diagnostic,
-        ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
-        ...(secondary.details === undefined ? {} : { details: secondary.details }),
-      };
-    }),
-  ];
+  const typedAggregate = isTypedActivationError(error);
+  const primary = projectThrownFailureLeaf(typedAggregate ? error : leaves[0]);
+  const secondary = typedAggregate ? leaves : leaves.slice(1);
+  if (secondary.length === 0) return primary;
   return {
-    ...(primary.cause === undefined ? {} : { cause: primary.cause }),
-    diagnostic: primary.diagnostic,
-    ...(primary.identity === undefined ? {} : { identity: primary.identity }),
-    details: {
-      ...(primary.details ?? {}),
-      concurrentFailures,
+    ...primary,
+    packageFact: {
+      thrown: {
+        diagnostic: error.message || error.name || "exception",
+        identity: thrownIdentity(error),
+        details: { concurrentFailures: secondary.map(projectThrownFailureLeaf) },
+      },
     },
   };
 }
