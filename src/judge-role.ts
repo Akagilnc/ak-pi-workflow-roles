@@ -1,10 +1,7 @@
-import {
-  type RoleHost,
-  type HostContext,
-  type HostToolResult,
-} from "./host-contracts.ts";
-import type { Static } from "typebox";
+import { type RoleHost } from "./host-contracts.ts";
 import { reviewSubmissionSchema } from "./review-submission.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -90,18 +87,8 @@ export function createJudgeRoleRuntime(
       if (soul.length === 0) throw new Error("Judge soul is empty");
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        pi.registerTool({
-          name: JUDGE_OUTPUT_TOOL_NAME,
-          label: "大理寺输出",
-          description: "提交大理寺终局判词；交卷调用结束后，由公开调用接缝按判词状态执行适用审核。",
-          promptSnippet: "提交大理寺终局判词",
-          parameters: judgeVerdictSchema,
-          async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error("大理寺职分未装载");
-            // ADR 0003: record the original receipt and end the tool call first.
-            // The public seam reads status and chooses the next route.
-            return { content: [], details: parameters, terminate: true };
-          },
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("judge"), {
+          readyError: () => (soul === undefined ? "大理寺职分未装载" : undefined),
         });
         pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("大理寺职分未装载");

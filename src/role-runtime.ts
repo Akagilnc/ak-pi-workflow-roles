@@ -6,7 +6,6 @@ import {
 
   runDirectoryFromHostContext,
   type HostContext,
-  type HostToolResult,
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
@@ -14,6 +13,8 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
@@ -567,7 +568,7 @@ function createFiledOfficerRuntime(
   roleHost: RoleHost,
   spec: {
     role: PackagedRole;
-    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    tool: RoleSubmissionDeclaration;
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
   },
@@ -582,26 +583,9 @@ function createFiledOfficerRuntime(
       soul = loaded;
       if (!registered) {
         registered = true;
-        roleHost.registerTool({
-          name: spec.tool.name,
-          label: spec.tool.label,
-          description: spec.tool.description,
-          promptSnippet: spec.tool.promptSnippet,
-          parameters: spec.tool.parameters as never,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            const projected =
-              spec.beforeAccept === undefined
-                ? undefined
-                : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            // Accept-as-is + terminate only. Shape is not an admission gate
-            // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
-            return {
-              content: [],
-              details: projected === undefined ? parameters : projected,
-              terminate: true as const,
-            };
-          },
+        registerFiledSubmissionTool(roleHost, spec.tool, {
+          readyError: () => (soul === undefined ? `${spec.role} 职分未装载` : undefined),
+          ...(spec.beforeAccept === undefined ? {} : { beforeAccept: spec.beforeAccept }),
         });
         roleHost.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);

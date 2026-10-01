@@ -1,18 +1,15 @@
-import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
-import { Type, type Static } from "typebox";
-import { openToolObject } from "./open-tool-schema.ts";
-import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
+import type { RoleHost, HostContext, HostGatekeeperActions } from "./host-contracts.ts";
 
 import {
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
   type CoderOutput,
   type FixerOutput,
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
-import { PARTIALLY_COMPLETED_DEFINITION, fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -32,28 +29,10 @@ import {
 export {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
+  coderOutputSchema,
   validateAcceptedWorkerDetails,
-};
-export type { WorkerOutput };
-
-// status 的合法词写在 description。WORKER_DONE_STATUSES 只让 completed /
-// partially_completed 进入提交闸。unfinished 且未见理由说明时，运行时同 run 催全
-// （ADR 0050）；理由在不在不按 JSON 类型判，也不在派发前用长度拒收。
-// report / remainingScope / reason 的声明只留字段名和语义。
-const CODER_STATUS_DESCRIPTION =
-  `planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。${PARTIALLY_COMPLETED_DEFINITION}` as const;
-const coderOutputObject = Type.Object({
-  status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
-  report: Type.Unknown({ description: "如实结果报告" }),
-  remainingScope: Type.Unknown({ description: "本局后剩余工作" }),
-  reason: Type.Unknown({
-    description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
-  }),
-});
-export const coderOutputSchema = withTerminatingOutputDeclarations(
-  openToolObject(coderOutputObject),
-);
-export type { FixerOutput, CoderOutput };
+} from "./package-contracts/worker-output.ts";
+export type { WorkerOutput, FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
   packet: {
     name: "ak-fix-packet",
@@ -215,16 +194,11 @@ export function createFixerRoleRuntime(
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        pi.registerTool({
-          name: FIXER_OUTPUT_TOOL_NAME,
-          label: "修内司输出",
-          description: "提交修内司终局回执。",
-          promptSnippet: "提交修内司终局回执",
-          parameters: fixerOutputSchema,
-          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
-            if (packet === undefined || phase === undefined) {
-              throw new Error("修内司修理包与阶段未装载");
-            }
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("fixer"), {
+          readyError: () =>
+            packet === undefined || phase === undefined ? "修内司修理包与阶段未装载" : undefined,
+          beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+            if (phase === undefined) throw new Error("修内司修理包与阶段未装载");
             const output = deepFreeze(validateFixerOutput(parameters, phase));
             const status = workerStatusOf(output);
             if (status !== undefined) {
@@ -237,7 +211,7 @@ export function createFixerRoleRuntime(
                 toolCallId,
               );
             }
-            return { content: [], details: output, terminate: true as const };
+            return output;
           },
         });
         pi.on("tool_call", (event) => {
@@ -313,20 +287,13 @@ export function createCoderRoleRuntime(
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        pi.registerTool({
-          name: CODER_OUTPUT_TOOL_NAME,
-          label: "将作监输出",
-          description: "提交将作监终局回执。",
-          promptSnippet: "提交将作监终局回执",
-          parameters: coderOutputSchema,
-          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
-            if (task === undefined || phase === undefined) {
-              throw new Error("将作监任务与阶段未装载");
-            }
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("coder"), {
+          readyError: () =>
+            task === undefined || phase === undefined ? "将作监任务与阶段未装载" : undefined,
+          beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+            if (phase === undefined) throw new Error("将作监任务与阶段未装载");
             const output = validateWorkerOutput(parameters, phase, "Coder");
             const status = workerStatusOf(output);
-            // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
-            // Skill still ships with the package (ADR 0052); code no longer refuses on it.
             if (status !== undefined) {
               assertAcceptableThroughHost(
                 submissionGate,
@@ -337,7 +304,7 @@ export function createCoderRoleRuntime(
                 toolCallId,
               );
             }
-            return { content: [], details: output, terminate: true as const };
+            return output;
           },
         });
         pi.on("before_agent_start", (event, ctx) => {

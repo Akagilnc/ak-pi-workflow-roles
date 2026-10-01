@@ -7,10 +7,8 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
-import {
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-  gatekeeperOutputSchema,
-} from "./package-contracts/gatekeeper-output.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
@@ -157,13 +155,7 @@ export type SubmissionGateHostActions = {
  * registration envelope — src/role-runtime.ts (ADR 0018). Schema authority is
  * the shared contract module (with infrastructure-failure declaration).
  */
-export const GATEKEEPER_TOOL_SPEC = {
-  name: GATEKEEPER_OUTPUT_TOOL_NAME,
-  label: "门下省决议",
-  description: "门下省终局决议。status 为 dispatch 或 pass。",
-  promptSnippet: "门下省决议",
-  parameters: gatekeeperOutputSchema,
-} as const;
+export const GATEKEEPER_TOOL_SPEC = roleSubmissionDeclaration("gatekeeper");
 
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
