@@ -89,7 +89,11 @@ export async function retainedRunPathsMatch(
   if (currentRunDirectory !== undefined) {
     const identity = await readRoleRunIdentity(currentRunDirectory);
     if (identity !== undefined) {
-      for (let directory = currentRunDirectory; dirname(directory) !== directory; directory = dirname(directory)) {
+      for (
+        let directory = physicalPathIdentity(currentRunDirectory);
+        dirname(directory) !== directory;
+        directory = dirname(directory)
+      ) {
         if (directory === activationBookDirectory(dirname(dirname(directory)), identity.bookKey)) {
           bookDirectory = directory;
           break;
