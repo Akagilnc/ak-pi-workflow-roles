@@ -33,7 +33,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
+import { formatRunLeaf, parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
 import {
   S4_SUBMISSION_LEDGER_KINDS,
   sitianRunVolumeDirectory,
@@ -364,10 +364,11 @@ async function resolveRunDestination(
     return { kind: "unbound-key", key: stableKey(bound.leaf) };
   }
   if (hints.role !== undefined && hints.role.length > 0) {
+    const leaf = formatRunLeaf(runId, hints.role);
     const existingDest = await findPlacedMigratingRun(
       context.booksDirectory,
       bookKey,
-      `${runId}@${hints.role}`,
+      leaf,
     );
     if (existingDest !== undefined) {
       return {
@@ -376,7 +377,7 @@ async function resolveRunDestination(
         disposition: existingDest.disposition,
       };
     }
-    return { kind: "unbound-key", key: stableKey(`${runId}@${hints.role}`) };
+    return { kind: "unbound-key", key: stableKey(leaf) };
   }
   // No path, no role: follow only a uniquely matching principal in this book.
   const uniquePrincipal = await findUniquePrincipalPlacedRun(

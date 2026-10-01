@@ -1136,13 +1136,11 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  const suffix = `@${input.role}`;
   let best: string | undefined;
   for (const runDirectory of runDirectories) {
-    const entry = basename(runDirectory);
-    if (!entry.endsWith(suffix)) continue;
-    const runId = entry.slice(0, entry.length - suffix.length);
-    if (runId.length === 0) continue;
+    const parsed = parseRunLeaf(basename(runDirectory));
+    if (parsed === undefined || parsed.role !== input.role) continue;
+    const runId = parsed.runId;
     const parentPath = await readRunParentPath(runDirectory);
     // The parent's ticket can change after this child was admitted. Within one
     // book the run leaf is its stable identity; directory placement is not.

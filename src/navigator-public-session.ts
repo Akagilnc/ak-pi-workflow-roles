@@ -21,6 +21,7 @@ import {
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
+import { parseRunLeaf } from "./role-run-placement.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
@@ -59,11 +60,9 @@ function exactRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
-  const entry = basename(runDirectory);
-  const suffix = "@navigator";
-  if (!entry.endsWith(suffix)) return undefined;
-  const runId = entry.slice(0, entry.length - suffix.length);
-  return runId.length > 0 ? runId : undefined;
+  const parsed = parseRunLeaf(basename(runDirectory));
+  if (parsed === undefined || parsed.role !== "navigator") return undefined;
+  return parsed.runId;
 }
 
 export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
