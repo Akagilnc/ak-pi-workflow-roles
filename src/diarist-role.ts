@@ -18,16 +18,12 @@ export { validateRecordedDiaristOutput };
 /**
  * 起居郎交卷形状。
  * #901：交边界（sessions）；正文与不可解析原字节由机械投影。
- * #1134: `status` alone is the trajectory field (src/diarist-contracts.ts:55
- * recognizes completed | escalate to settle); its words ride the description.
- * reason/sessions/ticketSessions are declared name + semantic description only —
- * the string type, the nested session/range/from/to object shapes and the array
- * types are deleted, because the package declaration IS the host's pre-dispatch
- * validator. The mechanical projection below still parses whatever shape arrives
- * (projectDiaristSessions / projectDiaristTicketSessions, #901 reask-not-explode).
+ * status 的合法词（completed | escalate）写在 description，结算认这些词。
+ * sessions / ticketSessions 是投影所读的边界：卷路径或端点读不出时走既有 reask，不中止本轮。
+ * 声明只留字段名和语义说明，不留类型、嵌套、长度、必填。
  */
 const DIARIST_SESSIONS_DESCRIPTION =
-  "对话边界；每卷一节，每节含若干区间，每区间含 from / to 起点终点（原生 id 或本轮行号二选一）。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。" as const;
+  "对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；起点与终点各写 id（原生 id）或 line（本轮行号），二选一。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。" as const;
 
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
@@ -46,7 +42,7 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
       }),
       sessions: Type.Optional(Type.Unknown({ description: DIARIST_SESSIONS_DESCRIPTION })),
       ticketSessions: Type.Unknown({
-        description: `多票庭逐票对话边界；每票含 ticketNumber 与其 ${DIARIST_SESSIONS_DESCRIPTION}一次交卷各票各自分录。与单票 sessions 二选一。`,
+        description: `多票庭逐票对话边界；每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。与单票 sessions 二选一。`,
       }),
     }),
   ),

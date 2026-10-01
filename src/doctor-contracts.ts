@@ -45,14 +45,10 @@ export type DoctorOutput = DoctorSubmission;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
-// #1134: `status` alone is the trajectory field (src/doctor-contracts.ts:112-114
-// reads completed | refused to settle); its words ride the description.
-// case/findings/reason/missingEvidence are LLM/human-read narrative content —
-// the submission passes through unprojected (validateDoctorSubmissionShape) and
-// Judge/台院 read the original volume, so no code branches on their length or
-// nested presence. Declaration keeps field name + semantic description only:
-// type, nesting, Literal, union, length, minimum and required are all deleted,
-// because the package declaration IS the host's pre-dispatch validator.
+// status 的合法词写在 description。交卷原样入账（validateDoctorSubmissionShape），
+// 本文件不按 completed | refused 改道。case / findings / reason / missingEvidence
+// 同样不按长度或嵌套改道，台院读原卷。声明只留字段名和语义说明，不留类型、嵌套、
+// 枚举、长度、必填。
 // The evidence-read action tool below keeps its own constraints — code reads
 // evidenceId/offset/limit to look up and slice (DoctorEvidenceStore.read), which
 // is a live-target binding, not a submission shape gate (ADR 0037).
@@ -66,7 +62,7 @@ const doctorSubmissionObject = Type.Object({
   }),
   findings: Type.Unknown({
     description:
-      "逐条资产观察与处方，原样留存（如 targetKey、observation、evidenceIds、disposition、guardrails、prescription、lastRealBite、assetEvidence）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。",
+      "逐条资产观察与处方，原样留存。一条可含 targetKey、targetKind、observation、evidenceIds、disposition、assetEvidence（targetKey、targetKind、evidenceId）、guardrails（reproducibleFailure、owningSeamOrInvariant、deletionOrSimplificationSuffices，各项可含 answer、evidenceIds、explanation）、prescription（kind、recommendation、necessityExplanation）、lastRealBite（kind、targetKey、evidenceId、eligibleEvidenceIds）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。",
   }),
   reason: Type.Unknown({
     description: "证据不足以支撑如实证词的原因；仅 refused 时用。",

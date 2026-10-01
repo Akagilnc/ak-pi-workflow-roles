@@ -7,16 +7,9 @@ export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 /** Owner 2026-09-28: partially_completed only when a lawful refusal exists; never otherwise (ADR 0015). */
 export const PARTIALLY_COMPLETED_DEFINITION =
   "partially_completed 只能在有合法拒绝项（完成项与合法拒绝项并存）时用，别的情况不准用。" as const;
-// #1134: `status` alone is the trajectory field AK reads to pick the next step
-// (src/worker-submission-gates.ts:296-303, src/public-cli/settlement.ts), so its
-// legal words live in the description every host shows the model. Every other
-// field below is narrative or settlement content that lands on the ledger as
-// submitted (src/submission-ledger.ts) and that no code branches on — its
-// declaration keeps the field name and this semantic description only. Type,
-// nesting, Literal, union, length and required constraints are deleted: the
-// package declaration IS the host's pre-dispatch validator, so a constraint
-// here is a rejection rule the owner never approved (owner 9ed9fa43-e814-40c4-
-// afe6-879767bc6daf: 只有需要拿来判断走势的字段，才有格式/枚举要求).
+// status 的合法词写在 description。completed / partially_completed 进入提交闸；
+// unfinished 且未见理由说明时，运行时同 run 催全（ADR 0050），理由在不在不按 JSON 类型判。
+// 其余字段入账原样留存。声明只留字段名和语义说明，不留类型、嵌套、枚举、长度、必填。
 const FIXER_STATUS_DESCRIPTION =
   `planned | completed | refused | unfinished | partially_completed。unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。${PARTIALLY_COMPLETED_DEFINITION}` as const;
 
@@ -35,10 +28,11 @@ const fixerOutputObject = Type.Object({
   }),
   classResults: Type.Unknown({
     description:
-      "各类 class 结算，原样留存（完成项可写 name、disposition、searchScope、exceptions、commitSha；拒绝项可写 name、disposition、remainingScope、blocker）。",
+      "各类 class 结算，原样留存（完成项可写 name、disposition、searchScope、exceptions（where、reason）、commitSha；拒绝项可写 name、disposition、remainingScope、blocker）。",
   }),
   testEvidence: Type.Unknown({
-    description: "测试证据条；diff 含测试改动时提交；机器不核验。",
+    description:
+      "测试证据条；diff 含测试改动时提交；机器不核验。可写 contract（测试改动所证明的契约）、minimumNecessaryCost（测试改动的一行最小必要成本）、measuredDuration（聚焦验证实测时长）。",
   }),
 });
 

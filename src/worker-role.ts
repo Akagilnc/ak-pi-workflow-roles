@@ -36,14 +36,10 @@ export {
 };
 export type { WorkerOutput };
 
-// #1134: `status` alone is the trajectory field (WORKER_DONE_STATUSES in
-// src/worker-submission-contracts.ts decides gate entry; its words ride the
-// description every host shows the model). report/remainingScope/reason are
-// narrative content recorded as submitted — declaration keeps name +
-// semantic description only, no type/length/required constraint. In particular
-// `reason` loses minLength:1: the unfinished-reason reminder is a runtime
-// bounce on an empty reason (src/worker-submission-gates.ts:159-163,296-302),
-// never a reason to refuse the call before execute runs.
+// status 的合法词写在 description。WORKER_DONE_STATUSES 只让 completed /
+// partially_completed 进入提交闸。unfinished 且未见理由说明时，运行时同 run 催全
+// （ADR 0050）；理由在不在不按 JSON 类型判，也不在派发前用长度拒收。
+// report / remainingScope / reason 的声明只留字段名和语义。
 const CODER_STATUS_DESCRIPTION =
   `planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。${PARTIALLY_COMPLETED_DEFINITION}` as const;
 const coderOutputObject = Type.Object({
