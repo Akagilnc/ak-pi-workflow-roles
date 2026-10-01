@@ -110,6 +110,45 @@ export function validateWorkerOutput(
 }
 
 
+/**
+ * Coder and fixer share one submission sequence: record via the shared tool,
+ * then read status and bounce through the same reminder gate.
+ * Seat differences stay in the ready check and the projection.
+ */
+function registerWorkerSubmission(
+  pi: RoleHost,
+  role: "coder" | "fixer",
+  options: {
+    readonly notReady: string;
+    readonly ready: () => boolean;
+    readonly phase: () => WorkerPhase | undefined;
+    readonly project: (parameters: unknown, phase: WorkerPhase) => WorkerOutput;
+    readonly submissionGate: { assertAcceptable(status: string, details?: unknown): void };
+    readonly hostActions: WorkerRoleHostActions;
+  },
+): void {
+  registerFiledSubmissionTool(pi, roleSubmissionDeclaration(role), {
+    readyError: () => (options.ready() ? undefined : options.notReady),
+    beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+      const phase = options.phase();
+      if (phase === undefined) throw new Error(options.notReady);
+      const output = options.project(parameters, phase);
+      const status = workerStatusOf(output);
+      if (status !== undefined) {
+        assertAcceptableThroughHost(
+          options.submissionGate,
+          status,
+          output,
+          options.hostActions,
+          ctx,
+          toolCallId,
+        );
+      }
+      return output;
+    },
+  });
+}
+
 /** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
 function assertAcceptableThroughHost(
   submissionGate: { assertAcceptable(status: string, details?: unknown): void },
@@ -194,25 +233,13 @@ export function createFixerRoleRuntime(
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("fixer"), {
-          readyError: () =>
-            packet === undefined || phase === undefined ? "修内司修理包与阶段未装载" : undefined,
-          beforeAccept: async ({ toolCallId, parameters, ctx }) => {
-            if (phase === undefined) throw new Error("修内司修理包与阶段未装载");
-            const output = deepFreeze(validateFixerOutput(parameters, phase));
-            const status = workerStatusOf(output);
-            if (status !== undefined) {
-              assertAcceptableThroughHost(
-                submissionGate,
-                status,
-                output,
-                hostActions,
-                ctx,
-                toolCallId,
-              );
-            }
-            return output;
-          },
+        registerWorkerSubmission(pi, "fixer", {
+          notReady: "修内司修理包与阶段未装载",
+          ready: () => packet !== undefined && phase !== undefined,
+          phase: () => phase,
+          project: (parameters, current) => deepFreeze(validateFixerOutput(parameters, current)),
+          submissionGate,
+          hostActions,
         });
         pi.on("tool_call", (event) => {
           if (event.toolName !== "bash") return;
@@ -287,25 +314,13 @@ export function createCoderRoleRuntime(
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("coder"), {
-          readyError: () =>
-            task === undefined || phase === undefined ? "将作监任务与阶段未装载" : undefined,
-          beforeAccept: async ({ toolCallId, parameters, ctx }) => {
-            if (phase === undefined) throw new Error("将作监任务与阶段未装载");
-            const output = validateWorkerOutput(parameters, phase, "Coder");
-            const status = workerStatusOf(output);
-            if (status !== undefined) {
-              assertAcceptableThroughHost(
-                submissionGate,
-                status,
-                output,
-                hostActions,
-                ctx,
-                toolCallId,
-              );
-            }
-            return output;
-          },
+        registerWorkerSubmission(pi, "coder", {
+          notReady: "将作监任务与阶段未装载",
+          ready: () => task !== undefined && phase !== undefined,
+          phase: () => phase,
+          project: (parameters, current) => validateWorkerOutput(parameters, current, "Coder"),
+          submissionGate,
+          hostActions,
         });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");

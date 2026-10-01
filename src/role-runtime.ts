@@ -13,7 +13,7 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
-import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -547,18 +547,6 @@ export async function projectClosedSubmissionLifecycle(
 }
 
 /**
- * Optional pre-accept hook on the shared filed-officer envelope (ADR 0075).
- * May return a details projection (envelope-owned machine facts recorded next to
- * the submitted parameters); undefined keeps the parameters as submitted.
- */
-type FiledOfficerBeforeAccept = (input: {
-  readonly toolCallId: string;
-  readonly parameters: unknown;
-  readonly signal: AbortSignal | undefined;
-  readonly ctx: HostContext;
-}) => Promise<unknown>;
-
-/**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
@@ -570,7 +558,7 @@ function createFiledOfficerRuntime(
     role: PackagedRole;
     tool: RoleSubmissionDeclaration;
     soulTag: string;
-    beforeAccept?: FiledOfficerBeforeAccept;
+    beforeAccept?: FiledSubmissionBeforeAccept;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
