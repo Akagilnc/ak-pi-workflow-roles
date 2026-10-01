@@ -136,6 +136,8 @@ export type SubmissionGateOutcome = {
   readonly receipt: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
+  /** Officer terminal already returned by the summon. Present when the reply was not a queue word. */
+  readonly terminal?: TerminalResult;
 };
 
 /**
@@ -225,6 +227,9 @@ export async function requireSubmissionGate(options: {
             && projected.summoned.runDirectory.trim() !== ""
             ? { runDirectory: projected.summoned.runDirectory }
             : {}),
+          ...(projected.summoned?.terminal === undefined
+            ? {}
+            : { terminal: projected.summoned.terminal }),
         };
       }
       reasksSpent += 1;

@@ -1147,25 +1147,16 @@ async function auditSubmittedRole(
             receipt: pass.receipt,
             ...(pass.runId === undefined ? {} : { runId: pass.runId }),
             ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+            ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
           }],
         };
       }
     }
     if (chain.status === "needs_reask") {
-      const held = chain.passes.at(-1);
-      const heldRunId = held?.runId
-        ?? (held?.runDirectory === undefined
-          ? undefined : runIdFromRunDirectory(held.runDirectory));
-      if (heldRunId !== undefined) {
-        const officer = await loadResumablePublicRole(env.home, heldRunId, env.principalAuthority);
-        const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
-        if (terminal === undefined) throw new Error("unreadable audit has no terminal result");
-        io.stdout(formatTerminalResult(terminal));
-        return { exitCode: 0, terminal };
-      }
-      if (turn.terminal === undefined) throw new Error("unreadable audit has no terminal result");
-      io.stdout(formatTerminalResult(turn.terminal));
-      return { exitCode: 0, terminal: turn.terminal };
+      const terminal = chain.passes.at(-1)?.terminal;
+      if (terminal === undefined) throw new Error("unreadable audit has no terminal result");
+      io.stdout(formatTerminalResult(terminal));
+      return { exitCode: 0, terminal };
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);

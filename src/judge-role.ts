@@ -10,6 +10,7 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -29,6 +30,7 @@ export async function runJudgeGates(input: {
     readonly receipt?: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
+    readonly terminal?: TerminalResult;
   } | void>;
 }): Promise<{
   readonly status: "converged" | "continue" | "escalate" | "needs_reask";
@@ -38,6 +40,7 @@ export async function runJudgeGates(input: {
     readonly receipt: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
+    readonly terminal?: TerminalResult;
   }[];
 }> {
   const passes: {
@@ -46,6 +49,7 @@ export async function runJudgeGates(input: {
     receipt: unknown;
     runId?: string;
     runDirectory?: string;
+    terminal?: TerminalResult;
   }[] = [];
   for (const subject of JUDGE_GATES) {
     if (await input.gateAlreadyConverged(subject)) continue;
@@ -65,6 +69,7 @@ export async function runJudgeGates(input: {
           receipt: pass.receipt,
           ...(pass.runId === undefined ? {} : { runId: pass.runId }),
           ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+          ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
         }],
       };
     }
