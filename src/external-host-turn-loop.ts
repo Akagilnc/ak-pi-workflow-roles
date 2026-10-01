@@ -10,6 +10,8 @@ import type {
   RoleTurnResult,
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
+import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
+import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
@@ -129,7 +131,7 @@ export async function driveExternalRoleTurnRounds(
 ): Promise<RoleTurnResult> {
   let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
-  let stderr = "";
+  let result: RoleTurnResult = { code: 0, stderr: "", timedOut: false };
 
   for (let attempt = 0; attempt < EXTERNAL_ROLE_TURN_ROUND_LIMIT; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
@@ -141,35 +143,60 @@ export async function driveExternalRoleTurnRounds(
       if (isHostAbortedError(error)) return settleHostAborted(prepared, driver.currentSessionId());
       throw error;
     }
-    if (round.status === "terminal") {
-      const result = round.result;
-      const combined = `${stderr}${result.stderr}`;
-      return combined === result.stderr ? result : { ...result, stderr: combined };
+    if (round.status === "terminal") return round.result;
+    // Only this round's exit and stderr belong to this round's terminal.
+    // ACP has no child exit; its successful protocol completion carries code 0.
+    result = {
+      code: round.code !== undefined ? round.code : 0,
+      stderr: round.stderr ?? "",
+      timedOut: round.timedOut === true,
+      ...(round.signal === undefined ? {} : { signal: round.signal }),
+    };
+    let closure: Awaited<ReturnType<ExternalPreparedTurn["closeRound"]>>;
+    try {
+      closure = await prepared.closeRound();
+    } catch (error) {
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `round closure failed beside host terminal: ${describeErrorIdentity(error)}`,
+        error,
+      });
+      return result.code === 0 && !result.timedOut && result.signal === undefined
+        ? { ...result, knownFailure: projectThrownFailureLeaf(error) }
+        : result;
     }
-    if (round.stderr !== undefined && round.stderr.length > 0) stderr += round.stderr;
-
-    const closure = await prepared.closeRound();
     if (closure.accepted) {
-      await driver.afterAccepted?.();
-      // A lawful reply is not a normal exit. Carry the exit this driver actually has.
-      // ACP session/prompt has no child code; only then is there nothing to carry.
-      return {
-        code: round.code !== undefined ? round.code : 0,
-        stderr,
-        timedOut: round.timedOut === true,
-        ...(round.signal === undefined || round.signal.length === 0 ? {} : { signal: round.signal }),
-      };
+      try { await driver.afterAccepted?.(); }
+      catch (error) {
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `post-acceptance close failed beside host terminal: ${describeErrorIdentity(error)}`,
+          error,
+        });
+      }
+      return result;
     }
-    if ("failure" in closure) return asFailure(closure.failure, stderr);
+    if ("failure" in closure) {
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `round closure failed beside host terminal: ${JSON.stringify(closure.failure)}`,
+      });
+      // This is an explicit envelope failure (e.g. required audit/ledger failure),
+      // not an inferred host cause. Preserve the process facts alongside it.
+      return result.code === 0 && !result.timedOut && result.signal === undefined
+        ? { ...result, knownFailure: closure.failure }
+        : result;
+    }
+    if (result.code !== 0 || result.signal !== undefined || result.timedOut) return result;
     prompt = closure.retry.message;
     driver.afterRetry?.();
   }
 
-  return asFailure({
-    cause: "output",
-    identity: { name: driver.roundLimitName, code: "round-retry-limit" },
-    ...(driver.currentSessionId() === undefined ? {} : { details: { sessionId: driver.currentSessionId() } }),
+  await retainPackageFault({
+    runDirectory: request.runDirectory,
+    diagnostic: `${driver.roundLimitName}: round-retry-limit`,
   });
+  return result;
 }
 
 export function createSerializedRoleTurnHost(

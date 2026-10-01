@@ -144,6 +144,8 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
 export async function retainPackageFault(input: {
   readonly runDirectory: string;
   readonly diagnostic: string;
+  /** Original package exception, independent of the host report. */
+  readonly error?: unknown;
   readonly appendSession?: (payload: {
     readonly diagnostic: string;
     readonly recordedAt: string;
@@ -153,6 +155,7 @@ export async function retainPackageFault(input: {
   const payload = {
     diagnostic: input.diagnostic,
     recordedAt: new Date().toISOString(),
+    ...(Object.hasOwn(input, "error") ? { failure: projectThrownFailureLeaf(input.error) } : {}),
   };
   let retentionFailure: string | undefined;
   const writeArtifact = async (): Promise<void> => {

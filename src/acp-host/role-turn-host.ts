@@ -361,7 +361,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               agentProseChunks.length = 0;
               return {
                 status: "terminal",
-                result: failure("output", "AcpRefusal", "refusal", { sessionId }),
+                result: {
+                  code: null,
+                  stderr: activeConnection.stderr?.() ?? "",
+                  timedOut: false,
+                  knownFailure: { diagnostic: result.stopReason, details: result },
+                },
               };
             }
             // #959: navigator prose exit when the model spoke without the output tool.
@@ -391,22 +396,42 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       if (connection !== undefined) {
         if (sessionId !== undefined && !accepted) {
           try { connection.notify("session/cancel", { sessionId }); }
-          catch { /* keep turn result */ }
+          catch (error) {
+            await retainPackageFault({
+              runDirectory: request.runDirectory,
+              diagnostic: `session cancel failed beside host terminal: ${describeErrorIdentity(error)}`,
+              error,
+            });
+          }
         }
         try { await connection.close(); }
-        catch { /* keep turn result */ }
+        catch (error) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `connection close failed beside host terminal: ${describeErrorIdentity(error)}`,
+            error,
+          });
+        }
       }
       if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
-        copyAndRecordHostDossier({
-          host: config.hostName,
-          sessionId,
-          cwd: request.cwd,
-          sessionDirectory: join(request.runDirectory, "session"),
-          sessionParent,
-          continuation: request.continuation,
-          ...(request.model !== undefined ? { model: request.model } : {}),
-          ...(request.home !== undefined ? { home: request.home } : {}),
-        });
+        try {
+          copyAndRecordHostDossier({
+            host: config.hostName,
+            sessionId,
+            cwd: request.cwd,
+            sessionDirectory: join(request.runDirectory, "session"),
+            sessionParent,
+            continuation: request.continuation,
+            ...(request.model !== undefined ? { model: request.model } : {}),
+            ...(request.home !== undefined ? { home: request.home } : {}),
+          });
+        } catch (error) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
+            error,
+          });
+        }
       }
       try {
         await prepared.dispose?.();
@@ -414,6 +439,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         await retainPackageFault({
           runDirectory: request.runDirectory,
           diagnostic: `host dispose failed beside host terminal: ${describeErrorIdentity(cleanupError)}`,
+          error: cleanupError,
         });
       }
     }

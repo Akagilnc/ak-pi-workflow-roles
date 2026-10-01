@@ -92,17 +92,15 @@ const waitForPointer = setInterval(() => {
         mcpServers: [{ name: "ak-probe", command: "/usr/bin/node", args: ["relay.mjs"] }],
         systemPrompt: { body: "system", materials: [] },
         prompt: request.continuation.prompt,
-        // Realistic open-schema shapes the production closer must preserve:
-        // required stays non-null; optional becomes type|null; nested/array/const/unknown kept.
+        // The native send path must not narrow open declarations.
         jsonSchema: {
           type: "object",
           properties: {
             status: { type: "string" },
             routingStatus: { description: "completed | refused — shape guidance, not a schema gate" },
-            // Composite nullable type: strip null in-leaf; required keeps non-null.
+            // Nullable declarations stay nullable.
             label: { type: ["string", "null"] },
             report: { type: "string" },
-            // Optional composite nullable → non-null leaf + unified null at the edge.
             note: { type: ["string", "null"] },
             nested: {
               type: "object",
@@ -149,12 +147,16 @@ const waitForPointer = setInterval(() => {
     assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
     assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
     assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
-    await assert.rejects(readFile(join(root, "headless-output-schema.json"), "utf8"));
+    const sentSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
+    assert.equal(sentSchema.additionalProperties, true);
+    assert.deepEqual(sentSchema.required, ["status", "routingStatus", "label", "nested"]);
+    assert.deepEqual(sentSchema.properties.label.type, ["string", "null"]);
+    assert.equal(sentSchema.properties.nested.additionalProperties, true);
+    assert.equal(sentSchema.properties.free.type, undefined);
     const gapNames = (await readdir(join(root, "artifacts"))).filter((name) => name.startsWith("post-admission-diagnostic-"));
     assert.ok(gapNames.length >= 1);
     const gap = JSON.parse(await readFile(join(root, "artifacts", gapNames[0]!), "utf8")) as { diagnostic?: unknown };
     assert.equal(typeof gap.diagnostic, "string");
-    assert.equal(String(gap.diagnostic).includes("--output-schema"), true);
 
     receipt = undefined;
     const resumed = await host.executeTurn({
@@ -177,7 +179,7 @@ const waitForPointer = setInterval(() => {
     const explicitArgv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
     assert.deepEqual(explicitArgv.at(-1)!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-from-package"]);
     rejectLoad = false;
-    assert.equal(argv[1]!.includes("--output-schema"), false);
+    assert.equal(argv[1]!.includes("--output-schema"), true);
     const exited = await host.executeTurn({
       ...request,
       continuation: { kind: "initial", prompt: "exit-17" },
@@ -185,7 +187,7 @@ const waitForPointer = setInterval(() => {
     assert.equal(exited.code, 17);
     assert.equal(exited.signal, undefined);
     assert.equal(exited.knownFailure, undefined);
-    assert.equal(exited.stderr.includes("HOST STDERR"), true);
+    assert.equal(exited.stderr, "HOST STDERR\n");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
     const signaled = await host.executeTurn({
       ...request,
@@ -209,7 +211,8 @@ const waitForPointer = setInterval(() => {
       ...request,
       continuation: { kind: "initial", prompt: "missing-terminal" },
     });
-    assert.equal(failed.knownFailure?.identity?.code, "codex-missing-terminal-event");
+    assert.equal(failed.code, 0);
+    assert.equal(failed.knownFailure, undefined);
 
     // Git work tree recognized (.git present) but rev-parse fails → loud terminal, no spawn.
     // Point gitdir at a missing path so nested temp dirs inside a real worktree still fail.
@@ -302,7 +305,7 @@ if (prompt.includes("with-thread")) {
 }
 process.stdout.write(JSON.stringify({
   type: "turn.failed",
-  error: { message: "thread-store conflict: session already has an active writer (code -32600)" },
+  error: { code: -32600, message: "thread-store conflict: session already has an active writer (code -32600)" },
 }) + "\\n");
 process.exit(1);
 `,
@@ -324,7 +327,7 @@ process.exit(1);
           return undefined;
         },
         async bind(_principal, id) {
-          if (rejectBind) throw new Error("session identity store is read-only");
+          if (rejectBind) throw Object.assign(new Error("session identity store is read-only"), { code: "EBIND" });
           bound = id;
         },
         resolveSessionFile: () => sessionParent,
@@ -354,38 +357,37 @@ process.exit(1);
     });
 
     const noThread = await execute("no-thread");
-    assert.equal(noThread.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(noThread.knownFailure?.cause, undefined);
+    assert.equal((noThread.knownFailure?.details?.error as { code?: number })?.code, -32600);
     assert.equal(
       noThread.knownFailure?.diagnostic,
       "thread-store conflict: session already has an active writer (code -32600)",
     );
 
     const persisted = await execute("with-thread");
-    assert.equal(persisted.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal((persisted.knownFailure?.details?.error as { code?: number })?.code, -32600);
     assert.equal(bound, "thread-failed-1");
 
     bound = undefined;
     rejectBind = true;
     const bindFailed = await execute("with-thread");
-    assert.equal(bindFailed.knownFailure?.identity?.name, "HeadlessCliError");
-    assert.equal(bindFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(bindFailed.knownFailure?.identity, undefined);
+    assert.equal(bindFailed.knownFailure?.cause, undefined);
     assert.equal(
       bindFailed.knownFailure?.diagnostic,
       "thread-store conflict: session already has an active writer (code -32600)",
     );
-    assert.deepEqual(bindFailed.knownFailure?.details, {
-      sessionId: "thread-failed-1",
-      exitCode: 1,
-    });
+    assert.deepEqual(bindFailed.knownFailure, persisted.knownFailure);
+    assert.equal(bindFailed.code, 1);
     const bindNotes = (await readdir(join(ledger.runDirectory, "artifacts")))
       .filter((name) => name.startsWith("post-admission-diagnostic-"));
     const bindBodies = await Promise.all(bindNotes.map(async (name) =>
-      JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown }));
-    assert.equal(bindBodies.some((note) => String(note.diagnostic).includes("read-only")), true);
+      JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8")) as { failure?: { identity?: { code?: unknown } } }));
+    assert.equal(bindBodies.some((note) => note.failure?.identity?.code === "EBIND"), true);
     rejectBind = false;
     sessionParent = "/dev/null/session.jsonl";
     const recordFailed = await execute("no-thread");
-    assert.equal(recordFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal((recordFailed.knownFailure?.details?.error as { code?: number })?.code, -32600);
     assert.equal(
       recordFailed.knownFailure?.diagnostic,
       "thread-store conflict: session already has an active writer (code -32600)",
@@ -395,7 +397,7 @@ process.exit(1);
   }
 });
 
-test("headless stdin delivery error cannot settle valid output as success", async () => {
+test("headless stdin delivery error stays independent of the child exit", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");
   const rollout = join(ledger.runDirectory, ".codex", "sessions", "rollout-thread-epipe.jsonl");
@@ -441,8 +443,12 @@ process.exit(0);
       agentDir: join(ledger.runDirectory, "agent"),
       runDirectory: ledger.runDirectory,
     });
-    assert.notEqual(result.code, 0);
-    assert.notEqual(result.knownFailure, undefined);
+    assert.equal(result.code, 0);
+    assert.equal(result.knownFailure, undefined);
+    const notes = await readdir(join(ledger.runDirectory, "artifacts"));
+    const bodies = await Promise.all(notes.filter((name) => name.startsWith("post-admission-diagnostic-"))
+      .map(async (name) => JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8"))));
+    assert.ok(bodies.some((note) => note.failure?.identity?.code === "EPIPE"));
     assert.equal(await readFile(join(ledger.runDirectory, "session", "codex-gpt-test-1.jsonl"), "utf8"), "native after close\n");
   } finally {
     ledger.dispose();

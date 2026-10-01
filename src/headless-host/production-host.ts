@@ -7,7 +7,8 @@
  * Intermediate AK tools ride the shared envelope MCP relay (Claude `--mcp-config`,
  * codex `-c mcp_servers.*`). The terminating receipt is the host-native schema
  * channel only (#750 submission-tool-is-schema-channel) — terminating tool is not
- * listed on MCP (Claude `--json-schema` passes the open contract; codex `--output-schema` is omitted).
+ * listed on MCP (Claude `--json-schema`, codex `--output-schema` receive the declaration unchanged).
+ * Codex native strict output cannot promise an open contract; the adapter reports that gap.
  */
 import { randomUUID } from "node:crypto";
 

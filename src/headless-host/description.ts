@@ -188,7 +188,7 @@ export function codexTurnArgs(options: {
   readonly systemPromptPath: string;
   /**
    * Absolute path for the native `--output-schema` flag.
-   * Production omits it: that flag cannot express the open contract without narrowing it.
+   * Pass the declaration unchanged; native strict output cannot promise an open contract.
    * Optional for prose-exit seats (#959 navigator) so agent_message stays free text.
    */
   readonly outputSchemaPath?: string;
