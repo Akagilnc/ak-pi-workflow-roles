@@ -25,7 +25,7 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 续跑该次运行。旗位、原样透传的续跑 message，以及 model / host / engine 解析，以 `ak-role help resume` 与 `ak-role help config` 为准（[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。上呈的是审核官时，resume 该官的 runId：上呈只暂停这一席，其后的闸照常接着走。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。换宿主不在本文另立一条：原件复制与先前记录是否递送，见 [ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID 则拒绝；其余续跑失败只输出一行指向当次错误记录的指针（`续跑失败，当次错误记录：<path>`），原因看该文件。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
+`ak-role resume <runId> [message]` 续跑该次运行。旗位与原样透传的续跑 message 见 `ak-role help resume`；model / host 解析见 `ak-role help`，engine 配置见 `ak-role help config`（[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。上呈的是审核官时，resume 该官的 runId：上呈只暂停这一席，其后的闸照常接着走。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。换宿主不在本文另立一条：原件复制与先前记录是否递送，见 [ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID 则拒绝；其余续跑失败只输出一行指向当次错误记录的指针（`续跑失败，当次错误记录：<path>`），原因看该文件。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
 
 全部可调用角色在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -148,27 +148,27 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 
 | 名号 | 席位 | 职掌 |
 | --- | --- | --- |
-| **将作监** | coder | **营造新作。** 承接新的谋划与需求，从一片空白开始设计、建造，直到形成可供使用的新成果。讲究先明其意，再定其形，不妄增枝节，只做当下所需之事。 |
-| **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
-| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；默认并行执行 completeness／correctness 两轴，调用者可显式覆盖为单轴，本席自跑包内 `ak-cross-m-review`，交薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
-| **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
-| **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
-| **门下省** | gatekeeper（交卷闸不再自动出席；可 `ak-role gatekeeper` 独立直调） | **审署诏敕与质量保证的省。** 交卷闸按受审物直接传召台院/符宝郎；中书省 converged 交卷经既有闸传召给事中（#1021）；本省不介入选席。调用者仍可独立传召本省作 dispatch/pass；左拾遗由调用者合并前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
-| **中书省** | secretariat（converged 交卷进入给事中交卷闸；#924、#1021） | **改票的出令省。** 按公用《票面法》把草稿修成可送庭文书；署（converged）交卷自动进入给事中审读，封驳后在同一中书省会话改写重交；对外终局只有署或上呈（escalate）。暂不细分席位。 |
-| **给事中** | countersign（中书省 converged 交卷触发交卷闸；亦可独立调用） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。开庭不自动起居郎；已有起居录先用录上票号，无录自行认票，交卷申报 `ticketNumber`；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
-| **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
-| **台院** | inspector | **纠举推鞫：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立；中文名由 #584 修订为台院，机器键不动。 |
-| **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
-| **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
-| **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；无进行中合并、无活可干或遇到无法自行决定之处，则升级。 |
-| **游奕使** | navigator（随公开入口顶层腿自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
-| **起居郎** | diarist（`ak-role diarist` 可单独传召；中书省立票前自动传召） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 自行搜集、整理、认票（#779 后无机械验真，机械只做 IO；起居录供符宝郎读录核旨）。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)（起居郎是 LLM 角色）、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
+| **将作监** | coder | 职掌见 [Soul](souls/coder.md)。 |
+| **修内司** | fixer | 职掌见 [Soul](souls/fixer.md)。 |
+| **御史台** | reviewer | 职掌见 [Soul](souls/reviewer.md)；调用面见 `ak-role help reviewer`。 |
+| **大理寺** | judge | 职掌见 [Soul](souls/judge.md)。 |
+| **审刑院** | auditor（调用面见 `ak-role help auditor`） | 依受审对象读取 [大理寺审计 Soul](souls/judge-auditor.md)／[太医署审计 Soul](souls/doctor-auditor.md)。 |
+| **门下省** | gatekeeper | 职掌见 [Soul](souls/gatekeeper.md)；独立调用见 `ak-role help gatekeeper`，交卷闸关系见 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
+| **中书省** | secretariat | 职掌见 [Soul](souls/secretariat.md)；调用面见 `ak-role help secretariat`。 |
+| **给事中** | countersign | 职掌见 [Soul](souls/countersign.md)；调用面见 `ak-role help countersign`。 |
+| **左拾遗** | gleaner-left | 职掌见 [Soul](souls/gleaner-left.md)；调用面见 `ak-role help gleaner-left`。 |
+| **台院** | inspector | 职掌见 [Soul](souls/inspector.md)；调用面见 `ak-role help inspector`，名号沿革见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [#584](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/584)。 |
+| **符宝郎** | notary | 职掌见 [Soul](souls/notary.md)；调用面见 `ak-role help notary`。 |
+| **通进司** | collector | 职掌见 [Soul](souls/collector.md)。 |
+| **校书郎** | merger | 职掌见 [Soul](souls/merger.md)。 |
+| **游奕使** | navigator | 职掌见 [Soul](souls/navigator.md)；调用面见 `ak-role help navigator`。 |
+| **起居郎** | diarist | 职掌见 [Soul](souls/diarist.md)；调用面见 `ak-role help diarist`。 |
 
 其余席位：
 
 | 席位 | 名 | 职掌 | 状态 |
 | --- | --- | --- | --- |
-| doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
+| doctor | **太医署** | 职掌见 [Soul](souls/doctor.md)；调用面见 `ak-role help doctor`。 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
 | — | **司天台** | 记候簿——只打点、只指针，不分析不执法；二期含每票起居录 kind `ticket-provenance` | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：确定性机制；两面对账已删 [#855](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/855)）；分析席已由太史承担；起居录见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
 | marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
@@ -180,12 +180,12 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：通进司把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、御史台、太医署各自都有一次。门下省交卷闸是完成侧挂钩，不是调用者必经编排链。省部级角色的内部组合属于其单次调用的内政，公开 CLI 语义零变化——外部调用者仍一次启动其选中的一个角色，跨 CLI 调用的顺序、重复与停止仍全归外部调用者。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；现行内审关联见 [ADR 0010「内审衙门」](docs/adr/0010-callers-own-role-composition-and-repetition.md)。省部级角色的内部组合属于其单次调用的内政，公开 CLI 语义零变化——外部调用者仍一次启动其选中的一个角色，跨 CLI 调用的顺序、重复与停止仍全归外部调用者。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
 ## 规范指针
 
-- 命令用法与拒绝文案：`ak-role help <command>`、`ak-role help config`（唯一权威）。
+- 命令用法、解析与拒绝文案：`ak-role help`、`ak-role help <command>`、`ak-role help config`（唯一权威）。
 - 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071、起居录 ADR 0075 等，未尽举）。
 - 术语表：[CONTEXT.md](CONTEXT.md)。编程契约：`src/package-contracts/` 导出。
