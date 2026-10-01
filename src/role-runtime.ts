@@ -38,6 +38,7 @@ import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   priorReceiptContinuation,
   RECEIPT_DELIVERY_REQUEST_ENTRY,
+  RECEIPT_REJECTION_ENTRY,
   receiptAttemptPointer,
 } from "./receipt-delivery-policy.ts";
 import {
@@ -104,6 +105,7 @@ import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
+  packagedRoleOutputRejectionReason,
   extractInfrastructureFailureEvidence,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
@@ -1275,7 +1277,7 @@ export function createRoleRuntimeExtension(
         },
       };
     });
-    roleHost.on("tool_result", async (event) => {
+    roleHost.on("tool_result", async (event, ctx) => {
       const role = selectedRole;
       if (role === undefined) return;
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
@@ -1290,14 +1292,19 @@ export function createRoleRuntimeExtension(
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
-      } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
-        // The rejection fact stays on this tool call.催交 budget moves only
-        // when agent_end sends the delivery prompt (#1132).
-        const reason = (event.content ?? [])
-          .map((part) => part.type === "text" && "text" in part ? part.text : "")
-          .join("")
-          .trim();
-        receiptDelivery.recordRejected(reason);
+      } else if (isOutputTool) {
+        const reason = packagedRoleOutputRejectionReason(classified);
+        if (reason !== undefined) {
+          receiptDelivery.recordRejected(reason);
+          // Bind the observed rejection now, before agent_end or a host failure.
+          // This observation is not an exhausted lifecycle or a budget spend.
+          if (ctx.invocationScopeId !== undefined) {
+            envelopeHost.appendEntry(RECEIPT_REJECTION_ENTRY, {
+              invocationScopeId: ctx.invocationScopeId,
+              reason,
+            });
+          }
+        }
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
       // closure. tool_result retains only infrastructure settlement.

@@ -83,6 +83,7 @@ import {
 import type { CliIo } from "./cli-io.ts";
 import { warnMissingMethodSkills } from "./machine-method-skills.ts";
 import {
+  coalesceSubmissionRows,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
@@ -211,10 +212,12 @@ function withUnsettledDirection(
   const outcome = parent.roleOutcome;
   if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return parent;
   const officerOutcome = officer?.roleOutcome;
-  const officerPayloads = officerOutcome !== undefined
-    && officerOutcome.kind !== "no_receipt"
-    ? officerOutcome.payloads
-    : undefined;
+  const officerPayloads = coalesceSubmissionRows(
+    officer?.submissions,
+    officerOutcome !== undefined && officerOutcome.kind !== "no_receipt"
+      ? officerOutcome.payloads
+      : undefined,
+  );
   return {
     ...parent,
     roleOutcome: {
@@ -225,7 +228,7 @@ function withUnsettledDirection(
         subsequentAudit: "incomplete",
         ...(officerOutcome === undefined ? {} : { officerRole: officerOutcome.role }),
         ...(officer?.runId === undefined ? {} : { officerRunId: officer.runId }),
-        ...(officerPayloads === undefined ? {} : { officerPayloads }),
+        ...(officerPayloads.length === 0 ? {} : { officerPayloads }),
       },
     },
   };
@@ -1084,42 +1087,6 @@ export async function continueParentAfterChild(
   return result;
 }
 
-function userDialogueText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((part) => {
-    if (
-      typeof part === "object" && part !== null && !Array.isArray(part)
-      && (part as { type?: unknown }).type === "text"
-      && typeof (part as { text?: unknown }).text === "string"
-    ) {
-      return (part as { text: string }).text;
-    }
-    return "";
-  }).join("");
-}
-
-/** Exact submission body already relayed to the officer. No prose match. */
-async function officerDialogueMatches(
-  env: InstructionSeatRunEnv,
-  admitted: AdmittedRoleInvocation,
-  body: string,
-): Promise<boolean> {
-  if (body.length === 0) return false;
-  if (admitted.instruction === body) return true;
-  try {
-    const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-    const entries = await readBoundSessionEntries(sessionFile);
-    for (const entry of entries) {
-      if (entry.type !== "message" || entry.message?.role !== "user") continue;
-      return userDialogueText(entry.message.content) === body;
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
-
 /**
  * A gate is already passed only when an officer run reviewed this submission
  * and its latest queue word is converged. The resumed seat's role is not itself
@@ -1130,19 +1097,11 @@ async function officerPassedCurrentSubmission(input: {
   readonly parentSessionFile: string;
   readonly officer: GateOfficer;
   readonly toolCallId: string;
-  readonly body: string;
-  readonly resumed?: AdmittedRoleInvocation;
 }): Promise<boolean> {
-  const { env, officer, body, resumed } = input;
-  if (resumed?.role === officer && await officerDialogueMatches(env, resumed, body)) return true;
+  const { env, officer } = input;
   const pointer = await readDirectOfficerRunPointer(input.parentSessionFile, officer);
   if (pointer?.runDirectory === undefined) return false;
-  if (
-    pointer.submissionToolCallId !== undefined
-    && pointer.submissionToolCallId !== input.toolCallId
-  ) {
-    return false;
-  }
+  if (pointer.submissionToolCallId !== input.toolCallId) return false;
   const officerRunId = runIdFromRunDirectory(pointer.runDirectory);
   if (officerRunId === undefined) return false;
   let admitted: AdmittedRoleInvocation;
@@ -1158,9 +1117,7 @@ async function officerPassedCurrentSubmission(input: {
   }
   if (admitted.role !== officer) return false;
   const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
-  if (latestQueueStatus(terminal) !== "converged") return false;
-  if (pointer.submissionToolCallId === input.toolCallId) return true;
-  return officerDialogueMatches(env, admitted, body);
+  return latestQueueStatus(terminal) === "converged";
 }
 
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
@@ -1236,14 +1193,11 @@ async function auditSubmittedRole(
     },
     abort() {},
   };
-  const submissionBody = readableGateItem(accepted);
   const passedThisSubmission = (officer: GateOfficer) => officerPassedCurrentSubmission({
     env,
     parentSessionFile: sessionFile,
     officer,
     toolCallId,
-    body: submissionBody,
-    ...(resumedOfficer === undefined ? {} : { resumed: resumedOfficer }),
   });
   if (admitted.role === "doctor") {
     if (!await passedThisSubmission("auditor")) {

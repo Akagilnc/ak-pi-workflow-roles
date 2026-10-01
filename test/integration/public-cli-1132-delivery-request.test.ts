@@ -741,7 +741,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
 
 // 读不出三态的审核召唤用尽配置次数后留下该回执，不把父席再送去改。
 test("#1132: an unreadable audit officer stops at the ceiling without resuming the parent", async () => {
-  for (const limit of [0, 1]) {
+  for (const limit of [0, 1, 3]) {
     await withSeatHome(async (home) => {
       await setConfiguredLimit(home, limit);
       const project = await freshProject(home);
@@ -778,7 +778,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
               runId: runIdFromRunDirectory(request.runDirectory)!,
               runDirectory: request.runDirectory,
               role: "notary",
-              details: { status: "sideways" },
+              details: { status: "sideways", revision: notaryCalls },
               toolCallId: `notary-sideways-${notaryCalls}`,
               home: request.home,
               ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
@@ -814,13 +814,15 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
         subsequentAudit?: string;
         officerRole?: string;
         officerRunId?: string;
-        officerPayloads?: readonly { status?: string }[];
+        officerPayloads?: readonly { status?: string; revision?: number }[];
       };
       assert.equal(facts.directionUnsettled, true);
       assert.equal(facts.subsequentAudit, "incomplete");
       assert.equal(facts.officerRole, "notary");
       assert.equal(typeof facts.officerRunId, "string");
       assert.equal(facts.officerPayloads?.at(-1)?.status, "sideways");
+      assert.deepEqual(facts.officerPayloads?.map((payload) => payload.revision),
+        Array.from({ length: limit + 1 }, (_, index) => index + 1));
     });
   }
 });

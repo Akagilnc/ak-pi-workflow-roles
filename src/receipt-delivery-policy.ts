@@ -7,7 +7,6 @@
  * records the delivery requests actually issued, never the budget
  * (零次即记零，不把额度或其他续跑次数冒充催交次数).
  */
-import { packagedRoleOutputRejectionReason } from "./navigator-invocation-identity.ts";
 import { AUTO_RESUME_LIMIT } from "./public-cli/run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./public-cli/config.ts";
 
@@ -15,6 +14,9 @@ export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as cons
 
 /** One in-process催交 send, tagged with the public call that issued it. */
 export const RECEIPT_DELIVERY_REQUEST_ENTRY = "ak-receipt-delivery-request" as const;
+
+/** A rejection observed by the output-tool hook, bound before any delivery turn. */
+export const RECEIPT_REJECTION_ENTRY = "ak-receipt-rejection" as const;
 
 /**
  * Facts of one public call. A call with an invocation scope does not share
@@ -221,8 +223,6 @@ function entryRecord(entry: unknown): Record<string, unknown> | undefined {
   return isRecord(entry) ? entry : undefined;
 }
 
-const RECEIPT_DELIVERY_PROMPT = "ak-receipt-delivery-prompt";
-
 /** Sends, observed rejections, and the latest lifecycle fact for this public call. */
 export type ReceiptContinuation = {
   readonly deliveryTurns: number;
@@ -244,7 +244,7 @@ function scopeTag(record: Record<string, unknown>): string | undefined {
   const customType = customTypeOf(record, message);
   const data = dataOf(record, message);
   if (
-    customType === RECEIPT_DELIVERY_REQUEST_ENTRY
+    (customType === RECEIPT_DELIVERY_REQUEST_ENTRY || customType === RECEIPT_REJECTION_ENTRY)
     && isRecord(data)
     && typeof data.invocationScopeId === "string"
     && data.invocationScopeId.trim() !== ""
@@ -263,38 +263,7 @@ function scopeTag(record: Record<string, unknown>): string | undefined {
   }
 }
 
-/**
- * A later manual call starts with its own user message and has no scope tag yet.
- * 催交 follow-up text stays inside the call that already tagged itself.
- */
-function plainUserBoundary(record: Record<string, unknown>): boolean {
-  const message = isRecord(record.message) ? record.message : undefined;
-  if (message?.role !== "user") return false;
-  return customTypeOf(record, message) !== RECEIPT_DELIVERY_PROMPT;
-}
-
-function unionRejectionReasons(
-  observed: readonly string[],
-  snapshot: readonly { reason: string }[],
-): { reason: string }[] {
-  const remaining = new Map<string, number>();
-  for (const reason of observed) remaining.set(reason, (remaining.get(reason) ?? 0) + 1);
-  const merged = observed.map((reason) => ({ reason }));
-  for (const item of snapshot) {
-    const left = remaining.get(item.reason) ?? 0;
-    if (left > 0) remaining.set(item.reason, left - 1);
-    else merged.push({ reason: item.reason });
-  }
-  return merged;
-}
-
-/**
- * Sends and rejections already stored for this public call.
- * A rejection toolResult has no scope of its own: it belongs to the next
- * scope tag of this call. A later untagged rejection, after a plain user
- * message and before that call writes a new tag, stays with the new call.
- * An empty lifecycle snapshot does not erase toolResults already observed.
- */
+/** Restore only facts explicitly bound to this public call, never inferred from dialogue. */
 export function priorReceiptContinuation(
   entries: Iterable<unknown>,
   invocationScopeId: string,
@@ -302,52 +271,38 @@ export function priorReceiptContinuation(
   const pointer = receiptAttemptPointer("", invocationScopeId);
   let entryTurns = 0;
   let factTurns = 0;
-  let snapshotReceipts: readonly { reason: string }[] = [];
+  let rejectedReceipts: { reason: string }[] = [];
   let snapshotTerminal = false;
-  const observed: string[] = [];
-  let pending: string[] = [];
-  let lastTag: string | undefined;
-  let plainUserAfterLastTag = false;
   for (const entry of entries) {
     const record = entryRecord(entry);
     if (record === undefined) continue;
     const tagged = scopeTag(record);
     if (tagged !== undefined) {
-      if (tagged === invocationScopeId) observed.push(...pending);
-      pending = [];
-      lastTag = tagged;
-      plainUserAfterLastTag = false;
       const message = isRecord(record.message) ? record.message : undefined;
       const customType = customTypeOf(record, message);
       if (tagged !== invocationScopeId) continue;
       if (customType === RECEIPT_DELIVERY_REQUEST_ENTRY) entryTurns += 1;
+      if (customType === RECEIPT_REJECTION_ENTRY) {
+        const data = dataOf(record, message);
+        if (isRecord(data) && typeof data.reason === "string") rejectedReceipts.push({ reason: data.reason });
+      }
       if (customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) continue;
       try {
         const facts = parseNoReceiptLifecycleFacts(dataOf(record, message));
         if (facts.attemptPointer !== pointer) continue;
-        if (facts.deliveryTurns >= factTurns) {
-          factTurns = facts.deliveryTurns;
-          snapshotReceipts = facts.rejectedReceipts;
-          snapshotTerminal = facts.terminalToolCalled;
+        factTurns = Math.max(factTurns, facts.deliveryTurns);
+        // Snapshots include all preceding observations. Replay later events,
+        // rather than treating their free-text reasons as deduplication keys.
+        if (facts.rejectedReceipts.length >= rejectedReceipts.length) {
+          rejectedReceipts = facts.rejectedReceipts.map(({ reason }) => ({ reason }));
         }
+        snapshotTerminal ||= facts.terminalToolCalled;
       } catch {
         // A malformed historical entry is not this call's count.
       }
       continue;
     }
-    if (plainUserBoundary(record)) {
-      pending = [];
-      plainUserAfterLastTag = true;
-      continue;
-    }
-    const message = isRecord(record.message) ? record.message : undefined;
-    if (message?.role !== "toolResult") continue;
-    const reason = packagedRoleOutputRejectionReason(message);
-    if (reason === undefined) continue;
-    pending.push(reason);
   }
-  if (!plainUserAfterLastTag && lastTag === invocationScopeId) observed.push(...pending);
-  const rejectedReceipts = unionRejectionReasons(observed, snapshotReceipts);
   return {
     deliveryTurns: Math.max(entryTurns, factTurns),
     rejectedReceipts,
