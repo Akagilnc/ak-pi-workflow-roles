@@ -41,6 +41,8 @@ import type {
 } from "./invocation.ts";
 import { presentControlledFailure, presentStructuralRejection } from "./settlement.ts";
 
+import { errorText } from "../unknown-value.ts";
+
 export type AnalystRunEnv = {
   readonly home: string;
 };
@@ -97,7 +99,7 @@ export async function buildAnalystIssueModeInputFromPublicArgv(
 
 /**
  * Attachment JSON → library AnalystSweepModeInput via the sole schema (#337).
- * No parallel hand shape; rejects missing/extra/wrong-type fields only.
+ * No parallel hand shape; rejects missing or wrong-type fields only.
  */
 export function parseAnalystSweepModeInputFromJsonValue(
   value: unknown,
@@ -141,7 +143,7 @@ export async function buildAnalystSweepModeInputFromAttachmentPaths(
   try {
     text = exactUtf8(bytes, "analyst sweep attachment");
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorText(error);
     throw new CliUsageError(detail, { cause: error });
   }
 

@@ -1,4 +1,5 @@
 import { reviewSubmissionSchema } from "./review-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
@@ -26,10 +27,4 @@ export type CountersignRuntimeDependencies = {
  * 决定工具规格。生命周期装配（注册、activate、prompt 注入、singleton 检查、
  * terminate）归注册信封 owner——src/role-runtime.ts（ADR 0018 / #572 R2 判词）。
  */
-export const COUNTERSIGN_TOOL_SPEC = {
-  name: COUNTERSIGN_OUTPUT_TOOL_NAME,
-  label: "给事中输出",
-  description: "给事中决议。",
-  promptSnippet: "给事中决议",
-  parameters: countersignVerdictSchema,
-} as const;
+export const COUNTERSIGN_TOOL_SPEC = roleSubmissionDeclaration("countersign");

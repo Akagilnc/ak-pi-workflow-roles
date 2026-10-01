@@ -13,6 +13,7 @@ import { Value } from "typebox/value";
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
+import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 
@@ -53,14 +54,10 @@ export function navigatorUnavailableError(
   error: unknown,
   cause: NavigatorUnavailableKey = source,
 ): NavigatorUnavailableError {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorText(error);
   return error instanceof NavigatorUnavailableError
     ? error
     : new NavigatorUnavailableError(source, message, cause, error);
-}
-
-function exactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function navigatorProviderFailureFromStatus(status: number | undefined): NavigatorProviderFailureFact | undefined {
@@ -86,7 +83,7 @@ export function navigatorProviderFailureFromError(error: unknown): NavigatorProv
     if (cursor instanceof NavigatorUnavailableError) {
       return { source: cursor.unavailableSource, cause: cursor.unavailableCause };
     }
-    if (!exactRecord(cursor)) {
+    if (!isRecord(cursor)) {
       cursor = cursor instanceof Error ? cursor.cause : undefined;
       continue;
     }
@@ -111,13 +108,13 @@ export function navigatorProviderFailureFromError(error: unknown): NavigatorProv
 export function navigatorProviderFailureFromDiagnostics(diagnostics: unknown): NavigatorProviderFailureFact | undefined {
   if (!Array.isArray(diagnostics)) return undefined;
   for (const diagnostic of diagnostics) {
-    if (!exactRecord(diagnostic)) continue;
+    if (!isRecord(diagnostic)) continue;
     if (diagnostic.type === "provider_transport_failure") return { source: "transport", cause: "transport" };
-    if (exactRecord(diagnostic.error)) {
+    if (isRecord(diagnostic.error)) {
       const fromCode = navigatorProviderFailureFromCode(diagnostic.error.code);
       if (fromCode !== undefined) return fromCode;
     }
-    if (exactRecord(diagnostic.details)) {
+    if (isRecord(diagnostic.details)) {
       const status = typeof diagnostic.details.status === "number"
         ? diagnostic.details.status
         : typeof diagnostic.details.statusCode === "number"
@@ -225,13 +222,13 @@ export function navigatorModelSettingPath(): string {
 export async function readNavigatorModelSetting(path = navigatorModelSettingPath()): Promise<string> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") {
+    if (!isRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") {
       throw new Error("Navigator model setting is malformed");
     }
     return raw.model;
   } catch (error) {
     // #178: missing file is absence (no package default).
-    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isEnoent(error)) {
       throw new Error("Navigator model setting is missing");
     }
     throw error;

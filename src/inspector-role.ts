@@ -1,5 +1,6 @@
 import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
   INSPECTOR_OUTPUT_TOOL_NAME,
   validateRecordedInspectorOutput,
@@ -25,10 +26,4 @@ export type InspectorRuntimeDependencies = {
 /**
  * 决定工具规格。生命周期装配归注册信封 owner——src/role-runtime.ts（ADR 0018）。
  */
-export const INSPECTOR_TOOL_SPEC = {
-  name: INSPECTOR_OUTPUT_TOOL_NAME,
-  label: "台院输出",
-  description: "台院终局回执，状态为 converged、continue 或 escalate。",
-  promptSnippet: "台院终局回执",
-  parameters: inspectorOutputSchema,
-} as const;
+export const INSPECTOR_TOOL_SPEC = roleSubmissionDeclaration("inspector");

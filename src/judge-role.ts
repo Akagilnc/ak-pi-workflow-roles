@@ -1,10 +1,7 @@
-import {
-  type RoleHost,
-  type HostContext,
-  type HostToolResult,
-} from "./host-contracts.ts";
-import type { Static } from "typebox";
-import { reviewSubmissionSchema } from "./review-submission.ts";
+import { type RoleHost } from "./host-contracts.ts";
+import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema, type ReviewQueueWord } from "./review-submission.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -31,10 +28,10 @@ export async function runJudgeGates(input: {
     readonly runDirectory?: string;
   } | void>;
 }): Promise<{
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: ReviewQueueWord;
   readonly passes: readonly {
     readonly subject: GatekeeperSubject;
-    readonly status: "converged" | "continue" | "escalate";
+    readonly status: ReviewQueueWord;
     readonly receipt: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
@@ -42,7 +39,7 @@ export async function runJudgeGates(input: {
 }> {
   const passes: {
     subject: GatekeeperSubject;
-    status: "converged" | "continue" | "escalate";
+    status: ReviewQueueWord;
     receipt: unknown;
     runId?: string;
     runDirectory?: string;
@@ -50,10 +47,11 @@ export async function runJudgeGates(input: {
   for (const subject of JUDGE_GATES) {
     if (await input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
-    const status = pass?.status;
-    if (pass === undefined || (status !== "converged" && status !== "continue" && status !== "escalate")) {
+    const received = pass?.status;
+    if (pass === undefined || typeof received !== "string" || !REVIEW_QUEUE_STATUSES.has(received)) {
       throw new Error("judge gate returned no conclusion");
     }
+    const status = received as ReviewQueueWord;
     passes.push({
       subject,
       status,
@@ -90,18 +88,8 @@ export function createJudgeRoleRuntime(
       if (soul.length === 0) throw new Error("Judge soul is empty");
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        pi.registerTool({
-          name: JUDGE_OUTPUT_TOOL_NAME,
-          label: "大理寺输出",
-          description: "提交大理寺终局判词；交卷调用结束后，由公开调用接缝按判词状态执行适用审核。",
-          promptSnippet: "提交大理寺终局判词",
-          parameters: judgeVerdictSchema,
-          async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error("大理寺职分未装载");
-            // ADR 0003: record the original receipt and end the tool call first.
-            // The public seam reads status and chooses the next route.
-            return { content: [], details: parameters, terminate: true };
-          },
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("judge"), {
+          readyError: () => (soul === undefined ? "大理寺职分未装载" : undefined),
         });
         pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("大理寺职分未装载");

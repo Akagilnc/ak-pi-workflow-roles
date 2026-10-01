@@ -20,6 +20,7 @@
  */
 import { open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { writeFileAtomically } from "./atomic-write.ts";
 import {
@@ -28,6 +29,7 @@ import {
   physicalPathIdentity,
 } from "./activation-ledger-topology.ts";
 import { resolveAnalystBookKey } from "./analyst-book-key.ts";
+import { isMissingPathError } from "./unknown-value.ts";
 import type {
   AnalystIssueMetricsPage,
   AnalystOptionalMetricNumber,
@@ -37,12 +39,6 @@ import type {
 const LIBRARY_INDEX_LOCK_NAME = ".library-index.lock";
 const LIBRARY_INDEX_LOCK_TIMEOUT_MS = 30_000;
 const LIBRARY_INDEX_LOCK_RETRY_MS = 15;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /**
  * Exclusive create lock for the library-index read→upsert→write critical section.
@@ -270,13 +266,7 @@ export async function readAnalystLibraryIndexPage(
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (
-      error instanceof Error
-      && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTDIR")
-    ) {
-      return undefined;
-    }
+    if (isMissingPathError(error)) return undefined;
     throw error;
   }
   const parsed: unknown = JSON.parse(raw);

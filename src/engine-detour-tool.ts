@@ -22,8 +22,6 @@ import {
 } from "./engine-detour-usage.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 
-
-
 // #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
 // must obtain the first item as the executable and spawn it (below; #82-98).
 // Root additionalProperties:false is deleted — execute() reads only `argv`.

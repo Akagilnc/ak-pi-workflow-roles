@@ -28,7 +28,6 @@ import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 
-
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
 

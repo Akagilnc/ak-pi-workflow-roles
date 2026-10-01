@@ -6,7 +6,6 @@ import {
 
   runDirectoryFromHostContext,
   type HostContext,
-  type HostToolResult,
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
@@ -14,6 +13,8 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
+import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
+import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
@@ -187,7 +188,7 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
       parsed = JSON.parse(rawAuthorityRefs);
     } catch (error) {
       throw new Error(
-        `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Reviewer authority refs transport error: JSON decode failed: ${errorText(error)}`,
       );
     }
     if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
@@ -295,6 +296,8 @@ export {
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
+
+import { isRecord, errorText } from "./unknown-value.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -506,7 +509,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     return { kind: "role_infrastructure_failure", role, phase };
   }
   // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
+  const details = isRecord(event.details)
     ? event.details as Record<string, unknown>
     : {};
   const status = typeof details.status === "string"
@@ -545,18 +548,6 @@ export async function projectClosedSubmissionLifecycle(
 }
 
 /**
- * Optional pre-accept hook on the shared filed-officer envelope (ADR 0075).
- * May return a details projection (envelope-owned machine facts recorded next to
- * the submitted parameters); undefined keeps the parameters as submitted.
- */
-type FiledOfficerBeforeAccept = (input: {
-  readonly toolCallId: string;
-  readonly parameters: unknown;
-  readonly signal: AbortSignal | undefined;
-  readonly ctx: HostContext;
-}) => Promise<unknown>;
-
-/**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
@@ -566,9 +557,9 @@ function createFiledOfficerRuntime(
   roleHost: RoleHost,
   spec: {
     role: PackagedRole;
-    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    tool: RoleSubmissionDeclaration;
     soulTag: string;
-    beforeAccept?: FiledOfficerBeforeAccept;
+    beforeAccept?: FiledSubmissionBeforeAccept;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -581,26 +572,9 @@ function createFiledOfficerRuntime(
       soul = loaded;
       if (!registered) {
         registered = true;
-        roleHost.registerTool({
-          name: spec.tool.name,
-          label: spec.tool.label,
-          description: spec.tool.description,
-          promptSnippet: spec.tool.promptSnippet,
-          parameters: spec.tool.parameters as never,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            const projected =
-              spec.beforeAccept === undefined
-                ? undefined
-                : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            // Accept-as-is + terminate only. Shape is not an admission gate
-            // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
-            return {
-              content: [],
-              details: projected === undefined ? parameters : projected,
-              terminate: true as const,
-            };
-          },
+        registerFiledSubmissionTool(roleHost, spec.tool, {
+          readyError: () => (soul === undefined ? `${spec.role} 职分未装载` : undefined),
+          ...(spec.beforeAccept === undefined ? {} : { beforeAccept: spec.beforeAccept }),
         });
         roleHost.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
@@ -709,7 +683,7 @@ export function createNavigatorRoleRuntime(
           dependencies.recordRoutePlaybookReadFailure?.(undefined);
           if (content.trim() !== "") parts.push(content);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = errorText(error);
           if (message.trim() !== "") {
             dependencies.recordRoutePlaybookReadFailure?.(message);
             parts.push(message);
@@ -853,7 +827,7 @@ export function createDiaristRoleRuntime(
       soulTag: "diarist",
       beforeAccept: async ({ parameters, ctx }) => {
         const submitted =
-          parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+          isRecord(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
         // Routing belongs to the public seam after this tool call has returned.
@@ -1069,7 +1043,7 @@ export function createRoleRuntimeExtension(
     ): void => {
       if (attendance === undefined) return;
       const recordDisposeFailure = (error: unknown): void => {
-        const diagnostic = error instanceof Error ? error.message : String(error);
+        const diagnostic = errorText(error);
         try {
           sitianReport({
             level: "event",
@@ -1083,7 +1057,7 @@ export function createRoleRuntimeExtension(
           try {
             envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
               diagnostic,
-              recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              recordFailure: errorText(recordError),
             });
           } catch {
             // Failure already diagnosed; recording must not create unhandled rejection (#959).

@@ -6,6 +6,8 @@
  */
 import type { HostIdentityDescription } from "../host-descriptions.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 /** Claude Code print-mode (#645). */
 export type ClaudePrintHostDescription = HostIdentityDescription & Readonly<{
   protocol: "claude-print";
@@ -128,11 +130,6 @@ function codexTomlStringTable(entries: Readonly<Record<string, string>>): string
   return `{${parts.join(",")}}`;
 }
 
-/** Shared plain-object guard for headless host schema/event reduction. */
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Project shared-envelope MCP rows into `codex -c mcp_servers.<name>.*` argv pairs.
  * Dot-path + TOML values per official config-advanced; spawn argv (no shell).
@@ -140,10 +137,10 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 function stringEnvironment(value: unknown): Record<string, string> | undefined {
   const entries = Array.isArray(value)
     ? value.flatMap((item) => {
-        if (!isPlainObject(item) || typeof item.name !== "string" || typeof item.value !== "string") return [];
+        if (!isRecord(item) || typeof item.name !== "string" || typeof item.value !== "string") return [];
         return [[item.name, item.value] as const];
       })
-    : isPlainObject(value)
+    : isRecord(value)
       ? Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")
       : [];
   return entries.length === 0 ? undefined : Object.fromEntries(entries);

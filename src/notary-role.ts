@@ -1,4 +1,6 @@
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
+import type { RoleHost, HostContext } from "./host-contracts.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.
@@ -10,7 +12,6 @@ import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
-  notaryOutputSchema,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
 
@@ -156,24 +157,8 @@ export function createNotaryRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({
-          name: NOTARY_OUTPUT_TOOL_NAME,
-          label: "符宝郎输出",
-          description: "提交引文保真与票面对齐的 converged/continue/escalate 决议。",
-          promptSnippet: "提交符宝郎决议",
-          parameters: notaryOutputSchema,
-          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
-            if (activation === undefined) {
-              throw new Error("符宝郎未激活");
-            }
-            // #753: handler only records — params as submitted, no findings/disposition rewrite.
-            // #541 infra declaration + sole-final barrier are ledger-owned (#575).
-            return {
-              content: [],
-              details: parameters,
-              terminate: true as const,
-            };
-          },
+        registerFiledSubmissionTool(pi, roleSubmissionDeclaration("notary"), {
+          readyError: () => (activation === undefined ? "符宝郎未激活" : undefined),
         });
         // Evidence assembly only (ADR 0018): soul + bound projection.
         // Ticket value is envelope-admitted at activate — not re-read from flags here.

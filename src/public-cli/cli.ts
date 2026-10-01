@@ -105,6 +105,8 @@ import {
 } from "./settlement.ts";
 import type { TerminalResult } from "./terminal.ts";
 
+import { errorText } from "../unknown-value.ts";
+
 export {
   buildExplicitInternalActivationArgs,
   resolveInternalRoleEntrypoint,
@@ -236,8 +238,6 @@ export type CliEnv = {
    */
   signal?: AbortSignal;
 };
-
-
 
 type RoleEnvironmentOptions = {
   role: PublicCallableRole;
@@ -542,7 +542,7 @@ function requireLegalEngineModel(model: string): string {
     return assertLegalEngineModel(model);
   } catch (error) {
     throw new CliUsageError(
-      error instanceof Error ? error.message : String(error),
+      errorText(error),
       { cause: error },
     );
   }
@@ -553,7 +553,7 @@ function requireLegalEngineName(name: string): string {
     return assertLegalEngineName(name);
   } catch (error) {
     throw new CliUsageError(
-      error instanceof Error ? error.message : String(error),
+      errorText(error),
       { cause: error },
     );
   }
@@ -585,7 +585,7 @@ function loadAndValidateConfig(
       validatePublicCliConfigAxes(config, packageRoot);
     } catch (error) {
       throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
         { cause: error },
       );
     }
@@ -917,7 +917,7 @@ async function runConfigCommand(
     try {
       config = setPersistentSeatHost(config, seat, unset ? undefined : args[2]!);
     } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+      throw new CliUsageError(errorText(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config, home));
@@ -941,7 +941,7 @@ async function runConfigCommand(
       config = setPersistentSeatEngine(config, seat, name, engineModel);
     } catch (error) {
       throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
         { cause: error },
       );
     }
@@ -963,7 +963,7 @@ async function runConfigCommand(
       config = setPersistentSeatEngine(config, seat, undefined);
     } catch (error) {
       throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
         { cause: error },
       );
     }
@@ -987,7 +987,7 @@ async function runConfigCommand(
       config = setPersistentSeatEngineModel(config, seat, model);
     } catch (error) {
       throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
         { cause: error },
       );
     }
@@ -1009,7 +1009,7 @@ async function runConfigCommand(
       config = setPersistentSeatEngineModel(config, seat, undefined);
     } catch (error) {
       throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
         { cause: error },
       );
     }

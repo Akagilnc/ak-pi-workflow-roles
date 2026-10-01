@@ -14,6 +14,8 @@ import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 import { packagedAnalystTerminal } from "../packaged-role-registry.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 const WORKER_ROLES = new Set(["coder", "fixer"]);
 
 /** Lawful acceptance vocabulary by role (PRD 受理终态映射). */
@@ -94,10 +96,6 @@ export type AnalystAcceptanceSuccessReworkSection = {
   readonly byRole: readonly AnalystRoleAcceptanceStats[];
   readonly rework: AnalystReworkLens;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** Locate collector groups array: receipt.groups or top-level groups. */
 function findCollectorGroups(body: Record<string, unknown>): unknown {

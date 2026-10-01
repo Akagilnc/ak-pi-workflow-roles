@@ -46,6 +46,8 @@ import {
   type AnalystUnreadableRun,
 } from "./analyst-page.ts";
 
+import { isMissingPathError } from "./unknown-value.ts";
+
 /** #338 compute-if-missing failure — issue identity + real cause (CLI → ControlledFailure). */
 export class AnalystIssueComputeError extends Error {
   readonly code = "analyst-issue-compute-failed" as const;
@@ -78,14 +80,6 @@ export class AnalystIssueComputeError extends Error {
       this.issueNumber = input.issueNumber;
     }
   }
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error
-    && "code" in error
-    && (error.code === "ENOENT" || error.code === "ENOTDIR")
-  );
 }
 
 /** Issue-mode typed input — book × ticket scope (#399). */
@@ -123,7 +117,7 @@ export type AnalystIssueModeInput = {
  * Sole sweep-mode input contract (#298/#329/#337).
  * Schema is the single definition; TS types are derived (no parallel hand shape).
  * projectRoot = string (not nonempty); changedLines optional finite non-negative;
- * 0 remains typed 空缺; no extra keys.
+ * 0 remains typed 空缺. Extra keys are not a reject reason.
  */
 export const analystSweepModeInputSchema = Type.Object(
   {
@@ -137,11 +131,9 @@ export const analystSweepModeInputSchema = Type.Object(
             Type.Number({ minimum: 0, maximum: Number.MAX_VALUE }),
           ),
         },
-        { additionalProperties: false },
       ),
     ),
   },
-  { additionalProperties: false },
 );
 
 /** Sweep-mode typed input — 已并 PR 清单 + LOC → 补算缺页 + 维护全库索引. */

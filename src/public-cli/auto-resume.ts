@@ -41,6 +41,8 @@ export { ensureRealArtifactsDirectory };
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
+import { errorText } from "../unknown-value.ts";
+
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
 /**
@@ -115,7 +117,7 @@ export class TurnDispatchedFailure extends Error {
   constructor(cause: unknown) {
     super(
       `settlement failed after the host turn genuinely started: ${
-        cause instanceof Error ? cause.message : String(cause)
+        errorText(cause)
       }`,
       { cause },
     );

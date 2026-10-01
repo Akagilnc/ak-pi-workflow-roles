@@ -37,6 +37,8 @@ import { serializeThrownValue } from "./serialize-thrown-value.ts";
 import { retainPackageFault } from "./public-cli/settlement.ts";
 import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
 
+import { isRecord, errorText } from "./unknown-value.ts";
+
 export { projectActivationFlags };
 
 type Handler = HostEventRegistration[1];
@@ -160,7 +162,7 @@ export async function prepareRoleEnvelope(options: {
       try {
         await appendFile(sessionFile, line, "utf8");
       } catch (error) {
-        const diagnostic = error instanceof Error ? error.message : String(error);
+        const diagnostic = errorText(error);
         armDurableWriteFailure?.(customType, diagnostic);
       }
     });
@@ -293,7 +295,7 @@ export async function prepareRoleEnvelope(options: {
     content: ContentPart[],
   ): void {
     if (infrastructureRoundFailure !== undefined) return;
-    const record = typeof details === "object" && details !== null && !Array.isArray(details)
+    const record = isRecord(details)
       ? details as Record<string, unknown>
       : undefined;
     const isInfra = record !== undefined && (
@@ -338,7 +340,7 @@ export async function prepareRoleEnvelope(options: {
     content: ContentPart[];
     details: Record<string, unknown>;
   } {
-    const diagnostic = error instanceof Error ? error.message : String(error);
+    const diagnostic = errorText(error);
     const content: ContentPart[] = [{ type: "text", text: diagnostic }];
     const errorCode = typeof (error as unknown as { code?: unknown })?.code === "string"
       ? (error as unknown as { code: string }).code

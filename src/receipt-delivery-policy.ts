@@ -1,3 +1,4 @@
+import { isRecord } from "./unknown-value.ts";
 /** Shared accepted-receipt delivery budget for role, auditor, and Navigator sessions (#288). */
 export const RECEIPT_DELIVERY_TURN_LIMIT = 2 as const;
 
@@ -18,10 +19,6 @@ export type NoReceiptLifecycleFacts = {
   attemptPointer: string;
   acceptedReceipt: false;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** Read only the facts required by Terminal consumers; persisted extensions are ignored. */
 export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycleFacts {

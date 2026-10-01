@@ -7,13 +7,12 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
-import {
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-  gatekeeperOutputSchema,
-} from "./package-contracts/gatekeeper-output.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { isRecord } from "./unknown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -157,13 +156,7 @@ export type SubmissionGateHostActions = {
  * registration envelope — src/role-runtime.ts (ADR 0018). Schema authority is
  * the shared contract module (with infrastructure-failure declaration).
  */
-export const GATEKEEPER_TOOL_SPEC = {
-  name: GATEKEEPER_OUTPUT_TOOL_NAME,
-  label: "门下省决议",
-  description: "门下省终局决议。status 为 dispatch 或 pass。",
-  promptSnippet: "门下省决议",
-  parameters: gatekeeperOutputSchema,
-} as const;
+export const GATEKEEPER_TOOL_SPEC = roleSubmissionDeclaration("gatekeeper");
 
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
@@ -174,18 +167,9 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
   return decision;
-}
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
 }
 
 /**
@@ -206,10 +190,10 @@ function projectOfficerDecision(
   fallbackStatus?: string,
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
-  const record = readRecord(decision);
-  const status =
-    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
-    ?? fallbackStatus;
+  const record = isRecord(decision) ? decision : undefined;
+  const status = record !== undefined && Object.hasOwn(record, "status")
+    ? receivedDiscriminator(record, "status")
+    : fallbackStatus;
   const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
   if (queueStatus === "converged") {
     return { status: "converged", officer, receipt };

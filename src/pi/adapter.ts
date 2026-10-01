@@ -20,7 +20,6 @@ import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../rol
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
-
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();

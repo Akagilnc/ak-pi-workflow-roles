@@ -103,7 +103,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     await writeFile(
       goodPrereq,
       JSON.stringify([
-        { id: "owner.choice", requirement: "Owner selects the public contract." },
+        { id: "owner.choice", requirement: "Owner selects the public contract.", extra: true },
       ]),
       "utf8",
     );

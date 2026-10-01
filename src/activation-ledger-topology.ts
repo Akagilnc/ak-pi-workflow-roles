@@ -7,6 +7,10 @@ import {
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { errnoCode, errorText } from "./unknown-value.ts";
+
+export { errnoCode, errorText };
+
 /**
  * Typed activation-ledger path/fs failure. Callers discriminate with instanceof/code;
  * never by parsing message prose. Original filesystem causes are retained.
@@ -126,18 +130,6 @@ export function physicalPathIdentity(path: string): string {
 /** Containment under physical path identity (symlink-stable). */
 export function physicallyContainedIn(root: string, candidate: string): boolean {
   return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
-}
-
-export function errnoCode(error: unknown): string | undefined {
-  return error !== null && typeof error === "object" && "code" in error
-    && typeof (error as { code: unknown }).code === "string"
-    ? (error as { code: string }).code
-    : undefined;
-}
-
-export function errorText(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
 }
 
 /**

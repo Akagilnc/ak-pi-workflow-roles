@@ -11,6 +11,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
+import { isRecord, errorText, isMissingPathError } from "./unknown-value.ts";
 
 export const RUN_TERMINAL_REPORT_FILE = "report.json" as const;
 export const RUN_TERMINAL_ERROR_FILE = "error.json" as const;
@@ -58,22 +59,6 @@ export type RunTerminalArtifactRead =
       readonly path: string;
       readonly reason: string;
     };
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error
-    && "code" in error
-    && (error.code === "ENOENT" || error.code === "ENOTDIR")
-  );
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Minimum producer-owned face shared by settlement terminal artifacts

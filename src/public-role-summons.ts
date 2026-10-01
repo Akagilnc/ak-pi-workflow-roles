@@ -26,9 +26,10 @@ import type {
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 
+import { isRecord, errorText } from "./unknown-value.ts";
+
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
-
 
 export type PublicSummonRole =
   | "inspector"
@@ -591,7 +592,7 @@ export async function summonParallelReviewerLenses(options: {
     if (error instanceof AggregateError) {
       return [error.message, ...error.errors.map(describeFailure)].join("\n");
     }
-    return error instanceof Error ? error.message : String(error);
+    return errorText(error);
   };
   const failedResult = (error: unknown): PublicSummonResult => ({
     exitCode: 1,
@@ -839,7 +840,7 @@ export async function summonGateOfficer(options: {
     const correlationId = parentRunId;
     const { isSafePositiveTicketNumber, readBoardTicketNumber } = await import("./run-ticket-number.ts");
     const parentTicket = await readBoardTicketNumber(options.sourceRunDirectory);
-    const submittedTicket = options.submission !== null && typeof options.submission === "object" && !Array.isArray(options.submission)
+    const submittedTicket = isRecord(options.submission)
       ? (options.submission as { ticketNumber?: unknown }).ticketNumber
       : undefined;
     const courtTicket = isSafePositiveTicketNumber(submittedTicket) ? submittedTicket : parentTicket;

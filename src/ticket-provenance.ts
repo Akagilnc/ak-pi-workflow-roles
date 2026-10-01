@@ -32,6 +32,8 @@ import {
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 /**
  * Typed input failure for diarist bounds/session path (reask, not infrastructure).
  * Accept hook discriminates with instanceof — never Error.message prefixes.
@@ -281,7 +283,7 @@ async function projectSessionRanges(input: {
     if (error instanceof TicketProvenanceInputError) throw error;
     const code = errnoCode(error);
     if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = errorText(error);
       throw new TicketProvenanceInputError(
         `session unreadable: ${input.session.path} (${detail})`,
         { cause: error },

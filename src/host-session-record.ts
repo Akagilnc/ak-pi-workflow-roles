@@ -26,6 +26,8 @@ import type { RoleTurnContinuation } from "./host-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
 export const HOST_SESSION_RECORD_KIND = "host-session" as const;
 
@@ -269,7 +271,7 @@ export function copyAndRecordHostDossier(options: {
       payload: {
         type: "native-session-warning",
         sessionId: options.sessionId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       },
     });
     return;
@@ -334,7 +336,7 @@ export function copyAndRecordHostDossier(options: {
         landingPath,
         ordinal,
         sessionId: options.sessionId,
-        error: lastError instanceof Error ? lastError.message : String(lastError),
+        error: errorText(lastError),
       },
     });
   }

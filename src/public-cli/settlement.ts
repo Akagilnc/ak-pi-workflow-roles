@@ -125,7 +125,7 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
       throw new Error("run artifact retention: artifacts path is not a real directory");
     }
   } catch (error) {
-    if (!isMissingPathError(error)) throw error;
+    if (!isEnoent(error)) throw error;
     await mkdir(artifactsDir, { recursive: true });
     const created = await lstat(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
@@ -399,9 +399,9 @@ async function readRecordedNoReceiptFacts(
   } catch (error) {
     // A session that was never written is genuine absence; anything else is a
     // real read failure about this run.
-    if (isMissingPathError(error)) return undefined;
+    if (isEnoent(error)) return undefined;
     return new LifecycleReadFailure(
-      `session transcript unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      `session transcript unreadable: ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -420,7 +420,7 @@ async function readRecordedNoReceiptFacts(
       : undefined;
   } catch (error) {
     return new LifecycleReadFailure(
-      `no-receipt lifecycle record is malformed: ${error instanceof Error ? error.message : String(error)}`,
+      `no-receipt lifecycle record is malformed: ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -482,6 +482,8 @@ import {
   type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
+
+import { isEnoent, isMissingPathError, isRecord, errorText } from "../unknown-value.ts";
 
 export type { ControlledFailureCause };
 
@@ -1047,24 +1049,6 @@ type SessionEntry = {
   parentSession?: string;
 };
 
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
-}
-
-/** Face clear only: path not enterable as a face (ENOENT or file mid-path). */
-function isAbsentFacePathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    ((error as { code?: unknown }).code === "ENOENT" ||
-      (error as { code?: unknown }).code === "ENOTDIR")
-  );
-}
-
 /**
  * Read the exact bound Pi session file principal.
  * Does not scan the session directory for "latest" — resume identity is the file.
@@ -1080,10 +1064,6 @@ export async function readBoundSessionEntries(
     entries.push(JSON.parse(line) as SessionEntry);
   }
   return entries;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -1467,7 +1447,7 @@ async function extractNavigatorFactFromAdmittedSession(
     const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (isEnoent(error)) {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -1499,7 +1479,7 @@ async function removeFaceIfPresent(path: string): Promise<void> {
     // force:true already ignores ENOENT; ENOTDIR = face path not enterable
     // (artifacts-as-file mid-path) — same absent-face semantics as the reader.
     // Other errno stay loud (失败诚实).
-    if (isAbsentFacePathError(error)) return;
+    if (isMissingPathError(error)) return;
     throw error;
   }
 }
@@ -1620,7 +1600,7 @@ async function readLawfulSettlementEntries(
   try {
     return { kind: "entries", entries: await readBoundSessionEntries(sessionFile) };
   } catch (error) {
-    if (isMissingPathError(error)) return { kind: "absent" };
+    if (isEnoent(error)) return { kind: "absent" };
     return { kind: "fault", error };
   }
 }
@@ -1863,7 +1843,7 @@ function countersignTerminalFromEntries(
     if (entry?.type !== "custom") continue;
     if (entry.customType !== SECRETARIAT_GATE_OFFICER_ENTRY_TYPE) continue;
     const data =
-      entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
+      isRecord(entry.data)
         ? (entry.data as Record<string, unknown>)
         : undefined;
     if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
@@ -1934,7 +1914,7 @@ async function applySecretariatCountersignTerminal(
   try {
     entries = await readBoundSessionEntries(coordinates.sessionFile);
   } catch (error) {
-    if (!isMissingPathError(error)) {
+    if (!isEnoent(error)) {
       await noteSettlementFault(
         admitted.runDirectory,
         scope,

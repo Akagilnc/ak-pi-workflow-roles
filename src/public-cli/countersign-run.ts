@@ -9,6 +9,8 @@ import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { CliIo } from "./cli-io.ts";
 import { currentReplyRows, type TerminalResult, type TerminalRoleOutcome } from "./terminal.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
@@ -50,10 +52,6 @@ export type CourtDiaristInvocationResult = {
   readonly terminal?: import("./terminal.ts").TerminalResult;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isEscalatePayload(payload: unknown): boolean {
   if (!isRecord(payload)) return false;

@@ -12,7 +12,6 @@ import {
   type RoleHost,
 } from "./host-contracts.ts";
 
-
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { SitianRecord } from "./sitian-contracts.ts";
@@ -21,6 +20,8 @@ import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic } from "./package-contracts/terminating-infrastructure.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+
+import { isRecord, errorText } from "./unknown-value.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -576,9 +577,7 @@ export function createSubmissionLedgerHost(
             // host-failure seam. Tool identity comes from the registry map.
             const reviewEscalate = tool.name === REVIEW_SUBMISSION_OUTPUT_TOOL_NAME
               && infrastructureFailureDiagnostic(params) !== undefined
-              && params !== null
-              && typeof params === "object"
-              && !Array.isArray(params)
+              && isRecord(params)
               && (params as Record<string, unknown>).status === "escalate";
             if (!reviewEscalate) {
               failOnInfrastructureFailureDeclaration(
@@ -602,7 +601,7 @@ export function createSubmissionLedgerHost(
                 toolCallId,
                 outcome: "correctable-rejection",
                 code: "typed-bounce",
-                diagnostic: error instanceof Error ? error.message : String(error),
+                diagnostic: errorText(error),
                 role,
                 accepted: params,
               });
@@ -613,7 +612,7 @@ export function createSubmissionLedgerHost(
                 attemptId,
                 toolCallId,
                 outcome: "infrastructure",
-                diagnostic: error instanceof Error ? error.message : String(error),
+                diagnostic: errorText(error),
                 role,
                 accepted: params,
               });

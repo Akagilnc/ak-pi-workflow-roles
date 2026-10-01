@@ -1,9 +1,13 @@
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
+import type { RoleHost, HostContext } from "./host-contracts.ts";
+import { registerFiledSubmissionTool } from "./filed-submission.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { ComplianceResponseRetentionError } from "./compliance-transport.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
-import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_DESCRIPTION, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, doctorSubmissionSchema, validateDoctorOutput, type DoctorCase } from "./doctor-contracts.ts";
+import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, validateDoctorOutput, type DoctorCase } from "./doctor-contracts.ts";
 
 import { sitianReport } from "./sitian-facade.ts";
+
+import { errorText } from "./unknown-value.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
 export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/<n>/runs directory", type: "string" as const } } as const;
@@ -19,14 +23,14 @@ function appendCandidate(ctx: HostContext, data: unknown): void {
       source: "doctor-role",
     });
   } catch (error) {
-    throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${errorText(error)}`, { cause: error });
   }
   const append = ctx.sessionManager.appendCustomEntry;
   if (typeof append === "function") {
     try {
       append.call(ctx.sessionManager, DOCTOR_CANDIDATE_ENTRY_TYPE, data);
     } catch (error) {
-      throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${errorText(error)}`, { cause: error });
     }
   }
 }
@@ -34,15 +38,18 @@ export function createDoctorRoleRuntime(pi: RoleHost, dependencies: DoctorRoleDe
   let activation: { soul: string; patient: DoctorCase; store: DoctorEvidenceStore } | undefined; let registered = false; pi.registerFlag(DOCTOR_CASE_FLAG.name, DOCTOR_CASE_FLAG.definition);
   return { async activate() { const path = pi.getFlag(DOCTOR_CASE_FLAG.name); if (typeof path !== "string" || !path.trim()) throw new Error("Doctor requires --ak-doctor-case"); const soul = (await dependencies.loadSoul()).trim(); if (!soul) throw new Error("Doctor soul is empty"); const patient = await dependencies.loadCase(path); activation = { soul, patient, store: new DoctorEvidenceStore(patient) };
     if (!registered) { registered = true; pi.registerTool({ name: DOCTOR_EVIDENCE_TOOL_NAME, label: "太医署证据", description: "分页读取留存的 Pi session 字节。", parameters: doctorEvidenceReadSchema, async execute(_id: string, params: { evidenceId: string; offset?: number; limit?: number }) { if (!activation) throw new Error("太医署未激活"); const details = activation.store.read(params.evidenceId, params.offset, params.limit); return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details }; } });
-      pi.registerTool({ name: DOCTOR_OUTPUT_TOOL_NAME, label: "太医署输出", description: DOCTOR_OUTPUT_TOOL_DESCRIPTION, parameters: doctorSubmissionSchema, async execute(id: string, params: unknown, _signal: AbortSignal | undefined, _update: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
-        if (!activation) throw new Error("太医署未激活");
-        const active = activation;
-        const testimony = validateDoctorOutput(params, active.patient, active.store);
-        try {
-          appendCandidate(ctx, { version: 1, testimony, cost: active.patient.cost, readRecord: active.store.readRecord(), patientIdentity: active.patient.identity });
-        } catch (error) { host.failInfrastructure(error, ctx, id); }
-        return { content: [], details: testimony, terminate: true };
-      } });
+      registerFiledSubmissionTool(pi, roleSubmissionDeclaration("doctor"), {
+        readyError: () => (activation === undefined ? "太医署未激活" : undefined),
+        beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+          if (activation === undefined) throw new Error("太医署未激活");
+          const active = activation;
+          const testimony = validateDoctorOutput(parameters, active.patient, active.store);
+          try {
+            appendCandidate(ctx, { version: 1, testimony, cost: active.patient.cost, readRecord: active.store.readRecord(), patientIdentity: active.patient.identity });
+          } catch (error) { host.failInfrastructure(error, ctx, toolCallId); }
+          return testimony;
+        },
+      });
       pi.on("before_agent_start", (event) => { if (!activation) throw new Error("太医署未激活"); const catalog = { version: activation.patient.version, identity: activation.patient.identity, admittedMetrics: { cost: activation.patient.cost }, lawfulTargetKeys: ["case", ...activation.patient.cost.invocations.sources], evidence: activation.patient.evidence.map(({ id, kind, sha256, byteLength, contentLength }) => ({ id, kind, sha256, byteLength, contentLength })) }; return { systemPrompt: `${event.systemPrompt}\n\n<doctor_soul>\n${activation.soul}\n</doctor_soul>\n\n<doctor_case>\n${JSON.stringify(catalog)}\n</doctor_case>` }; }); }
     const required = [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]; const names = pi.getAllTools().map((tool) => tool.name); for (const name of required) if (names.filter((item) => item === name).length !== 1) throw new Error(`Doctor required tool collision or missing: ${name}`); pi.setActiveTools(required); const active = pi.getActiveTools?.() ?? required; if (active.length !== 2 || !required.every((name) => active.includes(name))) throw new Error("Doctor active tool narrowing failed"); } };
 }

@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { loadDoctorCase } from "./doctor-evidence.ts";
+import { isEnoent } from "./unknown-value.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import {
   navigatorSubjectKey,
@@ -114,7 +115,7 @@ export async function loadNavigatorWorkContext(
         break;
       }
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
+      if (!isEnoent(error)) throw error;
     }
   }
   const authority = resolveNavigatorAuthorityMaterial(input, authorityMaterial);
