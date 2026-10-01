@@ -235,7 +235,10 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     assert.equal(durable?.state, "terminal");
   });
 });
-async function assertCleanupDiagnosticNoted(sessionFile: string): Promise<void> {
+async function assertCleanupDiagnosticNoted(
+  sessionFile: string,
+  identities: readonly string[],
+): Promise<void> {
   const entries = (await readFile(sessionFile, "utf8"))
     .trim()
     .split("\n")
@@ -244,8 +247,9 @@ async function assertCleanupDiagnosticNoted(sessionFile: string): Promise<void> 
   const diagnostic = entries.find(
     (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
   );
-  assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-  assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
+  const text = diagnostic?.data?.diagnostic;
+  assert.equal(typeof text, "string");
+  assert.equal(identities.some((identity) => (text as string).includes(identity)), true);
 }
 
 test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
@@ -290,7 +294,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         `${runId}@judge`,
       );
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["code=EACCES", "code=EPERM"]);
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const { recordFile } = resolveSitianRecordPath({
@@ -390,7 +394,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-lawful-publish-throw-001";
-    const { io } = captureIo();
+    const captured = captureIo();
     const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
       "lawful then dispatch throws after seal",
       { blockReportPublication: false },
@@ -404,26 +408,27 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
-          io,
+          io: captured.io,
           roleTurnHost: {
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
-              const statePath = join(request.runDirectory, "run-state.json");
-              await rm(statePath, { force: true });
-              await mkdir(statePath);
+              if (request.activation.role === "judge") {
+                const statePath = join(request.runDirectory, "run-state.json");
+                await rm(statePath, { force: true });
+                await mkdir(statePath);
+              }
               return out;
             },
           },
         },
       );
 
-      // Persist failure is a package note beside the accepted terminal.
-      // The loop stops on the lawful result.
-      assert.equal(result.exitCode, 0);
-      assert.ok(result.terminal);
-      assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+      // Persist notes the directory. The later mandatory audit reads that same
+      // run-state, so the parent is not delivered as accepted.
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal, undefined);
+      assert.equal(captured.stderr.some((line) => line.includes("EISDIR")), true);
       assert.equal(dispatches(), 1);
-      assert.equal(result.terminal!.autoResumeCount, 0);
       const runDirectory = join(
         home,
         ".ak-roles",
@@ -432,19 +437,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["code=EISDIR"]);
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must survive a later persist failure",
-      );
-      assert.ok(
-        result.terminal!.submissions?.some(
-          (payload) =>
-            typeof payload === "object"
-            && payload !== null
-            && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
-        ),
-        "accepted terminal keeps the sealed payload",
       );
     } finally {
       await restoreArtifactsWritable();
@@ -504,7 +500,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["code=EISDIR"]);
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -533,7 +529,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"), ["code=EISDIR"]);
 
     } finally {
       await restoreArtifactsWritable();
@@ -1162,8 +1158,9 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         const diagnostic = entries.find(
           (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
         );
-        assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-        assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
+        const text = diagnostic?.data?.diagnostic;
+        assert.equal(typeof text, "string");
+        assert.equal((text as string).includes("code=EISDIR"), true);
       },
       async () => {
         await lease.release();

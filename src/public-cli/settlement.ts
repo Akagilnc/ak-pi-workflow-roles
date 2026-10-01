@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import {
   readAnalystGateCyclesFromAuditorRoles,
@@ -104,10 +104,94 @@ export type SettlementCourtScope = {
   readonly invocationScopeId?: string;
   /**
    * Package fault beside an already chosen terminal. The host report stays.
-   * When absent, the same artifact-file fallback used by post-admission retains the fault.
+   * Bound by the public court to the one post-dispatch receiver.
    */
   readonly notePackageFault?: (diagnostic: string) => void | Promise<void>;
 };
+
+/**
+ * Hardened artifacts directory. A planted symlink at the run directory or the
+ * artifacts path must not receive a durable run artifact.
+ */
+export async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
+  const runStat = await lstat(runDirectory);
+  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
+    throw new Error("run artifact retention: run directory is not a real directory");
+  }
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  try {
+    const existing = await lstat(artifactsDir);
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw new Error("run artifact retention: artifacts path is not a real directory");
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    await mkdir(artifactsDir, { recursive: true });
+    const created = await lstat(artifactsDir);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw new Error("run artifact retention: artifacts directory is not a real directory");
+    }
+  }
+  return artifactsDir;
+}
+
+/**
+ * One retention path for a package fault beside an already chosen terminal.
+ * Session append is first when the caller has that channel. The artifact file
+ * is only the fallback after that append throws. Either failure is reported;
+ * neither replaces the terminal.
+ */
+export async function retainPackageFault(input: {
+  readonly runDirectory: string;
+  readonly diagnostic: string;
+  readonly appendSession?: (payload: {
+    readonly diagnostic: string;
+    readonly recordedAt: string;
+  }) => Promise<void>;
+  readonly stderr?: (text: string) => void;
+}): Promise<void> {
+  const payload = {
+    diagnostic: input.diagnostic,
+    recordedAt: new Date().toISOString(),
+  };
+  let retentionFailure: string | undefined;
+  const writeArtifact = async (): Promise<void> => {
+    const artifactsDir = await ensureRealArtifactsDirectory(input.runDirectory);
+    await writeFile(
+      join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
+      `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  };
+  if (input.appendSession !== undefined) {
+    try {
+      await input.appendSession(payload);
+    } catch (appendError) {
+      try {
+        await writeArtifact();
+      } catch (artifactError) {
+        retentionFailure =
+          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
+      }
+    }
+  } else {
+    try {
+      await writeArtifact();
+    } catch (artifactError) {
+      retentionFailure =
+        `post-dispatch diagnostic durable retention failed (best-effort continue): artifact=${describeErrorIdentity(artifactError)}`;
+    }
+  }
+  const stderr = input.stderr ?? ((text: string) => {
+    process.stderr.write(text);
+  });
+  try {
+    stderr(formatCliDiagnostic(input.diagnostic));
+    if (retentionFailure !== undefined) stderr(formatCliDiagnostic(retentionFailure));
+  } catch {
+    // Presentation is best-effort beside an already-formed host terminal.
+  }
+}
 
 /** Record a package fault without letting the note replace the terminal. */
 export async function noteSettlementFault(
@@ -115,21 +199,11 @@ export async function noteSettlementFault(
   scope: SettlementCourtScope | undefined,
   diagnostic: string,
 ): Promise<void> {
-  try {
-    if (scope?.notePackageFault !== undefined) {
-      await scope.notePackageFault(diagnostic);
-      return;
-    }
-    const dir = roleRunArtifactsDirectory(runDirectory);
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, `post-admission-diagnostic-${randomUUID()}.json`),
-      `${JSON.stringify({ version: 1, diagnostic, recordedAt: new Date().toISOString() }, null, 2)}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
-  } catch {
-    // A note that cannot be retained must not replace the host terminal.
+  if (scope?.notePackageFault !== undefined) {
+    await scope.notePackageFault(diagnostic);
+    return;
   }
+  await retainPackageFault({ runDirectory, diagnostic });
 }
 
 export function ledgerReadScope(
@@ -280,7 +354,7 @@ export async function settleHostEndedNoReceipt(
     await noteSettlementFault(
       admitted.runDirectory,
       scope,
-      `no-receipt lifecycle record could not be read: ${recorded.message}`,
+      `no-receipt lifecycle record could not be read: ${describeErrorIdentity(recorded.error ?? recorded)}`,
     );
     return settleNoReceiptTerminal(admitted, authority, scope, undefined);
   }
@@ -440,6 +514,11 @@ export type PackageSideFact = {
    */
   readonly exitCode?: number | null;
   readonly timedOut?: boolean;
+  /**
+   * The signal that ended the host child on this call, when the host reported
+   * one. Beside the host's details, never inside them.
+   */
+  readonly signal?: string;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
   /** A durable stderr.log write that failed while handling this call. */
@@ -698,10 +777,12 @@ function packageFactsOf(input: {
   readonly packageFact?: PackageSideFact;
   readonly code?: number | null;
   readonly timedOut?: boolean;
+  readonly signal?: string;
 }): PackageSideFact | undefined {
   const facts: PackageSideFact = {
     ...(input.code === undefined ? {} : { exitCode: input.code }),
     ...(input.timedOut === true ? { timedOut: true } : {}),
+    ...(input.signal === undefined || input.signal.length === 0 ? {} : { signal: input.signal }),
     ...(input.packageFact ?? {}),
   };
   return Object.keys(facts).length === 0 ? undefined : facts;
@@ -1917,7 +1998,7 @@ async function trySettleAcceptedSeatTerminalResult(
   ) {
     return settled;
   }
-  return applySecretariatCountersignTerminal(admitted, authority, settled);
+  return applySecretariatCountersignTerminal(admitted, authority, settled, scope);
 }
 
 /** One settlement dispatch. The registry `settlement` leaf selects the path. */
@@ -2013,6 +2094,7 @@ async function applySecretariatCountersignTerminal(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   settled: TerminalResult,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   let entries: SessionEntry[] = [];
@@ -2022,7 +2104,7 @@ async function applySecretariatCountersignTerminal(
     if (!isMissingPathError(error)) {
       await noteSettlementFault(
         admitted.runDirectory,
-        undefined,
+        scope,
         `secretariat officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
       );
     }
@@ -2070,6 +2152,7 @@ export async function attachPostAuditProjection(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   terminal: TerminalResult,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   let gate: TerminalGateFact | undefined;
@@ -2081,13 +2164,13 @@ export async function attachPostAuditProjection(
   } catch (error) {
     await noteSettlementFault(
       admitted.runDirectory,
-      undefined,
+      scope,
       `gate read failed beside host terminal: ${describeErrorIdentity(error)}`,
     );
   }
   const withGate = gate === undefined ? terminal : { ...terminal, gate };
   if (admitted.role !== "secretariat") return withGate;
-  return applySecretariatCountersignTerminal(admitted, authority, withGate);
+  return applySecretariatCountersignTerminal(admitted, authority, withGate, scope);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */

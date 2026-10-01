@@ -1,6 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -791,7 +792,7 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
   });
 });
 
-test("terminal persistence failure through public entry stays beside the accepted doctor terminal", async () => {
+test("terminal persistence failure is noted and the auditor read of that run is not delivered as success", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -811,6 +812,8 @@ test("terminal persistence failure through public entry stays beside the accepte
     // The accepted Doctor payload is the terminal. The run-state read failure
     // is a note beside it. This run records a real submission (sealedAcceptance)
     // before the run-state path is occupied. The assertion checks those bytes.
+    // Mandatory auditor still runs; the note is not a substitute for that gate.
+    await configurePassingReviewSeats(home);
     let recordedDetails: unknown;
     const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "41", "--project", project, "inspect"],
       {
@@ -820,7 +823,7 @@ test("terminal persistence failure through public entry stays beside the accepte
         credentials: { "openai-codex": true, xai: false },
         createRunId: () => runId,
         io: captured.io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -833,6 +836,10 @@ test("terminal persistence failure through public entry stays beside the accepte
           await writeFile(
             sessionFile,
             `${JSON.stringify({
+              type: "custom",
+              customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+              data: { version: 1, testimony: details },
+            })}\n${JSON.stringify({
               type: "message",
               message: {
                 role: "toolResult",
@@ -861,14 +868,17 @@ test("terminal persistence failure through public entry stays beside the accepte
             args: [...args],
           };
         },
-          }),
+          })),
       },
     );
 
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.role, "doctor");
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(result.terminal?.submissions, [recordedDetails]);
+    // The run-state directory is noted at persist, and the mandatory auditor
+    // then has to read that same run. That read is part of the audit, so the
+    // command must not deliver the parent as accepted.
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal, undefined);
+    assert.equal(captured.stderr.some((line) => line.includes("EISDIR")), true);
+    assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
     const sessionFile = join(runDirectory, "session", "session.jsonl");
     const entries = (await readFile(sessionFile, "utf8"))
       .trim()
@@ -879,7 +889,7 @@ test("terminal persistence failure through public entry stays beside the accepte
       entries.some((entry) =>
         entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
         && typeof entry.data?.diagnostic === "string"
-        && entry.data.diagnostic.length > 0),
+        && entry.data.diagnostic.includes("code=EISDIR")),
       true,
     );
   });

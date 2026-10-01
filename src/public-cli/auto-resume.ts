@@ -13,10 +13,8 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
-
-import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -35,8 +33,11 @@ import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
+  ensureRealArtifactsDirectory,
   presentFailureTerminal,
 } from "./settlement.ts";
+
+export { ensureRealArtifactsDirectory };
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
@@ -123,47 +124,6 @@ export class TurnDispatchedFailure extends Error {
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
 export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
-
-/**
- * #182-A hardened path identity, mirrored from settlement.ts's
- * ensureAuditEvidenceDirectory: a planted symlink at the run directory or the
- * artifacts path must not receive a durable run artifact (O_NOFOLLOW only
- * protects the final file name; recursive mkdir would accept a symlinked
- * parent). Fails loudly with the true cause instead. Shared by every caller
- * that needs a durable run-artifacts write independent of session/dossier
- * health — dispatch-error retention here, and post-admission's best-effort
- * cleanup diagnostic (#840 bounce class 2).
- */
-export async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
-  const runStat = await lstat(runDirectory);
-  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw new Error("run artifact retention: run directory is not a real directory");
-  }
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    const existing = await lstat(artifactsDir);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error("run artifact retention: artifacts path is not a real directory");
-    }
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    await mkdir(artifactsDir, { recursive: true });
-    const created = await lstat(artifactsDir);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw new Error("run artifact retention: artifacts directory is not a real directory");
-    }
-  }
-  return artifactsDir;
-}
-
-/** ENOENT identity shared with settlement.ts's hardened audit-artifact path. */
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
-}
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */
 function jsonSafeReplacer(): (key: string, value: unknown) => unknown {

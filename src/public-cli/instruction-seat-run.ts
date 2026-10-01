@@ -52,6 +52,7 @@ import {
 } from "./invocation.ts";
 import {
   presentControlledFailure,
+  packageFaultNoteFor,
   prepareSummonsResumeMaterials,
   roleTurnOptions,
   runPostAdmissionOneShot,
@@ -64,7 +65,6 @@ import {
 } from "./post-admission.ts";
 import {
   buildAutoResumeContinuationPrompt,
-  describeErrorIdentity,
   loadResumablePublicRole,
   markRunAdmitted,
   parentRunPathFromGatePointerInstruction,
@@ -74,11 +74,11 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
-  noteSettlementFault,
   presentStructuralRejection,
   readBoundSessionEntries,
   attachPostAuditProjection,
   trySettlePublicSeat,
+  type SettlementCourtScope,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import { warnMissingMethodSkills } from "./machine-method-skills.ts";
@@ -234,6 +234,14 @@ async function bindAndRelocateDiarist(
     await bindAdmittedTicketNumber(admitted, boardTicket);
   }
   return await relocateAdmittedRunToTicket(admitted, authority, lease);
+}
+
+function packageFaultScope(
+  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): SettlementCourtScope {
+  return { notePackageFault: packageFaultNoteFor(admitted, env, io) };
 }
 
 function seatAdapters(
@@ -756,7 +764,8 @@ export async function runPublicInstructionSeat(
       } catch (error) {
         return await presentControlledFailure(admitted, {
           timedOut: false, code: null, stderr: "", thrown: error,
-        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+        }, seatAdapters(admitted, env), env.principalAuthority, io, true,
+          packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
       if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
         await recordChildDiaristRun(admitted, outcome.admitted.runId);
@@ -765,7 +774,8 @@ export async function runPublicInstructionSeat(
         return await presentControlledFailure(admitted, {
           timedOut: false, code: null, stderr: "",
           thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
-        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+        }, seatAdapters(admitted, env), env.principalAuthority, io, true,
+          packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
       if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
         io.stdout(formatTerminalResult(outcome.terminal));
@@ -894,7 +904,7 @@ async function queueConclusionFromChild(
     const terminal = await trySettlePublicSeat(
       current,
       env.principalAuthority,
-      undefined,
+      packageFaultScope(current, env, io),
     );
     const status = latestQueueStatus(terminal);
     if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
@@ -935,7 +945,11 @@ export async function continueParentAfterChild(
   }
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
-      const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+      const terminal = await trySettlePublicSeat(
+        admitted,
+        env.principalAuthority,
+        packageFaultScope(admitted, env, io),
+      );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted.role, latestQueuePayload(resolved.terminal), resolved.admitted.runId);
     }
@@ -987,35 +1001,14 @@ async function auditSubmittedRole(
     io.stdout(formatTerminalResult(turn.terminal));
     return turn;
   }
-  let rows: Awaited<ReturnType<typeof readRecordedSubmissionRows>>;
-  try {
-    rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  } catch (error) {
-    // The host already accepted. A later ledger read stays beside that terminal.
-    await noteSettlementFault(
-      admitted.runDirectory,
-      undefined,
-      `submission history read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
-    );
-    io.stdout(formatTerminalResult(turn.terminal));
-    return turn;
-  }
+  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
   const acceptedRow = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted");
   const toolCallId = acceptedRow?.toolCallId;
   if (toolCallId === undefined) throw new Error("accepted submission has no tool call identity");
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-  let entries: Awaited<ReturnType<typeof readBoundSessionEntries>> = [];
-  if (admitted.role === "doctor") {
-    try {
-      entries = await readBoundSessionEntries(sessionFile);
-    } catch (error) {
-      await noteSettlementFault(
-        admitted.runDirectory,
-        undefined,
-        `doctor session read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
-  }
+  const entries = admitted.role === "doctor"
+    ? await readBoundSessionEntries(sessionFile)
+    : [];
   const context: HostContext = {
     cwd: admitted.projectRoot,
     mode: "print",
@@ -1031,21 +1024,10 @@ async function auditSubmittedRole(
     },
     abort() {},
   };
-  const keepAcceptedBesideAuditFault = async (error: unknown): Promise<SeatRunResult> => {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      undefined,
-      `audit read failed beside accepted terminal: ${describeErrorIdentity(error)}`,
-    );
-    if (turn.terminal !== undefined) io.stdout(formatTerminalResult(turn.terminal));
-    return turn;
-  };
   if (admitted.role === "doctor") {
     if (passedOfficer !== "auditor") {
       let lastSummon: PublicSummonResult | undefined;
-      let decision: Awaited<ReturnType<ReturnType<typeof createPiDoctorAuditor>>>;
-      try {
-        decision = await createPiDoctorAuditor()({
+      const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
@@ -1073,9 +1055,6 @@ async function auditSubmittedRole(
           return summoned;
         },
       });
-      } catch (error) {
-        return keepAcceptedBesideAuditFault(error);
-      }
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
           runId: admitted.runId, message: readableGateItem(decision.receipt ?? decision.violations),
@@ -1115,15 +1094,11 @@ async function auditSubmittedRole(
         },
       });
     if (admitted.role === "judge") {
-      try {
-        chain = await runJudgeGates({
-          gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
-            || (passedOfficer === "notary" && subject.kind === "judge_draft"),
-          runGate,
-        });
-      } catch (error) {
-        return keepAcceptedBesideAuditFault(error);
-      }
+      chain = await runJudgeGates({
+        gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
+          || (passedOfficer === "notary" && subject.kind === "judge_draft"),
+        runGate,
+      });
     } else {
       const subject = admitted.role === "fixer" || admitted.role === "coder"
         ? { kind: "worker_completion" as const }
@@ -1134,12 +1109,7 @@ async function auditSubmittedRole(
       if (passedOfficer === officer) {
         chain = { status: "converged", passes: [] };
       } else {
-        let pass: Awaited<ReturnType<typeof runGate>>;
-        try {
-          pass = await runGate(subject);
-        } catch (error) {
-          return keepAcceptedBesideAuditFault(error);
-        }
+        const pass = await runGate(subject);
         if (pass === undefined) throw new Error("audit gate returned no conclusion");
         officerRunId = pass.runId;
         chain = {
@@ -1161,7 +1131,11 @@ async function auditSubmittedRole(
           ? undefined : runIdFromRunDirectory(escalation.runDirectory));
       if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
       const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority);
-      const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
+      const terminal = await trySettlePublicSeat(
+        officer.admitted,
+        env.principalAuthority,
+        packageFaultScope(officer.admitted, env, io),
+      );
       if (terminal === undefined) throw new Error("escalated audit has no terminal result");
       io.stdout(formatTerminalResult(terminal));
       return { exitCode: 0, admitted: officer.admitted, terminal };
@@ -1187,7 +1161,12 @@ async function auditSubmittedRole(
   // Audit only adds gate rounds and, for 中书省, the officer fact. A second
   // settle would republish the same attempt.
   if (turn.terminal === undefined) throw new Error(`audited ${admitted.role} submission did not settle`);
-  const terminal = await attachPostAuditProjection(admitted, env.principalAuthority, turn.terminal);
+  const terminal = await attachPostAuditProjection(
+    admitted,
+    env.principalAuthority,
+    turn.terminal,
+    packageFaultScope(admitted, env, io),
+  );
   turn = { ...turn, terminal };
   io.stdout(formatTerminalResult(terminal));
   return turn;

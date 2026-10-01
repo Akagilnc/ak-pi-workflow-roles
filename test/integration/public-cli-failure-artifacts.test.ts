@@ -178,15 +178,19 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
     const names = await readdir(join(runDirectory, "artifacts"));
-    let noted = false;
+    const notes: string[] = [];
     for (const name of names) {
       if (!name.startsWith("post-admission-diagnostic-")) continue;
       const body = JSON.parse(await readFile(join(runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown };
-      if (typeof body.diagnostic === "string" && body.diagnostic.length > 0) noted = true;
+      if (typeof body.diagnostic === "string") notes.push(body.diagnostic);
     }
     const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
-    if (sessionText.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) noted = true;
-    assert.equal(noted, true);
+    for (const line of sessionText.split("\n")) {
+      if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) continue;
+      const entry = JSON.parse(line) as { data?: { diagnostic?: unknown } };
+      if (typeof entry.data?.diagnostic === "string") notes.push(entry.data.diagnostic);
+    }
+    assert.equal(notes.some((note) => note.includes("SyntaxError")), true);
   });
 });
 test("unwritable run directory keeps the child diagnostic primary with a durable Error Artifact and Terminal", async () => {
@@ -335,6 +339,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     seedGitProject(project);
     const { io, stdout } = captureIo();
     const acceptedDetails = { status: "converged", note: "ok" };
+    await configurePassingReviewSeats(home);
     let sealedSessionFile = "";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then stderr.log blocked"],
       {
@@ -343,7 +348,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
         cwd: project,
         createRunId: () => "run-stderr-log-eisdir-accepted-001",
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args) => {
@@ -375,7 +380,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
               sealedAcceptance: { role: "judge" as const, details: acceptedDetails },
             };
           },
-        }),
+        })),
       },
     );
     // The host accepted. stderr.log is a mirror; its write failure is a note.

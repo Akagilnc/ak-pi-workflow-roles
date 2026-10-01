@@ -97,6 +97,7 @@ import {
   settleHostEndedNoReceipt,
   noteSettlementFault,
   attachRecordedSubmissions,
+  retainPackageFault,
   type ControlledFailure,
   type PackageSideFact,
 } from "./settlement.ts";
@@ -166,6 +167,7 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
   persistRunState: boolean;
   deferredPersist: { needsPersist?: true } | Record<string, never>;
   invocationScopeId: string | undefined;
+  notePackageFault?: (diagnostic: string) => void | Promise<void>;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -189,6 +191,7 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
     input.env.principalAuthority,
     input.io,
     input.persistRunState,
+    input.notePackageFault,
   );
   return {
     ...failed,
@@ -237,42 +240,32 @@ export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
  * zero durable trace (#840 bounce class 2); a healthy session never gets a
  * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
  */
-async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvocation>(
-  admitted: A,
-  env: PostAdmissionEnv,
+async function recordBestEffortPostDispatchDiagnostic(
+  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
+  env: Pick<PostAdmissionEnv, "sessionAppender" | "principalAuthority">,
   diagnostic: string,
-  io: CliIo,
+  io: Pick<CliIo, "stderr">,
 ): Promise<void> {
-  const payload = { diagnostic, recordedAt: new Date().toISOString() };
-  let retentionFailure: string | undefined;
-  try {
-    await env.sessionAppender(
+  await retainPackageFault({
+    runDirectory: admitted.runDirectory,
+    diagnostic,
+    appendSession: (payload) => env.sessionAppender(
       env.principalAuthority,
       admitted.principal,
       POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
       payload,
-    );
-  } catch (appendError) {
-    try {
-      const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-      await writeFile(
-        join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
-        `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
-        { encoding: "utf8", flag: "wx" },
-      );
-    } catch (artifactError) {
-      retentionFailure =
-        `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
-    }
-  }
-  try {
-    io.stderr(formatCliDiagnostic(diagnostic));
-    if (retentionFailure !== undefined) {
-      io.stderr(formatCliDiagnostic(retentionFailure));
-    }
-  } catch {
-    // Presentation is best-effort beside an already-formed host terminal.
-  }
+    ),
+    stderr: (text) => io.stderr(text),
+  });
+}
+
+/** The one package-fault receiver, bound to this admitted run's session and io. */
+export function packageFaultNoteFor(
+  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
+  env: Pick<PostAdmissionEnv, "sessionAppender" | "principalAuthority">,
+  io: Pick<CliIo, "stderr">,
+): (diagnostic: string) => Promise<void> {
+  return (diagnostic) => recordBestEffortPostDispatchDiagnostic(admitted, env, diagnostic, io);
 }
 
 export type PostAdmissionEnv = {
@@ -440,6 +433,12 @@ export async function resolveResumeMethodMaterialAdapters<
       input.emptyAdapters,
       input.authority,
       { ...input.io, omitFailureStderrDiagnostic: true },
+      true,
+      (diagnostic) => retainPackageFault({
+        runDirectory: input.admitted.runDirectory,
+        diagnostic,
+        stderr: (text) => input.io.stderr(text),
+      }),
     );
     return { kind: "terminal", ...terminal };
   }
@@ -455,6 +454,7 @@ export async function presentControlledFailure<
   authority: DurablePrincipalAuthority,
   io: CliIo,
   persistRunState = true,
+  notePackageFault?: (diagnostic: string) => void | Promise<void>,
 ): Promise<{
   exitCode: number;
   admitted: A;
@@ -512,7 +512,7 @@ export async function presentControlledFailure<
       // The host failure is already classified. A run-state write stays beside it.
       await noteSettlementFault(
         admitted.runDirectory,
-        undefined,
+        notePackageFault === undefined ? undefined : { notePackageFault },
         `run-state persistence failed beside host terminal: ${describeErrorIdentity(error)}`,
       );
     }
@@ -523,6 +523,7 @@ export async function presentControlledFailure<
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
       recordAttemptHistory: true,
+      ...(notePackageFault === undefined ? {} : { notePackageFault }),
       ...(failureInput.invocationScopeId === undefined ||
         failureInput.invocationScopeId.length === 0
         ? {}
@@ -565,6 +566,7 @@ async function settleAfterTurnStarted<
   authority: DurablePrincipalAuthority,
   io: CliIo,
   persistRunState: boolean,
+  notePackageFault?: (diagnostic: string) => void | Promise<void>,
 ): Promise<{ exitCode: number; admitted: A; terminal: T }> {
   try {
     return (await presentControlledFailure(
@@ -574,6 +576,7 @@ async function settleAfterTurnStarted<
       authority,
       io,
       persistRunState,
+      notePackageFault,
     )) as { exitCode: number; admitted: A; terminal: T };
   } catch (error) {
     throw new TurnDispatchedFailure(error);
@@ -712,6 +715,7 @@ export async function dispatchPostAdmissionTurn<
           env.principalAuthority,
           io,
           persistRunState,
+          courtScope.notePackageFault,
         )),
         turnDispatched: true as const,
         skipAutoResume: true as const,
@@ -822,6 +826,7 @@ export async function dispatchPostAdmissionTurn<
           env.principalAuthority,
           io,
           persistRunState,
+          courtScope.notePackageFault,
         )) as { exitCode: number; admitted: A; terminal: T },
         ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
         ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
@@ -859,6 +864,7 @@ export async function dispatchPostAdmissionTurn<
           env.principalAuthority,
           io,
           persistRunState,
+          courtScope.notePackageFault,
         )) as { exitCode: number; admitted: A; terminal: T };
         return { ...settled, ...deferredPersist };
       }
@@ -924,6 +930,7 @@ export async function dispatchPostAdmissionTurn<
         env.principalAuthority,
         io,
         persistRunState,
+        courtScope.notePackageFault,
       );
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
@@ -1034,6 +1041,7 @@ export async function dispatchPostAdmissionTurn<
             persistRunState,
             deferredPersist,
             invocationScopeId: request.invocationScopeId,
+            notePackageFault: courtScope.notePackageFault,
           }),
         );
       }
@@ -1085,6 +1093,7 @@ export async function dispatchPostAdmissionTurn<
         env.principalAuthority,
         io,
         persistRunState,
+        courtScope.notePackageFault,
       );
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
@@ -1113,6 +1122,7 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
           deferredPersist,
           invocationScopeId: request.invocationScopeId,
+          notePackageFault: courtScope.notePackageFault,
         }),
       );
     }

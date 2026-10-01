@@ -20,6 +20,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
@@ -46,6 +47,7 @@ test("public report publication failure stays beside the accepted terminal", asy
     const { io } = captureIo();
     let lockedArtifactsDir: string | undefined;
     const runId = "run-audit-artifact-errno-001";
+    await configurePassingReviewSeats(home);
     try {
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
         {
@@ -54,7 +56,7 @@ test("public report publication failure stays beside the accepted terminal", asy
           cwd: project,
           createRunId: () => runId,
           io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -90,7 +92,7 @@ test("public report publication failure stays beside the accepted terminal", asy
               },
             };
           },
-          }),
+          })),
         },
       );
       assert.equal(result.exitCode, 0);
@@ -106,8 +108,12 @@ test("public report publication failure stays beside the accepted terminal", asy
         .filter(Boolean)
         .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
       const diagnostic = entries.find((entry) => entry.customType === "ak_post_admission_cleanup_diagnostic");
-      assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-      assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
+      const text = diagnostic?.data?.diagnostic;
+      assert.equal(typeof text, "string");
+      assert.equal(
+        (text as string).includes("code=EACCES") || (text as string).includes("code=EPERM"),
+        true,
+      );
     } finally {
       if (lockedArtifactsDir !== undefined) {
         try {
