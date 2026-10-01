@@ -15,7 +15,6 @@ import { dirname, join, relative, sep } from "node:path";
 
 import {
   bookHistoricalRoots,
-  canonicalRunSessionParent,
   findBookRunDirectory,
   findPlacedMigratingRun,
   findUniquePrincipalPlacedRun,
@@ -41,6 +40,7 @@ import {
   sitianVolumeRecordsFile,
   ticketProvenanceRecordFile,
 } from "./sitian-appender.ts";
+import { rewriteCopiedRunPages } from "./book-topology-runs-migrator.ts";
 import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
 const TICKET_PROVENANCE = "ticket-provenance";
@@ -734,27 +734,15 @@ function normalizeJsonlRaw(raw: string): string {
 }
 
 /**
- * Key shared by a backup row and the copy the runs migrator already rewrote.
- * That rewrite replaces a run-directory prefix in sessionParent and
- * re-stringifies every sessionParent line in the file. Bytes no longer match.
- * The run leaf plus the path inside the run still does.
+ * Drop rehomed rows from the copied source nest by backup line bytes.
+ * Run-page rewrite has not touched those copies yet. Rows that were not
+ * rehomed stay, including a neighbor whose sessionParent only looks similar.
  */
-function scrubLineKey(raw: string, bookRoots: readonly string[]): string {
-  const parsed = parseJsonlLine(raw);
-  if (!parsed.ok) return normalizeJsonlRaw(raw);
-  if (typeof parsed.value.sessionParent === "string") {
-    parsed.value.sessionParent = canonicalRunSessionParent(parsed.value.sessionParent, bookRoots);
-  }
-  return JSON.stringify(parsed.value);
-}
-
-/** Drop rehomed rows from the copied source nest. Other rows in the file stay. */
 async function scrubRawLinesFromFile(
   recordFile: string,
-  keys: ReadonlySet<string>,
-  bookRoots: readonly string[],
+  rawLines: ReadonlySet<string>,
 ): Promise<void> {
-  if (keys.size === 0) return;
+  if (rawLines.size === 0) return;
   const lines = await readJsonlLines(recordFile);
   if (lines.length === 0) return;
   const kept: string[] = [];
@@ -762,7 +750,7 @@ async function scrubRawLinesFromFile(
   for (const raw of lines) {
     if (raw.trim() === "") continue;
     const normalized = normalizeJsonlRaw(raw);
-    if (keys.has(scrubLineKey(raw, bookRoots))) {
+    if (rawLines.has(normalized)) {
       changed = true;
       continue;
     }
@@ -791,8 +779,8 @@ async function migrateMisplacedBook(
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
-  // backupRelPath → rehomed rows. Key is the move-invariant line, not backup bytes
-  // and not identity: rows without identity must still leave the source copy.
+  // backupRelPath → exact backup lines rehomed out of a source-run nest.
+  // Match those bytes, not identity and not a normalized sessionParent.
   const bookRoots = bookHistoricalRoots(
     context.booksDirectory,
     context.backupBooksDirectory,
@@ -848,7 +836,7 @@ async function migrateMisplacedBook(
           set = new Set<string>();
           scrubPlans.set(withinBook, set);
         }
-        set.add(scrubLineKey(raw, bookRoots));
+        set.add(normalizeJsonlRaw(raw));
       }
     }
   }
@@ -865,7 +853,7 @@ async function migrateMisplacedBook(
       coords.role,
     );
     if (destRun === undefined) continue;
-    await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines, bookRoots);
+    await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines);
   }
 }
 
@@ -913,6 +901,7 @@ export const misplacedRecordClassPartitionMigrator: BookTopologyPartitionMigrato
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
     await forEachBook(context, (bookKey, writes) => migrateMisplacedBook(context, bookKey, writes, outcomes));
+    await rewriteCopiedRunPages(context);
     return reconcileMigrationPartition(MISPLACED, "lines", outcomes);
   },
 };

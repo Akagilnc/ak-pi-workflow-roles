@@ -176,8 +176,6 @@ export function bookHistoricalRoots(
 export type BoundRunRef = {
   readonly leaf: string;
   readonly sourceRelative: string;
-  /** Path under the run directory. Empty when the path is the run directory. */
-  readonly withinRun: string;
 };
 
 /** Bind a path to this book's historical roots, then take complete leaf + source-relative run dir. */
@@ -192,29 +190,9 @@ export function runRefFromBoundPath(
     const rel = relative(rootResolved, candidate).split(sep).join("/");
     const segment = runsSegmentOf(rel);
     if (segment === undefined) continue;
-    const withinRun = rel === segment.sourceRelative
-      ? ""
-      : rel.startsWith(`${segment.sourceRelative}/`)
-        ? rel.slice(segment.sourceRelative.length + 1)
-        : undefined;
-    if (withinRun === undefined) continue;
-    return { leaf: segment.leaf, sourceRelative: segment.sourceRelative, withinRun };
+    return { leaf: segment.leaf, sourceRelative: segment.sourceRelative };
   }
   return undefined;
-}
-
-/**
- * Session parent reduced to run leaf + path inside that run.
- * A live books path and the same path after the run moves compare equal.
- * Unbound paths stay as given.
- */
-export function canonicalRunSessionParent(
-  sessionParent: string,
-  bookRoots: readonly string[],
-): string {
-  const bound = runRefFromBoundPath(sessionParent, bookRoots);
-  if (bound === undefined) return sessionParent;
-  return bound.withinRun.length === 0 ? bound.leaf : `${bound.leaf}/${bound.withinRun}`;
 }
 
 export type BackupRunLeaf = {

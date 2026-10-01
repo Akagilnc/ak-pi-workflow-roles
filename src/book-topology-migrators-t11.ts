@@ -535,8 +535,8 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
   async migrate(context: BookTopologyMigrationContext) {
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
-    // T9 already rewrote pages present in flat runs; volumes land after that and
-    // must reuse the same relocation authority with the full historical→final map.
+    // Copied run pages are rewritten after record-class cleanup. Volumes land
+    // after that and reuse the same relocation authority with the historical map.
     const crossRunRewrites = await collectPlacedRunRewrites(
       booksDirectory,
       backupBooksDirectory,
