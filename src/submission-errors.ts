@@ -53,7 +53,9 @@ export class WorkerPrefixReminderError extends Error {
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
-    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
+    // The ceiling is the configured unfinished-reason limit. This text reaches
+    // the model and does not restate a count.
+    super("本次 unfinished 回执未含 reason；请补上 reason 后再交。");
     this.name = "WorkerUnfinishedReasonReminderError";
   }
 }
