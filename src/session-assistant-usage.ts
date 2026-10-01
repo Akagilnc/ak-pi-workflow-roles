@@ -3,7 +3,7 @@
  * Accumulates real cost when rows carry it; never invents cost zeros (#675).
  */
 import type { Usage } from "@earendil-works/pi-ai";
-import { join } from "node:path";
+import { sessionFileOf } from "./role-run-placement.ts";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
 
@@ -93,7 +93,7 @@ export function sessionFileFromPublicSummon(
   summoned: PublicSummonResult,
 ): string | undefined {
   if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
-    return join(summoned.runDirectory, "session", "session.jsonl");
+    return sessionFileOf(summoned.runDirectory);
   }
   const fromArtifacts = summoned.terminal?.artifacts
     ?.map((a) => (a as { path?: string }).path)
@@ -104,7 +104,7 @@ export function sessionFileFromPublicSummon(
   const facts = (outcome as { decisiveFacts?: Record<string, unknown> }).decisiveFacts;
   const pointer = facts?.runPointer;
   if (typeof pointer === "string" && pointer.trim() !== "") {
-    return join(pointer, "session", "session.jsonl");
+    return sessionFileOf(pointer);
   }
   return undefined;
 }

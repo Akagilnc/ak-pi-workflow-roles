@@ -26,6 +26,31 @@ export function isSafePositiveTicketNumber(value: unknown): value is number {
 }
 
 /**
+ * Ticket spelling shared by placement, migration, and sitian subject routing.
+ * A number, or a digit string with no sign, zero-pad, decimal, or `#`.
+ * Unsafe integers are unidentified. Leading `#N` stays on readDeclaredTicketNumber.
+ */
+export function parseTicketNumber(value: unknown): number | undefined {
+  if (isSafePositiveTicketNumber(value)) return value;
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return isSafePositiveTicketNumber(parsed) ? parsed : undefined;
+}
+
+/** Ticket-provenance directory id from a sitian subject, when the subject is a ticket. */
+export function ticketNumberFromSitianSubject(subject: unknown): string | undefined {
+  if (typeof subject === "string" || typeof subject === "number") {
+    const parsed = parseTicketNumber(subject);
+    return parsed === undefined ? undefined : String(parsed);
+  }
+  if (subject !== null && typeof subject === "object" && !Array.isArray(subject)) {
+    const parsed = parseTicketNumber((subject as { ticketNumber?: unknown }).ticketNumber);
+    return parsed === undefined ? undefined : String(parsed);
+  }
+  return undefined;
+}
+
+/**
  * #1071 — read a role-declared ticketNumber field value for post-admission bind.
  * Accepts a safe positive integer, a digit string, or a leading `#N` token
  * (optional trailing material on the same field, e.g. `#1843 / PR #1876`).

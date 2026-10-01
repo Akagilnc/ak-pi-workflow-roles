@@ -17,6 +17,7 @@ import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
+import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import {
   durableSessionPointer,
   resolveBookKeyFromGit,
@@ -819,12 +820,9 @@ function readDiaristRunCoordinates(ctx: HostContext): {
   readonly boundTicketNumber?: number;
 } {
   const coordinates = readRoleRunCoordinates(ctx, "diarist accept");
-  const bound =
-    typeof coordinates.admitted.ticketNumber === "number" &&
-    Number.isSafeInteger(coordinates.admitted.ticketNumber) &&
-    coordinates.admitted.ticketNumber >= 1
-      ? coordinates.admitted.ticketNumber
-      : undefined;
+  const bound = isSafePositiveTicketNumber(coordinates.admitted.ticketNumber)
+    ? coordinates.admitted.ticketNumber
+    : undefined;
   return {
     runDirectory: coordinates.runDirectory,
     projectRoot: coordinates.projectRoot,

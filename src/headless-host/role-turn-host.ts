@@ -10,6 +10,7 @@ import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import { sessionDirectoryOf } from "../role-run-placement.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -752,7 +753,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       } finally {
         if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
           host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
-          sessionDirectory: join(request.runDirectory, "session"), sessionParent,
+          sessionDirectory: sessionDirectoryOf(request.runDirectory), sessionParent,
           continuation: request.continuation,
           ...(request.model !== undefined ? { model: request.model } : {}),
           ...(request.home !== undefined ? { home: request.home } : {}),

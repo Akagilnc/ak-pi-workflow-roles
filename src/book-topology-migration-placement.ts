@@ -10,15 +10,19 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import {
+  formatRunLeaf,
+  listBookRunContainers,
+  parseRunLeaf,
+  roleRunPlacement,
+  runsSegmentOf,
+} from "./role-run-placement.ts";
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
+  parseTicketNumber,
   readBoardTicketNumber,
   readMigrationDerivedTicketNumber,
 } from "./run-ticket-number.ts";
-
-const TICKET_NUMBER_RE = /^[1-9][0-9]*$/;
-const RUN_DIR_NAME_RE = /^([^@]+)@([^@]+)$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -63,13 +67,11 @@ export async function listMigrationDirents(
 }
 
 export function ticketNumberFromUnknown(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
-  if (typeof value === "string" && TICKET_NUMBER_RE.test(value)) return Number(value);
-  return undefined;
+  return parseTicketNumber(value);
 }
 
 export function isTicketNumberString(value: string): boolean {
-  return TICKET_NUMBER_RE.test(value);
+  return parseTicketNumber(value) !== undefined;
 }
 
 /**
@@ -83,11 +85,7 @@ export function ticketNumberFromWorktreeBasename(
 ): number | undefined {
   const matches = pathBasename.match(/\d+/g);
   if (matches === null || matches.length !== 1) return undefined;
-  const spelling = matches[0]!;
-  if (!TICKET_NUMBER_RE.test(spelling)) return undefined;
-  const ticketNumber = Number(spelling);
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return undefined;
-  return ticketNumber;
+  return parseTicketNumber(matches[0]!);
 }
 
 /**
@@ -184,15 +182,6 @@ export type BoundRunRef = {
   readonly sourceRelative: string;
 };
 
-function runLeafFromRelative(path: string): string | undefined {
-  const segments = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0);
-  const runsIndex = segments.lastIndexOf("runs");
-  if (runsIndex < 0 || runsIndex + 1 >= segments.length) return undefined;
-  const leaf = segments[runsIndex + 1];
-  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
-  return leaf;
-}
-
 /** Bind a path to this book's historical roots, then take complete leaf + source-relative run dir. */
 export function runRefFromBoundPath(
   path: string,
@@ -203,12 +192,9 @@ export function runRefFromBoundPath(
     const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
     if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
     const rel = relative(rootResolved, candidate).split(sep).join("/");
-    const leaf = runLeafFromRelative(rel);
-    if (leaf === undefined) continue;
-    const parts = rel.split("/").filter((part) => part.length > 0);
-    const runsIndex = parts.indexOf("runs");
-    if (runsIndex < 0 || runsIndex + 1 >= parts.length) continue;
-    return { leaf, sourceRelative: parts.slice(0, runsIndex + 2).join("/") };
+    const segment = runsSegmentOf(rel);
+    if (segment === undefined) continue;
+    return { leaf: segment.leaf, sourceRelative: segment.sourceRelative };
   }
   return undefined;
 }
@@ -268,23 +254,24 @@ export async function listBackupRunLeaves(
   return leaves;
 }
 
+async function listNamedPlacedRunPaths(
+  bookDir: string,
+  accept: (name: string) => boolean,
+): Promise<string[]> {
+  const matches: string[] = [];
+  for (const runsDir of await listBookRunContainers(bookDir)) {
+    for (const entry of await listMigrationDirents(runsDir)) {
+      if (accept(entry.name)) matches.push(join(runsDir, entry.name));
+    }
+  }
+  return matches;
+}
+
 async function listExactPlacedRunPaths(
   bookDir: string,
   leafName: string,
 ): Promise<string[]> {
-  const matches: string[] = [];
-  const subjectEntries = await listMigrationDirents(bookDir);
-  const runsDirs = [
-    join(bookDir, "runs"),
-    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
-  ];
-  for (const runsDir of runsDirs) {
-    const entries = await listMigrationDirents(runsDir);
-    if (entries.some((entry) => entry.name === leafName)) {
-      matches.push(join(runsDir, leafName));
-    }
-  }
-  return matches;
+  return listNamedPlacedRunPaths(bookDir, (name) => name === leafName);
 }
 
 function destPathFromSourceRelative(
@@ -329,19 +316,8 @@ async function listPrincipalPlacedRunPaths(
   runId: string,
 ): Promise<string[]> {
   const matches = [...await listExactPlacedRunPaths(bookDir, runId)];
-  const subjectEntries = await listMigrationDirents(bookDir);
-  const runsDirs = [
-    join(bookDir, "runs"),
-    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
-  ];
-  const prefix = `${runId}@`;
-  for (const runsDir of runsDirs) {
-    for (const entry of await listMigrationDirents(runsDir)) {
-      const name = entry.name;
-      if (!name.startsWith(prefix) || name.slice(runId.length + 1).includes("@")) continue;
-      const path = join(runsDir, name);
-      if (!matches.includes(path)) matches.push(path);
-    }
+  for (const path of await listNamedPlacedRunPaths(bookDir, (name) => parseRunLeaf(name)?.runId === runId)) {
+    if (!matches.includes(path)) matches.push(path);
   }
   return matches;
 }
@@ -364,13 +340,13 @@ export async function findBookRunDirectory(
   role?: string,
 ): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
   if (runId.trim() === "") return undefined;
-  const leafName = role !== undefined && role.length > 0 ? `${runId}@${role}` : runId;
+  const leafName = role !== undefined && role.length > 0 ? formatRunLeaf(runId, role) : runId;
   const matches = role !== undefined && role.length > 0
     ? await listExactPlacedRunPaths(bookDir, leafName)
     : await listPrincipalPlacedRunPaths(bookDir, runId);
   const unique = uniquePlacedRun(leafName, matches);
   if (unique === undefined) return undefined;
-  const foundRole = unique.runDirectory.split(/[/\\]/).pop()?.split("@")[1] ?? role ?? "";
+  const foundRole = parseRunLeaf(basename(unique.runDirectory))?.role ?? role ?? "";
   return { runDirectory: unique.runDirectory, role: foundRole };
 }
 
@@ -473,15 +449,9 @@ export function runCoordsFromSessionParent(
   sessionParent: unknown,
 ): { readonly runId: string; readonly role: string } | undefined {
   if (typeof sessionParent !== "string" || sessionParent.length === 0) return undefined;
-  const normalized = sessionParent.replace(/\\/g, "/");
-  const marker = "/runs/";
-  const index = normalized.lastIndexOf(marker);
-  if (index < 0) return undefined;
-  const after = normalized.slice(index + marker.length);
-  const leaf = after.split("/")[0] ?? "";
-  const match = RUN_DIR_NAME_RE.exec(leaf);
-  if (match === null) return undefined;
-  return { runId: match[1]!, role: match[2]! };
+  const segment = runsSegmentOf(sessionParent);
+  if (segment === undefined) return undefined;
+  return parseRunLeaf(segment.leaf);
 }
 
 export function runIdFromSubject(subject: unknown): string | undefined {

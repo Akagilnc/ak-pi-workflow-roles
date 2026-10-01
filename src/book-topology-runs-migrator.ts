@@ -22,7 +22,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { listBookRunDirectories } from "./role-run-placement.ts";
+import { listBookRunDirectories, parseRunLeaf } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -33,11 +33,6 @@ import {
 } from "./run-ticket-number.ts";
 
 const RUNS_PARTITION = "runs";
-
-const RUN_LEAF =
-  /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
-
-type RunLeaf = { readonly runId: string; readonly role: string };
 
 type PlannedRunMove = {
   readonly sourcePath: string;
@@ -50,12 +45,6 @@ type PlannedRunMove = {
     | { readonly ticketNumber: number; readonly projectRoot: string; readonly sourcePage: string }
     | undefined;
 };
-
-function parseRunLeaf(name: string): RunLeaf | undefined {
-  const match = RUN_LEAF.exec(name);
-  if (match === null) return undefined;
-  return { runId: match[1]!, role: match[2]! };
-}
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -130,7 +119,15 @@ async function planBookMoves(
       const parts = leaf.relativePath.replaceAll("\\", "/").split("/");
       const ticketStr = parts[1];
       if (ticketStr !== undefined && isTicketNumberString(ticketStr)) {
-        targetPath = join(booksDirectory, bookKey, ticketStr, "runs", leaf.leafName);
+        targetPath = parsed === undefined
+          ? join(booksDirectory, bookKey, ticketStr, "runs", leaf.leafName)
+          : destinationRunDirectory(
+            booksDirectory,
+            bookKey,
+            Number(ticketStr),
+            parsed.runId,
+            parsed.role,
+          );
         disposition = "placed";
         historicalRunDirectory = join(
           booksDirectory,

@@ -33,7 +33,13 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
+import { parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
+import {
+  S4_SUBMISSION_LEDGER_KINDS,
+  sitianRunVolumeDirectory,
+  sitianVolumeRecordsFile,
+  ticketProvenanceRecordFile,
+} from "./sitian-appender.ts";
 import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
 const TICKET_PROVENANCE = "ticket-provenance";
@@ -272,13 +278,9 @@ function isCanonicalRunNestedRecordFile(relPosix: string, recordClass: RecordCla
 }
 
 function runCoordsFromRelativePath(relPosix: string): { readonly runId: string; readonly role: string } | undefined {
-  const parts = relPosix.split("/");
-  const runsIndex = parts.indexOf("runs");
-  if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
-  const leaf = parts[runsIndex + 1]!;
-  const at = leaf.indexOf("@");
-  if (at <= 0 || at === leaf.length - 1) return undefined;
-  return { runId: leaf.slice(0, at), role: leaf.slice(at + 1) };
+  const segment = runsSegmentOf(relPosix);
+  if (segment === undefined) return undefined;
+  return parseRunLeaf(segment.leaf);
 }
 
 /** Typed owning run for a record-class row (subject / payload / sessionParent). */
@@ -308,10 +310,11 @@ function isAlreadyHomeUnderOwningRun(
 }
 
 function relativePathWithinRun(relPosix: string): string | undefined {
-  const parts = relPosix.split("/");
-  const runsIndex = parts.indexOf("runs");
-  if (runsIndex < 0 || runsIndex + 2 >= parts.length) return undefined;
-  return parts.slice(runsIndex + 2).join("/");
+  const segment = runsSegmentOf(relPosix);
+  if (segment === undefined) return undefined;
+  const parts = relPosix.split("/").filter((part) => part.length > 0);
+  if (segment.index + 2 >= parts.length) return undefined;
+  return parts.slice(segment.index + 2).join("/");
 }
 
 function unboundCategoryFile(
@@ -473,7 +476,10 @@ async function placeRunOwnedLine(
     return { disposition: "unbound", source };
   }
 
-  await writes.append(join(target.runDirectory, "session", category, "records.jsonl"), raw);
+  await writes.append(
+    sitianVolumeRecordsFile(sitianRunVolumeDirectory(target.runDirectory, category)),
+    raw,
+  );
   return { disposition: target.disposition, source };
 }
 
@@ -534,11 +540,10 @@ async function placeBareTicketProvenanceVolume(
   bare: { readonly ticket: number; readonly body: readonly string[] },
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
-  const dest = join(
-    context.booksDirectory,
+  const dest = ticketProvenanceRecordFile(
+    dirname(context.booksDirectory),
     bookKey,
     String(bare.ticket),
-    "records.jsonl",
   );
   // Whole-file bare install. Prior dest lines (legacy or earlier bare) rehome to
   // unbound with flipped dispositions — header stays first; no silent erase.

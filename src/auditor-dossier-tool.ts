@@ -1,8 +1,12 @@
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
-import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
+import {
+  roleRunArtifactsDirectory,
+  runDirectoryOfSessionFile,
+  sessionFileOf,
+} from "./role-run-placement.ts";
 import { Type } from "typebox";
 
 export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier" as const;
@@ -20,7 +24,7 @@ export function auditorRunDirectory(context: ExtensionContext | HostContext): st
   const sessionFile = context.sessionManager?.getSessionFile?.();
   if (sessionFile === undefined) return undefined;
   // Sole layout: <run>/session/session.jsonl → climb two levels to the run directory.
-  return resolve(dirname(dirname(sessionFile)));
+  return resolve(runDirectoryOfSessionFile(sessionFile));
 }
 
 /** The one shared, run-bound dossier locator exposed to every auditor seat. */
@@ -44,7 +48,7 @@ export function createAuditorDossierTool(
       const details: AuditorDossierLocation = {
         runDirectory,
         admittedRequest: join(runDirectory, "admitted-request.json"),
-        parentSessionCandidate: join(runDirectory, "session", "session.jsonl"),
+        parentSessionCandidate: sessionFileOf(runDirectory),
         attachments: join(runDirectory, "attachments"),
         artifacts: roleRunArtifactsDirectory(runDirectory),
       };

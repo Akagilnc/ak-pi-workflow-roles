@@ -9,6 +9,8 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { sessionFileOf } from "../role-run-placement.ts";
+
 import {
   buildAutoResumeContinuationPrompt,
   findRunDirectoryById,
@@ -722,7 +724,7 @@ export async function dispatchPostAdmissionTurn<
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
           admitted.runId,
-          { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
+          { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: sessionFileOf(admitted.runDirectory) },
         );
         let ticketNumber: number | undefined;
         for (const row of rows) {

@@ -16,7 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { listBookRunDirectories } from "../role-run-placement.ts";
+import { listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -1026,13 +1026,10 @@ export async function findRunDirectoryById(
       throw error;
     }
     for (const runDirectory of runDirectories) {
-      const entry = basename(runDirectory);
-      if (
-        (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
-        entry === `${runId}@${onlyRole}`
-      ) {
-        matches.push(runDirectory);
-      }
+      const parsed = parseRunLeaf(basename(runDirectory));
+      if (parsed === undefined || parsed.runId !== runId) continue;
+      if (onlyRole !== undefined && parsed.role !== onlyRole) continue;
+      matches.push(runDirectory);
     }
   }
   if (matches.length === 0) return undefined;
@@ -1098,7 +1095,7 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
     typeof disk.principalWire.sessionFile === "string" &&
     disk.principalWire.sessionFile.trim() !== ""
       ? disk.principalWire.sessionFile
-      : join(disk.principalWire.sessionDirectory, "session.jsonl");
+      : sessionFileIn(disk.principalWire.sessionDirectory);
   try {
     const stat = await lstat(sessionFile);
     return stat.isFile() && !stat.isSymbolicLink();
@@ -1490,9 +1487,9 @@ async function loadResumableRunRecord(
       );
     }
   }
-  const sourceRunLeaf = basename(sourceRunPath ?? "").split("@");
-  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf[0];
-  const referencedRole = sourceRun?.role ?? sourceRunLeaf[1];
+  const sourceRunLeaf = parseRunLeaf(basename(sourceRunPath ?? ""));
+  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf?.runId;
+  const referencedRole = sourceRun?.role ?? sourceRunLeaf?.role;
   if (referencedRunId !== undefined && referencedRunId !== "") {
     const currentSourceRunDirectory = await findRunDirectoryById(
       home,

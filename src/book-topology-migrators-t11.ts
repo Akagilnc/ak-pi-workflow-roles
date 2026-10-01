@@ -32,6 +32,7 @@ import {
   listMigrationDirents,
   uniqueRunLeafExistsInBook,
 } from "./book-topology-migration-placement.ts";
+import { parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -45,8 +46,7 @@ const NAVIGATOR_PARTITION = "navigator";
 const COLLECTOR_HANDBOOK_PARTITION = "collector-handbook";
 const MANUAL_ARCHIVES_PARTITION = "manual-archives";
 
-const TICKET_NUMBER_NAME = /^[1-9][0-9]*$/;
-const RUN_LEAF = /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
+
 
 const DEPRECATED_KIND_DIRECTORIES = [
   "submission-candidate",
@@ -73,8 +73,6 @@ export function isDeprecatedRunPage(name: string): boolean {
   return DEPRECATED_RUN_PAGE_NAME_SET.has(name);
 }
 
-type RunLeaf = { readonly runId: string; readonly role: string };
-
 type ParentRun = {
   readonly bookKey: string;
   readonly leafName: string;
@@ -82,15 +80,6 @@ type ParentRun = {
   readonly runId: string;
   readonly role: string;
 };
-
-function parseRunLeaf(name: string): RunLeaf | undefined {
-  const match = RUN_LEAF.exec(name);
-  if (match === null) return undefined;
-  const runId = match[1];
-  const role = match[2];
-  if (runId === undefined || role === undefined) return undefined;
-  return { runId, role };
-}
 
 function sourceIdentity(backupBooksDirectory: string, path: string): string {
   return relative(backupBooksDirectory, path).split(sep).join("/");
@@ -179,12 +168,12 @@ function parseParentRunBoundToMigration(
     return undefined;
   }
 
+  const segment = runsSegmentOf(rel);
+  if (segment === undefined || segment.index < 1) return undefined;
   const parts = rel.split("/").filter((part) => part.length > 0);
-  const runsIndex = parts.indexOf("runs");
-  if (runsIndex < 1 || runsIndex + 1 >= parts.length) return undefined;
-  const leafName = parts[runsIndex + 1];
+  const runsIndex = segment.index;
+  const leafName = segment.leaf;
   const before = parts.slice(0, runsIndex);
-  if (leafName === undefined) return undefined;
   let bookKey: string | undefined;
   if (before.length === 1) {
     bookKey = before[0];
@@ -674,7 +663,7 @@ export const bookTopologyIssuesMigrator: BookTopologyPartitionMigrator = {
         const sourcePath = join(issuesRoot, entry.name);
         const source = sourceIdentity(backupBooksDirectory, sourcePath);
         const isTicketDir =
-          entry.isDirectory() && TICKET_NUMBER_NAME.test(entry.name);
+          entry.isDirectory() && isTicketNumberString(entry.name);
         if (!isTicketDir || !(await hasAnyFileRecursive(sourcePath))) {
           outcomes.push({ disposition: "discarded", source });
           continue;

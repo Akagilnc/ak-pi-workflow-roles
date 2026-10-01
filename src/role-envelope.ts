@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+
+import { sessionFileOf } from "./role-run-placement.ts";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -119,7 +121,7 @@ export async function prepareRoleEnvelope(options: {
   // navigator attendance, no-receipt) MUST flush so parent settlement can read
   // them after the headless process ends — memory-only books left extractNavigatorFact
   // with no durable terminal / attendance on codex/claude/ACP parents.
-  let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
+  let sessionFile = options.sessionFile ?? sessionFileOf(request.runDirectory);
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
     try {

@@ -22,6 +22,11 @@ import {
   listMigrationDirents,
   runRefFromBoundPath,
 } from "./book-topology-migration-placement.ts";
+import {
+  SITIAN_RECORDS_LEAF,
+  sitianRunVolumeDirectory,
+  sitianVolumeRecordsFile,
+} from "./sitian-appender.ts";
 
 const SITIAN_MIXED_VOLUME_PARTITIONS = [
   "attendance",
@@ -407,13 +412,15 @@ async function migrateWorkerSubmissionGate(
           inspected.leaf,
           inspected.sourceRelative,
         );
-      const dest = volumeDestinationFile(
-        booksDirectory,
-        bookKey,
-        destRun,
-        kind,
-        name,
-      );
+      const dest = destRun !== undefined && name === SITIAN_RECORDS_LEAF
+        ? sitianVolumeRecordsFile(sitianRunVolumeDirectory(destRun.runDirectory, kind))
+        : volumeDestinationFile(
+          booksDirectory,
+          bookKey,
+          destRun,
+          kind,
+          name,
+        );
       await mkdir(dirname(dest), { recursive: true });
       await cp(sourcePath, dest, { preserveTimestamps: true });
       // One outcome per volume keeps the entries closure; bad rows attach below.

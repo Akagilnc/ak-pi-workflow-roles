@@ -1,3 +1,5 @@
+import { parseTicketNumber } from "./run-ticket-number.ts";
+
 /**
  * 起居录（ticket-provenance）typed 形状 —— ADR 0075 / ADR 0081 / #1090。
  *
@@ -66,12 +68,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function positiveInteger(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) return value;
-  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
-    const parsed = Number(value);
-    if (Number.isSafeInteger(parsed)) return parsed;
-  }
-  return undefined;
+  return parseTicketNumber(value);
 }
 
 function projectBound(value: unknown): TicketProvenanceBound | undefined {

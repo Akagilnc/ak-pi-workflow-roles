@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -27,6 +27,82 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+/** Writer leaf `<runId>@<role>`. Empty sides stay empty; this is not a validator. */
+export function formatRunLeaf(runId: string, role: string): string {
+  return `${runId}@${role}`;
+}
+
+/**
+ * Inverse of formatRunLeaf: last `@`, both sides non-empty.
+ * `a@b@c` is runId `a@b`, role `c`. Charset is not a second grammar.
+ */
+export function parseRunLeaf(name: string): { readonly runId: string; readonly role: string } | undefined {
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return undefined;
+  return { runId: name.slice(0, at), role: name.slice(at + 1) };
+}
+
+export function sessionDirectoryOf(runDirectory: string): string {
+  return join(runDirectory, "session");
+}
+
+export function sessionFileIn(sessionDirectory: string): string {
+  return join(sessionDirectory, "session.jsonl");
+}
+
+export function sessionFileOf(runDirectory: string): string {
+  return sessionFileIn(sessionDirectoryOf(runDirectory));
+}
+
+/** `<run>/session/session.jsonl` → run directory. */
+export function runDirectoryOfSessionFile(sessionFile: string): string {
+  return dirname(dirname(sessionFile));
+}
+
+/** `<run>/session` → run directory. */
+export function runDirectoryFromSessionDirectory(sessionDirectory: string): string {
+  return dirname(sessionDirectory);
+}
+
+/**
+ * First `runs` segment. The next segment is the run leaf.
+ * A later directory that is also named `runs` is inside the run, not another leaf.
+ */
+export function runsSegmentOf(path: string): {
+  readonly index: number;
+  readonly leaf: string;
+  readonly sourceRelative: string;
+} | undefined {
+  const parts = path.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
+  const index = parts.indexOf("runs");
+  if (index < 0 || index + 1 >= parts.length) return undefined;
+  const leaf = parts[index + 1];
+  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
+  return { index, leaf, sourceRelative: parts.slice(0, index + 2).join("/") };
+}
+
+/**
+ * Run containers under one book: flat `runs/` plus each subject `runs/`.
+ * A subject directory named `runs` is the flat container, not a second tree.
+ * Missing book still yields the flat container so callers treat ENOENT as empty.
+ */
+export async function listBookRunContainers(bookDir: string): Promise<string[]> {
+  const containers = [join(bookDir, "runs")];
+  let subjects;
+  try {
+    subjects = await readdir(bookDir, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingPathError(error)) return containers;
+    throw error;
+  }
+  const names = subjects
+    .filter((subject) => subject.isDirectory() && subject.name !== "runs")
+    .map((subject) => subject.name)
+    .sort((a, b) => a.localeCompare(b));
+  for (const name of names) containers.push(join(bookDir, name, "runs"));
+  return containers;
+}
+
 /**
  * Sole book-level run directory walk: flat legacy `runs/` plus each
  * `subject/runs/` child (ticket / unbound). One authority for read-side
@@ -36,13 +112,12 @@ function isMissingPathError(error: unknown): boolean {
 export async function listBookRunDirectories(bookDir: string): Promise<string[]> {
   const out: string[] = [];
   const seen = new Set<string>();
-
-  const collect = async (runsDir: string): Promise<void> => {
+  for (const runsDir of await listBookRunContainers(bookDir)) {
     let entries;
     try {
       entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isMissingPathError(error)) return;
+      if (isMissingPathError(error)) continue;
       throw error;
     }
     for (const entry of entries) {
@@ -52,20 +127,6 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
       seen.add(runDir);
       out.push(runDir);
     }
-  };
-
-  await collect(join(bookDir, "runs"));
-
-  let subjects;
-  try {
-    subjects = await readdir(bookDir, { withFileTypes: true });
-  } catch (error) {
-    if (isMissingPathError(error)) return out.sort();
-    throw error;
-  }
-  for (const subject of subjects) {
-    if (!subject.isDirectory() || subject.name === "runs") continue;
-    await collect(join(bookDir, subject.name, "runs"));
   }
   return out.sort();
 }
@@ -90,13 +151,13 @@ export function roleRunPlacement(
     activationBookDirectory(ledgerHome, input.bookKey),
     subjectDirectory,
     "runs",
-    `${input.runId}@${input.role}`,
+    formatRunLeaf(input.runId, input.role),
   );
-  const sessionDirectory = join(runDirectory, "session");
+  const sessionDirectory = sessionDirectoryOf(runDirectory);
   return {
     runDirectory,
     sessionDirectory,
-    sessionFile: join(sessionDirectory, "session.jsonl"),
+    sessionFile: sessionFileIn(sessionDirectory),
     artifactsDirectory: roleRunArtifactsDirectory(runDirectory),
     attachmentsDirectory: join(runDirectory, "attachments"),
   };

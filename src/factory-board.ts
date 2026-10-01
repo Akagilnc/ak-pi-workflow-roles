@@ -16,9 +16,7 @@
  * output path outside every ledger and declares the bound; one-shot write does
  * not advertise refresh. Snapshot bindings stay fixed; each tick re-reads ledgers.
  */
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 
 import { packagedBoardPlacement } from "./packaged-role-registry.ts";
 import {
@@ -29,6 +27,8 @@ import {
 } from "./human-format.ts";
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
+  assertOutputOutsideLedgers,
+  writePageOutsideLedgers,
   buildTicketTrajectoryBookIndex,
   loadTicketTrajectoryRuns,
   loadUnboundTrajectoryRuns,
@@ -312,10 +312,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isMissingPathError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-
 function escapeHtml(text: string): string {
   return text
     .replaceAll("&", "&amp;")
@@ -327,11 +323,6 @@ function escapeHtml(text: string): string {
 
 function attr(value: string): string {
   return escapeHtml(value);
-}
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(".."));
 }
 
 function activeBlockedBy(ticket: SnapshotTicket): number[] {
@@ -1661,76 +1652,7 @@ ${boardPageScript()}
 `;
 }
 
-async function assertOutputOutsideAllLedgers(
-  books: readonly FactoryBoardBook[],
-  outputPath: string,
-): Promise<{ ledgerRoots: string[]; outputAbsolute: string }> {
-  const outputAbsolute = resolve(outputPath);
-  const ledgerRoots: string[] = [];
-  for (const book of books) {
-    const ledgerResolved = resolve(book.ledgerDir);
-    let ledgerRoot: string;
-    try {
-      ledgerRoot = await realpath(ledgerResolved);
-    } catch (error) {
-      if (!isMissingPathError(error)) throw error;
-      ledgerRoot = ledgerResolved;
-    }
-    ledgerRoots.push(ledgerRoot);
-
-    const missingTail: string[] = [];
-    let cursor = outputAbsolute;
-    for (;;) {
-      try {
-        await lstat(cursor);
-        break;
-      } catch (error) {
-        if (!isMissingPathError(error)) throw error;
-        const parent = dirname(cursor);
-        if (parent === cursor) break;
-        missingTail.push(basename(cursor));
-        cursor = parent;
-      }
-    }
-    let realPrefix: string;
-    try {
-      realPrefix = await realpath(cursor);
-    } catch (error) {
-      if (!isMissingPathError(error)) throw error;
-      realPrefix = resolve(cursor);
-    }
-    const prospectiveReal =
-      missingTail.length === 0 ? realPrefix : resolve(realPrefix, ...missingTail.reverse());
-    if (
-      isPathInside(ledgerRoot, prospectiveReal) ||
-      isPathInside(ledgerRoot, realPrefix) ||
-      isPathInside(ledgerRoot, outputAbsolute)
-    ) {
-      throw new Error("factory board outputPath must be outside every ledger directory");
-    }
-  }
-  return { ledgerRoots, outputAbsolute };
-}
-
-async function writeHtmlAtomically(outputAbsolute: string, html: string, ledgerRoots: string[]): Promise<string> {
-  const parent = dirname(outputAbsolute);
-  await mkdir(parent, { recursive: true });
-  const parentReal = await realpath(parent);
-  for (const root of ledgerRoots) {
-    if (isPathInside(root, parentReal) || isPathInside(root, resolve(parentReal, basename(outputAbsolute)))) {
-      throw new Error("factory board outputPath must be outside every ledger directory");
-    }
-  }
-  const temporary = join(parent, `.factory-board-${randomUUID()}.html.tmp`);
-  try {
-    await writeFile(temporary, html, "utf8");
-    await rename(temporary, outputAbsolute);
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
-  }
-  return realpath(outputAbsolute);
-}
+const BOARD_OUTPUT_REFUSAL = "factory board outputPath must be outside every ledger directory";
 
 export async function writeFactoryBoardPage(input: {
   books: readonly FactoryBoardBook[];
@@ -1739,7 +1661,11 @@ export async function writeFactoryBoardPage(input: {
   outputPath: string;
   refreshBoundarySeconds?: number;
 }): Promise<{ outputPath: string; html: string }> {
-  const gate = await assertOutputOutsideAllLedgers(input.books, input.outputPath);
+  const gate = await assertOutputOutsideLedgers(
+    input.books.map((book) => book.ledgerDir),
+    input.outputPath,
+    BOARD_OUTPUT_REFUSAL,
+  );
   const html = await renderFactoryBoardHtml(
     input.books,
     input.view,
@@ -1748,7 +1674,12 @@ export async function writeFactoryBoardPage(input: {
       ? { refreshBoundarySeconds: input.refreshBoundarySeconds }
       : undefined,
   );
-  const outputPath = await writeHtmlAtomically(gate.outputAbsolute, html, gate.ledgerRoots);
+  const outputPath = await writePageOutsideLedgers(
+    gate.ledgerRoots,
+    gate.outputAbsolute,
+    html,
+    BOARD_OUTPUT_REFUSAL,
+  );
   return { outputPath, html };
 }
 

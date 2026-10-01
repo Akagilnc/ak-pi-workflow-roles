@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 import { appendFile, lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { sessionFileIn, sessionFileOf } from "../role-run-placement.ts";
+import { sitianVolumeDirectory } from "../sitian-appender.ts";
+
 import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
@@ -137,7 +140,7 @@ function ledgerReadScope(
 ): { home: string; sessionParent: string; attemptId?: string } {
   return {
     home: sealedLedgerHome(admitted),
-    sessionParent: join(admitted.runDirectory, "session", "session.jsonl"),
+    sessionParent: sessionFileOf(admitted.runDirectory),
     ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
       ? {}
       : { attemptId: scope.courtAttemptId }),
@@ -1069,7 +1072,7 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
+  const childDirectories = [sitianVolumeDirectory(dirname(sessionFile), "auditor-roles")];
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
   for (const childDirectory of childDirectories) {
@@ -2043,9 +2046,9 @@ export async function extractGateFactFromSessionDirectory(
     readonly parentSessionFile?: string;
   } = {},
 ): Promise<TerminalGateFact | undefined> {
-  const directories = [join(sessionDirectory, "auditor-roles")];
+  const directories = [sitianVolumeDirectory(sessionDirectory, "auditor-roles")];
   const parentSessionFile =
-    options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
+    options.parentSessionFile ?? sessionFileIn(sessionDirectory);
   const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
     parentSessionFile,
   });

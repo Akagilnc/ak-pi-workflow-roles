@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { sitianVolumeDirectory } from "./sitian-appender.ts";
+
 /** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
 export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as const;
 
@@ -29,7 +31,7 @@ export function bookDirectOfficerRunPointer(options: {
   readonly sessionFile: string;
   readonly runDirectory?: string;
 }): DirectOfficerRunPointer {
-  const nest = join(dirname(options.parentSessionFile), "auditor-roles");
+  const nest = sitianVolumeDirectory(dirname(options.parentSessionFile), "auditor-roles");
   mkdirSync(nest, { recursive: true });
   const pointer: DirectOfficerRunPointer = {
     version: 1,
