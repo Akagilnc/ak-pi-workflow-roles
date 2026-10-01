@@ -1,5 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 / #987 resume continues via explicit package
@@ -10,31 +9,21 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
-import { basename, dirname, join, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, writeFile, readFile } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/auditor-role.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { summonPublicRole } from "../../src/public-role-summons.ts";
-import { publicCliConfigPath } from "../../src/public-cli/config.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
-  relocateAdmittedRunToTicket,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { type CountersignRunEnv } from "../../src/public-cli/countersign-run.ts";
@@ -44,13 +33,12 @@ import {
   runPublicInstructionSeatResume,
 } from "../../src/public-cli/instruction-seat-run.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
-import { findRunDirectoryById, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { resolveNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
@@ -66,9 +54,10 @@ import {
   recordNonSealedSubmissionForSpawn,
   sealAcceptedSubmissionForSpawn,
 } from "../helpers/submission-ledger-fixture.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
@@ -113,34 +102,8 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   });
 }
 
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
   return { name, create: () => ({ ok: true as const, host }) };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "countersign@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Countersign Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 /** Gate child uses a lawful notary receipt; countersign does not summon diarist (#1111). */
@@ -203,7 +166,7 @@ test("countersign admission freezes attachments and binds the countersign role",
   });
 });
 
-test("countersign admission ignores attachment frontmatter; --ticket is unknown", async () => {
+test("countersign admission ignores attachment frontmatter", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -239,31 +202,22 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
     assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
-    (error: unknown) =>
-      error instanceof CliUsageError
-      && /unknown countersign option: --ticket/.test(
-        error instanceof Error ? error.message : String(error),
-      ),
-  );
 });
 
-test("countersign argv rejects unknown options", async () => {
-  assert.throws(
-    () => parsePublicSeatArgv("countersign", ["--bogus", "裁"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
+test("countersign public entry rejects --ticket before admitting a run", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const bookPath = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    assert.equal(existsSync(bookPath), false);
     const { io } = captureIo();
-    const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--bogus", "裁"],
+    const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--ticket", "582", "裁"],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejected.exitCode, 2);
     assert.equal(rejected.terminal, undefined);
+    assert.equal(existsSync(bookPath), false, "rejected call must not admit a run");
   });
 });
 
@@ -1104,11 +1058,7 @@ async function withCountersignProject(
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
+    addRoleRepoOrigin(project);
     await installGhFixture(join(home, "bin"), {
       issues: {
         582: { body: "issue 582 body", comments: [] },
@@ -1159,24 +1109,6 @@ function countersignPathEnv(input: {
     createRunId: () => input.runId,
   };
 }
-
-test("public countersign path: --ticket is unknown-option reject (exit 2)", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    const result = await runPublicInstructionSeat(
-      ["--ticket", "582", "裁：本票是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000p01",
-        blockTurn: true,
-      }),
-      captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(result.exitCode, 2);
-    assert.equal(result.admitted, undefined);
-  });
-});
 
 test("public countersign path: invalid attachment rejects before identity or run persistence", async () => {
   await withCountersignProject(async ({ home, project }) => {

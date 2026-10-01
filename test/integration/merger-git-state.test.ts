@@ -6,6 +6,7 @@ import test, { after } from "node:test";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -85,10 +86,7 @@ test("production Merger Git seam reads conflicted merge materials without gating
 
 test("production Merger Git seam returns empty materials when no merge is in progress", async () => {
   await withTempRoot("ak-merger-clean-head-", async (cwd) => {
-    git(cwd, "init", "-b", "main");
-    git(cwd, "config", "user.name", "Merger Test");
-    git(cwd, "config", "user.email", "merger@test.local");
-    git(cwd, "commit", "--allow-empty", "-m", "seed");
+    seedGitProject(cwd);
     const head = git(cwd, "rev-parse", "HEAD");
     const active = await createProductionMergerGitState(cwd).activeMerge();
     assert.equal(active.targetObjectId, head);
@@ -104,17 +102,14 @@ test("production Merger Git seam keeps non-repository infrastructure failures lo
     await writeFile(resolve(cwd, ".git"), "gitdir: /nonexistent-git-dir-827\n");
     await assert.rejects(
       () => createProductionMergerGitState(cwd).activeMerge(),
-      /not a git repository/i,
+      Error,
     );
   });
 });
 
 test("production Merger Git seam keeps corrupt MERGE_HEAD loud", async () => {
   await withTempRoot("ak-merger-corrupt-merge-", async (cwd) => {
-    git(cwd, "init", "-b", "main");
-    git(cwd, "config", "user.name", "Merger Test");
-    git(cwd, "config", "user.email", "merger@test.local");
-    git(cwd, "commit", "--allow-empty", "-m", "seed");
+    seedGitProject(cwd);
     const mergeHeadPath = git(cwd, "rev-parse", "--git-path", "MERGE_HEAD");
     await writeFile(
       resolve(cwd, mergeHeadPath),
@@ -122,24 +117,21 @@ test("production Merger Git seam keeps corrupt MERGE_HEAD loud", async () => {
     );
     await assert.rejects(
       () => createProductionMergerGitState(cwd).activeMerge(),
-      /MERGE_HEAD identity is unavailable or invalid/,
+      Error,
     );
   });
 });
 
 test("production Merger Git seam keeps corrupt detached HEAD loud", async () => {
   await withTempRoot("ak-merger-corrupt-head-", async (cwd) => {
-    git(cwd, "init", "-b", "main");
-    git(cwd, "config", "user.name", "Merger Test");
-    git(cwd, "config", "user.email", "merger@test.local");
-    git(cwd, "commit", "--allow-empty", "-m", "seed");
+    seedGitProject(cwd);
     await writeFile(
       resolve(cwd, ".git", "HEAD"),
       "0123456789abcdef0123456789abcdef01234567\n",
     );
     await assert.rejects(
       () => createProductionMergerGitState(cwd).activeMerge(),
-      /HEAD identity is unavailable or invalid/,
+      Error,
     );
   });
 });

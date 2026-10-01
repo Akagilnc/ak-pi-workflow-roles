@@ -1,5 +1,4 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
@@ -8,13 +7,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
-import { classifyPostAdmissionFailure, extractSessionProviderStop, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { extractSessionProviderStop, readSessionProviderStop, resolveAuditedRunnerKnownFailure } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -827,7 +825,7 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-typed-http-resume-once-001";
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "typed http sidecar is a directory"],
       {
         packageRoot,
@@ -878,81 +876,3 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     assert.equal(firstError.identity?.code, "EISDIR");
   });
 });
-/**
- * SessionManager defers first durable write until an assistant message exists.
- * After production Sitian retain, append realistic parent-aborted framing so the
- * parent session principal exists on disk. Does not invent the evidence stop —
- * readSessionProviderStop prefers Sitian retained auditor response over this framing.
- */
-function flushRetainedParentSession(sessionManager: SessionManager): void {
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [],
-    api: "unknown",
-    provider: "unknown",
-    model: "unknown",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "aborted",
-    timestamp: Date.now(),
-  });
-}
-
-/** Settle a disk session stop through the production knownFailure→error.json chain. */
-async function settleDiskSessionStopToErrorJson(input: {
-  home: string;
-  project: string;
-  runId: string;
-  sessionFile: string;
-  sessionDirectory: string;
-  exitCode?: number;
-}): Promise<{ errorPath: string; errorBody: Record<string, unknown> }> {
-  const bookKey = resolveBookKeyFromGit(input.project);
-  const runDirectory = join(
-    input.home,
-    ".ak-roles",
-    "books",
-    bookKey,
-    "runs",
-    `${input.runId}@judge`,
-  );
-  await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-  const known = await resolveAuditedRunnerKnownFailure({
-    runner: undefined,
-    sessionFile: input.sessionFile,
-    credential: undefined,
-    runDirectory,
-  });
-  assert.ok(known, "disk session must yield a knownFailure");
-  const failure = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: input.exitCode ?? 1,
-    stderr: "",
-    ...(known.cause === undefined ? {} : { knownCause: known.cause }),
-    ...(known.diagnostic === undefined ? {} : { knownDiagnostic: known.diagnostic }),
-    ...(known.identity === undefined ? {} : { knownIdentity: known.identity }),
-    ...(known.details === undefined ? {} : { knownDetails: known.details }),
-  });
-  const admitted = fixtureJudgeAdmitted({
-    runId: input.runId,
-    bookKey,
-    projectRoot: input.project,
-    instruction: "x",
-    instructionEmpty: false,
-    runDirectory,
-    sessionDirectory: input.sessionDirectory,
-    sessionFile: input.sessionFile,
-  });
-  await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-  const terminal = await settleJudgeFailureTerminalResult(admitted, failure, piDurablePrincipalAuthority);
-  const errorRef = terminal.artifacts.find((a) => a.kind === "error");
-  assert.ok(errorRef, "settlement must publish error artifact");
-  const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;
-  return { errorPath: errorRef.path, errorBody };
-}

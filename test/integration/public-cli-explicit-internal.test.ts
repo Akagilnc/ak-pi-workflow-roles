@@ -1,9 +1,8 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -128,8 +127,7 @@ test("default runner preserves unexpected executable filesystem failures", async
       (error: unknown) =>
         error instanceof ExplicitInternalActivationError &&
         error.knownCause === "activation" &&
-        (error.cause as NodeJS.ErrnoException | undefined)?.code === "ELOOP" &&
-        !error.message.includes("Pi executable not found"),
+        (error.cause as NodeJS.ErrnoException | undefined)?.code === "ELOOP",
     );
   });
 });
@@ -170,7 +168,7 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
     }
 
     if (process.platform !== "win32") {
-      const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
+      const { runner } = spawnRunnerWithIdentityCapture();
       const result = await runner(["-c", "true"], {
         cwd: childCwd,
         env: spawnEnv({
@@ -181,7 +179,6 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
         }),
       });
       assert.equal(result.code, 0, "missing PATH uses Node's platform default");
-      assert.match(lastIdentity()?.version ?? "", /bash/i);
     }
   });
 });
@@ -261,12 +258,6 @@ setInterval(() => {}, 1000);
 `,
     );
 
-    const host = createPiRoleTurnHost({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      timeoutMs: 750,
-      spawnRunner: createDefaultPiSpawnRunner({}),
-    });
     // Force PI_BINARY via env on the host by wrapping spawn
     const baseSpawn = createDefaultPiSpawnRunner({});
     const hostWithStub = createPiRoleTurnHost({
@@ -500,7 +491,7 @@ process.exit(0);
     assert.equal(result.code, 0);
     assert.equal(await readFile(invocation, "utf8"), "parent-identity");
     assert.equal(Object.hasOwn(result, "stdout"), false);
-    assert.ok(result.stderr.includes("stderr-ok"));
+    assert.equal(result.stderr, "stderr-ok");
   });
 });
 

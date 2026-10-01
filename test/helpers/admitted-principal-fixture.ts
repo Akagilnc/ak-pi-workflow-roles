@@ -7,7 +7,6 @@ import type { DurablePrincipal } from "../../src/host-contracts.ts";
 import type {
   AdmittedDoctorInvocation,
   AdmittedJudgeInvocation,
-  AdmittedReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 
 /** Test-owned opaque principal fixture — two-field wire shape, no production codec. */
@@ -61,26 +60,4 @@ export function fixtureDoctorAdmitted(
     ...rest,
     principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedDoctorInvocation;
-}
-
-export function fixtureReviewerAdmitted(
-  input: Omit<AdmittedReviewerInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "lens"> &
-    Partial<Pick<AdmittedReviewerInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "lens" | "principal">> & {
-      sessionDirectory?: string;
-      sessionFile?: string;
-    },
-): AdmittedReviewerInvocation {
-  const coords = sessionCoords(input.runDirectory, input.sessionDirectory, input.sessionFile);
-  const { sessionDirectory: _sd, sessionFile: _sf, ...rest } = input;
-  return {
-    role: "reviewer",
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
-    lens: "correctness",
-    authorityRefs: ["CLAUDE.md"],
-    ...rest,
-    principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
-  } satisfies AdmittedReviewerInvocation;
 }

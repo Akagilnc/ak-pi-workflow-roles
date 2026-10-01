@@ -6,7 +6,6 @@
  * advisory diagnostic and leaves the accepted receipt in place.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -23,6 +22,7 @@ import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import {
   argvFlagValue,
@@ -32,13 +32,6 @@ import {
 
 const TICKET = 505;
 const ROUTEBOOK_FAILURE = "missing playbook";
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "pipeline@test.local"], { cwd: root });
-  execFileSync("git", ["config", "user.name", "Pipeline Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
 
 test("#505 every active seat routes, submits, and settles from the public entry", async () => {
   await withTempRoot("ak-seat-pipeline-", async (home) => {

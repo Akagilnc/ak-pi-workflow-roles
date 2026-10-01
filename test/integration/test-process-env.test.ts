@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,6 @@ import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const HOST_HOME = userInfo().homedir;
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));

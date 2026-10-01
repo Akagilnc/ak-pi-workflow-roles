@@ -1,4 +1,5 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
  * Seams: loadResumableRunRecord / runAkRole(judge|resume) / Terminal autoResumeCount
@@ -7,14 +8,13 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
+import { objectPayloads} from "../helpers/terminal-payload.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -30,6 +30,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
@@ -44,6 +45,7 @@ import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 const roleTurnHostFromLegacyPiRunner = (options: Parameters<typeof rawLegacyPiRunner>[0]) =>
@@ -62,8 +64,6 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
     return fn(home);
   });
 }
-function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
-function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","416@test.local"],{cwd:root});execFileSync("git",["config","user.name","416"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}
 /** Accepted judge details + sealedAcceptance for faux runners (S4 ledger-only settlement). */
 function acceptedJudge(details: Record<string, unknown> = { status: "converged" }) {
   return {
@@ -177,7 +177,8 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
 test("block1: unknown runId still rejects", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    await assert.rejects(()=>loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),/unknown role run id/);
+    await assert.rejects(() => loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),
+      (err: unknown) => err instanceof CliUsageError && err.code === "AK_ROLE_USAGE");
     const {io}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high","missing-416"],{packageRoot,home,cwd:project,io,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                           packageRoot,
@@ -215,11 +216,8 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                       },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
-    const artifactsDirectory=join(runDir,"artifacts");
-    const diagnosticPath=(await readdir(artifactsDirectory))
-      .map((name)=>join(artifactsDirectory,name))
-      .find((path)=>stderr.join("").includes(path));
-    assert.ok(diagnosticPath);
+    // #1058: read the record the caller was pointed at, not a test-known path.
+    const diagnosticPath=await pointedErrorRecordPath(runDir,stderr.join(""));
     const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };

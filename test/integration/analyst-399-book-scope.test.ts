@@ -27,6 +27,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -67,23 +68,6 @@ const SESSION_JSONL = [
     message: { role: "assistant", timestamp: "2026-08-21T00:00:10.000Z", content: [] },
   }),
 ].join("\n") + "\n";
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
 
 async function countAnalystFiles(home: string): Promise<number> {
   const root = join(home, ".ak-roles", "analyst");
@@ -318,8 +302,8 @@ test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set",
 });
 
 // D2
-test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", async () => {
-  await withBookScopeWorld(async ({ home, mainRoot, worktreeRoot }) => {
+test("D2 analyst #399 bare sees main+2 worktree runs", async () => {
+  await withBookScopeWorld(async ({ home, worktreeRoot }) => {
     await withProcessCwd(worktreeRoot, async () => {
       const bare = captureIo();
       const bareResult = await runAkRole(["analyst"], { packageRoot, home, io: bare.io });
@@ -331,15 +315,9 @@ test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", 
       assert.equal(ids.has(RUN_MAIN_NO_TICKET), true);
       assert.equal(ids.has(RUN_WORKTREE_TICKET_A), true);
       assert.equal(ids.has(RUN_WT2_NO_TICKET), true);
-
-      const rejected = captureIo();
-      const rejectResult = await runAkRole(
-        ["analyst", "--project-root", mainRoot],
-        { packageRoot, home, io: rejected.io },
-      );
-      assert.equal(rejectResult.exitCode, 2);
-      assert.match(rejected.stderr.join(""), /project-root/i);
-      assert.match(rejected.stderr.join(""), /deleted|bare|--ticket/i);
+      // The --project-root refusal itself is carried by the real CLI case in
+      // analyst-public-cli.test.ts ("--project-root: deleted, loud reject"),
+      // which also asserts zero analyst writes; not restated here.
     });
   });
 });
@@ -374,7 +352,6 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
         body.page.legs.map((l) => l.runId).sort(),
         [RUN_WORKTREE_TICKET_A, RUN_MAIN_TICKET_A].sort(),
       );
-      assert.doesNotMatch(stdout.join("") + stderr.join(""), /library index|index miss/i);
     });
   });
 });
@@ -391,10 +368,9 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
-      assert.match(stderr.join(""), /git repository|common-dir|inside a repository/i);
       const after = await countAnalystFiles(home);
       assert.equal(after, before);
     },

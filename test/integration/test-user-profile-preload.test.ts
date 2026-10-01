@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #604: test-process user-profile preload redirects os.userInfo().homedir
@@ -6,7 +5,7 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
  * unchanged — preload is NODE_OPTIONS --require only.
  */
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

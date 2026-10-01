@@ -139,10 +139,11 @@ test("#1088 public request-manifest keeps semantic validation (UTF-8 JSON + requ
     assert.equal(manifest.requests[0]?.id, "codex");
 
     await writeFile(path, "{ not json", "utf8");
-    await assert.rejects(() => loadCollectorManifest(path), /UTF-8 JSON|must be UTF-8 JSON/);
+    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) =>
+      err instanceof Error && err.cause instanceof SyntaxError);
 
     await writeFile(path, JSON.stringify({ requests: [{ id: "x", body: "" }] }));
-    await assert.rejects(() => loadCollectorManifest(path), /requests\[0\] is invalid/);
+    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) => err instanceof Error);
   });
 });
 

@@ -1,7 +1,6 @@
 // #420 整改拆分：接缝与恢复家族
 // #178: restore prepare consumers with per-case seat fixture + explicit context.home.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -9,7 +8,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { extractNavigatorFact, NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
@@ -38,7 +37,7 @@ import {
   settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { flushEventLoopTurns, packageRoot, seedGitRepository, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { flushEventLoopTurns, packageRoot, seedGitRepository, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -112,10 +111,11 @@ test("shared accepted submission binds settled attendance before public extracti
 test("settlement rejection still records an accepted closure with unavailable attendance", async () => {
   const entries: Array<{ customType: string; data: unknown }> = [];
   const ctx = { sessionManager: { appendCustomEntry(customType: string, data: unknown) { entries.push({ customType, data }); } } } as never;
+  const writeFailure = new Error("navigator write failed");
   await assert.rejects(projectClosedSubmissionLifecycle(
     { role: "judge", kind: "accepted", accepted: { status: "converged" } },
-    ctx, null, () => {}, async () => { throw new Error("navigator write failed"); },
-  ), /navigator write failed/);
+    ctx, null, () => {}, async () => { throw writeFailure; },
+  ), (error: unknown) => error === writeFailure);
   assert.equal(entries.length, 1);
   assert.equal((entries[0]?.data as { navigator?: unknown }).navigator, undefined);
   assert.equal(extractNavigatorFact([{ type: "custom", ...entries[0]! }] as never).disposition, "unavailable");
@@ -205,9 +205,9 @@ test("prepare tool accepts free-form prose once without retry (#959)", async () 
     reason: "Usage: model prose must not gate acceptance",
   };
   const second = await tool.execute("free-form", freeForm as never, undefined, undefined, {} as never);
-  assert.equal(accepted.length, 2, "free-form shape still accepted once");
+  assert.deepEqual(accepted, [proseOnly, freeForm]);
   assert.equal((second as { terminate?: boolean }).terminate, true);
-  assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
+  assert.deepEqual((second as { details?: unknown }).details, freeForm);
 });
 
 test("prepare provider schema admits object-root free-form through real Tool validation (#959)", async () => {
@@ -319,16 +319,19 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, root);
       nav.prepare();
+      // The injected object is this test's own known input: its content must
+      // reach the downstream event unchanged, not merely be classified advice.
+      const advice = { reason: "still thinking", role: "not-a-role" };
       await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        { reason: "still thinking", role: "not-a-role" },
+        advice,
         "legacy-free-form",
       );
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
-      assert.ok(typeof events[0].prose === "string" && events[0].prose.includes("still thinking"));
+      assert.deepEqual(JSON.parse(events[0].prose), advice);
     }
 
     {
@@ -697,12 +700,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
 
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
-      seedGitRepository(project);
-      execFileSync(
-        "git",
-        ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-        { cwd: project },
-      );
+      seedRoleRepo(project);
 
       const captured: RoleTurnRequest[] = [];
       const recordingHost = (scripted: ReturnType<typeof roleTurnHostFromLegacyPiRunner>) => ({

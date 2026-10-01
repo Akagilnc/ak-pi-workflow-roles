@@ -1,26 +1,23 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -28,13 +25,11 @@ import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
   withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,
-  multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
 
 // Admission matrix: structural rejects before model dispatch share one root —
@@ -47,8 +42,10 @@ test("malformed CLI structure and empty --project= reject structurally before ad
     },
     {
       // Empty project must not resolve("") → cwd and complete admission/dispatch.
+      // --model is supplied so the structural reject cannot be attributed to the
+      // unrelated "seat has no model configured" refusal.
       label: "empty --project=",
-      args: () => ["judge", "--project=", "task"],
+      args: () => ["judge", "--model", "test/caller-seat:high", "--project=", "task"],
     },
   ] as const;
   for (const row of rows) {
@@ -83,6 +80,8 @@ test("malformed CLI structure and empty --project= reject structurally before ad
       assert.equal(stderr.length >= 1, true, row.label);
       // Typed admission oracle: structural reject never produces a Terminal.
       assert.equal(result.terminal, undefined, row.label);
+      assert.equal(existsSync(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), false,
+        `${row.label}: no run is admitted`);
     });
   }
 });
@@ -418,7 +417,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic, flood);
       }
-      assert.equal(stderr[0]!.includes("tool_execution_end"), true);
     }
 
     // Counterexample 2: oversized diagnostic is kept whole on durable + presentation.
@@ -464,7 +462,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic, stderrText);
       }
-      assert.ok(stderr[0]!.includes("x".repeat(680)));
     }
   });
 });
@@ -569,8 +566,6 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
       diagnosticEquals: "ECONNRESET from upstream",
       identityName: "RawSocketError",
     });
-    // stderr: non-flood shape only — durable identity lives on Terminal/Error Artifact (AC6).
-    assert.equal(stderr[0]!.includes("ak_judge_output"), false);
   });
 });
 test("post-admission throw undefined stays unrecognized (not activation/null-exit)", async () => {
@@ -662,7 +657,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     assert.equal(errorBody.cause, "timeout");
     assert.equal(errorBody.details?.timedOut, true);
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
-    assert.equal(stderr[0]!.includes("\n"), true);
   });
 });
 

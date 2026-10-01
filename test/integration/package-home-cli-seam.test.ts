@@ -1,11 +1,10 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #604 acceptance: production CLI home does not follow process.env.HOME.
  * Real entry (runAkRole) + disk observation — mid-size integration seam.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";

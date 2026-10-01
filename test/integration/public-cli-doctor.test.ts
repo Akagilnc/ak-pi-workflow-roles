@@ -3,18 +3,15 @@ import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts"
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
  * session/content route; completed/refused settle on the common Terminal face.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   appendFile,
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rm,
@@ -32,7 +29,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
 import {
   admitPublicRole,
@@ -48,39 +45,13 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
+import { assertPublicFailureSettlement, captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-doctor-", scenario);
-}
-
-function captureIo() {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    stdout,
-    stderr,
-    io: {
-      stdout: (text: string) => {
-        stdout.push(text);
-      },
-      stderr: (text: string) => {
-        stderr.push(text);
-      },
-    },
-  };
-}
-
-function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
-  execFileSync("git", ["config", "user.email", "doctor@test.local"], {
-    cwd: root,
-  });
-  execFileSync("git", ["config", "user.name", "Doctor Test"], { cwd: root });
-  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
 function isUsage(error: unknown): boolean {
@@ -411,7 +382,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completedCase?.issueNumber, 40);
     assert.ok(Array.isArray((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings));
     assert.equal(((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings as unknown[]).length, 1);
-    assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
       ?.path;

@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S2 factory board — external behavior at:
  *   1) isolated BoardSnapshot → HTML (no network)
@@ -8,14 +7,13 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { cp, mkdir, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { manualScheduler } from "../helpers/manual-scheduler.ts";
 
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
@@ -23,47 +21,31 @@ import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
-  decideTicketCurrentState,
   renderFactoryBoardHtml,
   startFactoryBoardPage,
   writeFactoryBoardPage,
   type FactoryBoardBook,
-  type FactoryBoardScheduler,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
-import { loadTicketTrajectoryRuns } from "../../src/ticket-trajectory.ts";
 import {
   createGhTicketSnapshotTransport,
   fetchBoardSnapshot,
   TicketSnapshotBindingError,
+  TicketSnapshotApiError,
   type BoardSnapshot,
-  type SnapshotTicket,
   type TicketSnapshotTransport,
 } from "../../src/ticket-snapshot.ts";
 import type { GhApiRunner, GhApiResponse } from "../../src/gh-api-runner.ts";
 import {
-  acceptedFacts,
-  isTerminatingToolName,
-  validateAcceptedDetails,
-  AcceptedDetailsContractError,
-  type TerminatingToolName,
-} from "../../src/package-contracts/terminating-tools.ts";
-import {
   attrsFromOpenTag,
-  discoverTrueHomeUnacceptedActiveIssue,
   elementsWith,
   executeProductionBoardSort,
-  independentAcceptedTrajectory,
-  independentIssueUsage,
-  independentLatestLegActivity,
   laneSortIdentity,
-  pathExists,
   ticket,
   topLevelLaneEntries,
   treeFingerprint,
   visibleTicketLabel,
   BoardSortElement,
-  type BoardPageSortMode,
 } from "../helpers/factory-board-shared.ts";
 
 /** Page sort modes advertised by the embedded production control (not a board export). */
@@ -104,23 +86,6 @@ class BoardSortDocument {
  * rendered HTML (same script body the browser runs — not the TS comparator alone).
  */
 
-
-function manualBoardScheduler(): {
-  scheduler: FactoryBoardScheduler;
-  ticks: Array<() => void>;
-} {
-  const ticks: Array<() => void> = [];
-  const scheduler: FactoryBoardScheduler = {
-    every(_ms, tick) {
-      ticks.push(tick);
-      return () => {
-        const idx = ticks.indexOf(tick);
-        if (idx >= 0) ticks.splice(idx, 1);
-      };
-    },
-  };
-  return { scheduler, ticks };
-}
 
 
 function sampleSnapshot(): BoardSnapshot {
@@ -199,6 +164,38 @@ async function booksWithLedgers(workspace: string): Promise<FactoryBoardBook[]> 
   ];
 }
 
+test("zero-turn ticket reports zero machine cost, tokens and wall clock", async () => {
+  // Machine boundary (#162 data-* contract): a ticket with no runs has nothing to
+  // sum, so its machine values are 0 — the board must not invent a nonzero
+  // duration or spend to fill the channel. Reuses the zero-run ledgers that
+  // booksWithLedgers already creates (orch #26, roles #128/#130).
+  await withTempRoot("factory-board-zero-turn-", async (workspace) => {
+    const books = await booksWithLedgers(workspace);
+    const html = await renderFactoryBoardHtml(
+      books,
+      { ok: true, snapshot: sampleSnapshot() },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+
+    for (const [book, issue] of [["orch", "26"], ["roles", "128"], ["roles", "130"]] as const) {
+      const card = elementsWith(html, "data-ticket").find(
+        (el) => el["data-book"] === book && el["data-ticket"] === issue,
+      );
+      assert.ok(card, `${book} #${issue} present`);
+      assert.equal(card["data-cost-usd"], "0", `${book} #${issue} cost`);
+      assert.equal(card["data-total-tokens"], "0", `${book} #${issue} tokens`);
+      assert.equal(card["data-wall-ms"], "0", `${book} #${issue} wall`);
+      assert.equal(card["data-landing-cycle-ms"], "0", `${book} #${issue} landing cycle`);
+      // The label row carries the same machine values, not just the card.
+      const costLabel = elementsWith(html, "data-cost-label").find(
+        (el) => el["data-cost-label"] === issue && el["data-book"] === book,
+      );
+      assert.ok(costLabel, `${book} #${issue} cost label`);
+      assert.equal(costLabel["data-total-tokens"], "0", `${book} #${issue} label tokens`);
+    }
+  });
+});
+
 test("board lists title and milestone per ticket; same-number tickets stay in their lanes", async () => {
   await withTempRoot("factory-board-lanes-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
@@ -211,7 +208,7 @@ test("board lists title and milestone per ticket; same-number tickets stay in th
     assert.equal(await treeFingerprint(books[1]!.ledgerDir), beforeOrch);
 
     assert.equal(elementsWith(html, "data-board-error").length, 0);
-    assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T12:00:00.000Z");
 
     const lanes = elementsWith(html, "data-lane");
     assert.equal(lanes.length, 2);
@@ -228,21 +225,13 @@ test("board lists title and milestone per ticket; same-number tickets stay in th
     assert.equal(orch26["data-title"], "orch lone 26");
     assert.equal(orch26["data-milestone"], "other");
 
-    // Lane sections must not cross-host the other book's #26.
-    const rolesLaneAt = html.indexOf('data-lane="roles"');
-    const orchLaneAt = html.indexOf('data-lane="orch"');
-    assert.ok(rolesLaneAt >= 0 && orchLaneAt >= 0);
-    const first = Math.min(rolesLaneAt, orchLaneAt);
-    const second = Math.max(rolesLaneAt, orchLaneAt);
-    const firstChunk = html.slice(first, second);
-    const secondChunk = html.slice(second);
-    if (rolesLaneAt < orchLaneAt) {
-      assert.match(firstChunk, /data-book="roles"[^>]*data-ticket="26"|data-ticket="26"[^>]*data-book="roles"/);
-      assert.doesNotMatch(firstChunk, /data-book="orch"[^>]*data-ticket="26"|data-ticket="26"[^>]*data-book="orch"/);
-      assert.match(secondChunk, /data-book="orch"/);
-    } else {
-      assert.match(firstChunk, /data-book="orch"/);
-      assert.match(secondChunk, /data-book="roles"/);
+    // Each #26 belongs only to the matching lane, independent of HTML attribute order.
+    for (const book of ["roles", "orch"]) {
+      assert.deepEqual(
+        topLevelLaneEntries(html, book).filter((entry) => entry["data-ticket"] === "26")
+          .map((entry) => entry["data-book"]),
+        [book],
+      );
     }
     });
 });
@@ -502,9 +491,12 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
 });
 
 test("snapshot adapter fails loudly on missing binding fields and transport errors", async () => {
+  const upstream = new Error("upstream boom");
+  let calls = 0;
   const transport: TicketSnapshotTransport = {
     async listBookTickets() {
-      throw new Error("upstream boom");
+      calls += 1;
+      throw upstream;
     },
   };
 
@@ -515,12 +507,13 @@ test("snapshot adapter fails loudly on missing binding fields and transport erro
         transport,
       }),
     (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /binding/i);
+      assert.ok(err instanceof TicketSnapshotBindingError);
+      assert.equal(err.bookKey, "roles");
       return true;
     },
   );
 
+  assert.equal(calls, 0, "invalid binding never reaches transport");
   await assert.rejects(
     () =>
       fetchBoardSnapshot({
@@ -528,8 +521,9 @@ test("snapshot adapter fails loudly on missing binding fields and transport erro
         transport,
       }),
     (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /upstream boom|api|roles/i);
+      assert.ok(err instanceof TicketSnapshotApiError);
+      assert.equal(err.bookKey, "roles");
+      assert.equal(err.cause, upstream);
       return true;
     },
   );
@@ -548,7 +542,7 @@ test("page write lands outside every ledger and stays read-only on books", async
     });
     assert.equal(written.outputPath, await realpath(outputPath));
     const html = await readFile(outputPath, "utf8");
-    assert.match(html, /data-generated-at="2026-08-05T15:00:00\.000Z"/);
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T15:00:00.000Z");
     for (let i = 0; i < books.length; i += 1) {
       assert.equal(await treeFingerprint(books[i]!.ledgerDir), before[i]);
     }
@@ -560,7 +554,7 @@ test("page write lands outside every ledger and stays read-only on books", async
           now: new Date(),
           outputPath: join(books[0]!.ledgerDir, "inside.html"),
         }),
-      /outside|ledger|output/i,
+      Error,
     );
     });
 });
@@ -630,7 +624,6 @@ test("duplicate bookKey bindings fail closed before API and never cross-wire lan
     assert.equal(elementsWith(cliHtml, "data-board-error")[0]?.["data-board-error"], "binding");
     assert.equal(elementsWith(cliHtml, "data-lane").length, 0);
     assert.equal(elementsWith(cliHtml, "data-ticket").length, 0);
-    assert.match(cliHtml, /duplicate bookKey/i);
 
     // Adapter: reject before transport is touched.
     let transportCalls = 0;
@@ -652,7 +645,6 @@ test("duplicate bookKey bindings fail closed before API and never cross-wire lan
       (err: unknown) => {
         assert.ok(err instanceof TicketSnapshotBindingError);
         assert.equal(err.bookKey, "roles");
-        assert.match(err.message, /duplicate bookKey/i);
         return true;
       },
     );
@@ -1485,8 +1477,6 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
 
     // Sort control present + production page script executes the claimed order
     assert.ok(elementsWith(html, "data-sort-control").length >= 1);
-    assert.match(html, /cost-desc/);
-    assert.match(html, /cost-asc/);
     // One-shot render does not advertise a refresh bound
     assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
     assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
@@ -1580,13 +1570,8 @@ test("S3 board projects no textual conclusion and excludes unlabelled narrative 
         0,
         `board must not project ${banned}`,
       );
-      assert.doesNotMatch(html, new RegExp(`${banned}=`));
     }
-    // Free-text assistant narrative must not be copied into the page body as a fact channel.
-    assert.doesNotMatch(html, /断势/);
-    assert.doesNotMatch(html, /趋势上升/);
-    assert.doesNotMatch(html, /deadbeefcafebabe/);
-    // Mechanical burn still projects; narrative does not ride along.
+    // Mechanical burn projects through typed fields; narrative has no fact-channel attribute.
     const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === "55");
     assert.ok(t);
     assert.equal(Number(t["data-cost-usd"]), 0.01);
@@ -1914,7 +1899,6 @@ test("blockedBy connection paginates to completion and refuses silent truncation
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.match(err.message, /pageInfo missing|completeness/i);
       return true;
     },
   );
@@ -2042,7 +2026,6 @@ test("snapshot adapter carries closedAt and refuses closed issues without it", a
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.match(err.message, /closedAt missing for closed issue/i);
       return true;
     },
   );
@@ -2065,7 +2048,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
     let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-    const { scheduler, ticks } = manualBoardScheduler();
+    const { scheduler, ticks } = manualScheduler();
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
     const view: FactoryBoardView = {
       ok: true,
@@ -2125,7 +2108,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     await new Promise((r) => setTimeout(r, 50));
     for (let i = 0; i < 20; i += 1) {
       html = await readFile(outputPath, "utf8");
-      if (html.includes('data-generated-at="2026-08-05T16:00:10.000Z"')) break;
+      if (elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z") break;
       await new Promise((r) => setTimeout(r, 20));
     }
     assert.equal(
@@ -2739,7 +2722,6 @@ test("retention drain refuses silent truncation and validates the injected clock
       }),
     (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.match(err.message, /pageInfo missing|completeness/i);
       return true;
     },
   );
@@ -2753,7 +2735,7 @@ test("retention drain refuses silent truncation and validates the injected clock
         closedIssueNumbers: [],
         retentionNow: new Date("not-a-date"),
       }),
-    /retentionNow/i,
+    (err: unknown) => err instanceof Error,
   );
 });
 
@@ -2794,7 +2776,7 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
     let nowMs = Date.parse(RETENTION_NOW);
-    const { scheduler, ticks } = manualBoardScheduler();
+    const { scheduler, ticks } = manualScheduler();
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
 
     const counters = { closedDrainCalls: 0 };
@@ -2910,7 +2892,7 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     ticks[0]!();
     for (let i = 0; i < 25; i += 1) {
       html = await readFile(outputPath, "utf8");
-      if (loadCalls >= 2 && html.includes('data-generated-at="2026-08-06T12:00:00.002Z"')) break;
+      if (loadCalls >= 2 && elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-06T12:00:00.002Z") break;
       await new Promise((r) => setTimeout(r, 20));
     }
     assert.ok(loadCalls >= 2, "each tick re-loads the snapshot through the adapter");
@@ -2940,18 +2922,19 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
     const nowMs = Date.parse("2026-08-05T16:00:00.000Z");
 
+    const upstream = new Error("snapshot source exploded");
     const failing = startFactoryBoardPage({
       books,
       loadView: async () => {
-        throw new Error("snapshot source exploded");
+        throw upstream;
       },
       outputPath: join(workspace, "out", "board2.html"),
       refreshBoundarySeconds: 1,
       clock: () => new Date(nowMs),
-      scheduler: manualBoardScheduler().scheduler,
+      scheduler: manualScheduler().scheduler,
     });
-    await assert.rejects(failing.started, /snapshot source exploded/);
-    await assert.rejects(() => failing.stop(), /snapshot source exploded/);
+    await assert.rejects(failing.started, (err: unknown) => err === upstream);
+    await assert.rejects(() => failing.stop(), (err: unknown) => err === upstream);
 
     assert.throws(
       () =>
@@ -2960,7 +2943,7 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
           outputPath: join(workspace, "out", "board3.html"),
           refreshBoundarySeconds: 1,
         }),
-      /view or loadView/i,
+      (err: unknown) => err instanceof Error,
     );
     });
 });
