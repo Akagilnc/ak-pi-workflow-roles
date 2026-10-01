@@ -891,6 +891,8 @@ const GATE_CHILD_ROLES = new Set(["notary", "auditor", "inspector", "countersign
  * The words are the existing officer re-ask. Each reask spends this loop's own
  * copy of the configured ceiling; exhaustion keeps the terminal already in hand.
  * A host failure stops here.
+ * Countersign already spends that ceiling inside its own seat, or the summoning
+ * gate does. This loop does not open a second one for the same conclusion.
  */
 async function queueConclusionFromChild(
   child: AdmittedRoleInvocation,
@@ -902,9 +904,18 @@ async function queueConclusionFromChild(
   | undefined
 > {
   if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
-  let current = child;
-  // This loop counts on its own. The child resume keeps the caller's env so
-  // its delivery, failure recovery, and other reask loops stay separate.
+  if (child.role === "countersign") {
+    const terminal = await trySettlePublicSeat(child, env.principalAuthority, undefined);
+    const status = latestQueueStatus(terminal);
+    if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
+      return { admitted: child, terminal, status };
+    }
+    return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
+  }
+  let current: AdmittedRoleInvocation = child;
+  // Notary, auditor, and inspector have no seat-local status reask. This loop
+  // is their one budget. The child resume keeps the caller's env so delivery,
+  // failure recovery, and other reask loops stay separate.
   let budgetEnv: InstructionSeatRunEnv = { ...env, unreadableReasksSpent: 0 };
   for (;;) {
     const terminal = await trySettlePublicSeat(
@@ -987,12 +998,17 @@ async function auditSubmittedRole(
   const record = accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
     ? accepted as Record<string, unknown> : undefined;
   const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
+  // A gate summon already owns this conclusion's reasks. The seat must not
+  // start another budget on the same run (parentRunPath is that summon).
+  const gateOwnsStatusReask = typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== "";
   if (admitted.role === "secretariat" && status !== "converged" && status !== "escalate") {
+    if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
     if (next === undefined) return turn;
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: SECRETARIAT_STATUS_REASK }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !QUEUE_CONCLUSIONS.has(status))) {
+    if (gateOwnsStatusReask) return turn;
     const next = withUnreadableReask(env);
     if (next === undefined) return turn;
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK }, next, io);

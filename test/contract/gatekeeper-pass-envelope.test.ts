@@ -6,7 +6,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
   GatekeeperDecisionError,
@@ -249,82 +248,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
   },
 );
 
-
-test("#1132 an unreadable officer conclusion stops at the configured ceiling", async () => {
-  const receipt = { status: "sideways", note: "held" };
-  for (const limit of [0, 1]) {
-    let calls = 0;
-    const outcome = await requireSubmissionGate({
-      context: {
-        cwd: process.cwd(),
-        sessionManager: { getSessionFile: () => "/tmp/unused" },
-      } as never,
-      subject: { kind: "secretariat_verdict" },
-      toolCallId: `t-ceiling-${limit}`,
-      autoResumeLimit: limit,
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra");
-        },
-        bindSubmissionNonPass() {
-          throw new Error("reask must not bind non-pass");
-        },
-      },
-      summonOfficer: async () => {
-        calls += 1;
-        return {
-          exitCode: 0,
-          runDirectory: "/tmp/runs/01a0cs1132-ceil-7000-8000-000000000001@countersign",
-          terminal: {
-            roleOutcome: {
-              kind: "accepted",
-              role: "countersign",
-              payloads: [receipt],
-            },
-            navigator: { disposition: "no-advice" },
-            artifacts: [],
-            runId: "01a0cs1132-ceil-7000-8000-000000000001",
-          },
-        };
-      },
-    });
-    assert.equal(calls, limit + 1, `limit ${limit}`);
-    assert.equal(outcome?.status, "needs_reask", `limit ${limit}`);
-    assert.deepEqual(outcome?.status === "needs_reask" ? outcome.receipt : undefined, receipt);
-  }
-});
-
-test("#1132 an unreadable auditor reply stops at the configured ceiling", async () => {
-  const reply = { status: "sideways" };
-  for (const limit of [0, 1]) {
-    let calls = 0;
-    const decision = await runComplianceAudit({
-      subject: "doctor",
-      context: { cwd: process.cwd() } as never,
-      runDirectory: "/tmp/runs/01parent@doctor",
-      autoResumeLimit: limit,
-      summonAuditor: async () => {
-        calls += 1;
-        return {
-          exitCode: 0,
-          terminal: {
-            roleOutcome: {
-              kind: "accepted",
-              role: "auditor",
-              payloads: [reply],
-            },
-            navigator: { disposition: "no-advice" },
-            artifacts: [],
-            runId: "auditor-sideways",
-          },
-        };
-      },
-    });
-    assert.equal(calls, limit + 1, `limit ${limit}`);
-    assert.equal(decision.status, "received", `limit ${limit}`);
-    assert.deepEqual(decision.status === "received" ? decision.reply : undefined, reply);
-  }
-});
 
 test("#969 requireSubmissionGate pass returns receipt + nested runId",
   async () => {

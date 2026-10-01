@@ -1288,11 +1288,20 @@ export function createRoleRuntimeExtension(
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
-        const reason = (event.content ?? [])
-          .map((part) => part.type === "text" && "text" in part ? part.text : "")
-          .join("")
-          .trim();
-        receiptDelivery.recordRejected(reason);
+        const details = event.details;
+        const code = details !== null && typeof details === "object" && "code" in details
+          ? details.code
+          : undefined;
+        // Unfinished-reason催全 spends on the send below. Counting the same
+        // reminder here ends the run before the accepting turn. Commit and
+        // prefix reminders still spend on the rejection.
+        if (code !== "worker_unfinished_reason_reminder") {
+          const reason = (event.content ?? [])
+            .map((part) => part.type === "text" && "text" in part ? part.text : "")
+            .join("")
+            .trim();
+          receiptDelivery.recordRejected(reason);
+        }
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
       // closure. tool_result retains only infrastructure settlement.

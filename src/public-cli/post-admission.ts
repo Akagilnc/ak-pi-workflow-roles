@@ -1343,23 +1343,27 @@ export async function dispatchPostAdmissionTurn<
     // The delivery budget is spent HERE, at the outermost level; only when it is
     // exhausted with still no receipt does the settlement seam record no_receipt.
     while (akSeamDeliversReceipt && issuedDeliveryRequests < deliveryLimit) {
-      issuedDeliveryRequests += 1;
-      const deliveryRequest = await buildReceiptDeliveryRequest({
-        admitted,
-        env,
-        request,
-        issuedSoFar: issuedDeliveryRequests,
-      });
-      // The same native-resume projection the first turn uses (host adapter owns
-      // the resume; AK only hands it the request — ADR 0082).
-      const deliveryTurnRequest: RoleTurnRequest = {
-        ...deliveryRequest,
-        principal: admitted.principal,
-        runDirectory: admitted.runDirectory,
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-      };
+      // Assembly sits in the same post-start catch as the host call. A throw
+      // here is a started turn: resume the session, and do not count a request
+      // that never reached the host.
       let deliveryResult: RoleTurnResult;
+      let deliveryTurnRequest: RoleTurnRequest;
       try {
+        const deliveryRequest = await buildReceiptDeliveryRequest({
+          admitted,
+          env,
+          request,
+          issuedSoFar: issuedDeliveryRequests + 1,
+        });
+        issuedDeliveryRequests += 1;
+        // The same native-resume projection the first turn uses (host adapter owns
+        // the resume; AK only hands it the request — ADR 0082).
+        deliveryTurnRequest = {
+          ...deliveryRequest,
+          principal: admitted.principal,
+          runDirectory: admitted.runDirectory,
+          ...(env.signal === undefined ? {} : { signal: env.signal }),
+        };
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with

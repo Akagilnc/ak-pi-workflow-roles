@@ -289,21 +289,57 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
  * Does not invent an output failure for an empty ledger.
  * #953: empty public terminal face — clear every reader-adoptable prior face.
  */
+/**
+ * Lifecycle fact the in-process runtime already wrote for this run and attempt.
+ * Absent, malformed, or a previous attempt's bytes are not a count.
+ */
+async function readCurrentAttemptNoReceiptFacts(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<NoReceiptLifecycleFacts | undefined> {
+  const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
+  if (entries === undefined) return undefined;
+  let attemptStart = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") {
+      attemptStart = index;
+      break;
+    }
+  }
+  const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
+    entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
+    || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
+  const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
+  if (raw === undefined) return undefined;
+  let facts: NoReceiptLifecycleFacts;
+  try {
+    facts = parseNoReceiptLifecycleFacts(raw);
+  } catch {
+    return undefined;
+  }
+  if (facts.runPointer !== admitted.runDirectory) return undefined;
+  if (facts.attemptPointer !== `current:${admitted.runDirectory}`) return undefined;
+  return facts;
+}
+
 export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
   /**
-   * #1132: delivery requests this run actually issued. The settlement seam
-   * records that count verbatim — zero stays zero. The budget is never reported
-   * as a count, and another loop's resumes are never counted as催交.
+   * #1132: delivery requests this run actually issued. Zero stays zero when
+   * nothing was sent and this attempt has no lifecycle fact. A fact already
+   * written for this run and attempt supplies the count when it is larger.
+   * The budget is never the count, and another loop's resumes are not催交.
    */
   issuedDeliveryRequests = 0,
 ): Promise<TerminalResult> {
+  const persisted = await readCurrentAttemptNoReceiptFacts(admitted, authority);
   const facts = noReceiptLifecycleFacts({
-    terminalToolCalled: false,
-    rejectedReceipts: [],
-    deliveryTurns: issuedDeliveryRequests,
+    terminalToolCalled: persisted?.terminalToolCalled ?? false,
+    rejectedReceipts: persisted?.rejectedReceipts ?? [],
+    deliveryTurns: Math.max(issuedDeliveryRequests, persisted?.deliveryTurns ?? 0),
     runPointer: admitted.runDirectory,
     attemptPointer: `current:${admitted.runDirectory}`,
   });
@@ -3218,51 +3254,28 @@ export async function settleFailureTerminalResult(
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
-    if (entries !== undefined) {
-      let attemptStart = 0;
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") { attemptStart = index; break; }
-      }
-      const lifecycleEntry = entries.slice(attemptStart).reverse().find((entry: SessionEntry) =>
-        entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
-      const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
-      if (raw !== undefined) {
-        // Catch only covers lifecycle-byte parse. Clear / navigator / gate I/O
-        // after a valid parse must keep their real failure identity (#953).
-        let facts: NoReceiptLifecycleFacts | undefined;
-        try {
-          facts = parseNoReceiptLifecycleFacts(raw);
-        } catch {
-          /* malformed lifecycle bytes remain the existing nonzero output failure */
-        }
-        if (
-          facts !== undefined &&
-          facts.runPointer === admitted.runDirectory &&
-          facts.attemptPointer === `current:${admitted.runDirectory}`
-        ) {
-          let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
-          // #478: no_receipt is still a public Terminal — project accepted gate facts.
-          // #953: empty public terminal face — clear every reader-adoptable prior face.
-          await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-          return withOptionalGateProjection(
-            {
-              roleOutcome: {
-                kind: "no_receipt",
-                role: admitted.role,
-                status: "no-accepted-receipt",
-                ...facts,
-                decisiveFacts,
-              },
-              navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
-              artifacts: [],
-              runId: admitted.runId,
-            },
-            sessionDirectory,
-            detourGateContext(admitted, options),
-          );
-        }
-      }
+    const facts = await readCurrentAttemptNoReceiptFacts(admitted, authority);
+    if (facts !== undefined) {
+      const decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
+      // #478: no_receipt is still a public Terminal — project accepted gate facts.
+      // #953: empty public terminal face — clear every reader-adoptable prior face.
+      await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+      return withOptionalGateProjection(
+        {
+          roleOutcome: {
+            kind: "no_receipt",
+            role: admitted.role,
+            status: "no-accepted-receipt",
+            ...facts,
+            decisiveFacts,
+          },
+          navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
+          artifacts: [],
+          runId: admitted.runId,
+        },
+        sessionDirectory,
+        detourGateContext(admitted, options),
+      );
     }
   }
   // Exact-session attendance only — never infer no-advice from caller omission.

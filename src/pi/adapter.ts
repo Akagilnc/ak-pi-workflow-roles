@@ -18,6 +18,8 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
+import { WorkerUnfinishedReasonReminderError } from "../submission-errors.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
@@ -107,14 +109,28 @@ function toPiToolDefinition<S extends TSchema, D>(
     description: tool.description,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     parameters: tool.parameters,
-    execute: async (toolCallId, params, signal, update, context) =>
-      toPiResult(await tool.execute(
-        toolCallId,
-        params as Static<S>,
-        signal,
-        update === undefined ? undefined : (result) => update(toPiResult(result)),
-        projectContext(context),
-      )),
+    execute: async (toolCallId, params, signal, update, context) => {
+      try {
+        return toPiResult(await tool.execute(
+          toolCallId,
+          params as Static<S>,
+          signal,
+          update === undefined ? undefined : (result) => update(toPiResult(result)),
+          projectContext(context),
+        ));
+      } catch (error) {
+        // The worker gate owns unfinished-reason催全. Returning the reminder
+        // here keeps one isError result so the in-process催交 counts the send
+        // once. Commit and prefix reminders stay native throws.
+        if (!(error instanceof WorkerUnfinishedReasonReminderError)) throw error;
+        const projected = projectCorrectableExecuteRejection(error);
+        return {
+          content: [{ type: "text" as const, text: projected.diagnostic }],
+          details: projected.details as D,
+          isError: true as const,
+        };
+      }
+    },
   };
 }
 

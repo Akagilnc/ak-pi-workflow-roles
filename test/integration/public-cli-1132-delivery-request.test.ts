@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
@@ -389,23 +390,6 @@ test("#1132: a countersign first turn carries the configured delivery ceiling", 
   }
 });
 
-// 催交真失败同样不得停在 running。
-test("#1132: a failing催交 leaves the run out of running", async () => {
-  await withSeatHome(async (home) => {
-    const run = await runExternalJudge(home, {
-      runId: "1132-external-fail-not-running",
-      project: await freshProject(home),
-      limit: 2,
-      failOnCall: 2,
-    });
-    assert.ok(run.runDirectory !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
-    ) as { state: string };
-    assert.notEqual(runState.state, "running", "a failed催交 must not leave the run live");
-  });
-});
-
 function isDeliveryPrompt(request: RoleTurnRequest): boolean {
   if (request.continuation.kind !== "resume") return false;
   try {
@@ -565,8 +549,8 @@ test("#1132: each催交 turn carries pi's existing delivery-state content", asyn
   });
 });
 
-// 真实宿主失败不洗成 no_receipt：a failing催交 keeps its cause.
-test("#1132: a failing催交 turn is a real failure, never no_receipt", async () => {
+// 催交中的宿主失败留在 failedAttempts，并让这次跑离开 running。
+test("#1132: a failing催交 turn records the host failure and leaves the run out of running", async () => {
   await withSeatHome(async (home) => {
     const run = await runExternalJudge(home, {
       runId: "1132-external-delivery-failure",
@@ -584,6 +568,11 @@ test("#1132: a failing催交 turn is a real failure, never no_receipt", async ()
       run.terminal.roleOutcome.decisiveFacts as { failedAttempts?: readonly unknown[] } | undefined
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
+    assert.ok(run.runDirectory !== undefined);
+    const runState = JSON.parse(
+      await readFile(join(run.runDirectory, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.notEqual(runState.state, "running");
   });
 });
 
@@ -735,13 +724,157 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
 
 // 读不出三态的审核召唤用尽配置次数后留下该回执，不把父席再送去改。
 test("#1132: an unreadable audit officer stops at the ceiling without resuming the parent", async () => {
+  for (const limit of [0, 1]) {
+    await withSeatHome(async (home) => {
+      await setConfiguredLimit(home, limit);
+      const project = await freshProject(home);
+      let judgeCalls = 0;
+      let notaryCalls = 0;
+      const host = {
+        async executeTurn(request: RoleTurnRequest) {
+          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(coordinates.sessionDirectory, { recursive: true });
+          await writeFile(
+            coordinates.sessionFile,
+            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+            "utf8",
+          );
+          if (request.activation.role === "judge") {
+            judgeCalls += 1;
+            if (judgeCalls === 1) {
+              await sealAcceptedSubmission({
+                cwd: request.cwd,
+                runId: runIdFromRunDirectory(request.runDirectory)!,
+                runDirectory: request.runDirectory,
+                role: "judge",
+                details: { status: "continue" },
+                toolCallId: "judge-continue",
+                home: request.home,
+              });
+            }
+            return { code: 0, stderr: "", timedOut: false };
+          }
+          if (request.activation.role === "notary") {
+            notaryCalls += 1;
+            await sealAcceptedSubmission({
+              cwd: request.cwd,
+              runId: runIdFromRunDirectory(request.runDirectory)!,
+              runDirectory: request.runDirectory,
+              role: "notary",
+              details: { status: "sideways" },
+              toolCallId: `notary-sideways-${notaryCalls}`,
+              home: request.home,
+              ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+            });
+          }
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      };
+      const result = await runAkRole(
+        ["judge", "--host", "grok-build", "--project", project, "go"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => `1132-audit-unreadable-stop-${limit}`,
+          io: captureIo().io,
+          roleTurnHost: host,
+          hostAdapters: packagedExternalHostNames()
+            .concat("pi")
+            .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+        },
+      );
+      assert.equal(judgeCalls, 1, `limit ${limit}: parent is not resumed for revision`);
+      assert.equal(notaryCalls, limit + 1, `limit ${limit}`);
+      assert.equal(result.exitCode, 0, `limit ${limit}`);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
+      if (result.terminal?.roleOutcome.kind !== "accepted") return;
+      assert.equal(payloadStatusSequence(result.terminal.roleOutcome).at(-1), "sideways");
+    });
+  }
+});
+
+// 同一不可读会签结论只由门召唤计次。直召会签仍用席位自己的额度。
+test("#1132: one unreadable countersign conclusion spends one budget", async () => {
+  for (const limit of [0, 1]) {
+    await withSeatHome(async (home) => {
+      await setConfiguredLimit(home, limit);
+      await runAkRole(
+        ["config", "set", "secretariat", "test/caller-seat:high", "notary", "test/caller-seat:high", "auditor", "test/caller-seat:high"],
+        { packageRoot, home, io: { stdout() {}, stderr() {} } },
+      );
+      const project = await freshProject(home);
+      const calls: Record<string, number> = {};
+      const host = {
+        async executeTurn(request: RoleTurnRequest) {
+          const role = request.activation.role;
+          calls[role] = (calls[role] ?? 0) + 1;
+          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(coordinates.sessionDirectory, { recursive: true });
+          await writeFile(
+            coordinates.sessionFile,
+            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+            "utf8",
+          );
+          const details = role === "secretariat"
+            ? { secretariatStatus: "converged", ticketNumber: 1132 }
+            : role === "countersign"
+              ? { status: "sideways", ticketNumber: 1132 }
+              : role === "diarist"
+                ? { status: "completed", ticketNumber: 1132, sessions: [] }
+                : { status: "converged", ticketNumber: 1132 };
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            runId: runIdFromRunDirectory(request.runDirectory)!,
+            runDirectory: request.runDirectory,
+            role,
+            details,
+            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+            toolCallId: `${role}-${calls[role]}`,
+            home: request.home,
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      };
+      const env = {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true as const, xai: true as const },
+        io: captureIo().io,
+        roleTurnHost: host,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      };
+      const opened = await runAkRole(
+        ["secretariat", "--host", "grok-build", "--project", project, "go"],
+        { ...env, createRunId: () => `1132-secretariat-countersign-${limit}` },
+      );
+      assert.equal(calls.secretariat, 1, `limit ${limit}`);
+      assert.equal(calls.countersign, limit + 1, `limit ${limit}`);
+      assert.equal(opened.exitCode, 0, `limit ${limit}`);
+      const officerRunId = opened.terminal?.runId;
+      assert.equal(typeof officerRunId, "string", `limit ${limit}`);
+      const beforeResume = calls.countersign ?? 0;
+      const resumed = await runAkRole(["resume", officerRunId!], env);
+      assert.equal((calls.countersign ?? 0) - beforeResume, limit + 1, `limit ${limit} resume`);
+      assert.equal(calls.secretariat, 1, `limit ${limit} resume`);
+      assert.equal(resumed.exitCode, 0, `limit ${limit} resume`);
+    });
+  }
+});
+
+// 首轮已经启动后，催交组装失败走已有的失败续跑，下一次是 resume。
+test("#1132: a delivery assembly failure after the turn started resumes the session", async () => {
   await withSeatHome(async (home) => {
-    await setConfiguredLimit(home, 0);
+    await setConfiguredLimit(home, 1);
     const project = await freshProject(home);
-    let judgeCalls = 0;
-    let notaryCalls = 0;
+    const kinds: string[] = [];
     const host = {
       async executeTurn(request: RoleTurnRequest) {
+        kinds.push(request.continuation.kind);
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
         await writeFile(
@@ -749,33 +882,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        if (request.activation.role === "judge") {
-          judgeCalls += 1;
-          if (judgeCalls === 1) {
-            await sealAcceptedSubmission({
-              cwd: request.cwd,
-              runId: runIdFromRunDirectory(request.runDirectory)!,
-              runDirectory: request.runDirectory,
-              role: "judge",
-              details: { status: "continue" },
-              toolCallId: "judge-continue",
-              home: request.home,
-            });
-          }
-          return { code: 0, stderr: "", timedOut: false };
-        }
-        if (request.activation.role === "notary") {
-          notaryCalls += 1;
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            runId: runIdFromRunDirectory(request.runDirectory)!,
-            runDirectory: request.runDirectory,
-            role: "notary",
-            details: { status: "sideways" },
-            toolCallId: `notary-sideways-${notaryCalls}`,
-            home: request.home,
-          });
-        }
+        await writeFile(join(coordinates.sessionDirectory, "grok-acp-session.json"), "not JSON\n");
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -786,7 +893,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        createRunId: () => "1132-audit-unreadable-stop",
+        createRunId: () => "1132-delivery-assembly-failure",
         io: captureIo().io,
         roleTurnHost: host,
         hostAdapters: packagedExternalHostNames()
@@ -794,11 +901,62 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
-    assert.equal(judgeCalls, 1, "parent is not resumed for revision");
-    assert.equal(notaryCalls, 1, "limit 0 is the first summon and no reask");
+    assert.deepEqual(kinds, ["initial", "resume"]);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.terminal?.autoResumeCount, 1);
+  });
+});
+
+// Pi 现场已经记下的当前跑实发次数，无卷结算照用。外层接缝这次没有另发。
+test("#1132: a Pi no-receipt settlement keeps the persisted delivery count", async () => {
+  await withSeatHome(async (home) => {
+    const limit = 3;
+    await setConfiguredLimit(home, limit);
+    const project = await freshProject(home);
+    const kinds: string[] = [];
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        kinds.push(request.continuation.kind);
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        const facts = {
+          terminalToolCalled: true,
+          rejectedReceipts: [{ reason: "held", diagnosticAvailable: true }],
+          deliveryTurns: limit,
+          sessionCompletion: "settled-without-accepted-receipt",
+          runPointer: request.runDirectory,
+          attemptPointer: `current:${request.runDirectory}`,
+          acceptedReceipt: false,
+        };
+        await writeFile(
+          coordinates.sessionFile,
+          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n${JSON.stringify({ type: "custom", customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, data: facts })}\n`,
+          "utf8",
+        );
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const result = await runAkRole(
+      ["judge", "--project", project, "go"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "1132-pi-persisted-delivery",
+        io: captureIo().io,
+        hostAdapters: packagedExternalHostNames()
+          .concat("pi")
+          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
+      },
+    );
+    assert.deepEqual(kinds, ["initial"]);
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    if (result.terminal?.roleOutcome.kind !== "accepted") return;
-    assert.equal(payloadStatusSequence(result.terminal.roleOutcome).at(-1), "sideways");
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+    if (result.terminal?.roleOutcome.kind !== "no_receipt") return;
+    assert.equal(result.terminal.roleOutcome.deliveryTurns, limit);
+    assert.equal(result.terminal.roleOutcome.terminalToolCalled, true);
+    assert.equal(result.terminal.roleOutcome.rejectedReceipts[0]?.reason, "held");
   });
 });

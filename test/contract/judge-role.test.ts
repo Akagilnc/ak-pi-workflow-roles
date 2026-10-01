@@ -37,7 +37,6 @@ import type { RoleHost } from "../../src/host-contracts.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   WorkerCommitReminderError,
-  WorkerUnfinishedReasonReminderError,
 } from "../../src/worker-submission-gates.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -1048,12 +1047,9 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const seatModel = fauxProvider({ provider: "unfinished-seats", api: "unfinished-seats" }).getModel();
   // Positive: no reason → bounce → same-run reasoned resubmit accepted through Gatekeeper.
   await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-    await assert.rejects(
-      tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
-      (error: unknown) =>
-        error instanceof WorkerUnfinishedReasonReminderError &&
-        error.code === "worker_unfinished_reason_reminder",
-    );
+    const bounced = await tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare"));
+    assert.equal(bounced.isError, true);
+    assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
     assert.equal(bounceGatekeeperProviderRequests, 0);
     const context = await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
@@ -1082,16 +1078,29 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
+  const deliveryPrompts: string[] = [];
+  (harness2.pi as { sendMessage?: (message: { customType: string }) => void }).sendMessage = (message) => {
+    deliveryPrompts.push(message.customType);
+  };
+  const bounce = async (id: string) => {
+    const bounced = await tool2.execute(id, bare, undefined, undefined, bounceContext(id));
+    assert.equal(bounced.isError, true);
+    assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
+    const ctx = bounceContext(id);
+    await harness2.handlers.get("tool_result")?.({
+      toolCallId: id,
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      isError: true,
+      content: bounced.content,
+      details: bounced.details,
+    }, ctx);
+    await harness2.handlers.get("agent_end")?.({ messages: [] }, ctx);
+  };
   await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-    await assert.rejects(
-      tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
-      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-    );
-    await assert.rejects(
-      tool2.execute("u2", bare, undefined, undefined, bounceContext("u2")),
-      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-    );
+    await bounce("u1");
+    await bounce("u2");
     assert.equal(bounceGatekeeperProviderRequests, 0);
+    assert.deepEqual(deliveryPrompts, ["ak-receipt-delivery-prompt", "ak-receipt-delivery-prompt"]);
     const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
       handlers: harness2.handlers,
@@ -1102,6 +1111,8 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       context: context2,
     });
     assert.deepEqual(sealed.accepted, bare);
+    await harness2.handlers.get("agent_end")?.({ messages: [] }, context2);
+    assert.equal(deliveryPrompts.length, 2);
   });
 });
 
