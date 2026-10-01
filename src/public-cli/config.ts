@@ -835,6 +835,14 @@ export function credentialProvidersFromAuthData(
   };
 }
 
+/**
+ * Public entry agent directory: explicit value, else PI_CODING_AGENT_DIR,
+ * else `<home>/.pi/agent`. CLI and nested summons share this rule.
+ */
+export function resolvePublicAgentDir(explicit: string | undefined, home: string): string {
+  return explicit ?? process.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+}
+
 export async function loadCredentialProviders(
   agentDir: string,
 ): Promise<CredentialProviders> {

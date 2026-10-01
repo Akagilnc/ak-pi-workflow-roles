@@ -12,11 +12,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { pathContainedIn } from "./activation-ledger-topology.ts";
 import {
   formatRunLeaf,
+  isUnboundRunDirectory,
   listBookRunContainers,
   parseRunLeaf,
   roleRunPlacement,
   runsSegmentOf,
 } from "./role-run-placement.ts";
+
+export { isUnboundRunDirectory };
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
   parseTicketNumber,
@@ -159,10 +162,6 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
       sourcePage: project.sourcePage,
     },
   };
-}
-
-export function isUnboundRunDirectory(runDirectory: string): boolean {
-  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
 }
 
 export function bookHistoricalRoots(
