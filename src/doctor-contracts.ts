@@ -9,6 +9,11 @@ export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
+const DOCTOR_DISPOSITIONS = ["keep", "thin", "delete"] as const;
+const DOCTOR_PRESCRIPTION_KINDS = ["retain", "delete", "simplify", "patch", "addMechanism"] as const;
+const biteActual = "actual" as const;
+const biteNone = "noRealBite" as const;
+const DOCTOR_BITE_KINDS = [biteActual, biteNone] as const;
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
 export type DoctorSessionCost =
   | { source: string; startedAt: string; endedAt: string; wallMilliseconds: number; completion: "accepted" }
@@ -24,12 +29,12 @@ export type DoctorCaseCost = {
 };
 export type DoctorGuardrailAnswer = { answer: boolean; evidenceIds: string[]; explanation: string };
 export type DoctorLastRealBite =
-  | { kind: "actual"; targetKey: string; evidenceId: string }
-  | { kind: "noRealBite"; targetKey: string; eligibleEvidenceIds: string[] };
+  | { kind: typeof biteActual; targetKey: string; evidenceId: string }
+  | { kind: typeof biteNone; targetKey: string; eligibleEvidenceIds: string[] };
 type DoctorFindingBody = {
-  evidenceIds: string[]; disposition: "keep" | "thin" | "delete";
+  evidenceIds: string[]; disposition: (typeof DOCTOR_DISPOSITIONS)[number];
   guardrails: { reproducibleFailure: DoctorGuardrailAnswer; owningSeamOrInvariant: DoctorGuardrailAnswer; deletionOrSimplificationSuffices: DoctorGuardrailAnswer };
-  prescription: { kind: "retain" | "delete" | "simplify" | "patch" | "addMechanism"; recommendation: string; necessityExplanation?: string };
+  prescription: { kind: (typeof DOCTOR_PRESCRIPTION_KINDS)[number]; recommendation: string; necessityExplanation?: string };
   lastRealBite: DoctorLastRealBite;
 };
 type DoctorAssetKind = DoctorTargetKind;
@@ -62,7 +67,7 @@ const doctorSubmissionObject = Type.Object({
   }),
   findings: Type.Unknown({
     description:
-      "逐条资产观察与处方，原样留存。一条可含 targetKey、targetKind、observation、evidenceIds、disposition、assetEvidence（targetKey、targetKind、evidenceId）、guardrails（reproducibleFailure、owningSeamOrInvariant、deletionOrSimplificationSuffices，各项可含 answer、evidenceIds、explanation）、prescription（kind、recommendation、necessityExplanation）、lastRealBite（kind、targetKey、evidenceId、eligibleEvidenceIds）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。",
+      `逐条资产观察与处方，原样留存。一条可含 targetKey、targetKind（${DOCTOR_TARGET_KINDS.join(" | ")}）、observation、evidenceIds、disposition（${DOCTOR_DISPOSITIONS.join(" | ")}）、assetEvidence（targetKey、targetKind、evidenceId）、guardrails（reproducibleFailure、owningSeamOrInvariant、deletionOrSimplificationSuffices，各项可含 answer、evidenceIds、explanation）、prescription（kind 为 ${DOCTOR_PRESCRIPTION_KINDS.join(" | ")}，另可写 recommendation、necessityExplanation）、lastRealBite（kind 为 ${DOCTOR_BITE_KINDS.join(" | ")}，另可写 targetKey、evidenceId、eligibleEvidenceIds）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。`,
   }),
   reason: Type.Unknown({
     description: "证据不足以支撑如实证词的原因；仅 refused 时用。",

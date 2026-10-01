@@ -28,7 +28,7 @@ const fixerOutputObject = Type.Object({
   }),
   classResults: Type.Unknown({
     description:
-      "各类 class 结算，原样留存（完成项可写 name、disposition、searchScope、exceptions（where、reason）、commitSha；拒绝项可写 name、disposition、remainingScope、blocker）。",
+      "各类 class 结算，原样留存。完成项的 disposition 为 completed，可写 name、searchScope、exceptions（where、reason）、commitSha。拒绝项的 disposition 为 refused，可写 name、remainingScope、blocker。",
   }),
   testEvidence: Type.Unknown({
     description:
