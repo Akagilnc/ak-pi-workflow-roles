@@ -80,7 +80,6 @@ import {
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
-  childSignalDeathDiagnostic,
   processCancelDiagnostic,
   processCancelSignalName,
   type CatchableProcessSignal,
@@ -390,6 +389,11 @@ export type ControlledFailureInput = {
   packageFact?: PackageSideFact;
   /** The signal that killed the host child, when one did. */
   signal?: string;
+  /**
+   * A catchable process-signal cancellation. Supplies fallback wording only —
+   * a host that reported a diagnostic of its own keeps it.
+   */
+  readonly cancelName?: CatchableProcessSignal;
   /** The typed-HTTP sidecar could not be read; auxiliary, never a cause. */
   sidecarReadFailure?: ThrownErrorFact;
   typedHttpObservationSettled?: true;
@@ -544,6 +548,7 @@ export async function presentControlledFailure<
       ? {}
       : { sidecarReadFailure }),
     ...(failureInput.signal === undefined ? {} : { signal: failureInput.signal }),
+    ...(failureInput.cancelName === undefined ? {} : { cancelName: failureInput.cancelName }),
     ...(failureInput.packageFact === undefined
       ? {}
       : { packageFact: failureInput.packageFact }),
@@ -680,7 +685,6 @@ async function settleDeferredPersist<
  * dropping them (CLAUDE.md:48 真因必须落痕).
  */
 function packageSideFailureOf(
-  result: RoleTurnResult,
   resolution: AuditedRunnerFailureResolution | undefined,
 ): PackageSideFact | undefined {
   const sidecarReadFailure = resolution?.sidecarReadFailure;
@@ -1113,6 +1117,27 @@ export async function dispatchPostAdmissionTurn<
         && stderrLogWriteFailure === undefined
         && cancelAfterSettle === undefined
       ) {
+        // A sealed acceptance is the host's lawful outcome, but a real failure
+        // this package hit on the way there is still a fact about the run and
+        // must be reported rather than dropped on the way to exit 0.
+        const acceptedSidecarFact = resolution?.sidecarReadFailure;
+        if (acceptedSidecarFact !== undefined) {
+          const failed = await settleAfterTurnStarted(
+              admitted,
+              withEngineDetourInvocationScope({
+              timedOut: result.timedOut,
+              code: result.code,
+              stderr: result.stderr,
+              ...(result.signal === undefined ? {} : { signal: result.signal }),
+              sidecarReadFailure: acceptedSidecarFact,
+            }, request.invocationScopeId),
+            adapters,
+            env.principalAuthority,
+            io,
+            persistRunState,
+          );
+          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+        }
         settledOutcome = {
           exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
           admitted,
@@ -1131,15 +1156,23 @@ export async function dispatchPostAdmissionTurn<
       const settledFailure = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({
-          timedOut: false,
+          // The host's own report for this call, in full: a timeout and a signal
+          // death are its facts, not something this branch may restate as
+          // `false`. The settlement error rides beside them under `thrown`, so
+          // neither fact replaces the other.
+          timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
-          // The host's own report for this call, kept as it gave it. The
-          // settlement error rides beside it under its own key via `thrown`,
-          // so neither fact replaces the other.
+          ...(result.signal === undefined ? {} : { signal: result.signal }),
+          ...(processCancelSignalName(env.signal) === undefined
+            ? {}
+            : { cancelName: processCancelSignalName(env.signal) as CatchableProcessSignal }),
           ...((resolution?.knownFailure ?? hostReportedFailure) === undefined ? {} : {
             knownFailure: resolution?.knownFailure ?? hostReportedFailure,
           }),
+          ...(resolution?.sidecarReadFailure === undefined
+            ? {}
+            : { sidecarReadFailure: resolution.sidecarReadFailure }),
           thrown: error,
         }, request.invocationScopeId),
         adapters,
@@ -1210,17 +1243,14 @@ export async function dispatchPostAdmissionTurn<
           timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
-          // The host's own report: a signal-killed child says so itself.
-          ...(result.signal === undefined
-            ? {}
-            : {
-              knownDiagnostic: childSignalDeathDiagnostic(result.signal),
-              signal: result.signal,
-            }),
+          // A signal-killed child is a fact of its own. The synthetic line is
+          // only a fallback for when the host declared no failure of its own —
+          // it must never displace words the host actually reported.
+          ...(result.signal === undefined ? {} : { signal: result.signal }),
           ...resolutionInput,
-          ...(processCancelName === undefined
-            ? {}
-            : { knownDiagnostic: processCancelDiagnostic(processCancelName) }),
+          // The cancellation is the host's own report of why this call ended;
+          // it supplies the wording only when the host declared nothing else.
+          ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
           // Secondary fact only — never the cause, and never merged into the
           // host's own details.
           ...(stderrLogWriteFact === undefined ? {} : { packageFact: stderrLogWriteFact }),
@@ -1242,8 +1272,8 @@ export async function dispatchPostAdmissionTurn<
     // handling it (an unreadable sidecar, a stderr mirror that would not write).
     // Those are true facts about this run, so they are reported rather than
     // dropped on the way to a no_receipt (CLAUDE.md:48 真因必须落痕).
-    if (packageSideFailureOf(result, resolution) !== undefined) {
-      const facts = packageSideFailureOf(result, resolution)!;
+    if (packageSideFailureOf(resolution) !== undefined) {
+      const facts = packageSideFailureOf(resolution)!;
       const failed = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({

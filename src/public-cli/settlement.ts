@@ -20,6 +20,11 @@ import {
 } from "../submission-ledger.ts";
 
 import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
+import {
+  childSignalDeathDiagnostic,
+  processCancelDiagnostic,
+  type CatchableProcessSignal,
+} from "./process-cancel.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
@@ -243,6 +248,16 @@ export async function settleHostEndedNoReceipt(
   // `false` / `[]` would assert an empty delivery that never happened
   // (#1032: 无回执如实呈 no_receipt; 单一真源).
   const recorded = await readRecordedNoReceiptFacts(coordinates.sessionFile, binding);
+  if (recorded instanceof LifecycleReadFailure) {
+    // The delivery owner's record exists but could not be read or parsed. That
+    // is a real failure about this run, not an absent record: reporting a
+    // fabricated empty delivery (false / [] / exhausted) here would assert a
+    // delivery that never happened (CLAUDE.md:48 真因必须落痕; #1032 不因形状杀局).
+    throw new LifecycleReadFailure(
+      `no-receipt lifecycle record could not be read: ${recorded.message}`,
+      { cause: recorded.error },
+    );
+  }
   return settleNoReceiptTerminal(
     admitted,
     authority,
@@ -256,19 +271,37 @@ export async function settleHostEndedNoReceipt(
   );
 }
 
+/** A lifecycle record that exists but could not be read or parsed. */
+export class LifecycleReadFailure extends Error {
+  /** The underlying read or parse failure, kept whole. */
+  readonly error: unknown;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "LifecycleReadFailure";
+    this.error = options?.cause;
+  }
+}
+
 /**
- * The delivery owner's own lifecycle record for this attempt, when it wrote one.
- * A missing or unreadable record is absence, not a fabricated one.
+ * The delivery owner's own lifecycle record for this attempt.
+ * - undefined: the owner wrote no record (genuine absence).
+ * - LifecycleReadFailure: a record exists but could not be read or parsed.
  */
 async function readRecordedNoReceiptFacts(
   sessionFile: string,
   binding: { runPointer: string; attemptPointer: string },
-): Promise<NoReceiptLifecycleFacts | undefined> {
+): Promise<NoReceiptLifecycleFacts | undefined | LifecycleReadFailure> {
   let entries: readonly SessionEntry[];
   try {
     entries = await readBoundSessionEntries(sessionFile);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // A session that was never written is genuine absence; anything else is a
+    // real read failure about this run.
+    if (isMissingPathError(error)) return undefined;
+    return new LifecycleReadFailure(
+      `session transcript unreadable: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
   const entry = entries.slice(currentAttemptStartIndex(entries)).reverse().find(
     (item: SessionEntry) =>
@@ -283,8 +316,11 @@ async function readRecordedNoReceiptFacts(
       && facts.attemptPointer === binding.attemptPointer
       ? facts
       : undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    return new LifecycleReadFailure(
+      `no-receipt lifecycle record is malformed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -667,6 +703,24 @@ function withKnownDetails(
  * washed when the child also timed out. Cause is never inferred from stderr wording.
  * AggregateError concurrent leaves keep primary identity and secondary facts in details.
  */
+/**
+ * Wording for a failure the host reported without a diagnostic of its own. The
+ * host's signal or cancellation is named when it gave one; otherwise the exit
+ * is. Only ever a fallback — a host that reported a diagnostic keeps it
+ * (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
+ */
+function hostReportedFallbackOf(input: {
+  readonly timedOut?: boolean;
+  readonly code?: number | null;
+  readonly signal?: string;
+  readonly cancelName?: string;
+}): string {
+  if (input.cancelName !== undefined) return processCancelDiagnostic(input.cancelName as CatchableProcessSignal);
+  if (input.signal !== undefined) return childSignalDeathDiagnostic(input.signal);
+  if (input.timedOut === true) return "role run timed out";
+  return `role run failed with exit ${input.code ?? "null"}`;
+}
+
 /** This call's package-side facts, or undefined when there are none. */
 function packageFactsOf(input: {
   readonly sidecarReadFailure?: ThrownErrorFact;
@@ -712,6 +766,11 @@ export function classifyPostAdmissionFailure(input: {
   knownDetails?: Readonly<Record<string, unknown>>;
   /** The signal that killed the host child, when one did (a non-normal exit). */
   signal?: string;
+  /**
+   * A catchable process-signal cancellation the host reported. Like `signal`,
+   * it only supplies fallback wording: the host's own diagnostic always wins.
+   */
+  readonly cancelName?: string;
   /** This package's own auxiliary read failure; recorded, never a cause. */
   sidecarReadFailure?: ThrownErrorFact;
   /** Further package-side facts merged under `packageFact`, never the cause. */
@@ -723,9 +782,13 @@ export function classifyPostAdmissionFailure(input: {
   // is kept beside it (失败诚实宪法：接住可以，洗白不行).
   if (Object.hasOwn(input, "thrown")) {
     const thrown = classifyThrownFailure(input.thrown);
+    // A host that carried a details record reported *something* for this call,
+    // even with no typed class: that record is its own and must not be
+    // displaced by the exception.
     const hostReported = input.knownCause !== undefined
       || (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "")
-      || input.knownIdentity !== undefined;
+      || input.knownIdentity !== undefined
+      || input.knownDetails !== undefined;
     // The host reported no *typed* class, but it did report this call: a
     // nonzero exit, a timeout, or a signal death are its own facts. A later
     // settlement exception does not replace them — it is a different failure
@@ -739,19 +802,17 @@ export function classifyPostAdmissionFailure(input: {
         || input.signal !== undefined
         || (typeof input.code === "number" && input.code !== 0);
       if (!hostFailed) return thrown;
-      const fallback = input.timedOut
-        ? "role run timed out"
-        : `role run failed with exit ${input.code ?? "null"}`;
       const facts = packageFactsOf(input);
       const packageFact = facts === undefined ? { thrown } : { ...facts, thrown };
       return {
         ...(input.timedOut ? { cause: "timeout" as const } : {}),
-        diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-        details: {
-          ...(input.knownDetails ?? {}),
-          exitCode: input.code,
-          ...(input.timedOut ? { timedOut: true as const } : {}),
-        },
+        ...(input.signal === undefined ? {} : { identity: { name: "ChildSignalDeath", code: input.signal } }),
+        diagnostic: conciseChildDiagnostic(
+          input.stderr,
+          hostReportedFallbackOf(input),
+        ),
+        // The host's record is untouched; this package's view of the exit and
+        // the caught exception both ride under `packageFact`.
         packageFact,
       };
     }
@@ -767,11 +828,15 @@ export function classifyPostAdmissionFailure(input: {
       // it rides whole under `packageFact` (owner 4743ade7: 代码凭什么要去决定cli的失败原因？).
       diagnostic: input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
         ? input.knownDiagnostic
-        : conciseChildDiagnostic(input.stderr, thrown.diagnostic),
-      ...(input.knownIdentity === undefined ? {} : { identity: input.knownIdentity }),
+        : conciseChildDiagnostic(input.stderr, hostReportedFallbackOf(input)),
+      ...(input.knownIdentity === undefined
+        ? {}
+        : { identity: input.knownIdentity }),
       // The host's details are handed back exactly as given.
       ...(input.knownDetails === undefined ? {} : { details: input.knownDetails }),
-      packageFact: { ...input.packageFact, thrown },
+      // Every fact this package captured on this call — the caught exception and
+      // any earlier auxiliary read failure — is reported, none of them dropped.
+      packageFact: { ...packageFactsOf(input), thrown },
     };
   }
   // #881: untyped original testimony retains diagnostic/identity, not a
@@ -815,8 +880,9 @@ export function classifyPostAdmissionFailure(input: {
   if (input.code !== 0) {
     // A nonzero exit says the run failed, not why. No typed fact confirmed a
     // class, so `cause` stays absent and the CLI's own diagnostic and exit code
-    // are what remains (host contract: omit cause, keep the original).
-    const fallback = `role run failed with exit ${input.code ?? "null"}`;
+    // are what remains (host contract: omit cause, keep the original). A signal
+    // or cancellation the host did report is named, not restated as an exit.
+    const fallback = hostReportedFallbackOf(input);
     return withKnownDetails(
       {
         diagnostic: conciseChildDiagnostic(input.stderr, fallback),

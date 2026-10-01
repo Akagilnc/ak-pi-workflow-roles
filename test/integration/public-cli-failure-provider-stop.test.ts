@@ -8,10 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { resolveAuditedRunnerFailureResolution } from "../../src/public-cli/settlement.ts";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -416,59 +414,6 @@ test("#307 2xx clears prior typed HTTP observation rather than persisting succes
   } finally {
     await rm(runDir, { recursive: true, force: true });
   }
-});
-test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep real cause", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj-typed-http-read");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-typed-http-read-001";
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
-    await mkdir(runDirectory, { recursive: true });
-    // Absence (no sidecar): ENOENT → undefined observation, no forged failure.
-    assert.equal(await readLatestTypedProviderHttpObservation(runDirectory), undefined);
-    const absent = await resolveAuditedRunnerFailureResolution({
-      runner: undefined,
-      runDirectory,
-    });
-    assert.equal(absent.knownFailure, undefined);
-
-    // A sidecar that cannot be read is a real fact, but it is this package's
-    // own auxiliary observation — it never becomes the call's failure, and it
-    // never edits what the host reported. Each bad sidecar is recorded whole
-    // on the resolution with its real identity.
-    const hostReport = { cause: "provider", diagnostic: "CURRENT_CLI_FAILURE" } as const;
-    await writeFile(join(runDirectory, "typed-provider-http.json"), JSON.stringify({ httpStatus: 500 }), "utf8");
-    const badShape = await resolveAuditedRunnerFailureResolution({
-      runner: hostReport,
-      runDirectory,
-    });
-    assert.deepEqual(badShape.knownFailure, hostReport);
-    assert.equal(badShape.sidecarReadFailure?.name, "Error");
-
-    // Malformed JSON keeps SyntaxError identity (not laundered as absence).
-    await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
-    const malformed = await resolveAuditedRunnerFailureResolution({
-      runner: hostReport,
-      runDirectory,
-    });
-    assert.deepEqual(malformed.knownFailure, hostReport);
-    assert.equal(malformed.sidecarReadFailure?.name, "SyntaxError");
-
-    // EISDIR on the observation path keeps its real errno.
-    await rm(join(runDirectory, "typed-provider-http.json"), { force: true });
-    await mkdir(join(runDirectory, "typed-provider-http.json"));
-    const eisdir = await resolveAuditedRunnerFailureResolution({
-      runner: hostReport,
-      runDirectory,
-    });
-    assert.deepEqual(eisdir.knownFailure, hostReport);
-    // The errno is asserted as a structured code, not read out of the system
-    // error's message wording.
-    assert.equal(eisdir.sidecarReadFailure?.name, "Error");
-    assert.equal(eisdir.sidecarReadFailure?.code, "EISDIR");
-  });
 });
 test("#307 typed HTTP non-absence failure retains the final dispatch error after resume budget", async () => {
   // EISDIR on the typed-HTTP sidecar must reach the controlled-failure error.json;

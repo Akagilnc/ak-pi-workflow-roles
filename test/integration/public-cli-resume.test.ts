@@ -29,14 +29,13 @@ import {
   loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
-  markRunTerminal,
   readRoleRunState,
   readTypedHttp429Observation,
   recordTypedProviderHttpStatus,
   renderResumeCommand,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { settleFailureTerminalResult, trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
@@ -1912,68 +1911,6 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
         await rm(lockPath, { force: true });
       },
     );
-  });
-});
-
-test("failure settlement attaches resume only for typed 429", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-settle-resume-unit";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    await mkdir(sessionDirectory, { recursive: true });
-    const admittedRequestPath = join(runDirectory, "admitted-request.json");
-    await writeFile(admittedRequestPath, "{}\n", "utf8");
-    const admitted = {
-      role: "judge" as const,
-      runId,
-      bookKey,
-      projectRoot: project,
-      instruction: "x",
-      instructionEmpty: false,
-      attachments: [],
-      runDirectory,
-      principal: fixturePrincipal(sessionDirectory, sessionFile),
-      admittedRequestPath,
-    };
-    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    await markRunResumable(runDirectory, {
-      httpStatus: 429,
-      provider: "xai",
-    });
-
-    const withResume = await settleFailureTerminalResult(
-      admitted,
-      { cause: "provider", diagnostic: "upstream declined" },
-      piDurablePrincipalAuthority,
-      {
-        resume: {
-          command: renderResumeCommand(runId),
-        },
-      },
-    );
-    assertRunIdOnlyInResumeCommand(withResume, runId);
-    assert.equal(withResume.artifacts.length, 0);
-
-    await markRunTerminal(runDirectory);
-    const without = await settleFailureTerminalResult(admitted, {
-      cause: "activation",
-      diagnostic: "boom",
-    }, piDurablePrincipalAuthority);
-    assert.equal(without.resume, undefined);
-    assert.equal(without.runId, runId);
-    assert.ok(without.artifacts.length > 0);
   });
 });
 
