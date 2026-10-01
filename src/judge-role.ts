@@ -1,5 +1,5 @@
 import { type RoleHost } from "./host-contracts.ts";
-import { reviewSubmissionSchema } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema, type ReviewQueueWord } from "./review-submission.ts";
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
@@ -28,10 +28,10 @@ export async function runJudgeGates(input: {
     readonly runDirectory?: string;
   } | void>;
 }): Promise<{
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: ReviewQueueWord;
   readonly passes: readonly {
     readonly subject: GatekeeperSubject;
-    readonly status: "converged" | "continue" | "escalate";
+    readonly status: ReviewQueueWord;
     readonly receipt: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
@@ -39,7 +39,7 @@ export async function runJudgeGates(input: {
 }> {
   const passes: {
     subject: GatekeeperSubject;
-    status: "converged" | "continue" | "escalate";
+    status: ReviewQueueWord;
     receipt: unknown;
     runId?: string;
     runDirectory?: string;
@@ -47,10 +47,11 @@ export async function runJudgeGates(input: {
   for (const subject of JUDGE_GATES) {
     if (await input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
-    const status = pass?.status;
-    if (pass === undefined || (status !== "converged" && status !== "continue" && status !== "escalate")) {
+    const received = pass?.status;
+    if (pass === undefined || typeof received !== "string" || !REVIEW_QUEUE_STATUSES.has(received)) {
       throw new Error("judge gate returned no conclusion");
     }
+    const status = received as ReviewQueueWord;
     passes.push({
       subject,
       status,

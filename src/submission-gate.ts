@@ -28,21 +28,20 @@ import {
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import { receivedDiscriminator } from "./submission-errors.ts";
+import type { ReviewQueueWord } from "./review-submission.ts";
 
-/** Queue word of the latest this-terminal payload. History does not outrank it. */
-export function latestQueueStatus(terminal: TerminalResult | undefined): string | undefined {
+/** Received discriminator of the latest payload, retained verbatim for re-ask. */
+export function latestQueueStatus(terminal: TerminalResult | undefined): unknown {
   const outcome = terminal?.roleOutcome;
   if (outcome === undefined) return undefined;
   if (outcome.kind === "audit_escalation") return "escalate";
   if (outcome.kind !== "accepted") return undefined;
   const latest = outcome.payloads?.[outcome.payloads.length - 1];
-  if (isRecord(latest)) {
-    const status = (latest as { status?: unknown }).status;
-    if (typeof status === "string" && status.trim() !== "") return status;
+  if (isRecord(latest) && Object.hasOwn(latest, "status")) {
+    return receivedDiscriminator(latest, "status");
   }
-  return typeof outcome.status === "string" && outcome.status.trim() !== ""
-    ? outcome.status
-    : undefined;
+  return outcome.status;
 }
 
 export function latestQueuePayload(terminal: TerminalResult | undefined): unknown {
@@ -131,7 +130,7 @@ function bookDirectOfficerPointer(
  * public terminal without a second authority.
  */
 export type SubmissionGateOutcome = {
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: ReviewQueueWord;
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;

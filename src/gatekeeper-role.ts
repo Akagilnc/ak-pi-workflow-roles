@@ -191,9 +191,9 @@ function projectOfficerDecision(
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
   const record = isRecord(decision) ? decision : undefined;
-  const status =
-    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
-    ?? fallbackStatus;
+  const status = record !== undefined && Object.hasOwn(record, "status")
+    ? receivedDiscriminator(record, "status")
+    : fallbackStatus;
   const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
   if (queueStatus === "converged") {
     return { status: "converged", officer, receipt };
