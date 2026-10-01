@@ -26,7 +26,6 @@ import {
   missingResolvedSeatModelMessage,
   parseModelSpec,
   resolveEffectiveSeat,
-  resolvedSeatWithModel,
   savePublicCliConfig,
   setAutoResumeLimit,
   setPersistentSeatConfig,
@@ -41,7 +40,6 @@ import {
 } from "./config.ts";
 import {
   loadHostProvidersTable,
-  projectHostFacingProvider,
   renderHostProvidersTable,
 } from "./host-providers.ts";
 import { packagedModelParent } from "../packaged-role-registry.ts";
@@ -54,11 +52,10 @@ import {
   type PostAdmissionEnv,
 } from "./post-admission.ts";
 import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
+import { openRoleSeatRuntime } from "./role-seat-runtime.ts";
 import {
-  composeRoleTurnHostAdapters,
   formatHostSelectionFailure,
   HostSelectionError,
-  selectRoleTurnHost,
   type HostSelectionFailure,
   type NamedRoleTurnHostAdapter,
 } from "./role-turn-host-resolution.ts";
@@ -258,54 +255,43 @@ function createRoleEnvironment(
   /** #178: after host selection, before missing-model — structural argv parse once. */
   afterHost?: () => void,
 ) {
-  const role = options.role;
   const extraPiArgs = env.extraPiArgs;
   const timeoutMs = env.timeoutMs;
-
-  // #617/#178/#788/#840: host first, then model; nested child seat selects own host.
-  const hostAdapters = composeRoleTurnHostAdapters(
-    {
+  const opened = openRoleSeatRuntime({
+    resolution: {
       packageRoot: env.packageRoot,
       ...(env.roleTurnHost === undefined ? {} : { roleTurnHost: env.roleTurnHost }),
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
       ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     },
-    env.principalAuthority!,
-  );
-  const roleTurnHost = selectRoleTurnHost(hostAdapters, {
-    role,
+    principalAuthority: env.principalAuthority!,
+    role: options.role,
     seat: options.seat,
+    home: options.home,
+    ...(afterHost === undefined ? {} : { afterHost }),
   });
-  // #178: host → argv (afterHost) → missing-model → provider projection.
-  afterHost?.();
-  const seatWithModel = resolvedSeatWithModel(options.seat);
-  if (seatWithModel === undefined) {
+  if (!opened.ok) {
     // Direct CLI has --model; dual remediation is intentional here (#178 / #916).
     throw new CliUsageError(
       missingResolvedSeatModelMessage(options.seat.seat, "invocation-or-config"),
     );
   }
-  const hostFacingSelection = projectHostFacingProvider(
-    seatWithModel.selection,
-    seatWithModel.host,
-    loadHostProvidersTable(options.home),
-    options.home,
-  );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
     agentDir: options.agentDir,
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
-    roleTurnHost,
-    hostAdapters,
+    roleTurnHost: opened.roleTurnHost,
+    hostAdapters: opened.hostAdapters,
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
-    ...projectSeatEngine(options.seat),
-    ...projectSeatHost(options.seat),
+    ...(opened.model === undefined ? {} : { model: opened.model }),
+    ...(opened.engine === undefined ? {} : { engine: opened.engine }),
+    ...(opened.engineModel === undefined ? {} : { engineModel: opened.engineModel }),
+    host: opened.host,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     ...(options.config?.autoResumeLimit === undefined
@@ -317,6 +303,25 @@ function createRoleEnvironment(
       : { boundTicketNumber: env.boundTicketNumber }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
   };
+}
+
+type PublicRoleDispatchParts = {
+  readonly agentDir: string;
+  readonly cwd: string;
+  readonly config: PublicCliConfig;
+  readonly credentials: CredentialProviders;
+};
+
+/** Shared preamble for a new public role command and an explicit resume. */
+async function loadPublicRoleDispatchParts(
+  env: CliEnv,
+  home: string,
+): Promise<PublicRoleDispatchParts> {
+  const agentDir = resolveAgentDir(env, home);
+  const cwd = env.cwd ?? process.cwd();
+  const config = await loadAndValidateConfig(home, env.packageRoot);
+  const credentials = env.credentials ?? (await loadCredentialProviders(agentDir));
+  return { agentDir, cwd, config, credentials };
 }
 
 /**
@@ -336,15 +341,11 @@ async function dispatchPublicRoleCommand<TParsed>(
     parseOnce: () => TParsed,
   ) => Promise<{ exitCode: number; terminal?: TerminalResult }>,
 ): Promise<CliResult> {
-  const agentDir = resolveAgentDir(env, home);
-  const cwd = env.cwd ?? process.cwd();
-  const config = await loadAndValidateConfig(home, env.packageRoot);
-  const credentials =
-    env.credentials ?? (await loadCredentialProviders(agentDir));
+  const parts = await loadPublicRoleDispatchParts(env, home);
   const seat = resolveEffectiveSeat(
-    config,
+    parts.config,
     role,
-    credentials,
+    parts.credentials,
     invocationFromParsed(parsed),
   );
   let parsedRoleArgv!: TParsed;
@@ -352,7 +353,15 @@ async function dispatchPublicRoleCommand<TParsed>(
     parsed.args,
     createRoleEnvironment(
       env,
-      { role, home, agentDir, cwd, credentials, seat, config },
+      {
+        role,
+        home,
+        agentDir: parts.agentDir,
+        cwd: parts.cwd,
+        credentials: parts.credentials,
+        seat,
+        config: parts.config,
+      },
       () => {
         parsedRoleArgv = parse(parsed.args);
       },
@@ -573,20 +582,6 @@ function requireCallableSeat(
   if (!isPublicCallableRole(seat)) {
     throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
-}
-
-/** Single seat engine axis → run-options projection (#391 E2 / #883). */
-function projectSeatEngine(
-  seat: Readonly<{ engine?: string; engineModel?: string }>,
-): { engine?: string; engineModel?: string } {
-  return pickEngineAxis(seat);
-}
-
-/** Single seat.host → run-options projection (#595 / #617). */
-function projectSeatHost(
-  seat: Readonly<{ host: string }>,
-): { host: string } {
-  return { host: seat.host };
 }
 
 function loadAndValidateConfig(
@@ -1219,19 +1214,15 @@ export async function runAkRole(
         runId: resumeRequest.runId,
         authority: env.principalAuthority ?? piDurablePrincipalAuthority,
       };
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const parts = await loadPublicRoleDispatchParts(env, home);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
       // Missing durable role keeps the judge seat table. The resume entry
       // itself is one function; it reads the stored run.
       const seatRole = resumeRole ?? "judge";
       const seat = resolveEffectiveSeat(
-        config,
+        parts.config,
         seatRole,
-        credentials,
+        parts.credentials,
         invocationFromParsed(parsed),
       );
       const result = await runPublicInstructionSeatResume(
@@ -1239,11 +1230,11 @@ export async function runAkRole(
         createRoleEnvironment(env, {
           role: seatRole,
           home,
-          agentDir,
-          cwd,
-          credentials,
+          agentDir: parts.agentDir,
+          cwd: parts.cwd,
+          credentials: parts.credentials,
           seat,
-          config,
+          config: parts.config,
         }),
         io,
       );
@@ -1261,9 +1252,20 @@ export async function runAkRole(
         };
         const parentRole = await peekRoleRunRole(home, parentRunId);
         if (parentRole === undefined) break;
-        const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
+        const parentSeat = resolveEffectiveSeat(
+          parts.config,
+          parentRole,
+          parts.credentials,
+          invocationFromParsed(parsed),
+        );
         const parentEnv = createRoleEnvironment(env, {
-          role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
+          role: parentRole,
+          home,
+          agentDir: parts.agentDir,
+          cwd: parts.cwd,
+          credentials: parts.credentials,
+          seat: parentSeat,
+          config: parts.config,
         });
         current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }

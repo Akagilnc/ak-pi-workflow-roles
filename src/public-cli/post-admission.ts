@@ -119,6 +119,7 @@ import {
   persistReturnedRunState,
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
+  writeHardenedArtifactFile,
 } from "./auto-resume.ts";
 
 function projectRelocatedTurnIdentity(
@@ -268,11 +269,10 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   } catch (appendError) {
     try {
       const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-      await writeFile(
-        join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
-        `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
-        { encoding: "utf8", flag: "wx" },
-      );
+      await writeHardenedArtifactFile(artifactsDir, "post-admission-diagnostic", {
+        version: 1,
+        ...payload,
+      });
     } catch (artifactError) {
       retentionFailure =
         `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
@@ -1383,6 +1383,66 @@ async function dispatchAfterWriterLease<T>(input: {
   }
 }
 
+/**
+ * One auto-resume dispatch: deferred run-state persist settles on the same
+ * path for station-child and ordinary in-call retries. The caller owns how
+ * the turn request is built and which correlation id the env carries.
+ */
+async function runSettledAutoResumeLoop<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+  P,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  adapters: PostAdmissionAdapters<A, T>;
+  effectiveEngine?: string;
+  dispatchEnv?: PostAdmissionEnv;
+  buildInitialPayload: () => P;
+  buildResumePayload: () => P;
+  toRequest: (payload: P) => Promise<RoleTurnRequest>;
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
+  const dispatchEnv = input.dispatchEnv ?? input.env;
+  return runWithAutoResumeLoop({
+    admitted: input.admitted,
+    principalAuthority: input.env.principalAuthority,
+    io: input.io,
+    sessionAppender: input.env.sessionAppender,
+    autoResumeLimit: input.env.autoResumeLimit,
+    ...(input.env.signal === undefined ? {} : { signal: input.env.signal }),
+    buildInitialPayload: input.buildInitialPayload,
+    buildResumePayload: input.buildResumePayload,
+    dispatch: async (payload, lease, _isFirst, attemptIo) =>
+      dispatchAfterWriterLease({
+        ...(lease === undefined ? {} : { lease }),
+        build: () => input.toRequest(payload),
+        dispatch: async (request) => {
+          const result = await dispatchPostAdmissionTurn({
+            admitted: input.admitted,
+            env: dispatchEnv,
+            io: attemptIo,
+            request,
+            ...(lease === undefined ? {} : { lease }),
+            adapters,
+            persistRunState: false,
+            ...(input.effectiveEngine === undefined
+              ? {}
+              : { effectiveEngine: input.effectiveEngine }),
+          });
+          return settleDeferredPersist(
+            input.admitted,
+            input.env.principalAuthority,
+            adapters,
+            attemptIo,
+            result,
+          );
+        },
+      }),
+  });
+}
+
 function isAlreadyFrozenSummonsAttachment(
   runDirectory: string,
   attachmentPath: string,
@@ -1601,7 +1661,6 @@ export async function runPostAdmissionSeatResume<
   try {
     if (env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
-      const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
       // One public call → one detour scope across in-place auto-resume dispatches.
       const invocationScopeId = mintEngineDetourInvocationScope({
@@ -1609,68 +1668,42 @@ export async function runPostAdmissionSeatResume<
           ? {}
           : { effectiveEngine: input.effectiveEngine }),
       });
-      return await runWithAutoResumeLoop({
+      return await runSettledAutoResumeLoop({
         admitted: loaded.admitted,
-        principalAuthority: env.principalAuthority,
+        env,
         io: input.io,
-        sessionAppender: env.sessionAppender,
-        autoResumeLimit: env.autoResumeLimit,
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
+        adapters,
+        ...(input.effectiveEngine === undefined
+          ? {}
+          : { effectiveEngine: input.effectiveEngine }),
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
-        // Same as public manual resume: prior-court sealed acceptance is not a
-        // redispatch brake (#833). New-court station-child turns still auto-resume.
-        dispatch: async (payload, lease, _isFirst, attemptIo) =>
-          dispatchAfterWriterLease({
-            ...(lease === undefined ? {} : { lease }),
-            build: async () => {
-              // #840 r8 判词 class 2: this call-local retry must keep this
-              // court's frozen summons / 交卷 body / attachments verbatim
-              // (same object as firstTurn) and project only the minimal
-              // host-needed resume trigger — never engine handbook material,
-              // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
-              // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
-              // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
-              // non-semantic trigger that projection already uses for a
-              // same-ticket summons carrying no instruction/attachments.
-              if (payload.resumeTurn && firstTurn !== undefined) {
-                return {
-                  ...firstTurn,
-                  continuation: {
-                    kind: "resume",
-                    prompt: RESUME_TRANSPORT_ENVELOPE,
-                  },
-                };
-              }
-              const turnRequest = withEngineDetourInvocationScope(
-                await buildRequestAfterLease(),
-                invocationScopeId,
-              );
-              firstTurn = turnRequest;
-              return turnRequest;
-            },
-            dispatch: async (turnRequest) => {
-              const result = await dispatchPostAdmissionTurn({
-                admitted: loaded.admitted,
-                env,
-                io: attemptIo,
-                request: turnRequest,
-                ...(lease === undefined ? {} : { lease }),
-                adapters: stationAdapters,
-                persistRunState: false,
-                ...(input.effectiveEngine === undefined
-                  ? {}
-                  : { effectiveEngine: input.effectiveEngine }),
-              });
-              return settleDeferredPersist(
-                loaded.admitted,
-                env.principalAuthority,
-                stationAdapters,
-                attemptIo,
-                result,
-              );
-            },
-          }),
+        toRequest: async (payload) => {
+          // #840 r8 判词 class 2: this call-local retry must keep this
+          // court's frozen summons / 交卷 body / attachments verbatim
+          // (same object as firstTurn) and project only the minimal
+          // host-needed resume trigger — never engine handbook material,
+          // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
+          // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
+          // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
+          // non-semantic trigger that projection already uses for a
+          // same-ticket summons carrying no instruction/attachments.
+          if (payload.resumeTurn && firstTurn !== undefined) {
+            return {
+              ...firstTurn,
+              continuation: {
+                kind: "resume",
+                prompt: RESUME_TRANSPORT_ENVELOPE,
+              },
+            };
+          }
+          const turnRequest = withEngineDetourInvocationScope(
+            await buildRequestAfterLease(),
+            invocationScopeId,
+          );
+          firstTurn = turnRequest;
+          return turnRequest;
+        },
       });
     }
     const resumed = await runPostAdmissionManualResume({
@@ -1873,7 +1906,6 @@ export async function runPostAdmissionResumable<
   terminal?: T;
 }> {
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
-  const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
 
   // One public call → one detour scope across in-place auto-resume dispatches.
   const invocationScopeId = mintEngineDetourInvocationScope({
@@ -1884,32 +1916,20 @@ export async function runPostAdmissionResumable<
   const buildScopedResume = (): RoleTurnRequest =>
     withEngineDetourInvocationScope(buildResumeRequest(), invocationScopeId);
 
-  return runWithAutoResumeLoop({
+  return runSettledAutoResumeLoop({
     admitted,
-    principalAuthority: env.principalAuthority,
+    env,
     io,
-    sessionAppender: env.sessionAppender,
-    autoResumeLimit: env.autoResumeLimit,
-    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    adapters: input.adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+    // Ordinary in-call retry keeps the admitted correlation when one was stored.
+    dispatchEnv: {
+      ...env,
+      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+    },
     buildInitialPayload: buildScopedInitial,
     buildResumePayload: buildScopedResume,
-    dispatch: async (request, lease, _isFirst, attemptIo) => {
-      const result = await dispatchPostAdmissionTurn({
-        admitted,
-        env: {
-          ...env,
-          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-        },
-        io: attemptIo,
-        request,
-        ...(lease === undefined ? {} : { lease }),
-        adapters,
-        persistRunState: false,
-        // #600: every attempt (initial + auto-resume) writes seat engine when present.
-        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      });
-      return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
-    },
+    toRequest: async (request) => request,
   });
 }
 

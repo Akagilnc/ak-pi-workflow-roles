@@ -210,7 +210,7 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
  * + O_NOFOLLOW where the platform provides it (a planted symlink is never
  * followed) — mirrors settlement.ts's own hardened artifact writers.
  */
-async function writeHardenedArtifactFile(
+export async function writeHardenedArtifactFile(
   artifactsDir: string,
   namePrefix: string,
   payload: Record<string, unknown>,

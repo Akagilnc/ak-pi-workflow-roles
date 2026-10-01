@@ -3,7 +3,8 @@
  * Seat differences are composition-root fields. An omitted reviewer lens
  * starts two ordinary single-axis runs here.
  */
-import { dirname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
+import { isUnboundRunDirectory } from "../role-run-placement.ts";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
@@ -456,6 +457,45 @@ async function runOmittedLensBatch(
 }
 
 /**
+ * One same-parent lookup. Seat branches still build their own summons.
+ * A found child resumes that child; no prior run returns undefined so the caller mints.
+ */
+function resumeSameParentInstructionSeat(input: {
+  readonly env: InstructionSeatRunEnv;
+  readonly io: CliIo;
+  readonly projectRoot: string;
+  readonly role: PackagedRole;
+  readonly parentRunPath: string;
+  readonly summons: SameTicketSummonsMaterials;
+  readonly ticketNumber?: number;
+}): Promise<SeatRunResult | undefined> {
+  return tryResumeSameTicketSeatRun({
+    home: input.env.home,
+    projectRoot: input.projectRoot,
+    role: input.role,
+    parentRunPath: input.parentRunPath,
+    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+    freshSummons: input.env.freshSummons,
+    summons: input.summons,
+    resume: (runId, materials) => runPublicInstructionSeatResume(
+      { runId, ...(materials === undefined ? {} : { summons: materials }) },
+      input.env,
+      input.io,
+    ),
+  });
+}
+
+/** Re-ask words when the parent supplied them; otherwise the caller's own instruction. */
+function sameParentInstruction(
+  env: InstructionSeatRunEnv,
+  fallback: { readonly instruction: string; readonly instructionEmpty: boolean },
+): { readonly instruction: string; readonly instructionEmpty: boolean } {
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+  if (resumeInstruction === undefined) return fallback;
+  return { instruction: resumeInstruction, instructionEmpty: false };
+}
+
+/**
  * Countersign on the shared entry: gate parent resume, deferred materialization,
  * then the same one-shot settlement as every other seat.
  */
@@ -470,23 +510,20 @@ async function runCountersignBody(
       : undefined;
   if (gateParentRunPath !== undefined) {
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
+    const resumed = await resumeSameParentInstructionSeat({
+      env,
+      io,
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
-      ...(isSafePositiveTicketNumber(env.boundTicketNumber) ? { ticketNumber: env.boundTicketNumber } : {}),
-      freshSummons: env.freshSummons,
+      ...(isSafePositiveTicketNumber(env.boundTicketNumber)
+        ? { ticketNumber: env.boundTicketNumber }
+        : {}),
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
         instructionEmpty: resumeInstruction.trim() === "",
       },
-      resume: (runId, materials) => runPublicInstructionSeatResume(
-        { runId, ...(materials === undefined ? {} : { summons: materials }) },
-        env,
-        io,
-      ),
     });
     if (resumed != null) return resumed;
   }
@@ -629,28 +666,23 @@ export async function runPublicInstructionSeat(
     }
     if (auditorSource === undefined) return { exitCode: 2 };
     const sourceDirectory = auditorSource;
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
-      ...(resumeInstruction === undefined
-        ? { instruction: parsed.instruction ?? "", instructionEmpty: (parsed.instruction ?? "").trim() === "" }
-        : { instruction: resumeInstruction, instructionEmpty: false }),
+      ...sameParentInstruction(env, {
+        instruction: parsed.instruction ?? "",
+        instructionEmpty: (parsed.instruction ?? "").trim() === "",
+      }),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
     const resumed = await withAuditorSoulEnv({
       subject: auditorSubject,
       sourceRunDirectory: auditorSource,
-      run: () => tryResumeSameTicketSeatRun({
-        home: env.home,
+      run: () => resumeSameParentInstructionSeat({
+        env,
+        io,
         projectRoot,
         role,
         parentRunPath: sourceDirectory,
-        freshSummons: env.freshSummons,
         summons,
-        resume: (runId, materials) => runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
       }),
     });
     if (resumed != null) return resumed;
@@ -659,26 +691,21 @@ export async function runPublicInstructionSeat(
   if (record.sameParent === "gate-pointer") {
     const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
     if (parentRunPath !== undefined) {
-      const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
       const summons: SameTicketSummonsMaterials = {
         sourceRunPath: parentRunPath,
-        ...(resumeInstruction === undefined
-          ? { instruction: parsed.instruction ?? "", instructionEmpty: (parsed.instruction ?? "").trim() === "" }
-          : { instruction: resumeInstruction, instructionEmpty: false }),
+        ...sameParentInstruction(env, {
+          instruction: parsed.instruction ?? "",
+          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+        }),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };
-      const resumed = await tryResumeSameTicketSeatRun({
-        home: env.home,
+      const resumed = await resumeSameParentInstructionSeat({
+        env,
+        io,
         projectRoot,
         role,
         parentRunPath,
-        freshSummons: env.freshSummons,
         summons,
-        resume: (runId, materials) => runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
       });
       if (resumed != null) return resumed;
     }
@@ -703,20 +730,17 @@ export async function runPublicInstructionSeat(
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
-      ...(resumeInstruction === undefined ? {} : { instruction: resumeInstruction, instructionEmpty: false }),
+      ...(resumeInstruction === undefined
+        ? {}
+        : { instruction: resumeInstruction, instructionEmpty: false }),
     };
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
+    const resumed = await resumeSameParentInstructionSeat({
+      env,
+      io,
       projectRoot,
       role,
       parentRunPath: source.runDirectory,
-      freshSummons: env.freshSummons,
       summons,
-      resume: (runId, materials) => runPublicInstructionSeatResume(
-        { runId, ...(materials === undefined ? {} : { summons: materials }) },
-        env,
-        io,
-      ),
     });
     if (resumed != null) return resumed;
   }
@@ -764,7 +788,7 @@ export async function runPublicInstructionSeat(
           timedOut: false, code: null, stderr: "", thrown: error,
         }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
       }
-      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+      if (outcome.admitted !== undefined && isUnboundRunDirectory(outcome.admitted.runDirectory)) {
         await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
       if (outcome.failedWithoutEscalate !== undefined) {

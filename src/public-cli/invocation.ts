@@ -27,6 +27,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  isUnboundRunDirectory,
   listBookRunDirectories,
   roleRunArtifactsDirectory,
   roleRunPlacement,
@@ -588,7 +589,7 @@ export async function relocateAdmittedRunToTicket(
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
 ): Promise<RunDirectoryRelocation | undefined> {
-  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
+  if (admitted.ticketNumber === undefined || !isUnboundRunDirectory(admitted.runDirectory)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -1097,20 +1098,34 @@ function requireOptionPath(
  * next option), and a leading `-` (read as the next Skill option). Not a
  * general free-text gate — only the projection admission seam.
  */
+function skillArgTokenFault(
+  value: string | undefined,
+): "empty" | "whitespace" | "optionLike" | undefined {
+  if (value === undefined || value.trim() === "") return "empty";
+  if (/\s/.test(value)) return "whitespace";
+  if (value.startsWith("-")) return "optionLike";
+  return undefined;
+}
+
 function requireSkillArgToken(
   value: string | undefined,
   messages: { empty: string; whitespace: string; optionLike: string },
 ): string {
-  if (value === undefined || value.trim() === "") {
-    throw new CliUsageError(messages.empty);
-  }
-  if (/\s/.test(value)) {
-    throw new CliUsageError(messages.whitespace);
-  }
-  if (value.startsWith("-")) {
-    throw new CliUsageError(messages.optionLike);
-  }
-  return value;
+  const fault = skillArgTokenFault(value);
+  if (fault !== undefined) throw new CliUsageError(messages[fault]);
+  return value as string;
+}
+
+/**
+ * Durable reviewer base on resume. Same token rule as fresh `--base`,
+ * with the resume-owned missing/damaged split.
+ */
+export function admittedReviewerBaseFault(
+  value: string | undefined,
+): "missing" | "damaged" | undefined {
+  const fault = skillArgTokenFault(value);
+  if (fault === undefined) return undefined;
+  return fault === "empty" ? "missing" : "damaged";
 }
 
 /**

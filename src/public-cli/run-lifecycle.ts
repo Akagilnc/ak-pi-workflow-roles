@@ -49,6 +49,7 @@ import {
   type PackagedRole,
 } from "../packaged-role-registry.ts";
 import {
+  admittedReviewerBaseFault,
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
@@ -1725,14 +1726,12 @@ function admitResumedRole(loaded: {
     }
     case "review-basis": {
       const rawBase = fields.baseRevision;
-      if (rawBase === undefined || rawBase.trim() === "") {
+      const baseFault = admittedReviewerBaseFault(rawBase);
+      if (baseFault !== undefined || rawBase === undefined) {
         throw new CliUsageError(
-          `role run admitted reviewer base revision is missing: ${runId}`,
-        );
-      }
-      if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
-        throw new CliUsageError(
-          `role run admitted reviewer base revision is damaged: ${runId}`,
+          baseFault === "damaged"
+            ? `role run admitted reviewer base revision is damaged: ${runId}`
+            : `role run admitted reviewer base revision is missing: ${runId}`,
         );
       }
       const lens = fields.lens;
