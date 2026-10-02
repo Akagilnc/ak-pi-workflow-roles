@@ -42,7 +42,7 @@ function asStringArray(value: unknown): readonly string[] {
 
 /**
  * Project one explicit Gatekeeper decision.
- * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
+ * No throw on shape — ADR 0055 / 仓内 CLAUDE.md 开篇: already-submitted params are retained as-is;
  * public-terminal projects non-usable releases via typed failure cause.
  */
 /** #836: no field drop — original object is the receipt. */
