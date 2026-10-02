@@ -69,8 +69,6 @@ const entries = [
   "sitian-contracts",
   "sitian-facade",
   "sitian-reader",
-  "typed-provider-http",
-  "upstream-error-testimony",
 ];
 
 /**

@@ -96,7 +96,6 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
     auditTool: JUDGE_AUDIT_TOOL_NAME,
     settlement: "sealed",
-    runnerFailure: "engine-detour-known-first",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
     /** Navigator subject is the public admitted instruction when the run is bound. */
@@ -214,7 +213,6 @@ export const PUBLIC_ROLE_RECORDS = [
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
-    runnerFailure: "engine-detour-record-first",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -309,10 +307,7 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
-    settlement: "residual",
-    /** #836: residual scan stays on the whole host session. */
-    residualScan: "session",
-    residualTool: MERGER_OUTPUT_TOOL_NAME,
+    settlement: "sealed",
     artifactFace: {
       evidenceRole: true,
       leaves: [
@@ -489,7 +484,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
@@ -504,7 +498,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
@@ -527,7 +520,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
-    runnerFailure: "engine-detour-record-first",
     gateStageLabel: "审刑院",
     /** Gate summon binds --subject judge and --source-run. */
     gateSummon: "subject-source",
@@ -630,7 +622,7 @@ export type PackagedActivationFlag = {
 };
 
 /**
- * Output tool for seats whose settlement leaf is the shared accepted-tool scan.
+ * Output tool for seats whose settlement leaf is the accepted ledger.
  * Any other settlement leaf names that seat's own reader.
  */
 export function packagedRoleAcceptedOutputTool(role: string): string | undefined {

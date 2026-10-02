@@ -83,18 +83,13 @@ export function parseNoReceiptLifecycleFacts(input: unknown): NoReceiptLifecycle
       && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
-  return {
+  return noReceiptLifecycleFacts({
     terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({
-      reason: item.reason as string,
-      diagnosticAvailable: (item.reason as string).trim() !== "",
-    })),
+    rejectedReceipts: input.rejectedReceipts as { reason: string }[],
     deliveryTurns: deliveryTurnsFact(input.deliveryTurns),
-    sessionCompletion: "settled-without-accepted-receipt",
     runPointer: input.runPointer,
     attemptPointer: input.attemptPointer,
-    acceptedReceipt: false,
-  };
+  });
 }
 
 /**
@@ -168,10 +163,14 @@ export function createReceiptDeliveryPolicy(limit?: number) {
      * larger of the two seams: a nested zero must not wipe prompts this layer
      * already sent, and adding the two counts would bill one send twice.
      */
-    recordNestedNoReceipt(facts: NoReceiptLifecycleFacts) {
-      terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
-      rejectedReceipts.push(...facts.rejectedReceipts);
-      deliveryTurns = Math.max(deliveryTurns, facts.deliveryTurns);
+    recordNestedNoReceipt(facts: Partial<NoReceiptLifecycleFacts>) {
+      if (typeof facts.terminalToolCalled === "boolean") {
+        terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
+      }
+      if (facts.rejectedReceipts !== undefined) {
+        rejectedReceipts.push(...facts.rejectedReceipts);
+      }
+      if (facts.deliveryTurns !== undefined) deliveryTurns = Math.max(deliveryTurns, facts.deliveryTurns);
       closed = true;
     },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {

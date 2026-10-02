@@ -111,7 +111,6 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
-import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import {
@@ -308,7 +307,7 @@ export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, 
 import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
-import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
+import { isRecord, errorText } from "./unknown-value.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -1056,9 +1055,6 @@ export function createRoleRuntimeExtension(
     // #1132: one ceiling for this turn, closed over from the execution seam.
     let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
     let noReceiptRecorded = false;
-    // Public-run fetch observation.
-    let priorFetch: typeof globalThis.fetch | undefined;
-    let fetchWrapped = false;
     /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
     const disposeNavigatorAttendanceNonBlocking = (
       attendance: NavigatorAttendanceDependency | undefined,
@@ -1433,35 +1429,31 @@ export function createRoleRuntimeExtension(
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       envelopeHost.stopKeepalive();
-      if (fetchWrapped && priorFetch !== undefined) {
-        globalThis.fetch = priorFetch;
-        priorFetch = undefined;
-        fetchWrapped = false;
-      }
       // Flush any still-pending affirmative attendance before teardown.
       // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
-      if (presentation !== undefined) {
-        try {
+      try {
+        if (presentation !== undefined) {
+          // Required attendance persistence must reach its failure owner, not be
+          // discarded as cleanup or merged with an existing host report.
           await envelopeHost.sendMessage({
             customType: NAVIGATOR_EVENT_TYPE,
             content: formatNavigatorReport(presentation.report),
             display: true,
             details: presentation.event,
           }, { triggerTurn: false });
-        } catch {
-          // Teardown must not mask the original role failure cause.
         }
+      } finally {
+        // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
+        // parent court for 43–270s after unavailable was already projected (#959 reopen).
+        const attendanceToDispose = navigatorAttendance;
+        navigatorAttendance = undefined;
+        pendingNavigatorSettlement = undefined;
+        disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
+        pendingInfrastructureFailures.clear();
+        pendingSubmissionNonPassByToolCallId.clear();
       }
-      // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
-      // parent court for 43–270s after unavailable was already projected (#959 reopen).
-      const attendanceToDispose = navigatorAttendance;
-      navigatorAttendance = undefined;
-      pendingNavigatorSettlement = undefined;
-      disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
-      pendingInfrastructureFailures.clear();
-      pendingSubmissionNonPassByToolCallId.clear();
     });
 
     const hostActions = {
@@ -1649,66 +1641,7 @@ export function createRoleRuntimeExtension(
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
 
-    // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // Same observation owner → typed-provider-http
-    // sidecar (settlement already merges observation.httpStatus into knownFailure).
-    // after_provider_response covers the success-path onResponse face; fetch wrap covers
-    // non-2xx Responses where openai-completions throws before onResponse (#675).
-    const recordHttpObservation = async (
-      status: number,
-      provider: string,
-      ctx: HostContext,
-    ): Promise<void> => {
-      const runDir = runDirectoryFromHostContext(ctx);
-      if (runDir === undefined) return;
-      try {
-        await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
-      } catch (error) {
-        if (status >= 200 && status < 300 && isEnoent(error)) return;
-        failInfrastructure(error, ctx);
-      }
-    };
-    roleHost.on("after_provider_response", async (event, ctx) => {
-      const status = event.status;
-      if (typeof status !== "number") return;
-      const fromCtx = ctx.model?.provider;
-      const provider =
-        typeof fromCtx === "string" && fromCtx.trim() !== ""
-          ? fromCtx
-          : "unknown";
-      await recordHttpObservation(status, provider, ctx);
-    });
-
     roleHost.on("session_start", async (event, ctx) => {
-      // Scope fetch observation to this public run.
-      if (!fetchWrapped && typeof globalThis.fetch === "function") {
-        priorFetch = globalThis.fetch.bind(globalThis);
-        const underlying = priorFetch;
-        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-          const response = await underlying(input, init);
-          const runDir = runDirectoryFromHostContext(ctx);
-          if (
-            runDir !== undefined
-            && typeof response?.status === "number"
-            && (response.status < 200 || response.status >= 300)
-          ) {
-            const provider =
-              typeof ctx.model?.provider === "string" && ctx.model.provider.trim() !== ""
-                ? ctx.model.provider
-                : "unknown";
-            try {
-              await recordTypedProviderHttpStatus(runDir, {
-                httpStatus: response.status,
-                provider,
-              });
-            } catch {
-              // Observation must not break the provider stream.
-            }
-          }
-          return response;
-        }) as typeof globalThis.fetch;
-        fetchWrapped = true;
-      }
       admitted = false;
       selectedRole = undefined;
       roleReferenceMaterials = "";

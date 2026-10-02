@@ -119,11 +119,16 @@ function withConvergedNotary(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
   };
 }
 
-function scriptedCountersignSession(details: unknown) {
+/**
+ * `stem` names the host turn so two turns of one run get the distinct tool call
+ * ids a real host mints — without an attempt tag the ledger pairs same-id rows.
+ */
+function scriptedCountersignSession(details: unknown, stem?: string) {
   return withConvergedNotary(scriptedTerminatingToolSession({
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     details,
+    ...(stem === undefined ? {} : { toolCallId: `call_${stem}` }),
   }));
 }
 
@@ -433,7 +438,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
             scriptedCountersignSession({
               status: "converged",
               note: "FIRST-署",
-            }),
+            }, "call-seed"),
           ),
         }),
       },
@@ -467,7 +472,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
           return scriptedCountersignSession({
             status: "continue",
             fix: { summary: "RESUMED-再审" },
-          })(args, options);
+          }, "call-resumed")(args, options);
         },
       }),
     });
@@ -476,7 +481,10 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    // Caller words ride the host turn; they do not open a court, so the result
+    // face is the run's own recorded sequence (#1032 修订票：裸 resume 只透传).
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
+      { status: "converged", note: "FIRST-署" },
       { status: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
     assert.deepEqual(resumed.terminal?.submissions, [
@@ -515,14 +523,8 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         }),
       },
     );
-    assert.equal(first.exitCode, 1);
-    assert.equal(first.terminal?.roleOutcome.kind, "failure");
-    assert.equal(
-      first.terminal?.roleOutcome.kind === "failure"
-        ? first.terminal.roleOutcome.cause
-        : undefined,
-      "output",
-    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.kind, "no_receipt");
 
     const { io: resumeIo, stdout } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再试"], {
@@ -654,10 +656,8 @@ async function appendResidualBounceTurn(input: {
 }
 
 /**
- * #843: shared seat settlement — court-scoped resume (message) bounce then sealed
- * accept stays accepted; gate bounce→pass rounds keep status/findings; bare resume
- * bounce after a prior accept is not masked by run-scoped stale acceptance; reverse
- * same-turn accept then bounce keeps rejection facts on payloads/gate.
+ * #843: bounce then sealed accept stays accepted; a later bounce stays a rejection
+ * on the lawful ledger; reverse same-turn accept then bounce keeps rejection facts.
  */
 test("#843 same-attempt correctable-rejection residual does not outrank later sealed accepted",
   async () => {
@@ -750,7 +750,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       };
     };
 
-    // Seed a sealed prior court so resume-with-message mints courtAttemptId (#833).
+    // Seed a sealed prior court so resume-with-message continues the same run.
     const seed = runScripted(
       ["countersign", ...seatModel, "--project", project, "裁"],
       scriptedCountersignSession(seedAccepted),
@@ -763,8 +763,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       seed.cap.stdout.join("") || seed.cap.stderr.join("") || "seed court must accept",
     );
 
-    // 1) Same court/attempt via resume+message: bounce then sealed accept → accepted / exit 0.
-    // sealedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
+    // 1) Bare resume+message: bounce then sealed accept → accepted / exit 0.
+    // Caller words are pass-through; they never mint an audit court (#1032 修订票).
     let sawCourtAttemptId = false;
     const { cap, done } = runScripted(
       ["resume", ...seatModel, runId, "再裁"],
@@ -796,6 +796,16 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
               isError: false,
               n: 43,
             }),
+            // The real host appends this closure when the seat seals; without a
+            // court the current-attempt residual rule reads it, not the court tag.
+            {
+              type: "custom",
+              customType: "ak-role-submission-closure",
+              data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: accepted },
+              id: "closure-accept",
+              parentId: "result-accept",
+              timestamp: sessionRowTime(44).iso,
+            },
           ],
           "append",
         );
@@ -820,8 +830,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
 
     assert.equal(
       sawCourtAttemptId,
-      true,
-      "resume with message must mint courtAttemptId for attempt-scoped ledger",
+      false,
+      "a bare resume with caller words must not mint an audit court",
     );
     assert.equal(
       result.exitCode,
@@ -830,21 +840,23 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // This-court payloads only when courtAttemptId is present (#879).
+    // No court scope: the run's recorded sequence is the result face, and the
+    // run-scoped submissions carrier reads the same rows (#836).
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
+      "converged",
       "continue",
       "converged",
     ]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
-    assert.equal(payloads.length, 2);
-    assert.equal(payloads[0]!.status, "continue");
+    assert.equal(payloads.length, 3);
+    assert.equal(payloads[1]!.status, "continue");
     assert.equal(
-      (payloads[0]!.fix as { summary?: string } | undefined)?.summary,
+      (payloads[1]!.fix as { summary?: string } | undefined)?.summary,
       "REJECTED-FIRST-findings-visible",
     );
-    assert.equal(payloads[1]!.status, "converged");
-    assert.equal(payloads[1]!.note, "ACCEPTED-AFTER-CORRECTION");
-    // submissions stay run-scoped (#836): prior seed + this-court bounce/accept.
+    assert.equal(payloads[2]!.status, "converged");
+    assert.equal(payloads[2]!.note, "ACCEPTED-AFTER-CORRECTION");
+    // submissions stay run-scoped (#836): prior seed + this turn's bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
     assert.ok(result.terminal.gate);
     assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
@@ -854,9 +866,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "converged");
     assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, []);
 
-    // 2 / 2b / 2c) Bare resume residual bounces must stay failure — plain bounce,
-    // bound missing-isError decoy, and unbound isError:false decoy must not wash
-    // the current residual via run-scoped stale accepted.
+    // 2 / 2b / 2c) A later bounce is a rejection payload. It does not turn the
+    // host's clean exit, or a prior lawful acceptance, into a failure.
     const residualBounceCases = [
       {
         label: "bare-resume",
@@ -938,17 +949,20 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       const caseResumed = await caseRun.done;
       assert.equal(
         caseResumed.exitCode,
-        1,
+        0,
         caseRun.cap.stdout.join("") ||
           caseRun.cap.stderr.join("") ||
-          `${caseSpec.label} must stay failure`,
+          `${caseSpec.label} keeps the lawful ledger`,
       );
-      assert.equal(caseResumed.terminal?.roleOutcome.kind, "failure");
-      assert.equal(
-        caseResumed.terminal?.roleOutcome.kind === "failure"
-          ? caseResumed.terminal.roleOutcome.diagnostic
-          : undefined,
-        caseSpec.body,
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "accepted");
+      const submissions = caseResumed.terminal?.submissions ?? [];
+      assert.ok(
+        submissions.some((row) =>
+          typeof row === "object" && row !== null
+          && (row as { status?: unknown }).status === "continue"
+          && (row as { fix?: { summary?: unknown } }).fix?.summary === caseSpec.summary,
+        ),
+        `${caseSpec.label} keeps the rejection on submissions`,
       );
     }
 

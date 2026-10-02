@@ -29,7 +29,7 @@ import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
-  trySettleAcceptedSeatTerminalResult,
+  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -394,7 +394,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       },
     };
 
-    const settled = await trySettleAcceptedSeatTerminalResult(
+    const settled = await trySettlePublicSeat(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-2" },
@@ -412,7 +412,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       assert.deepEqual(withHistory.roleOutcome.payloads, [second]);
     }
 
-    const emptyCourt = await trySettleAcceptedSeatTerminalResult(
+    const emptyCourt = await trySettlePublicSeat(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-never-sealed" },

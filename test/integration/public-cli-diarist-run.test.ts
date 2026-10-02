@@ -28,6 +28,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
@@ -51,7 +52,6 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const TICKET = 708;
 
@@ -1929,45 +1929,24 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       "unbound must not keep the durable run-state after relocate",
     );
 
-    // Fixture fidelity: same ticket-run session keeps first failure history and
-    // appends the accepted resume. Assert structured ak_run_attempt_history only.
-    const relocatedSessionFile = join(
-      ticketPlacement.runDirectory,
-      "session",
-      "session.jsonl",
-    );
-    const attemptHistory = (await readFile(relocatedSessionFile, "utf8"))
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        customType?: string;
-        data?: {
-          sequence?: number;
-          role?: string;
-          runId?: string;
-          outcome?: { kind?: string; diagnostic?: string };
-        };
-      })
-      .filter(
-        (row) =>
-          row.type === "custom" &&
-          row.customType === ATTEMPT_HISTORY_ENTRY_TYPE,
-      );
+    // Relocation keeps both attempts in the package ledger, not the host original.
+    const relocatedSessionFile = join(ticketPlacement.runDirectory, "session", "session.jsonl");
+    const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
+    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: relocatedSessionFile });
+    const attemptHistory = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
+      type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
+    });
     assert.equal(attemptHistory.length, 2);
-    assert.equal(attemptHistory[0]?.data?.sequence, 1);
-    assert.equal(attemptHistory[0]?.data?.outcome?.kind, "failure");
-    // Diagnostic is free text: assert non-empty presence only (ticket AC4 / quality-law).
-    assert.equal(typeof attemptHistory[0]?.data?.outcome?.diagnostic, "string");
-    assert.ok(
-      (attemptHistory[0]?.data?.outcome?.diagnostic as string).length > 0,
-    );
-    assert.equal(attemptHistory[0]?.data?.role, "diarist");
-    assert.equal(attemptHistory[0]?.data?.runId, runId);
-    assert.equal(attemptHistory[1]?.data?.sequence, 2);
-    assert.equal(attemptHistory[1]?.data?.outcome?.kind, "accepted");
-    assert.equal(attemptHistory[1]?.data?.role, "diarist");
-    assert.equal(attemptHistory[1]?.data?.runId, runId);
+    assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
+    assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
+    assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
+    assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
+    assert.equal(attemptHistory[0]?.role, "diarist");
+    assert.equal(attemptHistory[0]?.runId, runId);
+    assert.equal(attemptHistory[1]?.outcome?.kind, "accepted");
+    assert.equal(attemptHistory[1]?.role, "diarist");
+    assert.equal(attemptHistory[1]?.runId, runId);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });
@@ -2015,26 +1994,18 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
             const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDirectory, { recursive: true });
             await writeFile(join(sessionDirectory, "session.jsonl"), "\n", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDirectory, ".."),
-              provider: "xai",
-            });
             return { code: 1, stderr: "", timedOut: false, args: [...args] };
           },
         }),
       },
     );
     assert.equal(interrupted.exitCode, 1);
-    assert.ok(interrupted.terminal?.resume, JSON.stringify(interrupted.terminal));
+    stderr.length = 0;
 
     const reaskThen429 = diaristEnvelopeRunner(
       { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
       {
         afterReask: async () => {
-          await observeTyped429ViaProductionHandler({
-            runDirectory: unboundPlacement.runDirectory,
-            provider: "xai",
-          });
           await writeFile(
             join(unboundPlacement.runDirectory, "session", "session.jsonl"),
             `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,

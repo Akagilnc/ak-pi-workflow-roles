@@ -132,7 +132,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
-    let noReceipt: NoReceiptLifecycleFacts | undefined;
+    let noReceipt: Partial<NoReceiptLifecycleFacts> | undefined;
     let routePlaybookReadFailure: string | undefined;
     let disposed = false;
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */

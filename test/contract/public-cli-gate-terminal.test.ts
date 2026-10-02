@@ -11,20 +11,21 @@ import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "
  *   2. seat reduction without written reason (reason key absent)
  *   3. no-gate → gate omitted
  *   3b. lawful province pass → accepted Terminal stays; gate omitted (#597)
- *   4. damaged auditor-roles → must not wash to "no gate"
+ *   4. damaged auditor-roles on an accepted host → note beside the accepted terminal
  *   5. ordinary controlled failure still projects accepted gate facts
  *   6. no_receipt projects accepted gate facts
- *   7. resumable failure projects gate while keeping runId only in resume.command
- *   8. audit-incomplete + gate read damage ≠ publication-failure label
- *   9. failure path keeps damaged auditor-roles loud
+ *   7. host failure projects gate and discloses runId on the terminal
+ *   8. audit-incomplete + gate read damage stays off the publication-failure label
+ *   9. host failure keeps its own cause when auditor-roles is damaged
  *
  * Oracles: typed TerminalResult.gate / roleOutcome fields only (ADR 0052).
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
@@ -32,7 +33,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { renderResumeCommand } from "../../src/public-cli/run-lifecycle.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import type { TerminalGateFact, TerminalResult } from "../../src/public-cli/terminal.ts";
 import {
   captureIo,
@@ -41,7 +42,6 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const BASE_MS = Date.parse("2026-08-26T04:00:00.000Z");
 
@@ -199,19 +199,49 @@ function assertGateNotaryRound(
   assert.ok(round.officer.findings.every((item) => typeof item === "string"));
 }
 
-/** Typed oracle: gate/session JSONL damage surfaces as LedgerSessionJsonlError, not publication failure. */
-function assertLoudGateReadFailure(terminal: TerminalResult): void {
-  assert.equal(terminal.roleOutcome.kind, "failure");
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new Error("expected failure terminal for gate read damage");
-  }
-  assert.equal(terminal.roleOutcome.cause, undefined);
-  assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "LedgerSessionJsonlError");
+/** Gate JSONL damage is a package note. It does not become the host terminal. */
+async function assertGateDamageNoted(
+  home: string,
+  project: string,
+  runId: string,
+  terminal: TerminalResult,
+): Promise<void> {
+  const facts = terminal.roleOutcome.decisiveFacts ?? {};
   assert.equal(
-    Object.prototype.hasOwnProperty.call(terminal.roleOutcome.decisiveFacts, "publicationFailure"),
+    Object.prototype.hasOwnProperty.call(facts, "publicationFailure"),
     false,
   );
-  assert.equal(terminal.gate, undefined);
+  assert.notEqual(facts.errorName, "LedgerSessionJsonlError");
+  const runDirectory = join(
+    home,
+    ".ak-roles",
+    "books",
+    resolveBookKeyFromGit(project),
+    "unbound", "runs",
+    `${runId}@judge`,
+  );
+  const sessionFile = join(runDirectory, "session", "session.jsonl");
+  const entries = (await readFile(sessionFile, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
+  const sessionNote = entries.some((entry) =>
+    entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
+    && typeof entry.data?.diagnostic === "string");
+  const artifactDir = join(runDirectory, "artifacts");
+  let artifactNote = false;
+  try {
+    const names = await readdir(artifactDir);
+    for (const name of names) {
+      if (!name.startsWith("post-admission-diagnostic-")) continue;
+      const body = JSON.parse(await readFile(join(artifactDir, name), "utf8")) as { diagnostic?: unknown };
+      if (typeof body.diagnostic === "string") artifactNote = true;
+    }
+  } catch {
+    artifactNote = false;
+  }
+  assert.equal(sessionNote || artifactNote, true);
 }
 
 async function runJudgePublic(input: {
@@ -434,10 +464,12 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Settlement read fails loud — public entry settles a failure carrying the
-    // typed JSONL error identity, never an accepted Terminal that pretends no gate ran.
-    assert.equal(exitCode, 1);
-    assertLoudGateReadFailure(terminal);
+    // The host accepted. Damaged auditor-roles is a note, not a replacement failure
+    // and not a silent omission of the gate.
+    assert.equal(exitCode, 0);
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.gate, undefined);
+    await assertGateDamageNoted(home, project, "run-gate-damaged", terminal);
   }, { prefix: "ak-gate-damaged-" });
 });
 
@@ -510,7 +542,7 @@ test("public CLI no_receipt Terminal projects accepted gate facts", async () => 
   }, { prefix: "ak-gate-no-receipt-" });
 });
 
-test("public CLI resumable failure projects gate without re-disclosing runId outside resume", async () => {
+test("public CLI host failure projects gate and discloses runId", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -541,10 +573,6 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "openai-codex",
-          });
           await writeFile(
             join(sessionDir, "session.jsonl"),
             [
@@ -584,20 +612,9 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
     assert.ok(result.terminal);
     const terminal = result.terminal!;
     assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.ok(terminal.resume);
-    assert.equal(terminal.resume!.command, renderResumeCommand(runId));
-    assert.equal(terminal.runId, undefined);
+    assert.equal(terminal.runId, runId);
     assert.ok(terminal.gate !== undefined);
     assertGateNotaryRound(terminal.gate!, reason);
-    // Resume desensitization: runId only inside resume.command among typed regions.
-    const outside = {
-      roleOutcome: terminal.roleOutcome,
-      navigator: terminal.navigator,
-      artifacts: terminal.artifacts,
-      gate: terminal.gate,
-      runId: terminal.runId,
-    };
-    assert.equal(JSON.stringify(outside).includes(runId), false);
   }, { prefix: "ak-gate-resume-" });
 });
 
@@ -621,10 +638,12 @@ test("public CLI audit-incomplete keeps gate read damage off the publication-fai
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Gate read throws after successful publication → typed JSONL error identity.
-    // Must not carry publicationFailure decisive fact.
-    assert.equal(exitCode, 1);
-    assertLoudGateReadFailure(terminal);
+    // Audit-incomplete is not an accepted host report. The clean exit stays
+    // no_receipt. Gate damage is a note, not the turn's cause.
+    assert.equal(exitCode, 0);
+    assert.equal(terminal.roleOutcome.kind, "no_receipt");
+    assert.equal(terminal.gate, undefined);
+    await assertGateDamageNoted(home, project, "run-gate-audit-read", terminal);
   }, { prefix: "ak-gate-audit-read-" });
 });
 
@@ -645,9 +664,13 @@ test("public CLI failure path keeps damaged auditor-roles loud (not silent no-ga
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Failure settlement projects gate loud: damaged volumes surface typed
-    // JSONL error identity rather than a silent no-gate omission.
+    // The host's nonzero exit stays the terminal. Damaged auditor-roles is a note.
     assert.equal(exitCode, 1);
-    assertLoudGateReadFailure(terminal);
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.diagnostic, "provider rejected the request\n");
+    }
+    assert.equal(terminal.gate, undefined);
+    await assertGateDamageNoted(home, project, "run-gate-fail-damaged", terminal);
   }, { prefix: "ak-gate-fail-damaged-" });
 });

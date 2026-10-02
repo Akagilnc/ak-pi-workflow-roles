@@ -2,7 +2,7 @@
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -306,7 +306,7 @@ setInterval(() => {}, 1000);
   });
 });
 
-test("Pi stdin delivery error cannot settle as successful child exit", async () => {
+test("Pi stdin delivery error stays independent of the child exit", async () => {
   await withTempHome(async (home) => {
     const stub = join(home, "stdin-close-child.mjs");
     await writeExecutableStub(
@@ -318,14 +318,18 @@ process.exit(0);
 `,
     );
     const runner = createDefaultPiSpawnRunner({});
-    await assert.rejects(
-      runner([], {
-        cwd: home,
-        env: { ...isolatedTestProcessEnv(), PI_BINARY: stub },
-        stdin: "x".repeat(8 * 1024 * 1024),
-      }),
-      (error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "EPIPE",
-    );
+    const result = await runner([], {
+      cwd: home,
+      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: home },
+      stdin: "x".repeat(8 * 1024 * 1024),
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.knownFailure, undefined);
+    const artifacts = join(home, "artifacts");
+    const notes = await Promise.all((await readdir(artifacts))
+      .filter((name) => name.startsWith("post-admission-diagnostic-"))
+      .map(async (name) => JSON.parse(await readFile(join(artifacts, name), "utf8"))));
+    assert.ok(notes.some((note) => note.failure?.identity?.code === "EPIPE"));
   });
 });
 

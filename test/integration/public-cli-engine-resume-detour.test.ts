@@ -28,7 +28,6 @@ import {
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
@@ -85,7 +84,7 @@ const SEAT_TERMINAL: Record<
   },
   countersign: {
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    details: { countersignStatus: "converged" },
+    details: { status: "converged" },
   },
   "gleaner-left": {
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
@@ -268,11 +267,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
             // Resumability gates (loop + resume load) require the principal session
             // file to exist; seed it through the authoritative coordinates.
             await seedPrincipalSession(request);
-            // Faux typed-429: mark the run resumable so the loop retries once.
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
+            // Unclassified nonzero host exit: the auto-resume loop retries once.
             return { code: 1, stderr: "quota", timedOut: false };
           }
           // #959 怎么验#3: real-entry auto-resume continuation.prompt must be non-empty.
@@ -332,7 +327,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
       if (seat === "merger") await seedMergeProject(project);
       const runId = `run-engine-resume-${seat}`;
 
-      // Create an admitted, resumable run (faux typed-429).
+      // Admit a run the host ends with a nonzero exit, then resume it.
       {
         const { io } = captureIo();
         await runAkRole(baseArgs(seat, project), {
@@ -345,10 +340,6 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           roleTurnHost: withNestedTrueUnboundDiarist(
             createMinimalHost(async (request) => {
               await seedPrincipalSession(request);
-              await observeTyped429ViaProductionHandler({
-                runDirectory: request.runDirectory,
-                provider: "xai",
-              });
               return { code: 1, stderr: "quota", timedOut: false };
             }),
           ),
@@ -427,10 +418,6 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
         io,
         roleTurnHost: createMinimalHost(async (request) => {
           await seedPrincipalSession(request);
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false };
         }),
       });
@@ -514,10 +501,6 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
         io,
         roleTurnHost: createMinimalHost(async (request) => {
           await seedPrincipalSession(request);
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false };
         }),
       });

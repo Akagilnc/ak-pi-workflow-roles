@@ -194,9 +194,6 @@ export function createPiRoleHostAdapter(
       } else if (registration[0] === "session_shutdown") {
         const [, handler] = registration;
         pi.on("session_shutdown", (_value, ctx) => handler({}, context(ctx)));
-      } else if (registration[0] === "after_provider_response") {
-        const [, handler] = registration;
-        pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
       } else if (registration[0] === "agent_end") {
         const [, handler] = registration;
         pi.on("agent_end", (value, ctx) => handler({

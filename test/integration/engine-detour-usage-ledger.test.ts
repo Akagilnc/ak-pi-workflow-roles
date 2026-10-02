@@ -29,18 +29,29 @@ import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.t
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+
+/** Reopen the volume named by the delivered run id and record pointer. */
+async function readDeliveredDetourVolume(
+  home: string,
+  runId: string,
+  recordFile: string,
+) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  assert.ok(runDirectory, runId);
+  return readSitianRecords(join(runDirectory, recordFile));
+}
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const ENGINE = "kimi";
 const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
@@ -502,7 +513,12 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         // UTF-8 non-ASCII byte length through the real tool → sitian → decisiveFacts path
         assert.equal(usage.calls[0]?.stdoutByteLength, ECHO_STDOUT_BYTES);
         assert.equal(typeof usage.calls[0]?.durationMs, "number");
-        const opened = await readSitianRecords(usage.calls[0]!.recordPointer.recordFile);
+        assert.ok(result.terminal.runId, row.label);
+        const opened = await readDeliveredDetourVolume(
+          home,
+          result.terminal.runId,
+          usage.calls[0]!.recordPointer.recordFile,
+        );
         assert.ok(
           opened.records.some(
             (r) =>
@@ -601,7 +617,10 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       assert.equal(result.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
       const usage = usageOf(result.terminal);
       assert.equal(usage?.callCount, 1);
-      const openedHost = await readSitianRecords(
+      assert.ok(result.terminal?.runId);
+      const openedHost = await readDeliveredDetourVolume(
+        home,
+        result.terminal.runId,
         usage!.calls[0]!.recordPointer.recordFile,
       );
       const hostRow = openedHost.records.find(
@@ -688,10 +707,6 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
 
           if (turn === 0) {
             turn += 1;
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
             return { code: 1, stderr: "quota", timedOut: false };
           }
 
@@ -775,21 +790,14 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
                 : { host: request.host.trim() }),
               calls: [{ toolCallId: sharedId, kind: "ok" }],
             });
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
             return { code: 1, stderr: "quota", timedOut: false };
           }),
         },
       );
-      // #108 / #537: resumable keeps openable relative pointer; runId only in resume.command.
-      assert.ok(first.terminal?.resume, "typed 429 must settle resumable");
-      assert.equal(first.terminal?.runId, undefined);
-      assert.ok(
-        (first.terminal?.resume.command ?? "").includes(runId),
-        "resume.command must carry runId",
-      );
+      // #537: openable relative pointer; runId lives on the terminal.
+      assert.equal(first.exitCode, 1);
+      assert.equal(first.terminal?.roleOutcome.kind, "failure");
+      assert.equal(first.terminal?.runId, runId);
       const firstUsage = usageOf(first.terminal);
       assert.equal(firstUsage?.callCount, 1);
       assert.equal(firstUsage?.calls[0]?.toolCallId, sharedId);
@@ -807,29 +815,16 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
         false,
         "engineDetourToolUsage decisiveFacts must not re-disclose runId",
       );
-      // Relative pointer reopens once run directory is known from resume.command.
-      const bookRunsRoot = join(home, ".ak-roles", "books");
-      const { readdirSync } = await import("node:fs");
-      let absoluteRecord: string | undefined;
-      for (const book of readdirSync(bookRunsRoot)) {
-        const candidate = join(
-          bookRunsRoot,
-          book,
-          "unbound",
-          "runs",
-          `${runId}@judge`,
-          ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
-        );
-        try {
-          await readFile(candidate);
-          absoluteRecord = candidate;
-          break;
-        } catch {
-          // try next book
-        }
-      }
-      assert.ok(absoluteRecord, "relative pointer must resolve under the run from resume.command");
-      const reopened = await readSitianRecords(absoluteRecord);
+      // Relative pointer reopens from the delivered run id and record file.
+      const deliveredRunId = first.terminal?.runId;
+      const deliveredRecord = firstUsage?.calls[0]?.recordPointer.recordFile;
+      assert.ok(deliveredRunId);
+      assert.ok(deliveredRecord);
+      const reopened = await readDeliveredDetourVolume(
+        home,
+        deliveredRunId,
+        deliveredRecord,
+      );
       assert.ok(
         reopened.records.some(
           (r) => r.identity === firstUsage?.calls[0]?.recordPointer.identity,

@@ -372,6 +372,8 @@ export type LegacyFauxPiRunner = (
   code: number | null;
   stderr: string;
   timedOut: boolean;
+  /** Host child signal, when the faux runner reports one. */
+  signal?: string;
   args?: string[];
   piIdentity?: { executable: string; version: string };
   knownFailure?: RoleTurnKnownFailure;
@@ -410,6 +412,7 @@ export function roleTurnHostFromLegacyPiRunner(options: {
       code: result.code,
       stderr: result.stderr,
       timedOut: result.timedOut,
+      ...(result.signal === undefined ? {} : { signal: result.signal }),
       ...(result.knownFailure === undefined ? {} : { knownFailure: result.knownFailure }),
     };
     return projected;

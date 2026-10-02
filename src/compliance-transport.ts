@@ -6,12 +6,12 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { officerConclusionReask } from "./gatekeeper-role.ts";
 import { receivedDiscriminator } from "./submission-errors.ts";
-import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
+import { currentReplyRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isRecord } from "./unknown-value.ts";
 
-export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
+export type ComplianceNoReceipt = Partial<NoReceiptLifecycleFacts> & { status: "no-receipt"; usage?: Usage };
 /**
  * #757 / #750: no unreadable/unusable judgment on auditor replies.
  * Known three-state (converged/continue/escalate) is read for queueing only.
@@ -172,10 +172,7 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "accepted") {
-    const rows = coalesceSubmissionRows(
-      outcome.payloads,
-      summoned.terminal?.submissions,
-    );
+    const rows = currentReplyRows(summoned.terminal);
     if (rows.length === 0) {
       return readComplianceCandidate({}, usage);
     }
