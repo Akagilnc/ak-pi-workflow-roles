@@ -31,6 +31,7 @@ import {
 } from "./archivist-record-topology.ts";
 import type { HostRecordSession, RecordSessionHost } from "./host-contracts.ts";
 import { piRecordSessionHost } from "./pi/record-session-host.ts";
+import { sitianVolumeDirectory } from "./sitian-appender.ts";
 export {
   DIRECT_OFFICER_RUN_POINTER_KIND,
   bookDirectOfficerRunPointer,
@@ -47,7 +48,7 @@ const CURRENT_SESSION_LEDGER = "current-session.json";
 type CurrentSessionRecord = { readonly sessionFile: string };
 
 function readCurrentSession(sessionDir: string): string {
-  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = currentSessionLedgerPath(sessionDir);
   try {
     const value: unknown = JSON.parse(readFileSync(ledger, "utf8"));
     if (
@@ -68,7 +69,7 @@ function readCurrentSession(sessionDir: string): string {
 }
 
 function writeCurrentSession(sessionDir: string, sessionFile: string): void {
-  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = currentSessionLedgerPath(sessionDir);
   try {
     writeFileSync(ledger, `${JSON.stringify({ sessionFile })}\n`, { flag: "wx" });
   } catch (error) {
@@ -420,7 +421,7 @@ export function createRecordSessionOpen(
     // Ordinary kinds: durable parent's file is the sole nesting authority. A divergent
     // SessionManager directory must not create a second placement route.
     // Do not restore generic bookDir/<kind> fallback for foreign/unrooted parents.
-    sessionDir = join(dirname(parentResolved), options.kind);
+    sessionDir = sitianVolumeDirectory(dirname(parentResolved), options.kind);
     parentSession = parentFile;
     mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   }

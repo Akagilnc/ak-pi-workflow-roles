@@ -36,6 +36,7 @@ import {
   formatUsdPrecise,
 } from "./human-format.ts";
 import { listBookRunDirectories, sessionDirectoryOf } from "./role-run-placement.ts";
+import { sitianVolumeDirectory } from "./sitian-appender.ts";
 import { isPositiveTicketNumber, readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionTimestampSpan,
@@ -356,7 +357,7 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 
 /** Reviewer parallel axis-leg sessions live under session/reviewer-legs/. */
 async function listAxisLegSessionFiles(sessionDir: string): Promise<string[]> {
-  return listSessionFiles(join(sessionDir, "reviewer-legs"));
+  return listSessionFiles(sitianVolumeDirectory(sessionDir, "reviewer-legs"));
 }
 
 async function maxMtimeMs(paths: readonly string[]): Promise<number> {

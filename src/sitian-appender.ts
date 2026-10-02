@@ -90,7 +90,7 @@ function ticketProvenanceUnderBookPaths(
   ticketId: string,
 ): { sessionDir: string; recordFile: string } {
   const sessionDir = join(activationBookDirectory(ledgerHome, bookKey), ticketId);
-  return { sessionDir, recordFile: join(sessionDir, SITIAN_RECORDS_LEAF) };
+  return { sessionDir, recordFile: sitianVolumeRecordsFile(sessionDir) };
 }
 
 /** Pure topology owner shared by ambient writes and explicit-home submission reads. */
