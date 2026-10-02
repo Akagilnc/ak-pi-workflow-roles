@@ -26,7 +26,8 @@ function nonNullBranch(schema: unknown): unknown {
 
 /**
  * Declared contract objects close with additionalProperties:false + full required.
- * Free-JSON map leaf keeps recursive additionalProperties:$ref (native probe).
+ * Only the empirically verified free-JSON map leaf may keep additionalProperties
+ * as a lone recursive $ref (native probe); declared properties still require cover.
  */
 function assertStrictObjectNodes(node: unknown, path: string): void {
   if (!isRecord(node)) return;
@@ -36,18 +37,21 @@ function assertStrictObjectNodes(node: unknown, path: string): void {
     || isRecord(node.properties)
     || node.additionalProperties !== undefined;
   if (objectLike) {
-    if (isRecord(node.additionalProperties)) {
-      assertStrictObjectNodes(node.additionalProperties, `${path}.additionalProperties`);
-    } else {
-      assert.equal(node.additionalProperties, false, `${path} additionalProperties`);
-      if (isRecord(node.properties)) {
-        assert.ok(Array.isArray(node.required), `${path} required`);
-        assert.deepEqual(
-          [...(node.required as string[])].sort(),
-          Object.keys(node.properties).sort(),
-          `${path} required covers properties`,
-        );
-      }
+    const additional = node.additionalProperties;
+    const freeJsonMapRef =
+      isRecord(additional)
+      && typeof additional.$ref === "string"
+      && Object.keys(additional).length === 1;
+    if (!freeJsonMapRef) {
+      assert.equal(additional, false, `${path} additionalProperties`);
+    }
+    if (isRecord(node.properties)) {
+      assert.ok(Array.isArray(node.required), `${path} required`);
+      assert.deepEqual(
+        [...(node.required as string[])].sort(),
+        Object.keys(node.properties).sort(),
+        `${path} required covers properties`,
+      );
     }
   }
   if (Array.isArray(node.anyOf)) {
