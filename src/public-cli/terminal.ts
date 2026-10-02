@@ -8,6 +8,7 @@
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
+import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
 export type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -252,7 +253,7 @@ export function formatTerminalResult(result: TerminalResult): string {
     for (const [key, value] of Object.entries(facts)) {
       if (value === undefined) continue;
       const rendered =
-        typeof value === "string" ? value : JSON.stringify(value);
+        typeof value === "string" ? value : serializeThrownValue(value);
       lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
     }
   }

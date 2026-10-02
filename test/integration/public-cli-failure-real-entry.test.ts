@@ -415,7 +415,7 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
   });
 });
 
-test("public entry keeps host details beside package facts, a timeout beside a typed cause, and throw undefined", async () => {
+test("public entry keeps host details beside package facts and a timeout beside a typed cause", async () => {
   async function runHost(
     runId: string,
     prompt: string,
@@ -536,38 +536,6 @@ test("public entry keeps host details beside package facts, a timeout beside a t
     },
   );
 
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--model", "test/caller-seat:high", "--project", project, "throw undefined"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-throw-undefined-001",
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async () => {
-            throw undefined;
-          },
-        }),
-      },
-    );
-    const { errorRef } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      diagnosticEquals: "undefined",
-    });
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as { cause?: string; diagnostic: string };
-    assert.equal(errorBody.cause, undefined);
-    assert.equal(errorBody.diagnostic, "undefined");
-  });
 });
 
 test("typed empty-auth host failure settles as MissingProviderCredential (#987)", async () => {

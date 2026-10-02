@@ -35,6 +35,7 @@ import {
   attachRecordedSubmissions,
   ensureRealArtifactsDirectory,
   presentFailureTerminal,
+  retainPackageFault,
 } from "./settlement.ts";
 
 export { ensureRealArtifactsDirectory };
@@ -55,11 +56,24 @@ export async function persistReturnedRunState(
   await markRunTerminal(admitted.runDirectory);
 }
 
-function presentTerminal(terminal: TerminalResult, io: CliIo): void {
-  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-    presentFailureTerminal(terminal, io);
-  } else {
-    io.stdout(formatTerminalResult(terminal));
+export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, held?: readonly string[]): Promise<void> {
+  try {
+    if (held !== undefined) {
+      for (const value of held) io.stdout(value);
+    } else if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+      presentFailureTerminal(terminal, io);
+    } else {
+      io.stdout(formatTerminalResult(terminal));
+    }
+  } catch (error) {
+    // Presentation consumes a settled report; it never reopens dispatch or
+    // replaces the host's cause, identity or open details.
+    await retainPackageFault({
+      runDirectory,
+      diagnostic: `terminal presentation failed beside host terminal: ${describeErrorIdentity(error)}`,
+      error,
+      stderr: (text) => io.stderr(text),
+    });
   }
 }
 
@@ -514,11 +528,7 @@ export async function runWithAutoResumeLoop<
     } } as TerminalResult
     : terminal;
   if (complete !== undefined) {
-    if (isLawfulTypedTerminalOutcome(complete.roleOutcome)) {
-      options.io.stdout(formatTerminalResult(complete));
-    } else {
-      presentTerminal(complete, options.io);
-    }
+    await presentTerminal(complete, options.io, options.admitted.runDirectory);
   }
   return stoppedResult === undefined
     ? { exitCode: 1, terminal: complete } as T

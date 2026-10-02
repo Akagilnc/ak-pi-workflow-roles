@@ -93,10 +93,8 @@ import {
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
   formatErrorCauseDetail,
-  formatTerminalResult,
   ledgerReadScope,
   isLawfulTypedTerminalOutcome,
-  presentFailureTerminal,
   presentStructuralRejection,
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
@@ -116,6 +114,7 @@ import {
 import {
   ensureRealArtifactsDirectory,
   persistReturnedRunState,
+  presentTerminal,
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
@@ -559,7 +558,7 @@ export async function presentControlledFailure<
     }
     throw error;
   }
-  presentFailureTerminal(terminal, io);
+  await presentTerminal(terminal, io, admitted.runDirectory);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
     admitted,
@@ -2158,7 +2157,7 @@ export async function runPostAdmissionManualResume<
     // through its own settleAfterTurnStarted-backed branches; a lawful result
     // only ever reaches this point once that persist has already succeeded
     // (#836 r12 class 3 dedup — one persist owner, not a second here).
-    io.stdout(formatTerminalResult(result.terminal));
+    await presentTerminal(result.terminal, io, admitted.runDirectory);
   }
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
