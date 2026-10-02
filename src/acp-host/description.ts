@@ -18,11 +18,17 @@ export type AcpHostDescription = HostIdentityDescription & Readonly<{
   }>;
   /**
    * How the seat model reaches the agent:
-   * - "argv": passed as the CLI `--model` flag (grok);
-   * - "set_model": sent as an ACP `session/set_model` RPC with modelId
-   *   `provider:model` (hermes).
+   * - "argv": passed as the CLI `--model` flag;
+   * - "set_model": sent as an ACP `session/set_model` RPC after session new/load
+   *   and before prompt. Catalog modelId shape is `setModelId` (host-native).
    */
   modelPassing: "argv" | "set_model";
+  /**
+   * Host-native `session/set_model` modelId form when `modelPassing` is
+   * `"set_model"`. hermes catalogs are `provider:model`; grok catalogs are bare
+   * model ids. Ignored for `"argv"` hosts.
+   */
+  setModelId?: "bare" | "provider:model";
   /**
    * When set, the production factory ensures a seat profile whose SOUL.md is a
    * symlink to the packaged role soul, and prefixes argv with `flag <name>`.
@@ -51,14 +57,19 @@ export function acpStdioArgs(
 
 /**
  * The modelId the host addresses the seat model by.
- * "argv" hosts address by bare model name; "set_model" hosts address by the
- * `provider:model` modelId the ACP catalog exposes (seat provider after host
- * alias projection, concatenated — never a package provider map).
+ * "argv" hosts use the bare model on the CLI flag. "set_model" hosts use the
+ * host-native catalog form in `setModelId` (hermes `provider:model` after seat
+ * provider / host-alias projection; grok bare model — never a package map).
  */
 export function acpModelId(
-  modelPassing: AcpHostDescription["modelPassing"],
+  description: {
+    readonly modelPassing: AcpHostDescription["modelPassing"];
+    readonly setModelId?: AcpHostDescription["setModelId"] | undefined;
+  },
   model?: { readonly model?: string; readonly provider?: string },
 ): string | undefined {
   if (model?.model === undefined) return undefined;
-  return modelPassing === "set_model" ? `${model.provider}:${model.model}` : model.model;
+  if (description.modelPassing !== "set_model") return model.model;
+  const form = description.setModelId ?? "provider:model";
+  return form === "bare" ? model.model : `${model.provider}:${model.model}`;
 }

@@ -98,10 +98,13 @@ export type AcpRoleTurnHostConfig = Readonly<{
   hostName: string;
   /**
    * How the seat model reaches the agent: "set_model" sends an ACP
-   * `session/set_model` RPC with modelId `provider:model` once the session
-   * exists (new or loaded); "argv" leaves it to the connect argv (--model).
+   * `session/set_model` RPC once the session exists (new or loaded); "argv"
+   * leaves it to the connect argv (--model). Catalog modelId shape is
+   * `setModelId` (host-native).
    */
   modelPassing: AcpHostDescription["modelPassing"];
+  /** Host-native set_model catalog id; see AcpHostDescription.setModelId. */
+  setModelId?: AcpHostDescription["setModelId"];
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
   prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
 }>;
@@ -296,7 +299,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           : undefined;
         if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
           typeof entry === "object" && entry !== null
-          && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
+          && (entry as { modelId?: unknown }).modelId === acpModelId(config, request.model))) {
           outcome = failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
             provider: request.model.provider,
             model: request.model.model,
@@ -354,11 +357,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         }
 
         if (sessionReady) {
-        // set_model seat provider:model (#778); may rebuild agent — re-bind via loadSession.
+        // set_model host-native catalog id (#778 / #1146); may rebuild agent — re-bind via loadSession.
         if (config.modelPassing === "set_model" && request.model !== undefined && sessionId !== undefined) {
           await rpc("session/set_model", {
             sessionId,
-            modelId: acpModelId(config.modelPassing, request.model),
+            modelId: acpModelId(config, request.model),
           });
           sessionId = await loadSession(sessionId);
         }

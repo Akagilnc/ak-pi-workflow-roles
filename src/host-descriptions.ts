@@ -32,15 +32,19 @@ export const DEFAULT_ROLE_TURN_HOST = "pi" as const;
 export type HostFamily = "acp" | "headless";
 
 export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = Object.freeze({
-  /** Operator home `~/.grok`, native session/load resume, `agent [--model X] stdio`. */
+  /**
+   * Operator home `~/.grok`, native session/load resume, `agent stdio`.
+   * Model arrives as ACP `session/set_model` with bare modelId (grok catalog);
+   * argv `--model` is ignored by current grok (#1146 probe).
+   */
   "grok-build": Object.freeze({
     binaryFromHome: Object.freeze([".grok", "bin", "grok"]),
     argv: Object.freeze({
       prefix: Object.freeze(["agent"]),
       suffix: Object.freeze(["stdio"]),
-      modelFlag: "--model",
     }),
-    modelPassing: "argv",
+    modelPassing: "set_model",
+    setModelId: "bare",
     sessionBindingFile: "grok-acp-session.json",
   }),
   /**
@@ -58,6 +62,7 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       thinkingFlag: "--reasoning",
     }),
     modelPassing: "set_model",
+    setModelId: "provider:model",
     sessionBindingFile: "hermes-acp-session.json",
     seatProfileSoul: Object.freeze({
       flag: "-p",
