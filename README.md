@@ -29,6 +29,8 @@ Manual continuation and flag placement: `ak-role help resume`; model / host reso
 
 Automatic retry behavior: [auto-resume implementation](src/public-cli/auto-resume.ts); configuration usage: `ak-role help config`; effective limit: `ak-role config show`.
 
+Receipt re-requests and delivery accounting (#1132): [role runtime](src/role-runtime.ts), [receipt delivery policy](src/receipt-delivery-policy.ts), [external host loop](src/external-host-turn-loop.ts). Unfinished-reason handling: [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md).
+
 Seat and Gate-officer configuration:
 
 ```bash

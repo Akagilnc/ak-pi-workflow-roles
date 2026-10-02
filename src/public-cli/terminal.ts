@@ -7,6 +7,8 @@
  */
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
+import type { PackagedRole } from "../packaged-role-registry.ts";
+import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
 export type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -22,29 +24,13 @@ export type TerminalArtifactRef = {
 };
 
 /** Public callable roles that currently produce Terminal outcomes. */
-export type TerminalRoleName =
-  | "judge"
-  | "coder"
-  | "fixer"
-  | "collector"
-  | "doctor"
-  | "reviewer"
-  | "merger"
-  | "notary"
-  | "countersign"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat";
+export type TerminalRoleName = PackagedRole;
 
-export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
+export type NoReceiptTerminalOutcome = Partial<NoReceiptLifecycleFacts> & {
   kind: "no_receipt";
   role: TerminalRoleName;
   status: "no-accepted-receipt";
-  decisiveFacts: NoReceiptLifecycleFacts & Readonly<Record<string, unknown>>;
+  decisiveFacts: Partial<NoReceiptLifecycleFacts> & Readonly<Record<string, unknown>>;
 };
 
 export type TerminalRoleOutcome =
@@ -71,7 +57,7 @@ export type TerminalRoleOutcome =
       role: TerminalRoleName;
       /**
        * Typed cause class when a typed fact confirms it.
-       * Omitted when unknown — original diagnostic + error artifact carry the fact (#881).
+       * Omitted when unknown — the original diagnostic retains the fact (#881).
        * Never a fabricated "unrecognized" label.
        */
       cause?: ControlledFailureCause;
@@ -117,12 +103,6 @@ export type TerminalNavigatorFact =
       advisoryDiagnostic?: string;
     };
 
-/** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
-export type TerminalResume = {
-  /** Complete public command; run ID is revealed only here. */
-  readonly command: string;
-};
-
 /** Current English gate seat faces projected on Terminal (#478). */
 export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
@@ -162,38 +142,21 @@ export type TerminalGateFact = {
 };
 
 /**
+ * Parent-facing current reply: a court's own accepted/audit payloads only.
+ * Run-scoped history stays on TerminalResult.submissions (#879 / #836), and a
+ * failure face never answers as this court's reply (#953).
+ */
+export function currentReplyRows(terminal: TerminalResult | undefined): readonly unknown[] {
+  const outcome = terminal?.roleOutcome;
+  return outcome?.kind === "accepted" || outcome?.kind === "audit_escalation"
+    ? outcome.payloads ?? []
+    : [];
+}
+
+/**
  * One admitted Role run's typed Terminal aggregate.
- * Resumable failures carry `resume` and must not re-disclose the run ID via
- * top-level `runId` or public artifact path components — only `resume.command`.
- * #416: autoResumeCount (0..2) is a call-local observation of how many in-place
- * auto-resumes occurred during this single LLM call; it is not persisted to
- * run-state.json and does not participate in limit decisions.
+ * autoResumeCount is call-local (#416).
  */
-/**
- * Current-result payloads on a terminal — accepted/audit role result, or a
- * rare intentional failure face. Run history is TerminalResult.submissions
- * (#836 / #953), not this helper.
- */
-export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unknown[] {
-  if (outcome.kind === "accepted" || outcome.kind === "audit_escalation") return outcome.payloads ?? [];
-  if (outcome.kind === "failure") return outcome.payloads ?? [];
-  return [];
-}
-
-/**
- * Prefer non-empty current-result payloads; an empty array must not shadow
- * top-level submissions (#953 / #836). Callers that need failure history must
- * read TerminalResult.submissions directly — do not coalesce into failure.payloads.
- */
-export function coalesceSubmissionRows(
-  payloads: readonly unknown[] | undefined,
-  submissions: readonly unknown[] | undefined,
-): readonly unknown[] {
-  if (payloads !== undefined && payloads.length > 0) return payloads;
-  if (submissions !== undefined && submissions.length > 0) return submissions;
-  return payloads ?? submissions ?? [];
-}
-
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
@@ -223,21 +186,13 @@ export type TerminalResult = {
   autoResumeCount?: number;
 } & (
   | {
-      /** Resumable failure: run ID appears only inside resume.command. */
-      resume: TerminalResume;
-      runId?: undefined;
-      batch?: undefined;
-    }
-  | {
       runId: string;
-      resume?: undefined;
       batch?: undefined;
     }
   | {
       /** Deterministic public batch projection; no parent Role run exists. */
       batch: "reviewer";
       runId?: undefined;
-      resume?: undefined;
     }
 );
 
@@ -278,6 +233,19 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
+  // Accepted volumes do not dump decisiveFacts unless a failed attempt is
+  // recorded. The unsettled-direction fact still has to be visible on its own.
+  // audit_escalation already dumps every decisiveFact below.
+  if (
+    result.roleOutcome.kind === "accepted"
+    && result.roleOutcome.decisiveFacts?.directionUnsettled === true
+  ) {
+    lines.push("fact\tdirectionUnsettled\ttrue");
+    const subsequent = result.roleOutcome.decisiveFacts.subsequentAudit;
+    if (typeof subsequent === "string") {
+      lines.push(`fact\tsubsequentAudit\t${encodeTerminalField(subsequent)}`);
+    }
+  }
   if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt" || result.roleOutcome.kind === "audit_escalation" || result.roleOutcome.decisiveFacts?.failedAttempts !== undefined) {
     const facts = result.roleOutcome.kind === "accepted"
       ? { failedAttempts: result.roleOutcome.decisiveFacts?.failedAttempts }
@@ -285,7 +253,7 @@ export function formatTerminalResult(result: TerminalResult): string {
     for (const [key, value] of Object.entries(facts)) {
       if (value === undefined) continue;
       const rendered =
-        typeof value === "string" ? value : JSON.stringify(value);
+        typeof value === "string" ? value : serializeThrownValue(value);
       lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
     }
   }
@@ -330,10 +298,7 @@ export function formatTerminalResult(result: TerminalResult): string {
       }
     }
   }
-  if (result.resume !== undefined) {
-    // Resumable failure: run ID is revealed only inside the complete resume command.
-    lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
-  } else if (result.runId !== undefined) {
+  if (result.runId !== undefined) {
     lines.push(`run\t${encodeTerminalField(result.runId)}`);
   }
   if (result.autoResumeCount !== undefined) {
@@ -341,27 +306,19 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   // Role-result block: original payloads, newest first for humans (#961).
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
-  // #953: failure history is the top-level submissions carrier (#836) — present
-  // as recorded-submission, never as this-turn submission/receipt.
-  if (result.roleOutcome.kind === "failure") {
-    const recorded = result.submissions ?? [];
-    for (let i = recorded.length - 1; i >= 0; i -= 1) {
-      const payload = recorded[i]!;
-      const rendered =
-        typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
-    }
-  } else {
-    const payloads =
-      result.roleOutcome.kind === "accepted" ||
-      result.roleOutcome.kind === "audit_escalation"
-        ? coalesceSubmissionRows(result.roleOutcome.payloads, result.submissions)
-        : result.submissions ?? [];
-    for (let i = payloads.length - 1; i >= 0; i -= 1) {
-      const payload = payloads[i]!;
-      const rendered =
-        typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`submission\t${encodeTerminalField(rendered)}`);
+  // Present the current result and the run history on distinct faces (#879 / #836).
+  // Neither a prior court's submission nor a failed turn's history is this reply.
+  const current = result.roleOutcome.kind === "failure"
+    ? result.roleOutcome.payloads ?? []
+    : currentReplyRows(result);
+  for (const [label, rows] of [
+    ["submission", current],
+    ["recorded-submission", result.submissions ?? []],
+  ] as const) {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const payload = rows[i]!;
+      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+      lines.push(`${label}\t${encodeTerminalField(rendered)}`);
     }
   }
   return `${lines.join("\n")}\n`;

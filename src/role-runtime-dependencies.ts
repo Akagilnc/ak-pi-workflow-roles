@@ -64,6 +64,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       authority: options.authority,
       invocationId: options.invocationId,
       createSession: navigatorSessionFactory,
+      ...(options.deliveryRequestLimit === undefined ? {} : { deliveryRequestLimit: options.deliveryRequestLimit }),
       ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
       onEvent: options.onEvent,
     }),

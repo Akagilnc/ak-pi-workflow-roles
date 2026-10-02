@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -60,9 +59,15 @@ export {
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
+import {
+  createReceiptDeliveryPolicy,
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+} from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
+
+import { sha256Hex } from "./sha256.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
@@ -154,6 +159,8 @@ export type NavigatorAttendanceOptions = {
   contextError?: unknown;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
+  /** Effective ceiling already resolved for this turn (#1132). */
+  deliveryRequestLimit?: number;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
@@ -167,25 +174,21 @@ function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
     : undefined;
 }
 
-function exactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Correlate one rejected prepare call/result inside the just-finished prompt. */
 function rejectedPrepareReason(entries: readonly unknown[], start: number): string | undefined {
   const recent = entries.slice(start);
   const prepareCalls = new Set<string>();
   for (const entry of recent) {
-    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)
       || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
     for (const part of entry.message.content) {
-      if (exactRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME
+      if (isRecord(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME
         && typeof part.id === "string") prepareCalls.add(part.id);
     }
   }
   let reason: string | undefined;
   for (const entry of recent) {
-    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)
       || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
     const callId = entry.message.toolCallId;
     if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME
@@ -194,7 +197,7 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
     }
     const content = entry.message.content;
     const text = Array.isArray(content)
-      ? content.flatMap((part) => exactRecord(part) && typeof part.text === "string" ? [part.text] : []).join("")
+      ? content.flatMap((part) => isRecord(part) && typeof part.text === "string" ? [part.text] : []).join("")
       : typeof content === "string" ? content : "";
     if (text.trim() !== "") reason = text.trim();
   }
@@ -220,7 +223,7 @@ export function navigatorSubjectKey(
   if (provenance === "placeholder") return subjectRoot;
   const normalized = subject.trim().replace(/\s+/g, " ");
   if (normalized === "") return subjectRoot;
-  return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
+  return `${subjectRoot}#${sha256Hex(normalized).slice(0, 32)}`;
 }
 
 /**
@@ -418,11 +421,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          const delivery = createReceiptDeliveryPolicy();
+          // #1132: the ceiling this turn already resolved. Absent = package default.
+          const delivery = createReceiptDeliveryPolicy(options.deliveryRequestLimit);
           // Production prose arrives only via nested summon → prepare tool.execute
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).
-          const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
+          const promptAllowingRejectedPrepare = async (text: string) => {
             await persistNavigatorWorkBase(activeSession.recordPointer(), { subject, authority });
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -442,31 +446,30 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               // ineligible for publication before the correction turn starts.
               output = undefined;
               prepareBatchRejected = true;
+              // The correction prompt below is the one spend for this rejection.
               delivery.recordRejected(rejectedReason);
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;
             const sessionNoReceipt = activeSession.noReceipt?.();
             if (sessionNoReceipt !== undefined) {
-              // This session already settled without an accepted receipt on its own
-              // budget; one more prompt opens an independent summon, not a delivery
-              // request on the settled session (#675).
+              // This session already settled without an accepted receipt. Keep the
+              // larger issued count and stop; a nested zero must not wipe prompts
+              // this layer already sent (#675 / #1132).
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }
-            if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
-          await promptAllowingRejectedPrepare(request, false);
+          await promptAllowingRejectedPrepare(request);
           // Bound output only: correction after rejected prepare. Early ready-wait
           // does not 催交 final advice (owner: prepare then wait for settlement feed).
           if (boundSettlement !== undefined) {
             while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()), true);
+              delivery.recordDeliveryRequest();
+              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
             }
             if (output === undefined && delivery.nextAction() === "request-delivery") {
-              while (delivery.nextAction() === "request-delivery") {
-                delivery.recordDeliveryRequest();
-              }
+              delivery.closeBudget();
             }
             if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
               const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
@@ -485,10 +488,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             return undefined;
           }
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
-            if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
+            if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
           });
-          const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : undefined;
+          const nativeMessage = isRecord(nativeFailure) && isRecord(nativeFailure.message) ? nativeFailure.message : undefined;
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit direction advice";

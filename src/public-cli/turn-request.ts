@@ -27,6 +27,32 @@ export type ResumeModelConfig = {
   readonly thinking?: PublicThinkingLevel;
 };
 
+/**
+ * Env axes shared by every public turn projection.
+ * Callers add correlation, continuation, host, and station-only fields.
+ */
+export function projectPublicTurnAxes(env: {
+  readonly packageRoot: string;
+  readonly home: string;
+  readonly agentDir: string;
+  readonly model?: SeatModelConfig;
+  readonly engine?: string;
+  readonly engineModel?: string;
+  readonly timeoutMs?: number;
+}): Pick<
+  RoleTurnRequestProjectionOptions,
+  "packageRoot" | "home" | "agentDir" | "model" | "engine" | "engineModel" | "timeoutMs"
+> {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+  };
+}
+
 export type RoleTurnRequestProjectionOptions = {
   packageRoot: string;
   home: string;
@@ -44,7 +70,13 @@ export type RoleTurnRequestProjectionOptions = {
   /** #537 public-invocation scope (one ak-role call). */
   invocationScopeId?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
-  stationChild?: boolean;
+  readonly stationChild?: boolean;
+  /**
+   * #1132: the one effective delivery-request ceiling (#422 single resolve by
+   * the caller). Projected so the host adapter's own re-ask loop and the AK
+   * execution seam count with the same configured number.
+   */
+  readonly deliveryRequestLimit?: number;
 };
 
 export type AdmittedTurnInvocation = {
@@ -92,6 +124,9 @@ export function projectRoleTurnRequest(
       ? {}
       : { invocationScopeId: options.invocationScopeId }),
     ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
+    ...(options.deliveryRequestLimit === undefined
+      ? {}
+      : { deliveryRequestLimit: options.deliveryRequestLimit }),
   };
 }
 

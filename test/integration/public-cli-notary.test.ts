@@ -27,6 +27,7 @@ import {
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -457,6 +458,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
           await mkdir(join(sessionFile, ".."), { recursive: true });
           const runDir = options.env.AK_ROLE_RUN_DIR;
           assert.ok(typeof runDir === "string");
+          const invocationScopeId = options.env.AK_ROLE_INVOCATION_SCOPE;
           const noReceipt = {
             type: "custom",
             customType: "ak-no-receipt-lifecycle",
@@ -467,7 +469,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
               sessionCompletion: "settled-without-accepted-receipt",
               acceptedReceipt: false,
               runPointer: runDir,
-              attemptPointer: `current:${runDir}`,
+              attemptPointer: receiptAttemptPointer(runDir, typeof invocationScopeId === "string" ? invocationScopeId : undefined),
             },
             timestamp: "2026-08-25T00:00:03.000Z",
           };

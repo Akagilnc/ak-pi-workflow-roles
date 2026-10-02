@@ -18,8 +18,13 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "../submission-errors.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
-
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -107,14 +112,33 @@ function toPiToolDefinition<S extends TSchema, D>(
     description: tool.description,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     parameters: tool.parameters,
-    execute: async (toolCallId, params, signal, update, context) =>
-      toPiResult(await tool.execute(
-        toolCallId,
-        params as Static<S>,
-        signal,
-        update === undefined ? undefined : (result) => update(toPiResult(result)),
-        projectContext(context),
-      )),
+    execute: async (toolCallId, params, signal, update, context) => {
+      try {
+        return toPiResult(await tool.execute(
+          toolCallId,
+          params as Static<S>,
+          signal,
+          update === undefined ? undefined : (result) => update(toPiResult(result)),
+          projectContext(context),
+        ));
+      } catch (error) {
+        // The worker gate owns these one-shot reminders. Returning them as
+        // isError keeps the code on the tool result so催交 can record the
+        // fact without spending the reminder itself. Other correctable
+        // errors stay native throws.
+        if (!(
+          error instanceof WorkerUnfinishedReasonReminderError
+          || error instanceof WorkerCommitReminderError
+          || error instanceof WorkerPrefixReminderError
+        )) throw error;
+        const projected = projectCorrectableExecuteRejection(error);
+        return {
+          content: [{ type: "text" as const, text: projected.diagnostic }],
+          details: projected.details as D,
+          isError: true as const,
+        };
+      }
+    },
   };
 }
 
@@ -170,9 +194,6 @@ export function createPiRoleHostAdapter(
       } else if (registration[0] === "session_shutdown") {
         const [, handler] = registration;
         pi.on("session_shutdown", (_value, ctx) => handler({}, context(ctx)));
-      } else if (registration[0] === "after_provider_response") {
-        const [, handler] = registration;
-        pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
       } else if (registration[0] === "agent_end") {
         const [, handler] = registration;
         pi.on("agent_end", (value, ctx) => handler({

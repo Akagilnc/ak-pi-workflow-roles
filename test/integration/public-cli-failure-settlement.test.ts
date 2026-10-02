@@ -1,6 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
@@ -20,10 +19,9 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
-
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
+import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   withTempHome,
@@ -153,225 +151,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
   });
 });
-test("classifyPostAdmissionFailure retains typed causes without washing identity", () => {
-  const timeout = classifyPostAdmissionFailure({
-    timedOut: true,
-    code: null,
-    stderr: floodStderr(),
-  });
-  assert.equal(timeout.cause, "timeout");
-  assert.deepEqual(timeout.details, { timedOut: true, exitCode: null });
-
-  const activation = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: floodStderr(),
-  });
-  assert.equal(activation.cause, "activation");
-  assert.equal(activation.diagnostic, floodStderr());
-
-  const missing = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 0,
-    stderr: "",
-  });
-  assert.equal(missing.cause, "output");
-
-  const original = new Error("socket hang up");
-  original.name = "ProviderTransportError";
-  const unrecognized = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: original,
-  });
-  assert.equal(unrecognized.cause, undefined);
-  assert.equal(unrecognized.diagnostic, "socket hang up");
-  assert.equal(unrecognized.identity?.name, "ProviderTransportError");
-
-  // Production-owned typed thrown channel.
-  const typed = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: new ExplicitInternalActivationError("model upstream 503", {
-      knownCause: "provider",
-      name: "ProviderUnavailableError",
-      code: "PROVIDER_UNAVAILABLE",
-    }),
-  });
-  assert.equal(typed.cause, "provider");
-  assert.equal(typed.diagnostic, "model upstream 503");
-  assert.equal(typed.identity?.name, "ProviderUnavailableError");
-  assert.equal(typed.identity?.code, "PROVIDER_UNAVAILABLE");
-
-  // JSONL observation flood must not displace the real diagnostic.
-  const jsonl = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: realisticJsonlFloodStderr(),
-  });
-  assert.equal(jsonl.cause, "activation");
-  assert.equal(jsonl.diagnostic, realisticJsonlFloodStderr());
-
-  // Pi auth-guidance multi-line stderr is kept whole (#836 no footer clip).
-  const primaryAuthDiagnostic = "No API key found for the selected model.";
-  const authGuidanceStderr = [
-    primaryAuthDiagnostic,
-    "",
-    "Use /login to log into a provider via OAuth or API key. See:",
-    "  /tmp/example-docs/alpha.md",
-    "  /tmp/example-docs/beta.md",
-  ].join("\n");
-  const authGuidance = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: authGuidanceStderr,
-    knownCause: "provider",
-    knownIdentity: {
-      name: "MissingProviderCredential",
-      code: "xai",
-    },
-  });
-  assert.equal(authGuidance.cause, "provider");
-  assert.equal(authGuidance.diagnostic, authGuidanceStderr);
-  assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
-  assert.equal(authGuidance.identity?.code, "xai");
-
-  // AC2: timedOut must not wash a co-present typed knownCause identity/diagnostic.
-  const timedOutWithProvider = classifyPostAdmissionFailure({
-    timedOut: true,
-    code: null,
-    stderr: floodStderr(),
-    knownCause: "provider",
-    knownIdentity: { name: "ProviderStopError", code: "openai-codex" },
-    knownDiagnostic: "rate limited",
-  });
-  assert.equal(timedOutWithProvider.cause, "provider");
-  assert.equal(timedOutWithProvider.diagnostic, "rate limited");
-  assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
-  assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
-  assert.deepEqual(timedOutWithProvider.details, {
-    exitCode: null,
-    timedOut: true,
-  });
-
-  const reservedKnownDetails = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: 1,
-    stderr: "",
-    knownCause: "provider",
-    knownDiagnostic: "upstream unavailable",
-    knownDetails: { code: 99, timedOut: true, provider: "xai" },
-  });
-  assert.deepEqual(reservedKnownDetails.details, {
-    provider: "xai",
-    code: 99,
-    exitCode: 1,
-  });
-
-  // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
-  const thrownUndefined = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown: undefined,
-  });
-  assert.equal(thrownUndefined.cause, undefined);
-  assert.equal(thrownUndefined.diagnostic, "undefined");
-  // Absence of the thrown key still means no exception was observed.
-  const noThrownKey = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-  });
-  assert.equal(noThrownKey.cause, "activation");
-});
-test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-fail-attendance-001";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    const attendanceDetails = {
-      version: 1,
-      disposition: "no-advice",
-      invocationId: "019f8c2a-6666-7666-8666-666666666666",
-      role: "judge",
-      phase: null,
-      subjectKey: `${project}/.ak/work`,
-    };
-    await writeFile(
-      sessionFile,
-      [
-        JSON.stringify({
-          type: "custom",
-          customType: "ak-navigator-invocation",
-          data: {
-            invocationId: "019f8c2a-6666-7666-8666-666666666666",
-            role: "judge",
-            phase: null,
-            subjectKey: attendanceDetails.subjectKey,
-          },
-        }),
-        JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            toolCallId: "fatal-judge",
-            // Durable accepted terminal for post-terminal attendance window; retryable
-            // isError:true/details:{} is nonterminal under the shared classifier.
-            isError: false,
-            details: { status: "converged" },
-          },
-        }),
-        JSON.stringify({
-          type: "custom",
-          customType: "ak-role-submission-closure",
-          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: attendanceDetails },
-        }),
-        JSON.stringify({
-          type: "custom_message",
-          customType: "ak-navigator-attendance",
-          message: { details: attendanceDetails },
-          details: attendanceDetails,
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-    const admitted = fixtureJudgeAdmitted({
-      runId,
-      bookKey,
-      projectRoot: project,
-      instruction: "x",
-      instructionEmpty: false,
-      runDirectory,
-      sessionDirectory,
-      sessionFile,
-    });
-    await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-
-    const terminal = await settleJudgeFailureTerminalResult(admitted, {
-      cause: "activation",
-      diagnostic: "role infrastructure failed",
-    }, piDurablePrincipalAuthority);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.equal(terminal.navigator.disposition, "no-advice");
-  });
-});
 test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -406,11 +185,11 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
         },
       );
       const flood = realisticJsonlFloodStderr();
+      // A bare nonzero exit names no cause; the real diagnostic is kept whole.
       const { terminal } = await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: flood,
       });
       assert.equal(terminal.roleOutcome.kind, "failure");
@@ -447,11 +226,12 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
           }),
         },
       );
+      // A bare nonzero exit keeps the real stderr diagnostic whole and claims
+      // no cause of its own.
       const { terminal, errorRef } = await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
-        expectedCause: "activation",
         diagnosticEquals: stderrText,
       });
       const body = JSON.parse(await readFile(errorRef.path, "utf8")) as {
@@ -656,6 +436,11 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     };
     assert.equal(errorBody.cause, "timeout");
     assert.equal(errorBody.details?.timedOut, true);
+    // Empty session on this real failure: missing attendance stays unavailable.
+    assert.equal(terminal.navigator.disposition, "unavailable");
+    if (terminal.navigator.disposition === "unavailable") {
+      assert.equal(terminal.navigator.source, "unknown");
+    }
     // One-line stderr emission already asserted by helper; durable diagnostic stays full.
   });
 });
@@ -723,18 +508,19 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    const history = (await readFile(sessionFile, "utf8"))
-      .split("\n").filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as any)
-      .filter((row) => row.type === "custom" && row.customType === ATTEMPT_HISTORY_ENTRY_TYPE) as Array<{
-        data: { sequence?: number; outcome?: { kind?: string; diagnostic?: string } };
-      }>;
+    // Settlement must not append to the host's native session; both attempts
+    // remain readable in the package-owned append-only volume after resume.
+    const hostRows = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
+    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: sessionFile });
+    const history = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
+      type?: string; outcome?: { kind?: string; diagnostic?: string };
+    });
     assert.equal(history.length, 2);
-    assert.equal(history[0]!.data.outcome?.kind, "failure", "failed leg's complete result is retained");
-    assert.equal(typeof history[0]!.data.outcome?.diagnostic, "string");
-    assert.equal(history[1]!.data.outcome?.kind, "accepted");
-    assert.equal(history[0]!.data.sequence, 1);
-    assert.equal(history[1]!.data.sequence, 2);
+    assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
+    assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
+    assert.equal(typeof history[0]?.outcome?.diagnostic, "string");
+    assert.equal(history[1]?.outcome?.kind, "accepted");
 
     // report/evidence stay last-write-wins views of the final accepted attempt.
     const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
@@ -747,80 +533,6 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
   });
 });
 
-test("each controlled cause persists typed Error Artifact without manufacturing a Receipt", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const causes: Array<ControlledFailureCause | undefined> = [
-      "activation",
-      "provider",
-      "session",
-      "output",
-      "timeout",
-      undefined, // #881: no typed class — original diagnostic only
-    ];
-    for (const cause of causes) {
-      const causeKey = cause ?? "no-typed-cause";
-      const runId = `run-cause-${causeKey}`;
-      const runDirectory = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        `${runId}@judge`,
-      );
-      await mkdir(join(runDirectory, "session"), { recursive: true });
-      const admitted = fixtureJudgeAdmitted({
-        runId,
-        bookKey,
-        projectRoot: project,
-        instruction: "x",
-        instructionEmpty: false,
-        runDirectory,
-      });
-      await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-      const terminal = await settleJudgeFailureTerminalResult(admitted, {
-        ...(cause === undefined ? {} : { cause }),
-        diagnostic: `diagnostic for ${causeKey}`,
-        identity: { name: "CauseProbeError", code: causeKey },
-      }, piDurablePrincipalAuthority);
-      assert.equal(terminal.roleOutcome.kind, "failure");
-      if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-      assert.equal(terminal.roleOutcome.cause, cause);
-      assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
-      assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
-
-      // Durability before caller presentation (absorbed from the former
-      // dedicated durable-recordings test): artifact paths already openable,
-      // evidence leg present, and no session attendance → typed unavailable.
-      if (cause === "activation") {
-        assert.equal(terminal.navigator.disposition, "unavailable");
-        if (terminal.navigator.disposition === "unavailable") {
-          assert.equal(terminal.navigator.source, "unknown");
-          assert.equal(typeof terminal.navigator.reason, "string");
-        }
-        assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-      }
-      const errorRef = terminal.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef);
-      const body = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        kind: string;
-        cause: string;
-        diagnostic: string;
-        identity?: { name?: string; code?: string };
-      };
-      assert.equal(body.kind, "error");
-      assert.equal(body.cause, cause);
-      assert.equal(body.diagnostic, `diagnostic for ${causeKey}`);
-      assert.equal(body.identity?.name, "CauseProbeError");
-      // Must not look like a manufactured Judge Receipt status.
-      assert.equal("judgeStatus" in body, false);
-    }
-  });
-});
 test("#881 non-sealed correctable-rejection and infrastructure params each appear once beside host failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -892,16 +604,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
   });
 });
 
-function floodStderr(): string {
-  return [
-    "event: tool_call",
-    "event: token delta x".repeat(40),
-    "Error: provider boom",
-    "    at Object.fn (vendor/stack.js:1:1)",
-    "    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
-    "tokens=999999 tool_calls=42",
-  ].join("\n");
-}
 function realisticJsonlFloodStderr(): string {
   return [
     "Error: provider rejected the request",

@@ -13,6 +13,7 @@
  */
 import { Type, type TSchema } from "typebox";
 import type { CorrectableSubmissionError } from "../submission-correctable-error.ts";
+import { isRecord } from "../unknown-value.ts";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
@@ -94,26 +95,11 @@ type TerminatingInfrastructureHostActions<C> = {
 function isInfrastructureFailureDeclaration(
   parameters: unknown,
 ): boolean {
-  if (
-    parameters === null ||
-    typeof parameters !== "object" ||
-    Array.isArray(parameters)
-  ) {
-    return false;
-  }
-  const record = parameters as Record<string, unknown>;
-  if (!Object.hasOwn(record, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
-  const declaration = record[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  if (
-    declaration === null ||
-    typeof declaration !== "object" ||
-    Array.isArray(declaration)
-  ) {
-    return false;
-  }
-  const diagnostic = (declaration as Record<string, unknown>)[
-    INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY
-  ];
+  if (!isRecord(parameters)) return false;
+  if (!Object.hasOwn(parameters, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
+  const declaration = parameters[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  if (!isRecord(declaration)) return false;
+  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
   return typeof diagnostic === "string" && diagnostic.trim().length > 0;
 }
 

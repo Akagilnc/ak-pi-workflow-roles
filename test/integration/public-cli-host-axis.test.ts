@@ -19,7 +19,6 @@ import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/nota
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
@@ -578,10 +577,6 @@ async function seedResumableJudge(input: {
               piDurablePrincipalAuthority.decode(request.principal);
             await mkdir(sessionDirectory, { recursive: true });
             await writeFile(sessionFile, "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "openai-codex",
-            });
             if (input.afterTurn !== undefined) {
               await input.afterTurn(request.runDirectory, sessionDirectory);
             }

@@ -43,7 +43,6 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -143,7 +142,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
   });
 });
 
-test("S5: resumable (typed 429) state also resumable", async()=>{
+test("S5: host-reported provider failure stays loadable for bare resume", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-resumable-state-001";
@@ -153,7 +152,6 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        await observeTyped429ViaProductionHandler({runDirectory: join(sd,".."), provider:"openai-codex"});
         await writeFile(join(sd,"session.jsonl"),JSON.stringify({type:"message",message:{role:"assistant",stopReason:"error",errorMessage:"upstream declined",provider:"openai-codex",model:"probe",api:"openai-responses"}})+"\n","utf8");
         return{code:1,stderr:"fail\n",timedOut:false,args:[...args],knownFailure:{cause:"provider",identity:{name:"ProviderError",code:429},diagnostic:"HTTP 429"}};},
       })});

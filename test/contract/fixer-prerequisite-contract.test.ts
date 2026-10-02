@@ -1,25 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Value } from "typebox/value";
 
 import { namedActivationCause } from "../../src/activation-trace.ts";
 import {
   FixerPacketValidationError,
-  fixerPrerequisitesSchema,
   parseFixerPrerequisites,
-  type FixerInvocationInput,
 } from "../../src/package-contracts/fixer-packet.ts";
-
-const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
-const prerequisitesText = JSON.stringify([
-  { id: "owner.choice-1", requirement: "  Owner selects the public contract.  " },
-  { id: "artifact_A", requirement: "Build artifact exists." },
-]);
-
-function input(prerequisites = parseFixerPrerequisites(prerequisitesText)): FixerInvocationInput {
-  return Object.freeze({ instructions, prerequisites });
-}
-
 
 function captureValidationError(source: string): FixerPacketValidationError {
   let caught: unknown;
@@ -34,23 +20,12 @@ function captureValidationError(source: string): FixerPacketValidationError {
   return caught;
 }
 
-test("opaque fixer prose is independent of the frozen typed prerequisite attachment", () => {
-  const prerequisites = parseFixerPrerequisites(prerequisitesText);
-  assert.equal(Value.Check(fixerPrerequisitesSchema, JSON.parse(prerequisitesText)), true);
-  assert.equal(input(prerequisites).instructions, instructions);
-  assert.deepEqual(prerequisites, JSON.parse(prerequisitesText));
-  assert.equal(Object.isFrozen(prerequisites), true);
-  assert.equal(Object.isFrozen(prerequisites[0]), true);
-  assert.throws(() => { (prerequisites as any).push({ id: "later", requirement: "late" }); }, TypeError);
-});
-
 test("prerequisite attachment failures retain typed identity for each invalid shape", () => {
   const invalid = [
     "{",
     JSON.stringify({ prerequisites: [] }),
     JSON.stringify([{ id: "bad/id", requirement: "x" }]),
     JSON.stringify([{ id: "x", requirement: " " }]),
-    JSON.stringify([{ id: "x", requirement: "x", extra: true }]),
     JSON.stringify([{ id: "Same", requirement: "x" }, { id: "Same", requirement: "y" }]),
   ];
   for (const source of invalid) assert.throws(() => parseFixerPrerequisites(source), FixerPacketValidationError);

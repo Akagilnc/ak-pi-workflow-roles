@@ -16,6 +16,8 @@ export type DoctorAuditOptions = {
   context: HostContext;
   submission: unknown;
   signal?: AbortSignal;
+  /** Same ceiling the public execution seam already resolved. */
+  autoResumeLimit?: number;
   /** Same seam as runComplianceAudit options — offline tracers only. */
   summonAuditor?: AuditorSummon;
 };
@@ -39,6 +41,7 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
         ? {}
         : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.autoResumeLimit === undefined ? {} : { autoResumeLimit: options.autoResumeLimit }),
       ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),
     });
   };

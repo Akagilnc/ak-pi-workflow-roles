@@ -1,5 +1,6 @@
 import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
+import { isRecord } from "./unknown-value.ts";
 
 /**
  * Tool-result text the parent model sees (#753 / #750 evidence).
@@ -50,10 +51,21 @@ export class WorkerPrefixReminderError extends Error {
   }
 }
 
+/**
+ * ADR 0066/0070 one-shot commit and prefix reminders.
+ * They stay a correction the same session may make, and they do not occupy
+ * the configured re-ask or 催交 budget (#1132).
+ */
+export function isOneShotWorkerReminderCode(code: unknown): boolean {
+  return code === "worker_commit_reminder" || code === "worker_prefix_reminder";
+}
+
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
-    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
+    // The ceiling is the configured unfinished-reason limit. This text reaches
+    // the model and does not restate a count.
+    super("本次 unfinished 回执未含 reason；请补上 reason 后再交。");
     this.name = "WorkerUnfinishedReasonReminderError";
   }
 }
@@ -69,7 +81,7 @@ export function unreadableDiscriminatorNotice(field: string, received: unknown):
 
 /** The received discriminator only — never the rest of the receipt. */
 export function receivedDiscriminator(receipt: unknown, field: string): unknown {
-  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) return undefined;
+  if (!isRecord(receipt)) return undefined;
   if (!Object.hasOwn(receipt, field)) return undefined;
   return (receipt as Record<string, unknown>)[field];
 }

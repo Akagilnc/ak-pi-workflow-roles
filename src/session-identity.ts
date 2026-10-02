@@ -42,7 +42,6 @@ export function createSessionIdentityAuthority(
   };
 }
 
-
 /**
  * Native session/thread id already stored for this principal on `host`.
  * Public explicit resume reads it once and hands it to the host adapter.

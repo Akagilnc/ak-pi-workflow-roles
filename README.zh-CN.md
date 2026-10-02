@@ -29,6 +29,8 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 自动续跑行为见 [auto-resume 实现](src/public-cli/auto-resume.ts)；配置用法见 `ak-role help config`，有效上限用 `ak-role config show` 查看。
 
+催交与实发次数记账（#1132）见 [角色运行时](src/role-runtime.ts)、[回执递送策略](src/receipt-delivery-policy.ts)、[外部宿主循环](src/external-host-turn-loop.ts)。unfinished 缺理由处置见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。
+
 席位与官席配置：
 
 ```bash

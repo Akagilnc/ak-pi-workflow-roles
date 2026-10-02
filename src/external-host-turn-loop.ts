@@ -1,6 +1,6 @@
 /**
  * Middle external-host role-turn loop (#820 / ADR 0082).
- * One copy: serial, abort merge/race, 8-round closeRound retry,
+ * One copy: serial, abort merge/race, closeRound re-ask rounds,
  * host-aborted, round-limit. Last hop = ExternalHostTurnDriver (four verbs).
  */
 import type {
@@ -10,13 +10,22 @@ import type {
   RoleTurnResult,
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
-
-export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
+import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
+import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
 export type ExternalHostRoundOutcome =
-  | { readonly status: "delivered"; readonly stderr?: string }
+  | {
+      readonly status: "delivered";
+      readonly stderr?: string;
+      /** Child exit when this driver has one. Omitted when the protocol has no process exit (ACP). */
+      readonly code?: number | null;
+      readonly signal?: string;
+      readonly timedOut?: boolean;
+    }
   | { readonly status: "terminal"; readonly result: RoleTurnResult };
 
 export type ExternalHostTurnDriver = Readonly<{
@@ -97,25 +106,6 @@ export function externalHostFailure(
   });
 }
 
-/** A dispose failure replaces success; a primary failure retains its cause. */
-export function withExternalHostCleanupFailure(
-  outcome: RoleTurnResult,
-  cleanupError: unknown,
-  name: string,
-): RoleTurnResult {
-  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-  if (outcome.knownFailure === undefined) {
-    return externalHostFailure("session", name, "dispose-failed", { cleanupError: message }, message);
-  }
-  return {
-    ...outcome,
-    knownFailure: {
-      ...outcome.knownFailure,
-      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
-    },
-  };
-}
-
 function asFailure(knownFailure: RoleTurnKnownFailure, stderr = ""): RoleTurnResult {
   return { code: null, stderr, timedOut: false, knownFailure };
 }
@@ -141,9 +131,15 @@ export async function driveExternalRoleTurnRounds(
 ): Promise<RoleTurnResult> {
   let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
-  let stderr = "";
+  let result: RoleTurnResult = { code: 0, stderr: "", timedOut: false };
+  // #1132: the first round is the initial delivery. Each later counted re-ask
+  // spends the configured ceiling. The one commit reminder and the one prefix
+  // reminder are not counted re-asks (ADR 0066/0070).
+  const countedReaskLimit = deliveryLimitFromConfig(request.deliveryRequestLimit);
+  const exemptReminders = new Set<string>();
+  let countedReasks = 0;
 
-  for (let attempt = 0; attempt < EXTERNAL_ROLE_TURN_ROUND_LIMIT; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
 
     let round: ExternalHostRoundOutcome;
@@ -153,28 +149,91 @@ export async function driveExternalRoleTurnRounds(
       if (isHostAbortedError(error)) return settleHostAborted(prepared, driver.currentSessionId());
       throw error;
     }
-    if (round.status === "terminal") {
-      const result = round.result;
-      const combined = `${stderr}${result.stderr}`;
-      return combined === result.stderr ? result : { ...result, stderr: combined };
+    if (round.status === "terminal") return round.result;
+    // Only this round's exit and stderr belong to this round's terminal.
+    // ACP has no child exit; its successful protocol completion carries code 0.
+    result = {
+      code: round.code !== undefined ? round.code : 0,
+      stderr: round.stderr ?? "",
+      timedOut: round.timedOut === true,
+      ...(round.signal === undefined ? {} : { signal: round.signal }),
+    };
+    let closure: Awaited<ReturnType<ExternalPreparedTurn["closeRound"]>>;
+    try {
+      closure = await prepared.closeRound();
+    } catch (error) {
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `round closure failed beside host terminal: ${describeErrorIdentity(error)}`,
+        error,
+      });
+      return result.code === 0 && !result.timedOut && result.signal === undefined
+        ? { ...result, knownFailure: projectThrownFailureLeaf(error) }
+        : result;
     }
-    if (round.stderr !== undefined && round.stderr.length > 0) stderr += round.stderr;
-
-    const closure = await prepared.closeRound();
     if (closure.accepted) {
-      await driver.afterAccepted?.();
-      return { code: 0, stderr, timedOut: false };
+      try { await driver.afterAccepted?.(); }
+      catch (error) {
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `post-acceptance close failed beside host terminal: ${describeErrorIdentity(error)}`,
+          error,
+        });
+      }
+      return result;
     }
-    if ("failure" in closure) return asFailure(closure.failure, stderr);
+    if ("failure" in closure) {
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `round closure failed beside host terminal: ${JSON.stringify(closure.failure)}`,
+      });
+      // This is an explicit envelope failure (e.g. required audit/ledger failure),
+      // not an inferred host cause. Preserve the process facts alongside it.
+      return result.code === 0 && !result.timedOut && result.signal === undefined
+        ? { ...result, knownFailure: closure.failure }
+        : result;
+    }
+    if (result.code !== 0 || result.signal !== undefined || result.timedOut) return result;
+    const reminderCode = closure.retry.code;
+    const exempt = isOneShotWorkerReminderCode(reminderCode) && !exemptReminders.has(reminderCode);
+    if (exempt) exemptReminders.add(reminderCode);
+    else {
+      countedReasks += 1;
+      if (countedReasks > countedReaskLimit) {
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `${driver.roundLimitName}: round-retry-limit`,
+        });
+        return result;
+      }
+    }
     prompt = closure.retry.message;
     driver.afterRetry?.();
   }
 
-  return asFailure({
-    cause: "output",
-    identity: { name: driver.roundLimitName, code: "round-retry-limit" },
-    ...(driver.currentSessionId() === undefined ? {} : { details: { sessionId: driver.currentSessionId() } }),
-  });
+}
+
+/** Required envelope shutdown fails a clean host result; an existing host
+ * failure stays primary. Ordinary cleanup is handled at its owning seam. */
+export async function disposeExternalRoleTurn(
+  prepared: Pick<PreparedRoleTurn, "dispose">,
+  request: Pick<RoleTurnRequest, "runDirectory">,
+  outcome: RoleTurnResult,
+): Promise<RoleTurnResult> {
+  try {
+    await prepared.dispose?.();
+  } catch (error) {
+    await retainPackageFault({
+      runDirectory: request.runDirectory,
+      diagnostic: `required envelope shutdown failed beside host terminal: ${describeErrorIdentity(error)}`,
+      error,
+    });
+    if (outcome.code === 0 && !outcome.timedOut && outcome.signal === undefined
+      && outcome.knownFailure === undefined) {
+      return { ...outcome, knownFailure: projectThrownFailureLeaf(error) };
+    }
+  }
+  return outcome;
 }
 
 export function createSerializedRoleTurnHost(

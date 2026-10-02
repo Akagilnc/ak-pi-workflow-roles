@@ -7,6 +7,7 @@
  */
 import { Type } from "typebox";
 
+import { isRecord } from "../unknown-value.ts";
 import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
@@ -33,19 +34,18 @@ export type NavigatorAdvice = { readonly prose: string };
 export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") return { prose: value };
-  if (typeof value === "object" && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    if (typeof record.prose === "string") return { prose: record.prose };
-    if (record.prose !== undefined && record.prose !== null) {
-      return { prose: typeof record.prose === "string" ? record.prose : String(record.prose) };
+  if (isRecord(value)) {
+    if (typeof value.prose === "string") return { prose: value.prose };
+    if (value.prose !== undefined && value.prose !== null) {
+      return { prose: typeof value.prose === "string" ? value.prose : String(value.prose) };
     }
     // Free-form object submission: present the whole body as prose when it has content.
-    const keys = Object.keys(record);
+    const keys = Object.keys(value);
     if (keys.length === 0) return { prose: "" };
     try {
-      return { prose: JSON.stringify(record) };
+      return { prose: JSON.stringify(value) };
     } catch {
-      return { prose: String(record) };
+      return { prose: String(value) };
     }
   }
   return { prose: String(value) };

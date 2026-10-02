@@ -3,6 +3,8 @@
  * Pi's piped-stdin reader trims the wrapper; the body field keeps original bytes.
  * No size cap and no path/pointer substitute — the whole dialogue rides the envelope.
  */
+import { isRecord } from "./unknown-value.ts";
+
 export const USER_DIALOGUE_STDIN_KIND = "ak-user-dialogue" as const;
 
 export type UserDialogueStdinEnvelope = {
@@ -15,7 +17,7 @@ export function encodeUserDialogueStdin(body: string): string {
 }
 
 function isUserDialogueEnvelope(value: unknown): value is UserDialogueStdinEnvelope {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!isRecord(value)) return false;
   const record = value as { kind?: unknown; body?: unknown };
   return record.kind === USER_DIALOGUE_STDIN_KIND && typeof record.body === "string";
 }

@@ -4,6 +4,8 @@
  */
 import { readFile } from "node:fs/promises";
 
+import { isRecord } from "./unknown-value.ts";
+
 export type LedgerSessionRow = Record<string, unknown>;
 
 /**
@@ -30,10 +32,6 @@ export class LedgerSessionJsonlError extends Error {
     this.line = init.line;
     this.prefixRows = init.prefixRows;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -338,5 +336,4 @@ export function intervalRowsAroundAnchor(
   }
   return { rows: rows.slice(start, end), closed: end < rows.length };
 }
-
 

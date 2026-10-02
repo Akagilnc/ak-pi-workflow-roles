@@ -8,6 +8,8 @@ import { Type } from "typebox";
 import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 
 /** Same open decision shape the province uses inside audit sessions. */
@@ -32,10 +34,6 @@ export const gatekeeperOutputSchema = withTerminatingOutputDeclarations(
 export type GatekeeperDirectOutput =
   | { readonly status: "dispatch"; readonly officer: "inspector" | "notary" }
   | { readonly status: "pass"; readonly findings?: readonly string[] };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function asStringArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];

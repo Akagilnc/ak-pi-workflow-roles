@@ -19,6 +19,7 @@ import type {
   RoleTurnRequest,
 } from "./host-contracts.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
@@ -34,6 +35,10 @@ import {
   extractInfrastructureFailureEvidence,
 } from "./navigator-invocation-identity.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
+import { retainPackageFault } from "./public-cli/settlement.ts";
+import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
+
+import { isRecord, errorText } from "./unknown-value.ts";
 
 export { projectActivationFlags };
 
@@ -158,7 +163,7 @@ export async function prepareRoleEnvelope(options: {
       try {
         await appendFile(sessionFile, line, "utf8");
       } catch (error) {
-        const diagnostic = error instanceof Error ? error.message : String(error);
+        const diagnostic = errorText(error);
         armDurableWriteFailure?.(customType, diagnostic);
       }
     });
@@ -248,7 +253,10 @@ export async function prepareRoleEnvelope(options: {
     startKeepalive() {},
     stopKeepalive() {},
   };
-  createRoleRuntimeExtension(options.dependencies)(envelope);
+  createRoleRuntimeExtension(
+    options.dependencies,
+    deliveryLimitFromConfig(options.request.deliveryRequestLimit),
+  )(envelope);
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
@@ -291,7 +299,7 @@ export async function prepareRoleEnvelope(options: {
     content: ContentPart[],
   ): void {
     if (infrastructureRoundFailure !== undefined) return;
-    const record = typeof details === "object" && details !== null && !Array.isArray(details)
+    const record = isRecord(details)
       ? details as Record<string, unknown>
       : undefined;
     const isInfra = record !== undefined && (
@@ -336,7 +344,7 @@ export async function prepareRoleEnvelope(options: {
     content: ContentPart[];
     details: Record<string, unknown>;
   } {
-    const diagnostic = error instanceof Error ? error.message : String(error);
+    const diagnostic = errorText(error);
     const content: ContentPart[] = [{ type: "text", text: diagnostic }];
     const errorCode = typeof (error as unknown as { code?: unknown })?.code === "string"
       ? (error as unknown as { code: string }).code
@@ -551,14 +559,14 @@ export async function prepareRoleEnvelope(options: {
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
-    const cleanupFailures: unknown[] = [];
+    const requiredFailures: unknown[] = [];
     // session_shutdown may still append package durable entries (navigator
     // attendance when agent_settled was skipped). Drain only after those
     // handlers — single terminal judgment via settleDurableWrites (#959).
     try {
       await emit("session_shutdown", {});
     } catch (error) {
-      cleanupFailures.push(error);
+      requiredFailures.push(error);
     }
     try {
       // Always drain post-shutdown writes. Only throw when the host has not
@@ -566,7 +574,7 @@ export async function prepareRoleEnvelope(options: {
       const alreadyHanded = durableFailureHandedToCloseRound;
       const durableFailure = await settleDurableWrites();
       if (durableFailure !== undefined && !alreadyHanded) {
-        cleanupFailures.push(
+        requiredFailures.push(
           Object.assign(
             new Error(durableFailure.failure.diagnostic ?? "durable session entry flush failed"),
             { code: durableFailure.failure.identity?.code ?? "durable-session-write-failed" },
@@ -574,7 +582,7 @@ export async function prepareRoleEnvelope(options: {
         );
       }
     } catch (error) {
-      cleanupFailures.push(error);
+      requiredFailures.push(error);
     }
     try {
       const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
@@ -583,12 +591,17 @@ export async function prepareRoleEnvelope(options: {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     } catch (error) {
-      cleanupFailures.push(error);
+      // Closing the relay is ordinary cleanup, not required envelope work.
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `relay close failed beside envelope shutdown: ${describeErrorIdentity(error)}`,
+        error,
+      });
     }
-    if (cleanupFailures.length === 1) throw cleanupFailures[0];
-    if (cleanupFailures.length > 1) {
-      throw new AggregateError(cleanupFailures, "ACP envelope dispose cleanup failures", {
-        cause: cleanupFailures[0],
+    if (requiredFailures.length === 1) throw requiredFailures[0];
+    if (requiredFailures.length > 1) {
+      throw new AggregateError(requiredFailures, "Required envelope shutdown failures", {
+        cause: requiredFailures[0],
       });
     }
   };

@@ -111,7 +111,7 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
   });
 });
 
-test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
+test("default delivery ceiling sends two Navigator corrections and then stops", async () => {
   await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -125,9 +125,9 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     const nav = await attendance(setting, harness, events, root);
     nav.prepare();
     while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    harness.rejectPrepare("root rejection one", "root rejection two");
+    harness.rejectPrepare("root rejection one", "root rejection two", "root rejection three");
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(harness.prompts(), 2, "budget exhaustion must not start another prompt");
+    assert.equal(harness.prompts(), 3, "one initial prompt plus two corrections, then stop");
     const deliveryFeed = JSON.parse(harness.promptTexts()[1] ?? "") as {
       terminalToolCalled?: boolean;
       acceptedReceipt?: boolean;
@@ -143,7 +143,9 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     assert.deepEqual(lifecycle?.data.rejectedReceipts, [
       { reason: "root rejection one", diagnosticAvailable: true },
       { reason: "root rejection two", diagnosticAvailable: true },
+      { reason: "root rejection three", diagnosticAvailable: true },
     ]);
+    assert.equal(lifecycle?.data.deliveryTurns, 2);
     assert.equal(lifecycle?.data.terminalToolCalled, true);
   });
 });
@@ -328,10 +330,37 @@ test("a session that settled without a receipt is not re-summoned for delivery",
     assert.equal(lifecycle.length, 1);
     const facts = (lifecycle[0] as any).data;
     assert.equal(facts.terminalToolCalled, true);
+    assert.equal(facts.deliveryTurns, 0);
     assert.deepEqual(facts.rejectedReceipts, [
       { reason: "no typed candidate batch", diagnosticAvailable: true },
     ]);
     assert.equal(facts.runPointer, "/fixture/navigator-record");
+  });
+});
+
+test("a delivery prompt already sent keeps its count when the nested session reports zero", async () => {
+  await withTempRoot("navigator-nested-keeps-sent-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, root);
+    harness.rejectPrepare("prepare shape rejected");
+    harness.settleWithoutReceipt("nested settled without a receipt");
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2);
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.find((entry: any) => entry?.customType === "ak-no-receipt-lifecycle") as any;
+    assert.equal(lifecycle?.data.deliveryTurns, 1);
+    assert.deepEqual(
+      lifecycle?.data.rejectedReceipts?.map((item: { reason?: string }) => item.reason),
+      ["prepare shape rejected", "nested settled without a receipt"],
+    );
   });
 });
 

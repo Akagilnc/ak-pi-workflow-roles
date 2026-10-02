@@ -7,13 +7,13 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
-import {
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-  gatekeeperOutputSchema,
-} from "./package-contracts/gatekeeper-output.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
+import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { isRecord } from "./unknown-value.ts";
+import { serializeThrownValue } from "./serialize-thrown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -59,8 +59,8 @@ export type GatekeeperResult =
   | {
       /**
        * Accepted reply whose conclusion is not converged|continue|escalate.
-       * Envelope resumes the officer with plain-language re-ask — never parent-stands,
-       * never forges continue (#753 / unreadable-conclusion-resume-speaker).
+       * Envelope reasks the officer in plain language against the configured
+       * ceiling, then keeps this receipt. Never parent-stands, never forges continue.
        */
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
@@ -69,7 +69,7 @@ export type GatekeeperResult =
       readonly receivedStatus?: unknown;
       readonly runId?: string;
     }
-  | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
+  | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: Partial<NoReceiptLifecycleFacts> }
   | {
       readonly status: "transport_failure";
       readonly stage: GateOfficer;
@@ -157,35 +157,15 @@ export type SubmissionGateHostActions = {
  * registration envelope — src/role-runtime.ts (ADR 0018). Schema authority is
  * the shared contract module (with infrastructure-failure declaration).
  */
-export const GATEKEEPER_TOOL_SPEC = {
-  name: GATEKEEPER_OUTPUT_TOOL_NAME,
-  label: "门下省决议",
-  description: "门下省终局决议。status 为 dispatch 或 pass。",
-  promptSnippet: "门下省决议",
-  parameters: gatekeeperOutputSchema,
-} as const;
+export const GATEKEEPER_TOOL_SPEC = roleSubmissionDeclaration("gatekeeper");
 
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
 
-function failureReason(error: unknown): string {
-  if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
   return decision;
-}
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
 }
 
 /**
@@ -206,10 +186,10 @@ function projectOfficerDecision(
   fallbackStatus?: string,
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
-  const record = readRecord(decision);
-  const status =
-    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
-    ?? fallbackStatus;
+  const record = isRecord(decision) ? decision : undefined;
+  const status = record !== undefined && Object.hasOwn(record, "status")
+    ? receivedDiscriminator(record, "status")
+    : fallbackStatus;
   const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
   if (queueStatus === "converged") {
     return { status: "converged", officer, receipt };
@@ -226,17 +206,6 @@ function projectOfficerDecision(
  * identity. Never guess from undivided submissions — sole row included — history
  * stays on terminal.submissions (#836 presentation).
  */
-function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
-  const outcome = terminal?.roleOutcome;
-  // This-court identity only from accepted/audit_escalation settlement payloads
-  // (#879). Failure history is not this-court (#953) — it rides submissions.
-  if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
-    if (outcome.payloads !== undefined && outcome.payloads.length > 0) return outcome.payloads;
-  }
-  // No sole-row identity guess: undivided submissions are not this-court (#879).
-  return [];
-}
-
 /**
  * Failure/transport channel surfaces recorded history beside the failure
  * (#836 A.3) via the historical carrier only (#953 — not failure.payloads).
@@ -299,7 +268,7 @@ function projectOfficerTerminal(
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
-  const thisCourt = thisCourtOfficerPayloads(terminal);
+  const thisCourt = currentReplyRows(terminal);
   if (outcome === undefined) {
     const detail = summoned.stderr ?? "";
     const failurePayloads = officerFailurePayloads(terminal);
@@ -416,7 +385,7 @@ export async function projectGatekeeperRun(
   } catch (error) {
     return {
       officer,
-      result: { status: "transport_failure", stage: officer, reason: failureReason(error) },
+      result: { status: "transport_failure", stage: officer, reason: serializeThrownValue(error) },
     };
   }
   return {

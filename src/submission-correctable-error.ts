@@ -6,6 +6,8 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 
+import { errorText } from "./unknown-value.ts";
+
 /** Shared, unforgeable identity for submission errors that the same session may correct. */
 const correctableSubmissionErrorBrand = Symbol("ak-roles.correctable-submission-error");
 
@@ -34,8 +36,11 @@ export function isCorrectableExecuteError(error: unknown): boolean {
 }
 
 /**
- * Durable projection for ACP envelope tool catches only.
- * Pi path keeps native throw → isError toolResult (no shared projection consumer).
+ * Durable projection for correctable execute errors.
+ * The ACP envelope consumes it on every correctable catch. The Pi adapter
+ * consumes it for the one-shot commit and prefix reminders and the
+ * unfinished-reason reminder, returned as an isError tool result. Other Pi
+ * correctable errors stay native throws.
  */
 export type CorrectableExecuteRejectionProjection = {
   readonly diagnostic: string;
@@ -49,7 +54,7 @@ export type CorrectableExecuteRejectionProjection = {
 export function projectCorrectableExecuteRejection(
   error: unknown,
 ): CorrectableExecuteRejectionProjection {
-  const diagnostic = error instanceof Error ? error.message : String(error);
+  const diagnostic = errorText(error);
   if (error instanceof GatekeeperDecisionError) {
     return { diagnostic, details: { ...(error.result as Record<string, unknown>) } };
   }

@@ -32,12 +32,6 @@ import {
   WorkerCommitReminderError,
 } from "../../src/worker-submission-gates.ts";
 
-import {
-  admitPublicRole,
-} from "../../src/public-cli/invocation.ts";
-import {
-  settleSeatTerminalResult,
-} from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -193,82 +187,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
   });
 });
 
-test("lawful coder Terminal settlement publishes report and evidence", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const admitted = await admitPublicRole("coder", {
-      phase: "apply",
-      instruction: "Implement and verify.",
-      attachmentPaths: [],
-    }, {
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      createRunId: () => "run-coder-settle-001",
-    });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const receipt = {
-      status: "completed" as const,
-      report:
-        "TDD red/green evidence; same-pattern, introduced-regression, and behavior-fact checks complete.",
-    };
-    // Minimal session leaf: assistant toolCall then accepted toolResult.
-    const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "c1",
-              name: CODER_OUTPUT_TOOL_NAME,
-              arguments: receipt,
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "c1",
-          toolName: CODER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: receipt,
-        },
-      }),
-    ];
-    await writeFile(
-      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
-      `${sessionLines.join("\n")}\n`,
-      "utf8",
-    );
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: project,
-      home,
-      runDirectory: admitted.runDirectory,
-      role: "coder",
-      details: receipt,
-      toolCallId: "c1",
-    });
-
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
-    assert.equal(terminal.roleOutcome.role, "coder");
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
-    assert.equal(terminal.runId, "run-coder-settle-001");
-    const report = terminal.artifacts.find((a) => a.kind === "report");
-    assert.ok(report);
-    assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-
-  });
-});
-
 test("alternate host seals accepted Terminal without Pi acceptance leaf", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -324,6 +242,14 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
+    assert.deepEqual(result.terminal!.submissions, [receipt]);
+    assert.equal(result.terminal!.artifacts.some((a) => a.kind === "evidence"), true);
+    const report = result.terminal!.artifacts.find((a) => a.kind === "report");
+    assert.ok(report);
+    const reportBody = JSON.parse(await readFile(report.path, "utf8")) as {
+      outcome?: { payloads?: unknown };
+    };
+    assert.deepEqual(reportBody.outcome?.payloads, [receipt]);
   });
 });
 

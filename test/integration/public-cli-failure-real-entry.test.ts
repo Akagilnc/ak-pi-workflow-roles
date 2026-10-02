@@ -1,3 +1,4 @@
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -14,9 +15,13 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -26,108 +31,94 @@ import {
   assertPublicFailureSettlement,
 } from "../helpers/failure-settlement-kit.ts";
 
-test("public report publication failures retain typed errno identity", async () => {
-  // #953 clears conventional faces before rewrite, so report.json-as-directory no
-  // longer reaches writeFile. Lock artifacts/ instead — clear no-ops on absent
-  // faces; writeFile then EACCES. Audit-incomplete publication path abolished (#475).
-  const rows = [
-    {
-      label: "EACCES on report publication",
-      plant: async (runDir: string) => {
-        const artifactsDir = join(runDir, "artifacts");
-        await mkdir(artifactsDir, { recursive: true });
-        await chmod(artifactsDir, 0o555);
-        return artifactsDir;
-      },
-      seedSession: async (sessionFile: string) => {
-        await writeFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { status: "converged" },
-            },
-          })}\n`,
-          "utf8",
-        );
-      },
-      expectedCode: "EACCES",
-    },
-  ] as const;
-  for (const row of rows) {
-    await withTempHome(async (home) => {
-      const project = join(home, "proj");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const { io, stdout, stderr } = captureIo();
-      let lockedArtifactsDir: string | undefined;
-      try {
-        const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
-          {
+test("public report publication failure stays beside the accepted terminal", async () => {
+  // Lock artifacts/ so the report write fails. The host already accepted;
+  // that terminal stays, and the write failure is a cleanup diagnostic.
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    let lockedArtifactsDir: string | undefined;
+    const runId = "run-audit-artifact-errno-001";
+    await configurePassingReviewSeats(home);
+    try {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          io,
+          roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
             packageRoot,
-            home,
-            cwd: project,
-            createRunId: () => "run-audit-artifact-errno-001",
-            io,
-            roleTurnHost: roleTurnHostFromLegacyPiRunner({
-              packageRoot,
-              principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (args) => {
-              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-              const runDir = join(sessionDir, "..");
-              lockedArtifactsDir = await row.plant(runDir);
-              await mkdir(sessionDir, { recursive: true });
-              await row.seedSession(join(sessionDir, "session.jsonl"));
-              return {
-                code: 0,
-                stdout: "",
-                stderr: "",
-                timedOut: false,
-                args: [...args],
-                sealedAcceptance: {
-                  role: "judge" as const,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            const artifactsDir = join(runDir, "artifacts");
+            await mkdir(artifactsDir, { recursive: true });
+            await chmod(artifactsDir, 0o555);
+            lockedArtifactsDir = artifactsDir;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
                   details: { status: "converged" },
                 },
-              };
-            },
-            }),
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stdout: "",
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: {
+                role: "judge" as const,
+                details: { status: "converged" },
+              },
+            };
           },
-        );
-        assert.equal(result.exitCode, 1, row.label);
-        assert.equal(stdout.length, 1, row.label);
-        assert.equal(stderr.length, 1, row.label);
-        assert.ok(result.terminal, row.label);
-        const outcome = result.terminal!.roleOutcome;
-        assert.equal(outcome.kind, "failure", row.label);
-        if (outcome.kind !== "failure") throw new Error("expected publication failure");
-        // Must not wash publication errno into generic output absence.
-        assert.equal(outcome.cause, undefined, row.label);
-        assert.notEqual(outcome.cause, "output", row.label);
-        assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
-        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-        assert.ok(errorRef, row.label);
-        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-          cause: string;
-          identity?: { name?: string; code?: string | number };
-          diagnostic: string;
-        };
-        assert.equal(errorBody.cause, undefined, row.label);
-        assert.equal(errorBody.identity?.code, row.expectedCode, row.label);
-        assert.ok(errorBody.diagnostic.length > 0, row.label);
-      } finally {
-        if (lockedArtifactsDir !== undefined) {
-          try {
-            await chmod(lockedArtifactsDir, 0o755);
-          } catch {
-            // cleanup best-effort
-          }
+          })),
+        },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.runId, runId);
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound",
+        "runs",
+        `${runId}@judge`,
+      );
+      const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
+        ?.data?.diagnostic;
+      assert.equal(typeof noteText, "string");
+    } finally {
+      if (lockedArtifactsDir !== undefined) {
+        try {
+          await chmod(lockedArtifactsDir, 0o755);
+        } catch {
+          // cleanup best-effort
         }
       }
-    });
-  }
+    }
+  });
 });
 // Post-admission zero-exit matrix: admission succeeded, the pi child exits
 // zero, and no accepted ledger row exists — a missing session transcript, or
@@ -223,6 +214,8 @@ test("production knownFailure channel reaches settlement as provider with typed 
     const { io, stdout, stderr } = captureIo();
     // Resolved runner result — production-owned channel on ExplicitInternalPiResult,
     // not an ad-hoc thrown Error property and not stderr-prose inference.
+    const hostDiagnostic = "host own diagnostic";
+    const hostStderr = "activation wrapper exited nonzero\nsecond line\n";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider down"],
       {
         packageRoot,
@@ -238,13 +231,15 @@ test("production knownFailure channel reaches settlement as provider with typed 
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
-            code: 1,
-            // Deliberately misleading prose — cause must come from knownFailure only.
-            stderr: "activation wrapper exited nonzero\n",
-            timedOut: false,
+            code: 17,
+            signal: "SIGTERM",
+            timedOut: true,
+            // Independent of the typed diagnostic. Both stay.
+            stderr: hostStderr,
             args: [...args],
             knownFailure: {
               cause: "provider",
+              diagnostic: hostDiagnostic,
               identity: {
                 name: "ProviderUnavailableError",
                 code: "PROVIDER_UNAVAILABLE",
@@ -260,22 +255,55 @@ test("production knownFailure channel reaches settlement as provider with typed 
       stdout,
       stderr,
       expectedCause: "provider",
-      // Diagnostic may come from stderr selection or fallback; identity is typed.
+      diagnosticEquals: hostDiagnostic,
       identityName: "ProviderUnavailableError",
       identityCode: "PROVIDER_UNAVAILABLE",
     });
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.roleOutcome.cause, "provider");
-      assert.equal(
-        result.terminal!.roleOutcome.decisiveFacts.errorName,
-        "ProviderUnavailableError",
-      );
-      assert.equal(
-        result.terminal!.roleOutcome.decisiveFacts.errorCode,
-        "PROVIDER_UNAVAILABLE",
-      );
-    }
+    if (result.terminal!.roleOutcome.kind !== "failure") return;
+    assert.equal(result.terminal!.roleOutcome.cause, "provider");
+    assert.equal(result.terminal!.roleOutcome.diagnostic, hostDiagnostic);
+    const facts = result.terminal!.roleOutcome.decisiveFacts;
+    assert.equal(facts.errorName, "ProviderUnavailableError");
+    assert.equal(facts.errorCode, "PROVIDER_UNAVAILABLE");
+    assert.equal(facts.stderr, hostStderr);
+    const packageFact = facts.packageFact as { exitCode?: number; timedOut?: boolean; signal?: string };
+    assert.equal(packageFact.exitCode, 17);
+    assert.equal(packageFact.timedOut, true);
+    assert.equal(packageFact.signal, "SIGTERM");
+    assert.equal(stderr.length, 1);
+    assert.equal(stderr[0]?.includes(hostStderr), true);
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+      diagnostic?: string;
+      stderr?: string;
+      packageFact?: { exitCode?: number; timedOut?: boolean; signal?: string };
+    };
+    assert.equal(errorBody.diagnostic, hostDiagnostic);
+    assert.equal(errorBody.stderr, hostStderr);
+    assert.equal(errorBody.packageFact?.exitCode, 17);
+    assert.equal(errorBody.packageFact?.timedOut, true);
+    assert.equal(errorBody.packageFact?.signal, "SIGTERM");
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "attempt-history",
+      sessionParent: join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound",
+        "runs",
+        "run-provider-channel-001@judge",
+        "session",
+        "session.jsonl",
+      ),
+    });
+    const history = (await readSitianRecords(recordFile)).records.map((row) =>
+      (row.payload as { outcome?: { stderr?: string; diagnostic?: string; packageFact?: { exitCode?: number } } }).outcome);
+    assert.equal(history.at(-1)?.diagnostic, hostDiagnostic);
+    assert.equal(history.at(-1)?.stderr, hostStderr);
+    assert.equal(history.at(-1)?.packageFact?.exitCode, 17);
   });
 });
 
@@ -324,6 +352,13 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
     const { io, stdout, stderr } = captureIo();
     // The catalog says the credential is absent, but this invocation provides no
     // typed evidence that auth caused its nonzero exit.
+    const hostStderr = [
+      "No API key found for the selected model.",
+      "",
+      "Use /login to log into a provider via OAuth or API key. See:",
+      "  /tmp/example-docs/alpha.md",
+      "  /tmp/example-docs/beta.md",
+    ].join("\n");
     const result = await runAkRole(
       ["--model", "xai/grok-4:off", "judge", "--project", project, "empty auth"],
       {
@@ -342,13 +377,7 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stderr: [
-              "No API key found for the selected model.",
-              "",
-              "Use /login to log into a provider via OAuth or API key. See:",
-              "  /tmp/example-docs/alpha.md",
-              "  /tmp/example-docs/beta.md",
-            ].join("\n"),
+            stderr: hostStderr,
             timedOut: false,
             args: [...args],
             // deliberately omit knownFailure — credential channel must supply cause
@@ -357,11 +386,14 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
         }),
       },
     );
+    // No typed confirmation here, so no cause is claimed; the point of the case
+    // is that credential absence did not supply one either. The diagnostic is
+    // the host stderr for this call.
     const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
-      expectedCause: "activation",
+      diagnosticEquals: hostStderr,
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
@@ -374,13 +406,138 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
       identity?: { name?: string; code?: string | number };
       diagnostic: string;
     };
-    assert.equal(errorBody.cause, "activation");
+    // A bare nonzero exit names no cause; what matters here is that credential
+    // absence did not relabel it either.
+    assert.equal(errorBody.cause, undefined);
+    assert.equal(errorBody.diagnostic, hostStderr);
     assert.notEqual(errorBody.identity?.name, "MissingProviderCredential");
-    assert.equal(typeof errorBody.diagnostic, "string");
-    assert.ok(errorBody.diagnostic.length > 0);
     assert.ok(stderr[0]!.length > 0);
   });
 });
+
+test("public entry keeps host details beside package facts and a timeout beside a typed cause", async () => {
+  async function runHost(
+    runId: string,
+    prompt: string,
+    piRunner: (args: readonly string[]) => Promise<{
+      code: number | null;
+      stderr: string;
+      timedOut: boolean;
+      args: string[];
+      knownFailure?: {
+        cause?: "provider";
+        diagnostic?: string;
+        identity?: { name?: string; code?: string | number };
+        details?: Record<string, unknown>;
+      };
+    }>,
+    check: (settled: {
+      result: Awaited<ReturnType<typeof runAkRole>>;
+      stdout: string[];
+      stderr: string[];
+    }) => Promise<void>,
+  ) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--model", "test/caller-seat:high", "--project", project, prompt],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await mkdir(sessionDir, { recursive: true });
+              await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+              return piRunner(args);
+            },
+          }),
+        },
+      );
+      await check({ result, stdout, stderr });
+    });
+  }
+
+  const hostDetails = { code: 99, timedOut: true, exitCode: 7, provider: "xai" };
+  await runHost(
+    "run-host-details-keys-001",
+    "host details keys",
+    async (args) => ({
+      code: 1,
+      stderr: "",
+      timedOut: false,
+      args: [...args],
+      knownFailure: {
+        cause: "provider",
+        diagnostic: "upstream unavailable",
+        identity: { name: "ProviderUnavailableError", code: "PROVIDER_UNAVAILABLE" },
+        details: hostDetails,
+      },
+    }),
+    async ({ result, stdout, stderr }) => {
+      const { errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "provider",
+        diagnosticEquals: "upstream unavailable",
+        identityName: "ProviderUnavailableError",
+        identityCode: "PROVIDER_UNAVAILABLE",
+      });
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        details?: { code?: unknown; timedOut?: unknown; exitCode?: unknown; provider?: unknown };
+        packageFact?: { exitCode?: number | null; timedOut?: boolean };
+      };
+      assert.deepEqual(errorBody.details, hostDetails);
+      assert.equal(errorBody.packageFact?.exitCode, 1);
+      assert.equal(errorBody.packageFact?.timedOut, undefined);
+    },
+  );
+
+  await runHost(
+    "run-timeout-beside-provider-001",
+    "timeout beside provider",
+    async (args) => ({
+      code: null,
+      stderr: "HOST STDERR MUST STAY OFF THE DIAGNOSTIC\n",
+      timedOut: true,
+      args: [...args],
+      knownFailure: {
+        cause: "provider",
+        diagnostic: "rate limited",
+        identity: { name: "ProviderStopError", code: "openai-codex" },
+      },
+    }),
+    async ({ result, stdout, stderr }) => {
+      const { errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "provider",
+        diagnosticEquals: "rate limited",
+        identityName: "ProviderStopError",
+        identityCode: "openai-codex",
+      });
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        details?: unknown;
+        packageFact?: { exitCode?: number | null; timedOut?: boolean };
+      };
+      assert.equal(errorBody.details, undefined);
+      assert.equal(errorBody.packageFact?.exitCode, null);
+      assert.equal(errorBody.packageFact?.timedOut, true);
+    },
+  );
+
+});
+
 test("typed empty-auth host failure settles as MissingProviderCredential (#987)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -448,7 +605,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
     assert.ok(stderr[0]!.length > 0);
   });
 });
-test("lawful terminal preferred over child nonzero exit (no wash into failure)", async () => {
+test("a sealed receipt stays recorded when the host CLI reported a nonzero exit", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -505,13 +662,20 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
         }),
       },
     );
-    assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 0);
+    // The host CLI reported a nonzero exit for this call, so the turn fails on
+    // that report even though a submission was sealed. The sealed receipt is not
+    // lost: it stays on the run-scoped submissions (owner 4743ade7).
+    assert.equal(result.exitCode, 1);
+    assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["converged"]);
-    assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, undefined);
+    }
+    assert.deepEqual(
+      (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)),
+      [`{"status":"converged"}`],
+      "the sealed receipt stays recorded on the run-scoped carrier",
+    );
   });
 });

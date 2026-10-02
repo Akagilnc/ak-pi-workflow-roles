@@ -22,7 +22,7 @@ import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import {
   argvFlagValue,
@@ -61,7 +61,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
     const firstRunDirectory = new Map<string, string>();
     for (const record of PUBLIC_ROLE_RECORDS) {
       const routed: string[] = [];
-      const stderr: string[] = [];
+      const { stderr, io } = captureIo();
       const host = roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -100,12 +100,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           home,
           packageRoot,
           cwd: project,
-          io: {
-            stdout() {},
-            stderr(text: string) {
-              stderr.push(text);
-            },
-          },
+          io,
           boundTicketNumber: TICKET,
           hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host }) }],
           principalAuthority: piDurablePrincipalAuthority,

@@ -6,10 +6,12 @@ import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-cont
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
+  disposeExternalRoleTurn,
   externalHostFailure as failure,
   raceAgainstHostAbort,
-  withExternalHostCleanupFailure,
 } from "../external-host-turn-loop.ts";
+import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
+import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 
 import {
   copyAndRecordHostDossier,
@@ -27,6 +29,8 @@ import {
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
+import { isRecord } from "../unknown-value.ts";
+
 /**
  * #959: collect free-form agent text from ACP session/update stream.
  * Used only when the navigator seat spoke prose without calling the output tool.
@@ -42,7 +46,7 @@ function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | 
   let textFallback: unknown;
 
   const nested = params.update;
-  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+  if (isRecord(nested)) {
     const record = nested as Record<string, unknown>;
     kind = record.sessionUpdate;
     content = record.content;
@@ -55,7 +59,7 @@ function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | 
 
   if (kind !== "agent_message_chunk" && kind !== "agent_message") return undefined;
   if (typeof content === "string" && content.length > 0) return content;
-  if (typeof content === "object" && content !== null && !Array.isArray(content)) {
+  if (isRecord(content)) {
     const record = content as Record<string, unknown>;
     if (typeof record.text === "string" && record.text.length > 0) return record.text;
   }
@@ -82,7 +86,10 @@ export interface AcpConnection {
   onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
   /** Full process stderr accumulated so far (#836). */
   stderr?(): string;
-  close(): Promise<void>;
+  /** Observed native termination / RPC report, absent before either exists. */
+  result?(): RoleTurnResult | undefined;
+  /** Return spontaneous native termination, not a package-initiated daemon stop. */
+  close(): Promise<void | RoleTurnResult>;
 }
 
 export type AcpRoleTurnHostConfig = Readonly<{
@@ -114,15 +121,20 @@ export function connectAcpStdio(options: {
   readonly onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void;
 }): Promise<AcpConnection> {
   const child = spawn(options.binary, [...options.args], { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
-  const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: Error): void }>();
+  const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: unknown): void }>();
   const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
   if (options.onNotification !== undefined) notificationHandlers.push(options.onNotification);
   let nextId = 0;
   let closed = false;
-  let terminalError: Error | undefined;
-  // Rolling diagnostic tail only — not an unbounded transcript face (same class as headless).
+  let terminalError: unknown;
+  let spawned = false;
+  let stoppedByPackage = false;
+  let nativeExit: Pick<RoleTurnResult, "code" | "signal" | "timedOut"> | undefined;
+  let rpcFailure: RoleTurnResult["knownFailure"];
+  child.once("spawn", () => { spawned = true; });
+  // Native stderr bytes stay separate from transport exception diagnostics.
   let stderr = "";
-  const settleClosed = (error: Error): void => {
+  const settleClosed = (error: unknown): void => {
     if (closed) return;
     closed = true;
     terminalError = error;
@@ -132,59 +144,71 @@ export function connectAcpStdio(options: {
   // Framing corruption or a known required capability with unusable shape still
   // closes the child. Unknown client methods are answered in-band (JSON-RPC
   // method not found) and do not terminate the leg (#760).
-  const terminate = (error: Error): void => {
+  const terminate = (error: unknown): void => {
     settleClosed(error);
     child.stdin.end();
-    child.kill("SIGTERM");
+    stoppedByPackage = child.kill("SIGTERM") || stoppedByPackage;
   };
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     stderr += chunk;
-  });
-  child.on("error", (error) => settleClosed(acpError("acp-process-error", `ACP process error: ${error.message}`, error)));
-  createInterface({ input: child.stdout }).on("line", (line) => {
-    let message: RpcReply;
-    try { message = JSON.parse(line) as RpcReply; }
-    catch (error) {
-      terminate(acpError("acp-invalid-json", `Invalid ACP JSON: ${String(error)}`, error));
-      return;
-    }
-    if (typeof message.method === "string") {
-      const params = typeof message.params === "object" && message.params !== null
-        ? message.params as Readonly<Record<string, unknown>> : {};
-      for (const handler of notificationHandlers) handler(message.method, params);
-      if (typeof message.id === "number") {
-        if (message.method !== "session/request_permission") {
-          // Vendor extensions (_x.ai/*, …) and any other unhandled client request:
-          // JSON-RPC method-not-found reply; session continues (#760).
-          child.stdin.write(`${JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: { code: -32601, message: `Method not found: ${message.method}` },
-          })}\n`);
-          return;
+  }).on("error", terminate);
+  child.on("error", settleClosed);
+  child.stdin.on("error", terminate);
+  createInterface({ input: child.stdout }).on("error", terminate).on("line", (line) => {
+    try {
+      const message = JSON.parse(line) as RpcReply;
+      if (typeof message.method === "string") {
+        const params = typeof message.params === "object" && message.params !== null
+          ? message.params as Readonly<Record<string, unknown>> : {};
+        for (const handler of notificationHandlers) handler(message.method, params);
+        if (typeof message.id === "number") {
+          if (message.method !== "session/request_permission") {
+            // Vendor extensions (_x.ai/*, …) and any other unhandled client request:
+            // JSON-RPC method-not-found reply; session continues (#760).
+            child.stdin.write(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32601, message: `Method not found: ${message.method}` },
+            })}\n`);
+            return;
+          }
+          const choices = Array.isArray(params.options) ? params.options : [];
+          const selected = choices.find((value) =>
+            typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "allow_once") as { optionId?: unknown } | undefined;
+          if (typeof selected?.optionId !== "string") {
+            terminate(acpError("acp-permission-missing-allow-once", "ACP permission request omitted allow_once"));
+            return;
+          }
+          child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "selected", optionId: selected.optionId } } })}\n`);
         }
-        const choices = Array.isArray(params.options) ? params.options : [];
-        const selected = choices.find((value) =>
-          typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "allow_once") as { optionId?: unknown } | undefined;
-        if (typeof selected?.optionId !== "string") {
-          terminate(acpError("acp-permission-missing-allow-once", "ACP permission request omitted allow_once"));
-          return;
-        }
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "selected", optionId: selected.optionId } } })}\n`);
+        return;
       }
-      return;
+      if (typeof message.id !== "number") return;
+      const waiter = pending.get(message.id);
+      if (waiter === undefined) return;
+      pending.delete(message.id);
+      if (message.error !== undefined) {
+        const diagnostic = typeof message.error === "object" && message.error !== null
+          && "message" in message.error && typeof message.error.message === "string"
+          ? message.error.message : JSON.stringify(message.error);
+        rpcFailure ??= { diagnostic, details: message };
+        waiter.reject(acpError("acp-upstream-error", diagnostic, message));
+      } else waiter.resolve((message.result ?? {}) as Readonly<Record<string, unknown>>);
+    } catch (error) {
+      terminate(error);
     }
-    if (typeof message.id !== "number") return;
-    const waiter = pending.get(message.id);
-    if (waiter === undefined) return;
-    pending.delete(message.id);
-    if (message.error !== undefined) waiter.reject(acpError("acp-upstream-error", `ACP error: ${JSON.stringify(message.error)}`));
-    else waiter.resolve((message.result ?? {}) as Readonly<Record<string, unknown>>);
   });
-  child.on("close", (code) => settleClosed(acpError("acp-closed", `ACP closed (${String(code)}): ${stderr}`)));
+  const processClosed = new Promise<void>((resolve) => {
+    child.once("close", (code, signal) => {
+      // ENOENT also emits close, but no host process was launched in that case.
+      if (spawned) nativeExit = { code, timedOut: false, ...(signal === null ? {} : { signal }) };
+      settleClosed(acpError("acp-closed", "ACP process closed"));
+      resolve();
+    });
+  });
   return Promise.resolve({
     request(method, params) {
-      if (closed) return Promise.reject(terminalError ?? acpError("acp-connection-closed", "ACP connection is closed"));
+      if (closed) return Promise.reject(terminalError);
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
@@ -193,12 +217,12 @@ export function connectAcpStdio(options: {
           const waiter = pending.get(id);
           if (waiter === undefined) return;
           pending.delete(id);
-          waiter.reject(acpError("acp-write-failed", `ACP write failed: ${error.message}`, error));
+          waiter.reject(error);
         });
       });
     },
     notify(method, params) {
-      if (closed) throw terminalError ?? acpError("acp-connection-closed", "ACP connection is closed");
+      if (closed) throw terminalError;
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
     onNotification(handler) {
@@ -207,12 +231,18 @@ export function connectAcpStdio(options: {
     stderr() {
       return stderr;
     },
+    result() {
+      if (nativeExit === undefined && rpcFailure === undefined) return undefined;
+      return {
+        ...(nativeExit ?? { code: null, timedOut: false }),
+        stderr,
+        ...(rpcFailure === undefined ? {} : { knownFailure: rpcFailure }),
+      };
+    },
     async close() {
-      if (closed) return;
-      settleClosed(acpError("acp-connection-closed", "ACP connection is closed"));
-      child.stdin.end();
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+      if (!closed) terminate(acpError("acp-connection-closed", "ACP connection is closed"));
+      await processClosed;
+      return !stoppedByPackage && nativeExit !== undefined ? { ...nativeExit, stderr } : undefined;
     },
   });
 }
@@ -227,8 +257,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let sessionOpened = false;
     let accepted = false;
     const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
-    // Mutable so dispose failure can outrank a clean turn.
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
+    let reportedFailure: RoleTurnResult["knownFailure"];
+    let packageFailure: RoleTurnResult["knownFailure"];
     try {
       if (prepared.mcpServers.length === 0) {
         outcome = failure("activation", "UncontrolledAcpSession", "ak-config-missing");
@@ -359,9 +390,15 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             collectAgentProse = false;
             if (result.stopReason === "refusal") {
               agentProseChunks.length = 0;
+              reportedFailure = { diagnostic: result.stopReason, details: result };
               return {
                 status: "terminal",
-                result: failure("output", "AcpRefusal", "refusal", { sessionId }),
+                result: {
+                  code: null,
+                  stderr: activeConnection.stderr?.() ?? "",
+                  timedOut: false,
+                  knownFailure: reportedFailure,
+                },
               };
             }
             // #959: navigator prose exit when the model spoke without the output tool.
@@ -387,32 +424,90 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         } // sessionReady
         } // model match else
       } // mcpServers else
+    } catch (error) {
+      const native = connection?.result?.();
+      reportedFailure = native?.knownFailure;
+      outcome = native ?? { code: null, stderr: connection?.stderr?.() ?? "", timedOut: false };
+      await retainPackageFault({
+        runDirectory: request.runDirectory,
+        diagnostic: `ACP turn exception beside native host facts: ${describeErrorIdentity(error)}`,
+        error,
+      });
+      // Native abnormal exit / RPC report stays primary. Otherwise this is a
+      // real package exception, not a host cause inferred from missing output.
+      if (outcome.knownFailure === undefined && !outcome.timedOut && outcome.signal === undefined
+        && (native === undefined || outcome.code === 0 || outcome.code === null)) {
+        packageFailure = projectThrownFailureLeaf(error);
+        outcome = { ...outcome, knownFailure: packageFailure };
+      }
     } finally {
+      let naturalTermination: RoleTurnResult | void = undefined;
       if (connection !== undefined) {
         if (sessionId !== undefined && !accepted) {
           try { connection.notify("session/cancel", { sessionId }); }
-          catch { /* keep turn result */ }
+          catch (error) {
+            await retainPackageFault({
+              runDirectory: request.runDirectory,
+              diagnostic: `session cancel failed beside host terminal: ${describeErrorIdentity(error)}`,
+              error,
+            });
+          }
         }
-        try { await connection.close(); }
-        catch { /* keep turn result */ }
+        try { naturalTermination = await connection.close(); }
+        catch (error) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `connection close failed beside host terminal: ${describeErrorIdentity(error)}`,
+            error,
+          });
+        }
+      }
+      // Both success and failure drain the native stderr stream, including
+      // bytes arriving after the last RPC response.
+      outcome = { ...outcome, stderr: connection?.stderr?.() ?? outcome.stderr };
+      // On abnormal paths, teardown has now drained the real close/stderr.
+      // A successful ACP protocol turn remains successful: its ordinary
+      // connection cleanup is not reclassified as a role failure.
+      const native = connection?.result?.() ?? naturalTermination;
+      if (native !== undefined && (naturalTermination !== undefined || outcome.code !== 0
+        || outcome.knownFailure !== undefined || outcome.timedOut || outcome.signal !== undefined)) {
+        // A late native failure stays primary over a package failure. An own
+        // SIGTERM stop alone is ordinary disposal, not a guessed host cause.
+        const nativeFailed = (native.code !== null && native.code !== 0)
+          || (naturalTermination !== undefined && (native.timedOut || native.signal !== undefined));
+        let knownFailure = outcome.knownFailure;
+        if (nativeFailed && knownFailure !== undefined && knownFailure !== reportedFailure) {
+          if (knownFailure !== packageFailure) await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: knownFailure.diagnostic ?? "ACP package failure beside late native termination",
+            error: knownFailure,
+          });
+          knownFailure = reportedFailure;
+        }
+        const { knownFailure: _nativeFailure, ...facts } = native;
+        outcome = { ...facts, ...(knownFailure === undefined ? {} : { knownFailure }) };
       }
       if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
-        copyAndRecordHostDossier({
-          host: config.hostName,
-          sessionId,
-          cwd: request.cwd,
-          sessionDirectory: join(request.runDirectory, "session"),
-          sessionParent,
-          continuation: request.continuation,
-          ...(request.model !== undefined ? { model: request.model } : {}),
-          ...(request.home !== undefined ? { home: request.home } : {}),
-        });
+        try {
+          copyAndRecordHostDossier({
+            host: config.hostName,
+            sessionId,
+            cwd: request.cwd,
+            sessionDirectory: join(request.runDirectory, "session"),
+            sessionParent,
+            continuation: request.continuation,
+            ...(request.model !== undefined ? { model: request.model } : {}),
+            ...(request.home !== undefined ? { home: request.home } : {}),
+          });
+        } catch (error) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
+            error,
+          });
+        }
       }
-      try {
-        await prepared.dispose?.();
-      } catch (cleanupError) {
-        outcome = withExternalHostCleanupFailure(outcome, cleanupError, "AcpDisposeFailure");
-      }
+      outcome = await disposeExternalRoleTurn(prepared, request, outcome);
     }
     return outcome;
   });
