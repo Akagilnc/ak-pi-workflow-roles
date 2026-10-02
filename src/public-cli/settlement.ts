@@ -651,28 +651,30 @@ function isTypedActivationError(
   return isControlledFailureCause(cause);
 }
 
-/** Flatten nested AggregateError leaves; non-aggregate values stay as one fact. */
-function flattenThrownFailureLeaves(error: unknown): unknown[] {
-  if (!(error instanceof AggregateError)) {
-    return [error];
-  }
-  const leaves: unknown[] = [];
-  for (const item of error.errors) {
-    leaves.push(...flattenThrownFailureLeaves(item));
-  }
-  return leaves;
-}
-
 /**
  * Project one thrown value into a ControlledFailure leaf.
  * Sole owner for thrown-leaf identity/diagnostic mapping.
- * AggregateError nesting is handled by classifyThrownFailure.
+ * Aggregate shells and their direct children remain distinct facts.
  */
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
   const originalDetails = error !== null && typeof error === "object"
     ? (error as { details?: Readonly<Record<string, unknown>> }).details
     : undefined;
-  const details = originalDetails === undefined ? { error: serializeThrownValue(error) } : originalDetails;
+  const testimony = {
+    error: serializeThrownValue(error),
+    ...(error instanceof AggregateError
+      ? { concurrentFailures: error.errors.map(projectThrownFailureLeaf) }
+      : {}),
+  };
+  const details = originalDetails === undefined ? testimony : originalDetails;
+  const packageFact = originalDetails === undefined ? {} : {
+    packageFact: {
+      thrown: {
+        diagnostic: error instanceof Error ? error.message || error.name || "exception" : "non-Error throw",
+        details: testimony,
+      },
+    },
+  };
   if (isTypedActivationError(error)) {
     const identity = thrownIdentity(error);
     return {
@@ -682,6 +684,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
         ? { ...identity, code: error.failureCode }
         : identity,
       details,
+      ...packageFact,
     };
   }
   if (error instanceof Error) {
@@ -691,41 +694,13 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
       diagnostic: error.message || error.name || "exception",
       identity,
       details,
+      ...packageFact,
     };
   }
   return {
     diagnostic: error !== null && typeof error === "object" ? "non-Error throw" : String(error),
     details,
-  };
-}
-
-/**
- * Concurrent thrown failures (host + cleanup, etc.):
- * The typed report (or first leaf) owns cause/diagnostic/identity/details.
- * Additional leaves ride under the existing independent package exception fact.
- */
-function classifyThrownFailure(error: unknown): ControlledFailure {
-  if (!(error instanceof AggregateError)) {
-    return projectThrownFailureLeaf(error);
-  }
-  const leaves = flattenThrownFailureLeaves(error);
-  if (leaves.length === 0) {
-    // Empty aggregate — retain the aggregate shell rather than invent a cause.
-    return projectThrownFailureLeaf(error);
-  }
-  const typedAggregate = isTypedActivationError(error);
-  const primary = projectThrownFailureLeaf(typedAggregate ? error : leaves[0]);
-  const secondary = typedAggregate ? leaves : leaves.slice(1);
-  if (secondary.length === 0) return primary;
-  return {
-    ...primary,
-    packageFact: {
-      thrown: {
-        diagnostic: error.message || error.name || "exception",
-        identity: thrownIdentity(error),
-        details: { concurrentFailures: secondary.map(projectThrownFailureLeaf) },
-      },
-    },
+    ...packageFact,
   };
 }
 
@@ -761,7 +736,7 @@ function withKnownDetails(
  * Order: thrown → knownCause → timeout → activation (nonzero) → clean exit.
  * knownCause precedes timeout so a co-present typed provider/session identity is not
  * washed when the child also timed out. Cause is never inferred from stderr wording.
- * AggregateError concurrent leaves keep primary identity and secondary facts in details.
+ * AggregateError shells, direct children and raw testimony stay distinct.
  */
 /**
  * Wording for a failure the host reported without a diagnostic of its own. The
@@ -840,7 +815,7 @@ export function classifyPostAdmissionFailure(input: {
   // both real facts: the host's report stays the cause, and the later exception
   // is kept beside it (失败诚实宪法：接住可以，洗白不行).
   if (Object.hasOwn(input, "thrown")) {
-    const thrown = classifyThrownFailure(input.thrown);
+    const thrown = projectThrownFailureLeaf(input.thrown);
     // A host that carried a details record reported *something* for this call,
     // even with no typed class: that record is its own and must not be
     // displaced by the exception.

@@ -13,6 +13,7 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { isRecord } from "./unknown-value.ts";
+import { serializeThrownValue } from "./serialize-thrown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -161,11 +162,6 @@ export const GATEKEEPER_TOOL_SPEC = roleSubmissionDeclaration("gatekeeper");
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
-
-function failureReason(error: unknown): string {
-  if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
 
 /** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
@@ -389,7 +385,7 @@ export async function projectGatekeeperRun(
   } catch (error) {
     return {
       officer,
-      result: { status: "transport_failure", stage: officer, reason: failureReason(error) },
+      result: { status: "transport_failure", stage: officer, reason: serializeThrownValue(error) },
     };
   }
   return {
