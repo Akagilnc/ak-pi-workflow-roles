@@ -61,48 +61,6 @@ export function runDirectoryFromSessionDirectory(sessionDirectory: string): stri
 }
 
 /**
- * First `runs` segment of a **book-relative** path. The next segment is the run leaf.
- * A later directory that is also named `runs` is inside the run, not another leaf.
- * Absolute ledger paths and `<bookKey>/...` books-root paths are a different
- * coordinate: a book key may itself be `runs`. Bind those to the caller's
- * historical book roots before calling.
- */
-export function runsSegmentOf(path: string): {
-  readonly index: number;
-  readonly leaf: string;
-  readonly sourceRelative: string;
-} | undefined {
-  const parts = path.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
-  const index = parts.indexOf("runs");
-  if (index < 0 || index + 1 >= parts.length) return undefined;
-  const leaf = parts[index + 1];
-  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
-  return { index, leaf, sourceRelative: parts.slice(0, index + 2).join("/") };
-}
-
-/**
- * Run containers under one book: flat `runs/` plus each subject `runs/`.
- * A subject directory named `runs` is the flat container, not a second tree.
- * Missing book still yields the flat container so callers treat ENOENT as empty.
- */
-export async function listBookRunContainers(bookDir: string): Promise<string[]> {
-  const containers = [join(bookDir, "runs")];
-  let subjects;
-  try {
-    subjects = await readdir(bookDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoent(error)) return containers;
-    throw error;
-  }
-  const names = subjects
-    .filter((subject) => subject.isDirectory() && subject.name !== "runs")
-    .map((subject) => subject.name)
-    .sort((a, b) => a.localeCompare(b));
-  for (const name of names) containers.push(join(bookDir, name, "runs"));
-  return containers;
-}
-
-/**
  * Sole book-level run directory walk: flat legacy `runs/` plus each
  * `subject/runs/` child (ticket / unbound). One authority for read-side
  * enumeration under a book directory — findRunDirectoryById, analyst scan,
@@ -111,12 +69,13 @@ export async function listBookRunContainers(bookDir: string): Promise<string[]> 
 export async function listBookRunDirectories(bookDir: string): Promise<string[]> {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const runsDir of await listBookRunContainers(bookDir)) {
+
+  const collect = async (runsDir: string): Promise<void> => {
     let entries;
     try {
       entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isEnoent(error)) continue;
+      if (isEnoent(error)) return;
       throw error;
     }
     for (const entry of entries) {
@@ -126,6 +85,20 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
       seen.add(runDir);
       out.push(runDir);
     }
+  };
+
+  await collect(join(bookDir, "runs"));
+
+  let subjects;
+  try {
+    subjects = await readdir(bookDir, { withFileTypes: true });
+  } catch (error) {
+    if (isEnoent(error)) return out.sort();
+    throw error;
+  }
+  for (const subject of subjects) {
+    if (!subject.isDirectory() || subject.name === "runs") continue;
+    await collect(join(bookDir, subject.name, "runs"));
   }
   return out.sort();
 }

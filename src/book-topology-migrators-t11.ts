@@ -31,8 +31,6 @@ import {
   listMigrationDirents,
   uniqueRunLeafExistsInBook,
 } from "./book-topology-migration-placement.ts";
-import { parseRunLeaf, runsSegmentOf } from "./role-run-placement.ts";
-import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -48,7 +46,8 @@ const NAVIGATOR_PARTITION = "navigator";
 const COLLECTOR_HANDBOOK_PARTITION = "collector-handbook";
 const MANUAL_ARCHIVES_PARTITION = "manual-archives";
 
-
+const TICKET_NUMBER_NAME = /^[1-9][0-9]*$/;
+const RUN_LEAF = /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
 
 const DEPRECATED_KIND_DIRECTORIES = [
   "submission-candidate",
@@ -75,6 +74,8 @@ export function isDeprecatedRunPage(name: string): boolean {
   return DEPRECATED_RUN_PAGE_NAME_SET.has(name);
 }
 
+type RunLeaf = { readonly runId: string; readonly role: string };
+
 type ParentRun = {
   readonly bookKey: string;
   readonly leafName: string;
@@ -82,6 +83,15 @@ type ParentRun = {
   readonly runId: string;
   readonly role: string;
 };
+
+function parseRunLeaf(name: string): RunLeaf | undefined {
+  const match = RUN_LEAF.exec(name);
+  if (match === null) return undefined;
+  const runId = match[1];
+  const role = match[2];
+  if (runId === undefined || role === undefined) return undefined;
+  return { runId, role };
+}
 
 function sourceIdentity(backupBooksDirectory: string, path: string): string {
   return relative(backupBooksDirectory, path).split(sep).join("/");
@@ -170,27 +180,36 @@ function parseParentRunBoundToMigration(
     return undefined;
   }
 
-  // rel is books-root-relative: `<bookKey>/...`. The book key is its own coordinate.
   const parts = rel.split("/").filter((part) => part.length > 0);
-  const bookKey = parts[0];
-  if (bookKey === undefined || parts.length < 2) return undefined;
-  const segment = runsSegmentOf(parts.slice(1).join("/"));
-  if (segment === undefined) return undefined;
-  const before = parts.slice(1, 1 + segment.index);
-  const flat = before.length === 0;
-  const subjectNest = before.length === 1
-    && (before[0] === "unbound" || (before[0] !== undefined && isTicketNumberString(before[0])));
-  const issuesNest = before.length === 2
-    && before[0] === "issues"
-    && before[1] !== undefined
-    && isTicketNumberString(before[1]);
-  if (!flat && !subjectNest && !issuesNest) return undefined;
-  const leaf = parseRunLeaf(segment.leaf);
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 1 || runsIndex + 1 >= parts.length) return undefined;
+  const leafName = parts[runsIndex + 1];
+  const before = parts.slice(0, runsIndex);
+  if (leafName === undefined) return undefined;
+  let bookKey: string | undefined;
+  if (before.length === 1) {
+    bookKey = before[0];
+  } else if (
+    before.length === 2
+    && (before[1] === "unbound" || (before[1] !== undefined && isTicketNumberString(before[1])))
+  ) {
+    bookKey = before[0];
+  } else if (
+    before.length === 3
+    && before[1] === "issues"
+    && before[2] !== undefined
+    && isTicketNumberString(before[2])
+  ) {
+    // Legacy issues/<ticket>/runs/<leaf> bound to this book.
+    bookKey = before[0];
+  }
+  if (bookKey === undefined) return undefined;
+  const leaf = parseRunLeaf(leafName);
   if (leaf === undefined) return undefined;
   return {
     bookKey,
-    leafName: segment.leaf,
-    sourceRelative: segment.sourceRelative,
+    leafName,
+    sourceRelative: parts.slice(1, runsIndex + 2).join("/"),
     runId: leaf.runId,
     role: leaf.role,
   };
@@ -536,8 +555,8 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
   async migrate(context: BookTopologyMigrationContext) {
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
-    // Copied run pages are rewritten after record-class cleanup. Volumes land
-    // after that and reuse the same relocation authority with the historical map.
+    // T9 already rewrote pages present in flat runs; volumes land after that and
+    // must reuse the same relocation authority with the full historical→final map.
     const crossRunRewrites = await collectPlacedRunRewrites(
       booksDirectory,
       backupBooksDirectory,
@@ -584,7 +603,7 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
           outcomes.push({ disposition: "unbound", source });
           continue;
         }
-        const destNest = sitianRunVolumeDirectory(destination.runDirectory, AUDITOR_ROLES_PARTITION);
+        const destNest = join(destination.runDirectory, "session", AUDITOR_ROLES_PARTITION);
         await copyVolumeIntoNest(sourcePath, historicalVolume, destNest);
 
         const historicalParents = historicalRunDirectoriesFor(
@@ -656,7 +675,7 @@ export const bookTopologyIssuesMigrator: BookTopologyPartitionMigrator = {
         const sourcePath = join(issuesRoot, entry.name);
         const source = sourceIdentity(backupBooksDirectory, sourcePath);
         const isTicketDir =
-          entry.isDirectory() && isTicketNumberString(entry.name);
+          entry.isDirectory() && TICKET_NUMBER_NAME.test(entry.name);
         if (!isTicketDir || !(await hasAnyFileRecursive(sourcePath))) {
           outcomes.push({ disposition: "discarded", source });
           continue;

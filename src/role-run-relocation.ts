@@ -1,6 +1,6 @@
 /**
- * Typed run-path projection shared by live bind/read and historical migration.
- * Live readers project frozen machine-page locators; only migrators walk durable pages.
+ * Single authority for rewriting durable run pages after a run directory moves.
+ * Live callers project typed fields; only historical migrators walk durable pages.
  *
  * Scope is typed machine-consumed path fields only — never free text, never
  * frozen attachment/artifact bytes. Nested walk is confined to package-owned
@@ -10,13 +10,12 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 
-import {
-  activationBookDirectory,
-  physicalPathIdentity,
-} from "./activation-ledger-topology.ts";
-
+import { activationBookDirectory, physicalPathIdentity } from "./activation-ledger-topology.ts";
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { findRoleRunDirectory, roleRunPlacement, sessionDirectoryOf } from "./role-run-placement.ts";
+import { findRoleRunDirectory, roleRunPlacement } from "./role-run-placement.ts";
+
+import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
+
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
@@ -49,6 +48,8 @@ const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
 const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 const OFFICER_POINTER_FIELDS = ["sessionFile", "runDirectory"] as const;
 const SITIAN_RECORD_FIELDS = ["sessionParent"] as const;
+const SESSION_HEADER_FIELDS = ["parentSession"] as const;
+const BINDING_PARENT_FIELDS = ["sessionFile"] as const;
 
 export type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
@@ -264,18 +265,68 @@ async function rewriteOfficerPointerFile(
   }
 }
 
-type JsonlLineEdit = { readonly line: string; readonly changed: boolean };
+async function rewriteSitianRecordsJsonl(
+  path: string,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): Promise<void> {
+  if (!existsSync(path)) return;
+  const raw = await readFile(path, "utf8");
+  if (raw.length === 0) return;
+  const endsWithNewline = raw.endsWith("\n");
+  const lines = raw.split("\n");
+  // split keeps a trailing empty slot when file ends with \n — preserve it.
+  let changed = false;
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (line === "" && i === lines.length - 1 && endsWithNewline) {
+      out.push("");
+      continue;
+    }
+    if (line.trim() === "") {
+      out.push(line);
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      out.push(line);
+      continue;
+    }
+    if (!isRecord(parsed)) {
+      out.push(line);
+      continue;
+    }
+    if (!("sessionParent" in parsed)) {
+      out.push(line);
+      continue;
+    }
+    const before = parsed.sessionParent;
+    rewriteRunDirectoryPathFieldsAgainstRewrites(
+      parsed,
+      SITIAN_RECORD_FIELDS,
+      rewrites,
+    );
+    if (parsed.sessionParent !== before) changed = true;
+    out.push(JSON.stringify(parsed));
+  }
+  if (!changed) return;
+  const body = out.join("\n");
+  await writeFile(
+    path,
+    endsWithNewline && !body.endsWith("\n") ? `${body}\n` : body,
+    "utf8",
+  );
+}
 
 /**
- * Shared JSONL rewrite: keep empty lines, unparseable lines, and non-objects.
- * `edit` returns undefined to keep the original bytes. A line may be
- * re-stringified (`changed: false`) without forcing a write; the file is
- * rewritten only when some line reports `changed: true`.
- * Parse failures stay on the line. This is not a record-write swallow.
+ * Session transcript typed locators only: header.parentSession and
+ * ak_auditor_parent_attempt_binding data.parent.sessionFile. Never message text.
  */
-async function rewriteJsonlLines(
+async function rewriteSessionTranscriptBindings(
   path: string,
-  edit: (parsed: Record<string, unknown>) => JsonlLineEdit | undefined,
+  rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
   if (!existsSync(path)) return;
   const raw = await readFile(path, "utf8");
@@ -305,13 +356,32 @@ async function rewriteJsonlLines(
       out.push(line);
       continue;
     }
-    const edited = edit(parsed);
-    if (edited === undefined) {
-      out.push(line);
-      continue;
+    let lineChanged = false;
+    if (parsed.type === "session" && "parentSession" in parsed) {
+      const before = parsed.parentSession;
+      rewriteRunDirectoryPathFieldsAgainstRewrites(
+        parsed,
+        SESSION_HEADER_FIELDS,
+        rewrites,
+      );
+      if (parsed.parentSession !== before) lineChanged = true;
+    } else if (
+      parsed.type === "custom" &&
+      parsed.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE &&
+      isRecord(parsed.data) &&
+      isRecord(parsed.data.parent)
+    ) {
+      const parent = parsed.data.parent;
+      const before = parent.sessionFile;
+      rewriteRunDirectoryPathFieldsAgainstRewrites(
+        parent,
+        BINDING_PARENT_FIELDS,
+        rewrites,
+      );
+      if (parent.sessionFile !== before) lineChanged = true;
     }
-    if (edited.changed) changed = true;
-    out.push(edited.line);
+    if (lineChanged) changed = true;
+    out.push(lineChanged ? JSON.stringify(parsed) : line);
   }
   if (!changed) return;
   const body = out.join("\n");
@@ -322,36 +392,16 @@ async function rewriteJsonlLines(
   );
 }
 
-async function rewriteSitianRecordsJsonl(
-  path: string,
-  rewrites: readonly RunDirectoryPathRewrite[],
-): Promise<void> {
-  await rewriteJsonlLines(path, (parsed) => {
-    if (!("sessionParent" in parsed)) return undefined;
-    const before = parsed.sessionParent;
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      parsed,
-      SITIAN_RECORD_FIELDS,
-      rewrites,
-    );
-    return {
-      line: JSON.stringify(parsed),
-      changed: parsed.sessionParent !== before,
-    };
-  });
-}
-
 /**
  * Package-owned nested seams under session/ only:
- * direct-officer *.pointer.json and sitian records.jsonl.
- * Native transcripts stay byte-identical (ADR 0086), including their typed bindings.
- * Never walks attachments/ or artifacts/.
+ * direct-officer *.pointer.json, sitian records.jsonl,
+ * session transcript typed parent bindings. Never walks attachments/ or artifacts/.
  */
 async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  const sessionRoot = sessionDirectoryOf(pagesDirectory);
+  const sessionRoot = join(pagesDirectory, "session");
   async function walk(directory: string): Promise<void> {
     let entries;
     try {
@@ -371,6 +421,8 @@ async function rewriteNestedMachinePathPages(
         await rewriteOfficerPointerFile(path, rewrites);
       } else if (entry.name === "records.jsonl") {
         await rewriteSitianRecordsJsonl(path, rewrites);
+      } else if (entry.name.endsWith(".jsonl")) {
+        await rewriteSessionTranscriptBindings(path, rewrites);
       }
     }
   }

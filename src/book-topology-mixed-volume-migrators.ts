@@ -21,11 +21,6 @@ import {
   listMigrationDirents,
   runRefFromBoundPath,
 } from "./book-topology-migration-placement.ts";
-import {
-  SITIAN_RECORDS_LEAF,
-  sitianRunVolumeDirectory,
-  sitianVolumeRecordsFile,
-} from "./sitian-appender.ts";
 
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
@@ -168,10 +163,7 @@ function volumeDestinationFile(
   if (destRun === undefined) {
     return join(booksDirectory, bookKey, "unbound", kind, fileName);
   }
-  const volume = sitianRunVolumeDirectory(destRun.runDirectory, kind);
-  return fileName === SITIAN_RECORDS_LEAF
-    ? sitianVolumeRecordsFile(volume)
-    : join(volume, fileName);
+  return join(destRun.runDirectory, "session", kind, fileName);
 }
 
 async function placedRunForLeaf(

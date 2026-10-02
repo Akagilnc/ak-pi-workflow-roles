@@ -21,7 +21,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { listBookRunDirectories, parseRunLeaf } from "./role-run-placement.ts";
+import { listBookRunDirectories } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -35,6 +35,11 @@ import { isEnoent } from "./unknown-value.ts";
 
 const RUNS_PARTITION = "runs";
 
+const RUN_LEAF =
+  /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
+
+type RunLeaf = { readonly runId: string; readonly role: string };
+
 type PlannedRunMove = {
   readonly sourcePath: string;
   readonly sourceIdentity: string;
@@ -46,6 +51,12 @@ type PlannedRunMove = {
     | { readonly ticketNumber: number; readonly projectRoot: string; readonly sourcePage: string }
     | undefined;
 };
+
+function parseRunLeaf(name: string): RunLeaf | undefined {
+  const match = RUN_LEAF.exec(name);
+  if (match === null) return undefined;
+  return { runId: match[1]!, role: match[2]! };
+}
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -120,15 +131,7 @@ async function planBookMoves(
       const parts = leaf.relativePath.replaceAll("\\", "/").split("/");
       const ticketStr = parts[1];
       if (ticketStr !== undefined && isTicketNumberString(ticketStr)) {
-        targetPath = parsed === undefined
-          ? join(booksDirectory, bookKey, ticketStr, "runs", leaf.leafName)
-          : destinationRunDirectory(
-            booksDirectory,
-            bookKey,
-            Number(ticketStr),
-            parsed.runId,
-            parsed.role,
-          );
+        targetPath = join(booksDirectory, bookKey, ticketStr, "runs", leaf.leafName);
         disposition = "placed";
         historicalRunDirectory = join(
           booksDirectory,
@@ -238,6 +241,13 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
         bookKey,
       );
 
+      const crossRunRewrites: RunDirectoryPathRewrite[] = planned
+        .filter((move) => move.isDirectory && move.historicalRunDirectory !== undefined)
+        .map((move) => ({
+          oldRunDirectory: move.historicalRunDirectory!,
+          newRunDirectory: move.targetPath,
+        }));
+
       for (const move of planned) {
         if (await pathExists(move.targetPath)) {
           throw new Error(
@@ -245,6 +255,14 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
           );
         }
         await copyRunTree(move.sourcePath, move.targetPath, move.isDirectory);
+        if (move.isDirectory) {
+          await rewriteRoleRunDurablePages({
+            pagesDirectory: move.targetPath,
+            oldRunDirectory: move.historicalRunDirectory ?? move.targetPath,
+            newRunDirectory: move.targetPath,
+            crossRunRewrites,
+          });
+        }
         if (move.isDirectory && move.derivation !== undefined) {
           await writeDerivationPage(move.targetPath, move.derivation);
         }
@@ -259,35 +277,6 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
     return reconcileMigrationPartition(RUNS_PARTITION, "entries", outcomes);
   },
 };
-
-/**
- * Rewrite durable pages on runs already copied by the runs migrator.
- * Record-class cleanup still matches backup line bytes, so this runs after
- * that cleanup rather than between the copy and the byte match.
- */
-export async function rewriteCopiedRunPages(
-  context: BookTopologyMigrationContext,
-): Promise<void> {
-  const { backupBooksDirectory, booksDirectory } = context;
-  for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
-    const planned = await planBookMoves(backupBooksDirectory, booksDirectory, bookKey);
-    const crossRunRewrites: RunDirectoryPathRewrite[] = planned
-      .filter((move) => move.isDirectory && move.historicalRunDirectory !== undefined)
-      .map((move) => ({
-        oldRunDirectory: move.historicalRunDirectory!,
-        newRunDirectory: move.targetPath,
-      }));
-    for (const move of planned) {
-      if (!move.isDirectory) continue;
-      await rewriteRoleRunDurablePages({
-        pagesDirectory: move.targetPath,
-        oldRunDirectory: move.historicalRunDirectory ?? move.targetPath,
-        newRunDirectory: move.targetPath,
-        crossRunRewrites,
-      });
-    }
-  }
-}
 
 export type BoardBoundUnboundRelocation = {
   readonly from: string;

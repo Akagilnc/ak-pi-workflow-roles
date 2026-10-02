@@ -1188,8 +1188,8 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
       identity: "legacy-1",
       payload: { note: "old" },
     });
-    // Same-identity log rows both append; bare replacement must rehome both
-    // physical rows and flip both outcomes (no phantom placed).
+    // Two source rows share identity — second skips physical write but must still
+    // claim dest so bare replace flips both outcomes (no phantom placed).
     const legacyRawDup = JSON.stringify({
       kind: "ticket-provenance",
       subject: String(TICKET),
@@ -1253,7 +1253,7 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
     assert.equal(
       tp.unbound,
       4,
-      "both legacy rows + first bare header+body rehomed",
+      "both legacy claims + first bare header+body rehomed (identity dup still counted)",
     );
     assert.equal(tp.discarded, 0);
 

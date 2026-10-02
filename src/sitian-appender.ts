@@ -66,7 +66,7 @@ type SitianRecordPath = {
 };
 
 /** Sole records leaf under every sitian volume directory. */
-export const SITIAN_RECORDS_LEAF = "records.jsonl" as const;
+const SITIAN_RECORDS_LEAF = "records.jsonl" as const;
 
 export function sitianVolumeDirectory(sessionDirectory: string, category: string): string {
   return join(sessionDirectory, category);
@@ -78,14 +78,6 @@ export function sitianRunVolumeDirectory(runDirectory: string, category: string)
 
 export function sitianVolumeRecordsFile(volumeDirectory: string): string {
   return join(volumeDirectory, SITIAN_RECORDS_LEAF);
-}
-
-export function ticketProvenanceRecordFile(
-  ledgerHome: string,
-  bookKey: string,
-  ticketId: string,
-): string {
-  return ticketProvenanceUnderBookPaths(ledgerHome, bookKey, ticketId).recordFile;
 }
 
 /**
