@@ -36,7 +36,7 @@ import {
   formatUsdPrecise,
 } from "./human-format.ts";
 import { listBookRunDirectories, sessionDirectoryOf } from "./role-run-placement.ts";
-import { isSafePositiveTicketNumber, readRunTicketNumber } from "./run-ticket-number.ts";
+import { isPositiveTicketNumber, readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
@@ -755,7 +755,7 @@ export async function loadTicketTrajectoryRuns(
   issueNumber: number,
   bookIndex?: TicketTrajectoryBookIndex,
 ): Promise<TicketTrajectoryRun[]> {
-  if (!isSafePositiveTicketNumber(issueNumber)) {
+  if (!isPositiveTicketNumber(issueNumber)) {
     throw new Error("issueNumber must be a positive integer");
   }
   const root = resolve(ledgerDir);
@@ -795,7 +795,7 @@ export async function renderTicketTrajectoryHtml(
   now: Date,
   options?: { refreshBoundarySeconds?: number },
 ): Promise<string> {
-  if (!isRecord(ticketSnapshot) || !isSafePositiveTicketNumber(ticketSnapshot.issueNumber)) {
+  if (!isRecord(ticketSnapshot) || !isPositiveTicketNumber(ticketSnapshot.issueNumber)) {
     throw new Error("ticketSnapshot.issueNumber must be a positive integer");
   }
   const issueNumber = ticketSnapshot.issueNumber;
