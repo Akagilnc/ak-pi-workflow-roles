@@ -578,10 +578,6 @@ export function formatCliDiagnostic(message: string): string {
   return `ak-role: ${message}\n`;
 }
 
-/**
- * One concise stderr line for humans. Durable Error Artifact / Terminal keep the
- * full original diagnostic — presentation collapses newlines and flood frames.
- */
 /** #836: full diagnostic on stderr — no first-line clip / flood filter. */
 export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
   const text = failure.diagnostic.trim().length > 0 ? failure.diagnostic : "failure";

@@ -57,7 +57,7 @@ export type TerminalRoleOutcome =
       role: TerminalRoleName;
       /**
        * Typed cause class when a typed fact confirms it.
-       * Omitted when unknown — original diagnostic + error artifact carry the fact (#881).
+       * Omitted when unknown — the original diagnostic retains the fact (#881).
        * Never a fabricated "unrecognized" label.
        */
       cause?: ControlledFailureCause;
