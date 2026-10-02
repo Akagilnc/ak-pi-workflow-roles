@@ -298,13 +298,8 @@ test("gleaner-left resume timeout is not masked by a prior-attempt residual", as
         }),
       },
     );
-    assert.equal(first.exitCode, 1);
-    assert.equal(
-      first.terminal?.roleOutcome.kind === "failure"
-        ? first.terminal.roleOutcome.cause
-        : undefined,
-      "output",
-    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.kind, "no_receipt");
 
     const { io, stdout } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {

@@ -116,7 +116,6 @@ export async function assertPublicFailureSettlement(input: {
   assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
   assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
   assert.ok(terminal.navigator);
-  assert.equal(terminal.resume, undefined);
   assert.equal(typeof terminal.runId, "string");
   assert.ok(terminal.runId !== undefined && terminal.runId.length > 0);
   assert.ok(Array.isArray(terminal.artifacts));

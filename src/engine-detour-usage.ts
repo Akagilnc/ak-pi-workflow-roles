@@ -42,8 +42,8 @@ export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as cons
 
 /**
  * Run-relative sitian volume path for one detour call.
- * Openable once the run directory is known (resume.command / top-level runId);
- * contains no runId bytes itself (#108 + #537 AC8).
+ * Openable once the run directory is known from the terminal's run id.
+ * Contains no runId bytes itself (#108 + #537).
  */
 export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE =
   `session/${ENGINE_DETOUR_CALL_KIND}/records.jsonl` as const;
@@ -237,7 +237,7 @@ export async function readEngineDetourToolUsage(input: {
     }
     const pointer: RecordPointer = {
       identity: record.identity,
-      recordFile,
+      recordFile: ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
       kind: record.kind,
       level: record.level,
     };
@@ -249,36 +249,6 @@ export async function readEngineDetourToolUsage(input: {
 
   const calls = Array.from(callsByToolCallId.values());
   return { callCount: calls.length, calls };
-}
-
-/**
- * Project usage onto the public Terminal face.
- * Non-resumable: keep absolute recordFile (runId already public via top-level runId).
- * Resumable: keep an openable run-relative recordFile and identity with no runId
- * bytes (#108 single disclosure + #537 AC8 reopen).
- */
-export function projectEngineDetourToolUsageForPublicTerminal(
-  usage: EngineDetourToolUsageFact,
-  options: { readonly discloseRecordFile: boolean },
-): EngineDetourToolUsageFact {
-  if (options.discloseRecordFile) return usage;
-  return {
-    callCount: usage.callCount,
-    calls: usage.calls.map((call) => ({
-      toolCallId: call.toolCallId,
-      durationMs: call.durationMs,
-      ...(call.code === undefined ? {} : { code: call.code }),
-      ...(call.stdoutByteLength === undefined
-        ? {}
-        : { stdoutByteLength: call.stdoutByteLength }),
-      recordPointer: {
-        identity: call.recordPointer.identity,
-        kind: call.recordPointer.kind,
-        level: call.recordPointer.level,
-        recordFile: ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
-      },
-    })),
-  };
 }
 
 /** One shared invocation.json reader (ENOENT → undefined; other errors propagate). */
@@ -324,15 +294,16 @@ export function withEngineDetourToolUsageFact<
 }
 
 /**
- * Mint one public-invocation scope id when an engine is mounted.
+ * Mint one public-invocation scope id.
  * Call once at the public-entry boundary — never inside the auto-resume loop.
- * The id lives on RoleTurnRequest / HostContext only (no detour sidecar file).
+ * Auto-resume reuses it; an explicit new public call, including manual resume,
+ * mints another. The id lives on RoleTurnRequest / HostContext only.
+ * Receipt facts and detour rows both use this id, including calls with no
+ * engine mounted — a missing engine must not merge two public calls.
  */
-export function mintEngineDetourInvocationScope(input: {
+export function mintEngineDetourInvocationScope(_input: {
   readonly effectiveEngine?: string;
-}): string | undefined {
-  const engine = input.effectiveEngine?.trim();
-  if (engine === undefined || engine.length === 0) return undefined;
+}): string {
   return randomUUID();
 }
 

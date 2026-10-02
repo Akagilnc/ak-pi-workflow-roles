@@ -7,7 +7,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -49,14 +49,14 @@ test("typed groups travel from real output settlement into the report artifact",
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
-    const stdout: string[] = [];
+    const { stdout, io } = captureIo();
     const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: false },
       createRunId: () => "collector-groups-run",
-      io: { stdout: (text) => stdout.push(text), stderr: () => undefined },
+      io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,

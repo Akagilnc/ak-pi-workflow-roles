@@ -19,15 +19,6 @@ import {
 import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import {
-  readLatestTypedProviderHttpObservation,
-} from "../typed-provider-http.ts";
-export {
-  clearTypedProviderHttpObservation,
-  recordTypedProviderHttpStatus,
-  readLatestTypedProviderHttpObservation,
-  type TypedProviderHttpObservation,
-} from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
@@ -74,18 +65,7 @@ import {
 
 import { isRecord, errorText, isEnoent } from "../unknown-value.ts";
 
-/** Providers eligible for v1 typed-429 resume (Codex / xAI only).
- * @deprecated v1 429-only gate removed by #416 (owner 2026-08-22: "根本不要有限制"). Kept for compatibility; do not use for new branching.
- */
-export const V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"] as const;
-export type V1ResumableProvider = (typeof V1_RESUMABLE_PROVIDERS)[number];
-
 export type RoleRunState = "admitted" | "running" | "resumable" | "terminal";
-
-export type TypedHttp429Observation = {
-  readonly httpStatus: 429;
-  readonly provider: V1ResumableProvider;
-};
 
 /** Default for the #422 configurable single-call auto-resume ceiling
  * (public-cli.json top-level `autoResumeLimit`). No longer the runtime truth
@@ -106,10 +86,6 @@ export type RoleRunRecord = {
   readonly admittedRequestPath: string;
   /** Coder/Fixer — preserved for resume continuation. */
   readonly phase?: CoderPhase | FixerPhase;
-  /** Present only while state === "resumable".
-   * @deprecated retained only for historical 429 runs; #416 no longer gates resume on this field.
-   */
-  readonly resumable?: TypedHttp429Observation;
 };
 
 /**
@@ -181,29 +157,6 @@ export function buildAutoResumeContinuationPrompt(options: {
 const RUN_STATE_FILE = "run-state.json";
 const WRITER_LOCK_FILE = "writer.lock";
 
-/** @deprecated #416: 429-only classification removed; kept for compatibility. */
-export function isV1ResumableProvider(
-  provider: string,
-): provider is V1ResumableProvider {
-  return (V1_RESUMABLE_PROVIDERS as readonly string[]).includes(provider);
-}
-
-/** @deprecated #416: 429-only observation no longer gates resume; kept for historical runs. */
-export async function readTypedHttp429Observation(
-  runDirectory: string,
-): Promise<TypedHttp429Observation | undefined> {
-  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
-  if (observation === undefined) return undefined;
-  if (observation.httpStatus !== 429) return undefined;
-  if (!isV1ResumableProvider(observation.provider)) return undefined;
-  return { httpStatus: 429, provider: observation.provider };
-}
-
-/** Complete public resume command. Run ID is revealed only through this command text. */
-export function renderResumeCommand(runId: string): string {
-  return `ak-role resume ${runId}`;
-}
-
 export async function writeRoleRunState(
   runDirectory: string,
   record: Omit<RoleRunRecord, "runDirectory">,
@@ -236,7 +189,6 @@ type RoleRunStateDisk = {
   readonly admittedRequestPath: string;
   readonly principalWire: RoleRunPrincipalWire;
   readonly phase?: CoderPhase | FixerPhase;
-  readonly resumable?: TypedHttp429Observation;
   /** Open court turn (#637); omit when no unsealed current court. */
   readonly currentCourt?: CurrentCourtState;
 };
@@ -319,7 +271,7 @@ async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | unde
     // failure (EISDIR, EACCES, ...) or a JSON.parse SyntaxError on a present
     // file is genuine infrastructure/data damage and must keep its own
     // identity — callers route it through the controlled-failure seam
-    // (markRunRunning/markRunResumable/markRunTerminal/recordCurrentCourt)
+    // (markRunRunning/markRunTerminal/recordCurrentCourt)
     // instead of it being relabeled "run state missing" (#836).
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
@@ -389,19 +341,6 @@ async function readRoleRunStateDisk(
       ? { sessionFile: rewriteRunDirectoryPathValue(record.sessionFile, storedRunDirectory, runDirectory) as string }
       : {}),
   };
-  let resumable: TypedHttp429Observation | undefined;
-  if (record.resumable !== undefined && record.resumable !== null) {
-    if (isRecord(record.resumable)) {
-      const r = record.resumable;
-      if (
-        r.httpStatus === 429 &&
-        typeof r.provider === "string" &&
-        isV1ResumableProvider(r.provider)
-      ) {
-        resumable = { httpStatus: 429, provider: r.provider };
-      }
-    }
-  }
   const phase =
     record.phase === "plan" || record.phase === "apply"
       ? record.phase
@@ -421,7 +360,6 @@ async function readRoleRunStateDisk(
     ) as string,
     principalWire,
     ...(phase === undefined ? {} : { phase }),
-    ...(resumable === undefined ? {} : { resumable }),
     ...(currentCourt === undefined ? {} : { currentCourt }),
   };
 }
@@ -443,7 +381,6 @@ async function writeRoleRunStateDisk(
       : { sessionFile: disk.principalWire.sessionFile }),
     admittedRequestPath: disk.admittedRequestPath,
     ...(disk.phase === undefined ? {} : { phase: disk.phase }),
-    ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
     ...(disk.currentCourt === undefined ? {} : { currentCourt: disk.currentCourt }),
   };
   await writeFile(
@@ -473,7 +410,6 @@ function materializeRoleRunFromDisk(
         runDirectory: disk.runDirectory,
         admittedRequestPath: disk.admittedRequestPath,
         ...(disk.phase === undefined ? {} : { phase: disk.phase }),
-        ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
       },
     };
   } catch {
@@ -562,20 +498,10 @@ export async function markRunRunning(
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
   }
-  // Omit resumable while a writer is active. Principal wire is passed through uninterpreted.
+  // Principal wire is passed through uninterpreted.
   // Preserve open currentCourt across running transitions (#637).
-  await writeRoleRunStateDisk(runDirectory, {
-    runId: current.runId,
-    role: current.role,
-    state: "running",
-    bookKey: current.bookKey,
-    projectRoot: current.projectRoot,
-    runDirectory: current.runDirectory,
-    admittedRequestPath: current.admittedRequestPath,
-    principalWire: current.principalWire,
-    ...(current.phase === undefined ? {} : { phase: current.phase }),
-    ...(current.currentCourt === undefined ? {} : { currentCourt: current.currentCourt }),
-  });
+  // A historical resumable payload on disk is not copied: the parser never kept it.
+  await writeRoleRunStateDisk(runDirectory, { ...current, state: "running" });
   await recordEffectiveInvocationModel(
     runDirectory,
     effectiveModel,
@@ -591,40 +517,13 @@ export async function markRunRunning(
   );
 }
 
-/** @deprecated #416: 429-only resumable marker; kept for historical runs. */
-export async function markRunResumable(
-  runDirectory: string,
-  observation: TypedHttp429Observation,
-): Promise<void> {
-  const current = await readRoleRunStateDisk(runDirectory);
-  if (current === undefined) {
-    throw new Error("cannot mark resumable: run state missing");
-  }
-  await writeRoleRunStateDisk(runDirectory, {
-    ...current,
-    state: "resumable",
-    resumable: observation,
-  });
-}
-
 export async function markRunTerminal(runDirectory: string): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
   // Preserve the open court's settlement identity after a failed/incomplete turn (#637).
-  await writeRoleRunStateDisk(runDirectory, {
-    runId: current.runId,
-    role: current.role,
-    state: "terminal",
-    bookKey: current.bookKey,
-    projectRoot: current.projectRoot,
-    runDirectory: current.runDirectory,
-    admittedRequestPath: current.admittedRequestPath,
-    principalWire: current.principalWire,
-    ...(current.phase === undefined ? {} : { phase: current.phase }),
-    ...(current.currentCourt === undefined ? {} : { currentCourt: current.currentCourt }),
-  });
+  await writeRoleRunStateDisk(runDirectory, { ...current, state: "terminal" });
 }
 
 /** Read the open court turn on a retained run, if any (#637). */
@@ -668,26 +567,30 @@ export async function clearCurrentCourt(
   ) {
     return;
   }
-  await writeRoleRunStateDisk(runDirectory, {
-    runId: current.runId,
-    role: current.role,
-    state: current.state,
-    bookKey: current.bookKey,
-    projectRoot: current.projectRoot,
-    runDirectory: current.runDirectory,
-    admittedRequestPath: current.admittedRequestPath,
-    principalWire: current.principalWire,
-    ...(current.phase === undefined ? {} : { phase: current.phase }),
-    ...(current.resumable === undefined ? {} : { resumable: current.resumable }),
-  });
+  const { currentCourt: _currentCourt, ...rest } = current;
+  await writeRoleRunStateDisk(runDirectory, rest);
 }
 
 export class RunWriterLeaseHeldError extends Error {
   readonly code = "AK_RUN_WRITER_LEASE_HELD" as const;
-  constructor(message = "role run writer lease is already held") {
+  /**
+   * Why the lease could not be taken, as structured data: the OS errno of the
+   * underlying reclaim failure when there was one. Carried so a consumer
+   * asserts the real cause instead of recognising it in the message text
+   * (质量法: 机器只咬契约，不咬呈现).
+   */
+  readonly causeCode?: string | number;
+  constructor(message = "role run writer lease is already held", causeCode?: string | number) {
     super(message);
     this.name = "RunWriterLeaseHeldError";
+    if (causeCode !== undefined) this.causeCode = causeCode;
   }
+}
+
+/** The OS errno of a thrown value, when it carries one. */
+function errnoOf(error: unknown): string | number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" || typeof code === "number" ? code : undefined;
 }
 
 export type RunWriterLease = {
@@ -971,6 +874,7 @@ export async function acquireRunWriterLease(
     } catch (reclaimError) {
       throw new RunWriterLeaseHeldError(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
+        errnoOf(reclaimError),
       );
     }
     if (reclaimed) {
@@ -984,6 +888,7 @@ export async function acquireRunWriterLease(
     lastReclaimFailure !== undefined
       ? `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)}; last reclaim failure: ${describeErrorIdentity(lastReclaimFailure)})`
       : `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
+    lastReclaimFailure === undefined ? undefined : errnoOf(lastReclaimFailure),
   );
 }
 
@@ -1204,7 +1109,6 @@ async function loadResumableRunRecord(
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
-  readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
   const runDirectory = await findRunDirectoryById(home, runId);
@@ -1469,7 +1373,6 @@ async function loadResumableRunRecord(
   return {
     run,
     principal,
-    ...(run.resumable === undefined ? {} : { observation: run.resumable }),
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -1530,14 +1433,12 @@ function resumedBaseAdmitted(loaded: {
 function seatLoadedResult<R extends AdmittedRoleInvocation>(
   loaded: {
     readonly run: RoleRunRecord;
-    readonly observation?: TypedHttp429Observation;
   },
   admitted: R,
-): { admitted: R; run: RoleRunRecord; observation?: TypedHttp429Observation } {
+): { admitted: R; run: RoleRunRecord } {
   return {
     admitted,
     run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
 
@@ -1554,7 +1455,6 @@ export async function peekRoleRunRole(
 export type LoadedResumablePublicRole = {
   readonly admitted: AdmittedRoleInvocation;
   readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
 };
 
 /**
@@ -1578,7 +1478,6 @@ export async function loadResumablePublicRole(
 function admitResumedRole(loaded: {
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
-  readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }): AdmittedRoleInvocation {
   const role = loaded.run.role;

@@ -37,6 +37,8 @@ export type PreparedRoleTurn = Readonly<{
     }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
+  /** Drain required shutdown work. Its failures throw; ordinary transport
+   * cleanup is reported by its owner without rejecting this drain. */
   dispose?(): Promise<void>;
   /**
    * Headless CLI family (#645): role terminating-tool schema for host-native

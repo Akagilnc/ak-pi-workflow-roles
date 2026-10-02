@@ -1,11 +1,12 @@
 /**
- * Canonical reader for run-directory typed terminal artifacts.
- * Layout owner is settlement publish*Artifacts (report.json / error.json /
- * audit-incomplete.json under artifacts/, plus the same publisher's durable
- * failure fallbacks). This module only reads presence and structural
+ * Canonical layout and reader for run-directory typed terminal artifacts.
+ * Settlement publish*Artifacts uses these names (report.json / error.json /
+ * audit-incomplete.json under artifacts/, plus durable failure fallbacks).
+ * The reader only checks presence and structural
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
+import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -13,9 +14,13 @@ import { parseRunLeaf, roleRunArtifactsDirectory } from "./role-run-placement.ts
 
 import { isRecord, errorText, isMissingPathError } from "./unknown-value.ts";
 
+export const RUN_TERMINAL_REPORT_FILE = "report.json" as const;
+export const RUN_TERMINAL_ERROR_FILE = "error.json" as const;
+export const RUN_TERMINAL_EVIDENCE_FILE = "evidence.json" as const;
+export const RUN_TERMINAL_ERROR_SETTLEMENT_FILE = "error.settlement.json" as const;
 export const RUN_TERMINAL_ARTIFACT_FILES = [
-  "report.json",
-  "error.json",
+  RUN_TERMINAL_REPORT_FILE,
+  RUN_TERMINAL_ERROR_FILE,
   "audit-incomplete.json",
 ] as const;
 
@@ -28,13 +33,18 @@ export type RunTerminalArtifactFile = (typeof RUN_TERMINAL_ARTIFACT_FILES)[numbe
  * Relative to the run directory.
  */
 export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
-  "artifacts/error.settlement.json",
-  "error.settlement.json",
+  `artifacts/${RUN_TERMINAL_ERROR_SETTLEMENT_FILE}`,
+  RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
 ] as const;
 
-/** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */
-const UNIQUE_ERROR_FALLBACK_NAME =
-  /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+/** Publisher and reader share the open-ended error face stem. */
+export const UNIQUE_ERROR_FALLBACK_STEM = "error";
+export function uniqueErrorFallbackName(): string {
+  return `${UNIQUE_ERROR_FALLBACK_STEM}.${randomUUID()}.json`;
+}
+const UNIQUE_ERROR_FALLBACK_NAME = new RegExp(
+  `^${UNIQUE_ERROR_FALLBACK_STEM}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$`, "i",
+);
 
 export type RunTerminalArtifactRead =
   | { readonly status: "absent" }
@@ -262,9 +272,4 @@ export async function readRunTerminalArtifact(
     return unreadable[0]!;
   }
   return { status: "absent" };
-}
-
-/** Test/helper: basename face of a unique fallback path, if any. */
-export function isUniqueErrorFallbackName(name: string): boolean {
-  return UNIQUE_ERROR_FALLBACK_NAME.test(basename(name));
 }

@@ -7,11 +7,11 @@ It is **not** packaged workflow authority, not a generic role-ordering rule, not
 a transition machine, not package memory, not a mechanical gate, and not a
 runtime budget. Callers outside this repository owe it nothing (ADR 0010).
 
-Each role verdict/judgment exists only in that role’s typed submission-tool
-Receipt. A development-trail entry may preserve or cite the Receipt but is not
-itself a verdict and cannot replace the Receipt. Filenames never carry
-verdicts. Restart or compaction recovery is manual rereading of that trail; no
-package resume semantics arise. Timeout guidance remains caller-owned and creates no runtime budget.
+Role-result authority: [submission contracts](../src/package-contracts/terminating-tools.ts)
+and [ADR 0003](adr/0003-per-role-submission-tools.md). Caller-owned composition and
+budgets: [ADR 0010](adr/0010-callers-own-role-composition-and-repetition.md).
+A development-trail entry may preserve or cite the Receipt but is not
+itself a verdict and cannot replace the Receipt.
 
 ## Canonical manual record sequence
 
@@ -22,18 +22,14 @@ be omitted only with an **explicit disposition** recorded in the trail.
    repository-relative path + SHA-256 of exact bytes (see
    `packets/judge-authority.md`).
 2. **Record any authority judgment** — preserve/cite the Authority typed Receipt
-   in the trail against the identified inputs. The trail entry is not the verdict
-   and cannot replace the Receipt. Filename is not the verdict.
-3. **Record a construction plan** — bind authority identity and record
-   Behavior / Owner / Red / Green / Scope for each proposed change (see
-   `packets/judge-plan.md`).
+   in the trail against the identified inputs.
+3. **Record a construction plan** — use [the Plan template](../packets/judge-plan.md).
 4. **Preserve construction receipt / commit / test evidence** — keep the worker
    report, full target commit SHA, and test evidence that the construction
    actually produced.
 5. **Record Apply judgment** — preserve/cite the Apply typed Receipt in the
    trail against authority/plan identities and the committed target (see
-   `packets/judge-apply.md`). The trail entry is not the verdict and cannot
-   replace the Receipt.
+   `packets/judge-apply.md`).
 6. **Preserve independent review and per-finding adjudication** — bind each
    finding/disposition to authority, a fixed reviewed range (full base
    and target SHAs), and current facts (see `packets/judge-review.md`).
@@ -41,8 +37,7 @@ be omitted only with an **explicit disposition** recorded in the trail.
    instructions (see `packets/fixer-repair.md`) and, only when needed, a separate
    typed prerequisite attachment (see `packets/fixer-prerequisites.json`) without
    overwriting prior artifacts. Preserve the accepted current Fixer receipt and
-   its audit observation. Its typed `classResults` records completed or lawfully
-   refused findings.
+   its audit observation; fields are defined by [the Fixer contract](../src/package-contracts/fixer-output.ts).
 
 ## Artifact preservation rules
 
@@ -60,9 +55,5 @@ be omitted only with an **explicit disposition** recorded in the trail.
 
 After session restart or context compaction, re-seed by **manually rereading**
 the artifact trail (paths, digests, receipts, dispositions) before dispatching
-new work. Do not invent package-level memory. Automatic resume of Role runs
-(each non-lawful LLM call retried in-place up to 2 times, call-local counter
-without persistence, runId unchanged, same session, see #416 owner decision
-2026-08-22 "某次调用被掐就像一次 toolcall 被掐然后重试, 讨论的范围一直是单次")
-is explicitly permitted and overrides the former "or automatic resume"
-prohibition in this line; package-level memory remains prohibited.
+new work. Package automatic retry behavior is owned by
+[auto-resume](../src/public-cli/auto-resume.ts), not this manual checklist.

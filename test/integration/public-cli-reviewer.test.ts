@@ -2,7 +2,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
@@ -37,15 +36,12 @@ import {
 import {
   loadResumablePublicRole,
   markRunAdmitted,
-  markRunResumable,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { settleSeatTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
   withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
@@ -59,7 +55,7 @@ function lawfulReviewerReceipt(
   status: "completed" | "refused" = "completed",
   options?: { readonly axisKey?: string; readonly report?: string },
 ) {
-  // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓级第 0 条).
+  // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓内 CLAUDE.md 开篇).
   const axisKey = options?.axisKey ?? lens;
   const report = options?.report ?? `${lens}-axis-report`;
   const amendments = { [axisKey]: report };
@@ -514,117 +510,6 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
   });
 });
 
-test("lawful reviewer Terminal preserves review evidence", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const admitted = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Review completeness and correctness lenses.",
-      attachmentPaths: [],
-      baseRevision: "main",
-      lens: "completeness",
-      // 尺③：非空 authorityRefs 落 evidence artifact 的契约在此承接（原冷装
-      // refs-only e2e 的独有断言，#420 类一收拢后由这条在进程内真 Terminal 承载）。
-      authorityRefs: [
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-      ],
-      createRunId: () => "run-reviewer-settle-001",
-    });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const receipt = {
-      ...lawfulReviewerReceipt("completeness"),
-      auditNoReceipt: {
-        status: "no-receipt",
-        terminalToolCalled: true,
-        rejectedReceipts: [{ reason: "  \t" }],
-        deliveryTurns: 2,
-        sessionCompletion: "settled-without-accepted-receipt",
-        runPointer: "/reviewer-audit/run",
-        attemptPointer: "reviewer-audit-attempt",
-        acceptedReceipt: false,
-      },
-    };
-    const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "Review completeness and correctness lenses." }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "r1",
-              name: REVIEWER_OUTPUT_TOOL_NAME,
-              arguments: { status: "completed" },
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "r1",
-          toolName: REVIEWER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: receipt,
-        },
-      }),
-    ];
-    await writeFile(
-      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
-      `${sessionLines.join("\n")}\n`,
-      "utf8",
-    );
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: project,
-      home,
-      runDirectory: admitted.runDirectory,
-      role: "reviewer",
-      details: receipt,
-      toolCallId: "r1",
-    });
-
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
-    assert.equal(terminal.roleOutcome.role, "reviewer");
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
-    assert.equal(terminal.runId, "run-reviewer-settle-001");
-    assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as Record<string, unknown> & {
-      baseRevision?: string;
-      callerProvenance?: string;
-    };
-    assert.equal("taskPath" in evidence, false);
-    assert.equal("taskSha256" in evidence, false);
-    assert.equal(evidence.baseRevision, "main");
-    assert.deepEqual(evidence.authorityRefs, [
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-    ]);
-    assert.equal(evidence.callerProvenance, "Review completeness and correctness lenses.");
-  });
-});
-
 /** Shortest lawful child turn: write receipt from --ak-review-lens (or override). */
 async function lawfulChildTurn(
   args: readonly string[],
@@ -911,7 +796,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         turnCwd = options.cwd;
         // Explicit --lens shares the ticket worktree (#997).
         assert.equal(realpathSync(options.cwd), realpathSync(project));
-        // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
+        // Deliberate receipt/lens mismatch must still land (仓内 CLAUDE.md 开篇).
         return lawfulChildTurn(args, {
           lens: "completeness",
           toolCallId: "ok1",
@@ -941,17 +826,29 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.equal(values.lens, "correctness");
     assert.deepEqual(values.authority, ["CLAUDE.md", "docs/adr/0001-roles-grow-by-demand.md"]);
     assert.ok(dialogue.slice(dialogue.indexOf("\n")).includes(instruction));
-    const bookKey = resolveBookKeyFromGit(project);
-    const evidence = JSON.parse(
-      await readFile(
-        join(
-          home, ".ak-roles", "books", bookKey, "unbound", "runs",
-          "run-cli-reviewer-ok@reviewer", "artifacts", "evidence.json",
-        ),
-        "utf8",
-      ),
-    ) as { callerProvenance?: string };
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.artifacts.some((a) => a.kind === "report"), true);
+    const evidenceRef = result.terminal?.artifacts.find((a) => a.kind === "evidence");
+    assert.ok(evidenceRef);
+    const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as {
+      callerProvenance?: string;
+      baseRevision?: string;
+      authorityRefs?: string[];
+    };
     assert.equal(evidence.callerProvenance, instruction);
+    assert.equal(evidence.baseRevision, "HEAD~1");
+    assert.deepEqual(evidence.authorityRefs, [
+      "CLAUDE.md",
+      "docs/adr/0001-roles-grow-by-demand.md",
+    ]);
+    assert.equal("taskPath" in evidence, false);
+    assert.equal("taskSha256" in evidence, false);
+    if (result.terminal?.roleOutcome.kind === "accepted") {
+      const amendments = (result.terminal.roleOutcome.payloads?.[0] as {
+        amendments?: { completeness?: string };
+      } | undefined)?.amendments;
+      assert.equal(amendments?.completeness, "completeness-axis-report");
+    }
   });
 });
 
@@ -1111,10 +1008,6 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    await markRunResumable(admitted.runDirectory, {
-      httpStatus: 429,
-      provider: "xai",
-    });
 
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
@@ -1197,14 +1090,9 @@ test("ak-role resume continues reviewer with fixed base", async () => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         }),
       });
-      assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "reviewer");
     }
 
@@ -1321,21 +1209,16 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-        await observeTyped429ViaProductionHandler({
-          runDirectory: join(sessionDir, ".."),
-          provider: "xai",
-        });
         return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
       }),
     });
 
     assert.equal(batch.exitCode, 1, stdout.join(""));
-    const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
-    const correctnessResume = batch.terminal?.reviewerChildren?.correctness?.resume?.command;
-    assert.equal(typeof completenessResume, "string");
-    assert.equal(typeof correctnessResume, "string");
-    const completenessRunId = completenessResume!.slice("ak-role resume ".length);
-    const correctnessRunId = correctnessResume!.slice("ak-role resume ".length);
+    const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
+    const correctnessRunId = batch.terminal?.reviewerChildren?.correctness?.runId;
+    if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
+      assert.fail("dual-lens children must disclose runId");
+    }
     assert.notEqual(completenessRunId, correctnessRunId);
     assert.equal(capturedProviders.length >= 2, true);
     for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
@@ -1413,22 +1296,20 @@ test("default dual-lens relative --project and inline --base fail closed like si
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         }),
       });
       assert.equal(batch.exitCode, 1, batchStdout.join(""));
-      const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
-      assert.equal(typeof completenessResume, "string");
+      const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
+      if (typeof completenessRunId !== "string") {
+        assert.fail("completeness child must disclose runId");
+      }
       const bookKey = resolveBookKeyFromGit(project);
       const admitted = JSON.parse(
         await readFile(
           join(
             home, ".ak-roles", "books", bookKey, "unbound", "runs",
-            `${completenessResume!.slice("ak-role resume ".length)}@reviewer`,
+            `${completenessRunId}@reviewer`,
             "admitted-request.json",
           ),
           "utf8",

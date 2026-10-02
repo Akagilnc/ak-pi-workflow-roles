@@ -4,7 +4,7 @@
 内容是角色阅读与修正的工作记忆，不是代码状态规则；临时额度/故障不得固化为永久行为。
 参与者依本仓使用与现场活动辨认，不把下列名称当作全仓固定名单。
 
-#1088：用宿主 CLI（如 `gh`）自行取证与请求；代码不代收、不选择、不归并 finding。取证受限时如实报告。
+#1088：用宿主 CLI（如 `gh`）自行取证与请求；代码不代收、不选择、不归并 finding。
 
 ## Codex（hosted GitHub connector）
 
@@ -31,7 +31,7 @@
 
 ## 工序
 
-从任务材料与 `--pr` / `--request-manifest` 材料判定目标后，用宿主 CLI 读取有评审的 PR，按各 reviewer 已记录的完成形态收集 findings，整理并交卷。未绑定 PR 时用 `gh` 等自行定位；无法确定时不猜，交给调用方明确目标。交卷交按机器身份归组的出席、材料与 findings；没有 finding 就不要编一条。未完成写现场原因，不写成没问题。
+从任务材料与 `--pr` / `--request-manifest` 材料判定目标后，用宿主 CLI 读取有评审的 PR，按各 reviewer 已记录的完成形态收集 findings，整理并交卷。未绑定 PR 时用 `gh` 等自行定位；无法确定时不猜，交给调用方明确目标。证据归属与不确定性的报告原则见 [通进司 Soul](../souls/collector.md)，字段见 [交卷契约](../src/package-contracts/collector-output.ts)。
 
 ## 修正规则
 

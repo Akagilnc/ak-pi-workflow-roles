@@ -73,3 +73,12 @@ export function processCancelSignalName(
 export function processCancelDiagnostic(signalName: CatchableProcessSignal): string {
   return `ak-role terminated by ${signalName}`;
 }
+
+/**
+ * Diagnostic line for a child the host lost to a signal. The child reported
+ * code=null, which is a non-normal exit and never a successful run
+ * (ADR 0052: 真失败退非零).
+ */
+export function childSignalDeathDiagnostic(signal: string): string {
+  return `role run was killed by ${signal}`;
+}

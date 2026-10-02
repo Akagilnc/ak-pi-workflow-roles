@@ -29,7 +29,7 @@ export type NavigatorAdvice = { readonly prose: string };
  * Project one Navigator advice receipt as prose.
  * Accepts { prose }, a bare string, or any object — objects stringify as the
  * prose body so historical / free-form submissions still present. Shape is not
- * an admission gate (ADR 0055 / 第 0 条 / #959).
+ * an admission gate (ADR 0055 / 仓内 CLAUDE.md 开篇 / #959).
  */
 export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | undefined {
   if (value === undefined || value === null) return undefined;

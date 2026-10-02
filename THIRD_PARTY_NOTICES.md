@@ -1,16 +1,13 @@
 # Third-Party Notices
 
-This project (`@akagilnc/pi-workflow-roles`) is licensed under **Apache-2.0**.
-The notices below are **third-party** licenses and are **not** the project
-license authority. Do not treat them as dual-licensing the package.
+Project license: [LICENSE](LICENSE). The notices below cover third-party provenance.
 
 ## mattpocock/skills (MIT)
 
 Upstream provenance: [mattpocock/skills](https://github.com/mattpocock/skills).
 
-`ak-role setup` installs the following skills from that upstream repository
-into the user's machine Skill directory. Neither the repository nor the npm
-package carries copies of them.
+Acquisition and installation: [machine Skill setup](src/public-cli/machine-method-skills.ts).
+Attributed methods:
 
 - `tdd`
 - `diagnosing-bugs`
@@ -44,7 +41,7 @@ SOFTWARE.
 
 ## First-party method (not third-party)
 
-- `ak-cross-m-review` — `ak-role setup` installs it from
+- `ak-cross-m-review` — provenance:
   [Akagilnc/ak-cross-m-review](https://github.com/Akagilnc/ak-cross-m-review)
   (MIT, Copyright (c) 2026 Akagi). This is first-party material owned by the
   same author line, not a third-party skill.

@@ -13,10 +13,8 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
-
-import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -26,7 +24,6 @@ import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
   acquireRunWriterLease,
-  markRunResumable,
   markRunTerminal,
   RunWriterLeaseHeldError,
   type RunWriterLease,
@@ -36,47 +33,47 @@ import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
+  ensureRealArtifactsDirectory,
   presentFailureTerminal,
-  resolveControlledFailureResumeObservation,
+  retainPackageFault,
 } from "./settlement.ts";
+
+export { ensureRealArtifactsDirectory };
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
-import { errorText, isEnoent } from "../unknown-value.ts";
+import { errorText } from "../unknown-value.ts";
 
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
 /**
  * Persist run-state after a host-turn result, outside the retried dispatch try.
- * Lawful settlement always seals terminal — a typed 429 observation must not
- * win (#416 成功即停). 429 only marks resumable on the controlled-failure path.
- * Write failure must escape the retried dispatch try instead of becoming a
- * synthetic host-turn terminal.
+ * The host outcome already decided the terminal. This write only seals the run.
  */
 export async function persistReturnedRunState(
-  admitted: { runDirectory: string; principal?: DurablePrincipal },
-  options?: { readonly lawful?: boolean },
+  admitted: { runDirectory: string },
 ): Promise<void> {
-  if (options?.lawful === true) {
-    await markRunTerminal(admitted.runDirectory);
-    return;
-  }
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-  });
-  const typedHttp429 = resumeObservation.typedHttp429;
-  if (admitted.principal !== undefined && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-    return;
-  }
   await markRunTerminal(admitted.runDirectory);
 }
 
-function presentTerminal(terminal: TerminalResult, io: CliIo): void {
-  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-    presentFailureTerminal(terminal, io);
-  } else {
-    io.stdout(formatTerminalResult(terminal));
+export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, held?: readonly string[]): Promise<void> {
+  try {
+    if (held !== undefined) {
+      for (const value of held) io.stdout(value);
+    } else if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+      presentFailureTerminal(terminal, io);
+    } else {
+      io.stdout(formatTerminalResult(terminal));
+    }
+  } catch (error) {
+    // Presentation consumes a settled report; it never reopens dispatch or
+    // replaces the host's cause, identity or open details.
+    await retainPackageFault({
+      runDirectory,
+      diagnostic: `terminal presentation failed beside host terminal: ${describeErrorIdentity(error)}`,
+      error,
+      stderr: (text) => io.stderr(text),
+    });
   }
 }
 
@@ -143,38 +140,6 @@ export class TurnDispatchedFailure extends Error {
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
 export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
-
-/**
- * #182-A hardened path identity, mirrored from settlement.ts's
- * ensureAuditEvidenceDirectory: a planted symlink at the run directory or the
- * artifacts path must not receive a durable run artifact (O_NOFOLLOW only
- * protects the final file name; recursive mkdir would accept a symlinked
- * parent). Fails loudly with the true cause instead. Shared by every caller
- * that needs a durable run-artifacts write independent of session/dossier
- * health — dispatch-error retention here, and post-admission's best-effort
- * cleanup diagnostic (#840 bounce class 2).
- */
-export async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
-  const runStat = await lstat(runDirectory);
-  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw new Error("run artifact retention: run directory is not a real directory");
-  }
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    const existing = await lstat(artifactsDir);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error("run artifact retention: artifacts path is not a real directory");
-    }
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-    await mkdir(artifactsDir, { recursive: true });
-    const created = await lstat(artifactsDir);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw new Error("run artifact retention: artifacts directory is not a real directory");
-    }
-  }
-  return artifactsDir;
-}
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */
 function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
@@ -563,11 +528,7 @@ export async function runWithAutoResumeLoop<
     } } as TerminalResult
     : terminal;
   if (complete !== undefined) {
-    if (isLawfulTypedTerminalOutcome(complete.roleOutcome)) {
-      options.io.stdout(formatTerminalResult(complete));
-    } else {
-      presentTerminal(complete, options.io);
-    }
+    await presentTerminal(complete, options.io, options.admitted.runDirectory);
   }
   return stoppedResult === undefined
     ? { exitCode: 1, terminal: complete } as T

@@ -8,7 +8,8 @@
  *   converged → continue remaining review and settle
  *   continue → raw officer receipt; caller resumes the submitted seat for revision
  *   escalate → return the officer run so the caller can resume that officer directly
- *   unrecognized status → resume officer with plain-language re-ask (no round cap)
+ *   unrecognized status → resume officer with plain-language re-ask, counted
+ *     against the configured ceiling; exhaustion keeps that receipt
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
@@ -30,6 +31,7 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { receivedDiscriminator } from "./submission-errors.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
 /** Received discriminator of the latest payload, retained verbatim for re-ask. */
 export function latestQueueStatus(terminal: TerminalResult | undefined): unknown {
@@ -97,6 +99,7 @@ function bookDirectOfficerPointer(
   officer: GateOfficer,
   result: GatekeeperResult,
   summoned: PublicSummonResult,
+  toolCallId: string,
 ): void {
   if (
     result.status !== "converged"
@@ -121,6 +124,7 @@ function bookDirectOfficerPointer(
     ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
       ? { runDirectory: summoned.runDirectory }
       : {}),
+    ...(toolCallId.trim() === "" ? {} : { submissionToolCallId: toolCallId }),
   });
 }
 
@@ -130,16 +134,20 @@ function bookDirectOfficerPointer(
  * public terminal without a second authority.
  */
 export type SubmissionGateOutcome = {
-  readonly status: ReviewQueueWord;
+  readonly status: ReviewQueueWord | "needs_reask";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
+  /** Officer terminal already returned by the summon. Present when the reply was not a queue word. */
+  readonly terminal?: TerminalResult;
 };
 
 /**
  * Shared envelope: project gate, book officer pointer, map onto host actions.
- * Review loop has no round cap (#753 no-round-cap).
+ * A real converged / continue / escalate returns immediately. An unreadable
+ * conclusion reasks that officer against the configured ceiling; exhaustion
+ * returns the receipt actually received.
  * On converged, returns the officer snapshot (receipt + nested runId) for seat projection.
  */
 export async function requireSubmissionGate(options: {
@@ -155,9 +163,12 @@ export async function requireSubmissionGate(options: {
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
+  /** This loop's ceiling. Absent uses the package default. */
+  readonly autoResumeLimit?: number;
 }): Promise<SubmissionGateOutcome | void> {
   let reask: string | undefined;
-  // No round cap — end only on converged, continue/escalate, or real failure.
+  let reasksSpent = 0;
+  const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   const summonOfficer =
     options.summonOfficer ??
     createDefaultGateOfficerSummon({
@@ -181,6 +192,7 @@ export async function requireSubmissionGate(options: {
           projected.officer,
           gatekeeper,
           projected.summoned,
+          options.toolCallId,
         );
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
@@ -207,6 +219,24 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
+      if (reasksSpent >= reaskLimit) {
+        return {
+          status: "needs_reask",
+          officer: projected.officer,
+          receipt: gatekeeper.receipt,
+          ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+            ? { runId: gatekeeper.runId }
+            : {}),
+          ...(typeof projected.summoned?.runDirectory === "string"
+            && projected.summoned.runDirectory.trim() !== ""
+            ? { runDirectory: projected.summoned.runDirectory }
+            : {}),
+          ...(projected.summoned?.terminal === undefined
+            ? {}
+            : { terminal: projected.summoned.terminal }),
+        };
+      }
+      reasksSpent += 1;
       reask = officerConclusionReask(gatekeeper.receivedStatus);
       continue;
     }

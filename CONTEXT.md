@@ -1,73 +1,59 @@
 # CONTEXT — @akagilnc/pi-workflow-roles 词表
 
-> 只放术语与调用顺序说明。规范及决策的为什么以 `docs/adr/` 为准。
+> 术语索引；已有法源的定义、流程与规则直接引用，不在此重述。
 
-**交卷→审核调用顺序（说明；规范见 ADR 0003、0010、0055、0085）**：具名交卷工具先记录受审席本轮原话并结束调用，随后由公开调用接缝传召审核席；审核通过后继续尚未完成的审核并结算，不 resume 受审席。审核席封驳（continue）时，由公开调用接缝自动 resume 受审席并递送审核回执；受审席重交后继续审核。审核席上呈时，由调用者 resume 上呈席本人；恢复后继续剩余审核，不重交已提交内容，也不 resume 父席。审核席读不出三态时，按 ADR 0055 resume 审核席本人重答。此处描述外部调用顺序与回送归属；具体审核组合、实现接缝与持久化仍由适用 ADR 和实现各自负责。
+**交卷→审核调用顺序**：见 [ADR 0003](docs/adr/0003-per-role-submission-tools.md)、[ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md)、[ADR 0085](docs/adr/0085-ledger-before-audit.md)；实现见 [公开执行接缝](src/public-cli/post-admission.ts)。
 
-- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元。法律分类为**寺监级**与**省部级**。实现不限于 LLM。见 ADR 0010、0047、0051。
-- **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分**通用层**与**业务 overlay**。确定性角色无 soul。见 ADR 0005。
-- **角色方法 Skill(Role method Skill)**:安装在用户机器上、供角色执行具体任务方法的材料；Soul 持判断原则，Skill 持可替换方法步骤。现行依据是 #1043。ADR 0032 只还约束「未观察到展开不拒收」，不再定义安装位置。
-- **角色门禁(Role gating)**:车间内的机械限制（LLM：工具集收窄与调用拦截；确定性角色：自身能力边界）。区别于 soul 文本约束。见 ADR 0008。
-- **交卷工具(Submission tool)**:角色的 terminating 工具（审核席共用 `ak_submission_output`，其他角色使用具名输出工具）。**回执(Receipt)** = 其产物,角色劳动成果的法定出口。见 ADR 0003、0041。
-- **审核席(Review seat)**:父席交卷后按受审物传召的审核角色（如台院、符宝郎、审刑院）。见 ADR 0055、0079、0080。
-- **格式契约(Format contract)**:在具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,且有明确 owner 与 consumer 的格式不变式。
-- **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的。见 ADR 0025。
-- **形状校验(Shape validation)**:拒收理由**只涉数据排布**（在场/缺席、键拼写、基数、类型、跨字段组合）；一旦需引用外部可观察事实或世界规则,即非形状校验。见 ADR 0055；CLAUDE.md 第 0 条。
-- **记账位(Ledger slot)**:每份角色输出唯一精确 key 及取值域(如 `status`),供落账与呈现。见 ADR 0010、0040、0057。
-- **承接者判据(Successor test)**:删与留之争的可核验判据。见 ADR 0084；关联 ADR 0036、`souls/quality-law.md` 三问。
-- **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围的全仓扫描。见 ADR 0045。
-- **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。见 ADR 0021。
-- **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。见 ADR 0022。
-- **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。见 ADR 0023。
-- **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。见 ADR 0024、0042。
-- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名。专事后判卷。见 README 大理寺；ADR 0074。
-- **Fixer(修内司)**:以 `plan`/`apply` 处理调用方修理包的角色。见 README Fixer；ADR 0015、0034、0050。
-- **Coder(将作监)**:以 `plan`/`apply` 完成首次实现或据理拒绝派单的角色。见 ADR 0032、0034、0050、0082。
-- **未完终态(Unfinished)**:worker apply 阶段合法交卷状态，语义为**受阻求援**。见 ADR 0050。
-- **Reviewer(御史台)**:围绕固定目标做独立、可追溯代码评审的寺监级角色。见 ADR 0010、0031、0032、0082。
-- **门下省(Gate province)**:审署诏敕与质量保证的省部级席位；各官仍是独立角色。见 ADR 0067、0074、0079。
-_Avoid_:把「门下省」当作通进司的公开角色名。
-- **中书省(Secretariat)**:改票的出令省；按《票面法》把草稿修成可送庭文书。见 README；souls/ticket-law.md。
-- **给事中(Countersign)**:门下省下的**票庭审读官**。见 ADR 0074、0075。
-- **左拾遗(Gleaner-left)**:门下省下合并前无锚定风闻官；只上弹章、不封驳不裁决。见 ADR 0067。
-- **台院(Inspector)**:纠举推鞫官；审**复杂度**与**测试质量**。机器键 `inspector`。见 ADR 0074。
-- **符宝郎(Document-fidelity auditor)**:门下省下独立文书核验角色。首责：**核实实际授权出处**。见 ADR 0067、0074、0075、0079。
-- **起居录(ticket-provenance)**:每票一份的共同案卷。不同于一次运行的卷宗。见 ADR 0075、0081。
-- **起居郎(diarist)**:为本票起居录记下本票对话的角色。见 ADR 0075、0081。
-- **通进司(Collector)**:门下省下的收证衙门；不评审、不裁决、不修复、不路由。canonical 键 `collector`。见 ADR 0067。
-_Avoid_:门下省（那是省名）。
-- **评审腿(Review leg)**:completeness／correctness 普通单轴 Reviewer run 之一。见 ADR 0010、0082。
-- **Soul 审刑院(Soul-compliance audit)**:独立实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」。见 ADR 0062。
-- **卷宗(Dossier)**:一次 run 在候簿里的全部既落账材料。见 ADR 0048、0085。
-- **先立卷后审卷**:跨角色／账本接缝上合法取证次序的名称。见 ADR 0085。
-- **绑定(Binding)**:targetHead 一类对象同一性机械校验能力。见 ADR 0004、0027、0037。
-- **Navigator(游奕使)**:旁听包角色结算的独立领航席；建议下一包角色/phase。见 ADR 0061。
-- **路书(Route playbook)**:游奕使用于专业判断的非约束参考路线。_Avoid_:默认工作流、路由表、自动编排规则。见 ADR 0061。
-- **角色调用(Role invocation)**:一个角色从输入到回执的单次独立劳动。见 ADR 0010。
-- **公开角色 CLI(Public role CLI)**:包外调用者使用角色包的产品入口。见 ADR 0052、0082。
-_Avoid_:把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
-- **内部角色入口(Internal role entrypoint)**:获授权包开发 session 用来激活和诊断角色的仓内接缝，不是外部产品面。_Avoid_:公开入口、备用 CLI。见 ADR 0082。
-- **调用请求(Invocation request)**:一次角色调用的输入（可选 instruction、attachments、角色专属参数）。见 ADR 0052。
-- **附件(Attachment)**:调用者明确附给一次角色调用的材料。见 ADR 0052。
-- **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果。见 ADR 0052。
-- **角色运行(Role run)**:一次已受理角色调用的持久执行身份。见 ADR 0052。
-- **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿。见 ADR 0048、0049。
-_Avoid_:家册、账本目录、工作区记录。
-- **司天台(Archivist)**:记录的所有者（如实记录与生成高阶数据）。确定性机制,非 LLM 角色;log4j 式记录器,只追加、不回读、不当状态源;宿主对话卷宗（hermes 暂除外）是 CLI 原件的复制品。见 ADR 0047、0065、0077、0086。
-_Avoid_:Recorder、Docket、遥测。
-- **太史(Analyst)**:司天台的分析席；只读记录、生成高阶数据。确定性机制。见 ADR 0068。
-_Avoid_:遥测、metrics-service、Telemetry。
-- **Artifact reference**:终局结果中声明的本地材料引用。见 ADR 0052。
-- **引擎（Engine）**:角色劳动的执行后端。见 ADR 0069、0071。
-- **编排器(Orchestrator)**:包外交通系统。见 ADR 0010。
-- **三态判词**:`converged` / `continue` / `escalate`（给事中票庭：署／封驳／上呈）。见 ADR 0074。
-- **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环。见 ADR 0015。
-- **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit 的角色。见 README 校书郎；ADR 0027。
-- **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。canonical 键 `marshal`。见 ADR 0051；README。
-- **Doctor(太医署)**:读保留 Pi session 案例、产出单案过程成本诊断并开方的举证角色。见 ADR 0012、0013、0017。
-- **工厂(Factory)**:车间整体（角色、闸、法、包模板、流程站点）。太医署的唯一病人。见 ADR 0013。
-- **大扫除(Factory cleanup)**:按最小完整责任边界删除无收益机制及其专属格式、适配、测试和文档。见 ADR 0036、0045。
-- **落地周期(Issue-to-merge lead time)**:首 run 起点至 now／关票的端到端时长。见 issue #136。
-- **方子(Prescription)**:太医署的 finding 加处置建议。见 ADR 0012、0013。
-- **真咬人(Real bite)**:闸最近真拦下东西的证据。见 ADR 0012。
-- **过程成本报告(Process-cost report)**:由保留 runs 中 Pi session 字节可重算的单案过程成本诊断。见 ADR 0017。
+- **角色(Role)**：有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元。法律分类为**寺监级**与**省部级**。实现不限于 LLM。组合见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)。
+- **Soul**：见 [ADR 0005](docs/adr/0005-soul-layering-generic-law-plus-host-overlay.md)。
+- **角色方法 Skill(Role method Skill)**：见 [机器方法 Skill 装配](src/public-cli/machine-method-skills.ts)、[ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md) 的 #1043 修订。
+- **角色门禁(Role gating)**：见 [ADR 0008](docs/adr/0008-role-gating-judge-toolset-narrowing.md)。
+- **交卷工具(Submission tool)／回执(Receipt)**：见 [ADR 0003](docs/adr/0003-per-role-submission-tools.md)、[ADR 0041](docs/adr/0041-keep-sole-final-submission-delete-collector-operational-batch-law.md)、[工具契约](src/package-contracts/terminating-tools.ts)。
+- **审核席(Review seat)**：见 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
+- **格式契约(Format contract)**：在具名输入、输出或持久化边界上，由真实生产路径执行、会改变接受或拒绝结果，且有明确 owner 与 consumer 的格式不变式。
+- **最小必需验证(Minimum-required validation)**：见 [ADR 0025](docs/adr/0025-input-output-validation-only-checks-what-is-required.md)。
+- **形状校验(Shape validation)**：见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md)、[仓内宪法](CLAUDE.md) 开篇。
+- **记账位(Ledger slot)**：见 [ADR 0040](docs/adr/0040-keep-only-required-execution-discriminators.md)、[ADR 0057](docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md)。
+- **承接者判据(Successor test)**：见 [ADR 0084](docs/adr/0084-successor-test-for-keep-or-delete.md)。
+- **同类扫描(Class-wide scan)**：见 [ADR 0045](docs/adr/0045-cleanup-scans-classes-not-ticket-items.md)。
+- **语义 JSON 校验(Semantic JSON validation)**：见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
+- **发布 Schema(Published schema)**：见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
+- **边界 Schema 真源(Boundary schema owner)**：见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
+- **模型自报(Model self-report)**：见 [ADR 0024](docs/adr/0024-delete-coder-self-reported-commit-sha.md)、[ADR 0042](docs/adr/0042-runtime-may-own-facts-but-not-a-second-contract-factory.md)。
+- **Judge(大理寺)**：职掌见 [Soul](souls/judge.md)，调用见 `ak-role help judge`。
+- **Fixer(修内司)**：职掌见 [Soul](souls/fixer.md)，调用见 `ak-role help fixer`。
+- **Coder(将作监)**：职掌见 [Soul](souls/coder.md)，调用见 `ak-role help coder`。
+- **未完终态(Unfinished)**：见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)、[worker 输出契约](src/package-contracts/worker-output.ts)。
+- **Reviewer(御史台)**：职掌见 [Soul](souls/reviewer.md)，调用见 `ak-role help reviewer`。
+- **门下省(Gate province)**：职掌见 [Soul](souls/gatekeeper.md)，制度沿革见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。_Avoid_：把「门下省」当作通进司的公开角色名。
+- **中书省(Secretariat)**：职掌见 [Soul](souls/secretariat.md)，票面法见 [ticket-law](souls/ticket-law.md)。
+- **给事中(Countersign)**：职掌见 [Soul](souls/countersign.md)。
+- **左拾遗(Gleaner-left)**：职掌见 [Soul](souls/gleaner-left.md)。
+- **台院(Inspector)**：职掌见 [Soul](souls/inspector.md)。
+- **符宝郎(Notary)**：职掌见 [Soul](souls/notary.md)；制度沿革见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。
+- **起居录(ticket-provenance)**：见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)、[卷宗拓扑](docs/dossier-topology.md)。
+- **起居郎(diarist)**：职掌见 [Soul](souls/diarist.md)，方法见 [收集方法](resources/diarist-collect.md)。
+- **通进司(Collector)**：职掌见 [Soul](souls/collector.md)。_Avoid_：门下省（那是省名）。
+- **评审腿(Review leg)**：见 `ak-role help reviewer`、[ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)。
+- **Soul 审刑院(Soul-compliance audit)**：见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)、`ak-role help auditor`。
+- **卷宗(Dossier)**：见 [卷宗拓扑](docs/dossier-topology.md)。
+- **先立卷后审卷**：见 [ADR 0085](docs/adr/0085-ledger-before-audit.md)。
+- **绑定(Binding)**：见 [ADR 0004](docs/adr/0004-targethead-binding-check.md)、[ADR 0037](docs/adr/0037-keep-live-target-authority-and-evidence-binding.md)。
+- **Navigator(游奕使)**：职掌见 [Soul](souls/navigator.md)。
+- **路书(Route playbook)**：见 [ADR 0061](docs/adr/0061-navigator-routebook-is-free-form-advisory-material.md)、[路书](resources/navigator-route-playbook.md)。_Avoid_：默认工作流、路由表、自动编排规则。
+- **角色调用(Role invocation)／编排器(Orchestrator)**：见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)。
+- **公开角色 CLI(Public role CLI)／内部角色入口(Internal role entrypoint)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)。_Avoid_：把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
+- **调用请求(Invocation request)／附件(Attachment)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、`ak-role help <command>`。
+- **终局结果(Terminal result)／角色运行(Role run)／Artifact reference**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
+- **候簿(Ledger book)**：见 [ADR 0048](docs/adr/0048-ledger-one-home-many-books-dirname-key-git-only.md)、[ADR 0049](docs/adr/0049-ledger-is-index-zero-content-bytes.md)。_Avoid_：家册、账本目录、工作区记录。
+- **司天台(Archivist)**：见 [ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)、[ADR 0065](docs/adr/0065-sitian-phase-two-records-have-one-entry.md)、[ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。_Avoid_：Recorder、Docket、遥测。
+- **太史(Analyst)**：见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_：遥测、metrics-service、Telemetry。
+- **引擎(Engine)**：见 [ADR 0069](docs/adr/0069-labor-outsourcing-engine-generic-one-logic.md)、[劳务方法](resources/engine-dispatch.md)。
+- **三态判词**：见 [大理寺 Soul](souls/judge.md)、[给事中 Soul](souls/countersign.md)、[judge 输出契约](src/package-contracts/judge-output.ts)。
+- **裁类循环(Class-repair loop)**：见 [ADR 0015](docs/adr/0015-doctrine-persists-as-role-io-contracts.md)。
+- **Merger(校书郎)**：职掌见 [Soul](souls/merger.md)。
+- **尚书省(Marshal)**：见 [班子表](README.zh-CN.md)、[ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。
+- **Doctor(太医署)／工厂(Factory)／方子(Prescription)／真咬人(Real bite)**：见 [太医署 Soul](souls/doctor.md)、[ADR 0012](docs/adr/0012-doctor-is-an-evidence-only-seat.md)、[ADR 0013](docs/adr/0013-doctor-patient-is-the-factory-never-a-case.md)。
+- **大扫除(Factory cleanup)**：见 [ADR 0036](docs/adr/0036-format-validation-defaults-to-delete.md)、[ADR 0045](docs/adr/0045-cleanup-scans-classes-not-ticket-items.md)。
+- **落地周期(Issue-to-merge lead time)**：见 [#136](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/136)。
+- **过程成本报告(Process-cost report)**：见 [ADR 0017](docs/adr/0017-doctor-reads-retained-pi-sessions.md)。

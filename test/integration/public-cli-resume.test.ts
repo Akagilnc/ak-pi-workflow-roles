@@ -2,12 +2,11 @@ import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
- * #108 typed HTTP 429 resume seam.
- * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
- * with injectable Pi runner. Assert typed regions, resume command identity,
- * exact-session reopen, temporary overrides, reject-without-replay — never
- * table labels/layout/prose classification. #987: public manual resume does
- * not take a package writer-lease gate before host CLI resume.
+ * Public manual resume passthrough and host-failure settlement.
+ * Seams: run-lifecycle / runAkRole(judge|resume) with injectable Pi runner.
+ * Assert typed regions, exact-session reopen, temporary overrides,
+ * reject-without-replay — never table labels or prose. #987: public manual
+ * resume does not take a package writer-lease gate before host CLI resume.
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -32,39 +31,20 @@ import {
   describeErrorIdentity,
   loadResumablePublicRole,
   markRunAdmitted,
-  markRunResumable,
-  markRunTerminal,
   readRoleRunState,
-  readTypedHttp429Observation,
-  recordTypedProviderHttpStatus,
-  renderResumeCommand,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
+import { readRecordedSubmissions } from "../../src/submission-ledger.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { readSitianRecords, resolveSitianRecordPath, resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
-
-/** Resumable failure: top-level runId omitted; resume.command carries the id (#665). Original payloads/diagnostics are not rewritten (#836). */
-function assertRunIdOnlyInResumeCommand(
-  terminal: TerminalResult,
-  runId: string,
-): void {
-  assert.ok(terminal.resume, "resumable failure must carry typed resume region");
-  assert.equal(terminal.resume.command, renderResumeCommand(runId));
-  assert.equal(terminal.resume.command.includes(runId), true);
-  assert.equal(
-    terminal.runId,
-    undefined,
-    "top-level runId must be omitted on resumable failure Terminal",
-  );
-}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-resume-", async (home) => {
@@ -81,8 +61,8 @@ const roleTurnHostFromLegacyPiRunner: typeof rawRoleTurnHostFromLegacyPiRunner =
  * #953 clears conventional faces (including directory plants) before rewrite,
  * so report.json-as-directory no longer reaches writeFile. When blocking,
  * lock artifacts/ to 0o555 — clear is a no-op on absent faces; writeFile EACCES.
- * Throw/ledger poison cases pass blockReportPublication:false so their own
- * EISDIR identity stays decisive.
+ * Throw/ledger poison cases pass blockReportPublication:false. A later
+ * read or write fault is a note beside the host terminal.
  */
 function sealedPublicationBlockedHost(
   note: string,
@@ -110,10 +90,6 @@ function sealedPublicationBlockedHost(
         lockedArtifactsDirs.add(artifactsDir);
       }
       await mkdir(sessionDir, { recursive: true });
-      await observeTyped429ViaProductionHandler({
-        runDirectory: runDir,
-        provider: "xai",
-      });
       await writeFile(
         join(sessionDir, "session.jsonl"),
         `${JSON.stringify({
@@ -190,151 +166,6 @@ function writeSessionProviderStop(
     "utf8",
   );
 }
-
-test("typed HTTP 429 observation is field-based; quota-like prose alone is never enough", async () => {
-  await withTempHome(async (home) => {
-    const runDir = join(home, "run-obs");
-    await mkdir(runDir, { recursive: true });
-
-    // Prose-only file is not a typed observation channel.
-    await writeFile(
-      join(runDir, "noise.txt"),
-      "rate limited quota exhausted HTTP 429 billing\n",
-      "utf8",
-    );
-    assert.equal(await readTypedHttp429Observation(runDir), undefined);
-
-    // Wrong status ignored.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 503,
-      provider: "openai-codex",
-    });
-    assert.equal(await readTypedHttp429Observation(runDir), undefined);
-
-    // Non-v1 provider ignored even at 429.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 429,
-      provider: "anthropic",
-    });
-    assert.equal(await readTypedHttp429Observation(runDir), undefined);
-
-    // Typed Codex/xAI 429 retained.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 429,
-      provider: "openai-codex",
-    });
-    assert.deepEqual(await readTypedHttp429Observation(runDir), {
-      httpStatus: 429,
-      provider: "openai-codex",
-    });
-
-    // Latest non-qualifying response is authoritative: earlier 429 must not stick.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 503,
-      provider: "openai-codex",
-    });
-    assert.equal(await readTypedHttp429Observation(runDir), undefined);
-
-    // A later qualifying 429 may re-arm within the same attempt.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 429,
-      provider: "xai",
-    });
-    assert.deepEqual(await readTypedHttp429Observation(runDir), {
-      httpStatus: 429,
-      provider: "xai",
-    });
-
-    // Non-v1 provider at 429 also supersedes a prior qualifying observation.
-    await recordTypedProviderHttpStatus(runDir, {
-      httpStatus: 429,
-      provider: "anthropic",
-    });
-    assert.equal(await readTypedHttp429Observation(runDir), undefined);
-  });
-});
-
-
-test("typed 429 failure Terminal carries resume command and reveals run id only there", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const runId = "run-resume-429-001";
-
-    const result = await runAkRole(
-      [
-        "--model",
-        "openai-codex/gpt-5.6-sol:high",
-        "judge",
-        "--project",
-        project,
-        "quota interrupted task",
-      ],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          const runDir = join(sessionDir, "..");
-          // Production observation seam — not a direct recordTypedProviderHttpStatus stand-in.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "openai-codex",
-          });
-          await writeSessionProviderStop(sessionDir, {
-            provider: "openai-codex",
-            // Deliberately non-quota wording — classification must not use prose.
-            errorMessage: "upstream declined this request",
-          });
-          return {
-            code: 1,
-            stderr: "activation wrapper exited nonzero\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-        }),
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    // Durable observation + Error Artifact remain on disk even though public
-    // Terminal omits path refs that would re-disclose the run ID.
-    assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
-      httpStatus: 429,
-      provider: "openai-codex",
-    });
-    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
-    assert.equal(durable?.state, "resumable");
-    assert.deepEqual(durable?.resumable, {
-      httpStatus: 429,
-      provider: "openai-codex",
-    });
-  });
-});
-
 test("quota-like prose without typed 429 is not resumable", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -375,7 +206,6 @@ test("quota-like prose without typed 429 is not resumable", async () => {
 
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.resume, undefined);
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`),
@@ -384,257 +214,21 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     assert.equal(durable?.state, "terminal");
   });
 });
+async function assertCleanupDiagnosticNoted(
+  sessionFile: string,
+): Promise<void> {
+  const entries = (await readFile(sessionFile, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
+  const diagnostic = entries.find(
+    (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
+  );
+  assert.equal(typeof diagnostic?.data?.diagnostic, "string");
+}
 
-test("lawful terminal result wins over typed 429 observation", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const runId = "run-lawful-wins-001";
-
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          const runDir = join(sessionDir, "..");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "xai",
-          });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: {
-                  status: "converged",
-                  note: "completed despite earlier 429",
-                },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-            sealedAcceptance: { role: "judge", details: { status: "converged", note: "completed despite earlier 429" } },
-          };
-        },
-        }),
-      },
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal!.resume, undefined);
-    const bookKey = resolveBookKeyFromGit(project);
-    const durable = await readRoleRunState(
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`),
-      piDurablePrincipalAuthority,
-    );
-    assert.equal(durable?.state, "terminal");
-  });
-});
-
-test("within-attempt earlier 429 does not qualify resume after a later non-429 response", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const runId = "run-within-attempt-stale-429-001";
-
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "stale within-attempt 429"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          const runDir = join(sessionDir, "..");
-          // First provider response is a qualifying 429.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "openai-codex",
-            httpStatus: 429,
-          });
-          // Later response in the same attempt is non-429 — must supersede.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "openai-codex",
-            httpStatus: 500,
-          });
-          await writeSessionProviderStop(sessionDir, {
-            provider: "openai-codex",
-            errorMessage: "upstream internal error",
-          });
-          return {
-            code: 1,
-            stderr: "provider_error\n",
-            timedOut: false,
-            args: [...args],
-            knownFailure: {
-              cause: "provider",
-              identity: { name: "ProviderError", code: 500 },
-              diagnostic: "upstream internal error",
-            },
-          };
-        },
-        }),
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.resume, undefined);
-    assert.equal(result.terminal!.runId, runId);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-  });
-});
-
-test("prior attempt 429 does not make a later non-429 failure resumable", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-attempt-scope-001";
-    const bookKey = resolveBookKeyFromGit(project);
-
-    // Attempt 1: typed 429 → resumable.
-    {
-      const { io } = captureIo();
-      const first = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "first attempt quota"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => runId,
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "openai-codex",
-            });
-            await writeSessionProviderStop(sessionDir, {
-              provider: "openai-codex",
-              errorMessage: "HTTP 429",
-            });
-            return {
-              code: 1,
-              stderr: "provider_error\n",
-              timedOut: false,
-              args: [...args],
-              knownFailure: {
-                cause: "provider",
-                identity: { name: "ProviderError", code: 429 },
-                diagnostic: "HTTP 429",
-              },
-            };
-          },
-          }),
-        },
-      );
-      assert.equal(first.exitCode, 1);
-      assert.ok(first.terminal?.resume);
-    }
-
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-    assert.ok(await readTypedHttp429Observation(runDirectory));
-
-    // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
-    const { io } = captureIo();
-    let resumeDispatches = 0;
-    const second = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-        resumeDispatches += 1;
-        const sessionFile = args[args.indexOf("--session") + 1]!;
-        // Bound principal remains; drop prior provider-stop so this attempt's
-        // timeout is not reclassified from stale session identity.
-        await writeFile(sessionFile, "\n", "utf8");
-        // Deliberately do not write a fresh 429 observation.
-        return {
-          code: 1,
-          stderr: "upstream timeout\n",
-          timedOut: true,
-          args: [...args],
-        };
-      },
-      }),
-    });
-
-    assert.equal(resumeDispatches, 1);
-    assert.equal(second.exitCode, 1);
-    assert.ok(second.terminal);
-    assert.equal(second.terminal!.resume, undefined);
-    assert.equal(second.terminal!.runId, runId);
-    assert.equal(second.terminal!.roleOutcome.kind, "failure");
-    if (second.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(second.terminal!.roleOutcome.cause, "timeout");
-    }
-    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-    assert.equal(second.terminal!.resume, undefined);
-  });
-});
-
-test("lawful+publication-fail under 429: resume hint uniform-out; recorded payload survives (#665/#836)", async () => {
+test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -658,20 +252,14 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         },
       );
 
-      assert.equal(result.exitCode, 1);
+      assert.equal(result.exitCode, 0);
       assert.ok(result.terminal);
-      // #665: principal available + typed 429 → resume hint (统一出).
-      assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-      assert.equal(result.terminal!.roleOutcome.kind, "failure");
-      if (result.terminal!.roleOutcome.kind === "failure") {
-        // Publication errno retained; hint presence must not wash failure cause into provider-429.
-        assert.equal(result.terminal!.roleOutcome.cause, undefined);
-        assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EACCES");
-      }
-      // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
-      // Publication failure under 429 is non-lawful → retries until budget (default 2 resumes → 3 dispatches).
-      assert.equal(dispatches(), 3, "auto-resume budget must exhaust without seal block");
-      assert.equal(result.terminal!.autoResumeCount, 2);
+      assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+      assert.equal(typeof result.terminal!.runId, "string");
+      // Publication is a package fault beside the accepted host terminal.
+      // A lawful terminal stops the auto-resume loop.
+      assert.equal(dispatches(), 1);
+      assert.equal(result.terminal!.autoResumeCount, 0);
       const bookKey = resolveBookKeyFromGit(project);
       const runDirectory = join(
         home,
@@ -681,8 +269,18 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         "unbound", "runs",
         `${runId}@judge`,
       );
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-      assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
+      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
+      const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
+      const { recordFile } = resolveSitianRecordPath({
+        level: "event", kind: "attempt-history",
+        sessionParent: piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
+      });
+      const historyOutcomes = async () => (await readSitianRecords(recordFile)).records.map((row) =>
+        (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
+      assert.deepEqual(await historyOutcomes(), ["accepted"],
+        "the sealed attempt is recorded once; publication failure is not a second attempt");
 
       // Publication never wrote a success report face under the locked artifacts/.
       const reportPath = join(runDirectory, "artifacts", "report.json");
@@ -751,9 +349,15 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         "rebuilt terminal must reference the public report artifact",
       );
       assert.ok(
-        await hasRecordedSubmission(project, runId, home),
+        (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
+      assert.deepEqual(await historyOutcomes(), ["accepted", "accepted"],
+        "the actual resume adds its own accepted attempt");
+      await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+      await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
+      assert.deepEqual(await historyOutcomes(), ["accepted", "accepted"],
+        "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreArtifactsWritable();
     }
@@ -766,7 +370,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-lawful-publish-throw-001";
-    const { io } = captureIo();
+    const captured = captureIo();
     const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
       "lawful then dispatch throws after seal",
       { blockReportPublication: false },
@@ -780,60 +384,39 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
-          io,
+          io: captured.io,
           roleTurnHost: {
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
-              const statePath = join(request.runDirectory, "run-state.json");
-              await rm(statePath, { force: true });
-              await mkdir(statePath);
+              if (request.activation.role === "judge") {
+                const statePath = join(request.runDirectory, "run-state.json");
+                await rm(statePath, { force: true });
+                await mkdir(statePath);
+              }
               return out;
             },
           },
         },
       );
 
-      // #836: seal no longer blocks; non-lawful throw path records then fails.
-      // The deferred run-state persist this settlement defers hits the same
-      // poisoned run-state.json again — a second genuine infra failure. #836
-      // r13 class 2: it must settle loudly and stop the loop immediately
-      // (autoResumeCount 0), not retry through it silently to budget
-      // exhaustion (the pre-r13 value here was 2).
+      // Persist notes the directory. The later mandatory audit reads that same
+      // run-state, so the parent is not delivered as accepted.
       assert.equal(result.exitCode, 1);
-      assert.ok(result.terminal);
-      assert.equal(result.terminal!.roleOutcome.kind, "failure");
+      assert.equal(result.terminal, undefined);
       assert.equal(dispatches(), 1);
-      assert.equal(result.terminal!.autoResumeCount, 0);
-      assert.ok(
-        await hasRecordedSubmission(project, runId, home),
-        "recorded accepted payload must survive direct throw after record",
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound", "runs",
+        `${runId}@judge`,
       );
-      if (result.terminal!.roleOutcome.kind === "failure") {
-        assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
-        assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
-        // The reported cause is the deferred persist write's own real failure
-        // (EISDIR on the still-poisoned run-state.json) — structured field,
-        // proof this settled through the real authority rather than being
-        // traced only to the loop's no-op attempt io and discarded.
-        assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-        // #836 A.3 / #953: failure terminal carries already-recorded payload on
-        // the historical submissions carrier — not as current failure.payloads.
-        assert.ok(Array.isArray(result.terminal!.submissions));
-        assert.ok(
-          result.terminal!.submissions!.some(
-            (payload) =>
-              typeof payload === "object"
-              && payload !== null
-              && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
-          ),
-          "failure terminal must carry the sealed payload on submissions beside the deferred-persist failure",
-        );
-        assert.equal(
-          result.terminal!.roleOutcome.payloads === undefined
-            || result.terminal!.roleOutcome.payloads.length === 0,
-          true,
-        );
-      }
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      assert.ok(
+        (await readRecordedSubmissions(project, runId, home)).length > 0,
+        "recorded accepted payload must survive a later persist failure",
+      );
     } finally {
       await restoreArtifactsWritable();
     }
@@ -877,23 +460,27 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
           },
         },
       );
-      // #836: authority-failed seal block deleted — non-lawful failure still exhausts budget.
-      assert.equal(dispatches(), 3, "auto-resume budget must exhaust without authority block");
-      assert.equal(result.exitCode, 1);
+      // Ledger damage is a package note. It does not invent a host failure,
+      // and a lawful no_receipt stops the loop.
+      assert.equal(dispatches(), 1);
+      assert.equal(result.exitCode, 0);
       assert.ok(result.terminal);
-      assert.equal(result.terminal!.autoResumeCount, 2);
-      const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "failure");
-      if (outcome.kind === "failure") {
-        assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
-        assert.equal(typeof outcome.diagnostic, "string");
-        assert.ok(String(outcome.diagnostic).length > 0);
-      }
+      assert.equal(result.terminal!.autoResumeCount, 0);
+      assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "unbound", "runs",
+        `${runId}@judge`,
+      );
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
-      const { io: resumeIo, stderr: resumeStderr } = captureIo();
+      const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
@@ -915,123 +502,16 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         }),
       });
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
-      assert.equal(resumeResult.exitCode, 1);
-      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`);
-      // #1058: read the record the caller was actually pointed at, not a known path.
-      const pointedPath = await pointedErrorRecordPath(runDirectory, resumeStderr.join(""));
-      const error = JSON.parse(await readFile(pointedPath, "utf8")) as {
-        runId?: unknown;
-        diagnostic?: unknown;
-      };
-      assert.equal(error.runId, runId);
-      assert.equal(typeof error.diagnostic, "string");
-      // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
-      if (resumeResult.terminal !== undefined) {
-        const resumeOutcome = resumeResult.terminal.roleOutcome;
-        assert.equal(resumeOutcome.kind, "failure");
-        if (resumeOutcome.kind === "failure") {
-          assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
-        }
-      }
+      assert.equal(resumeResult.exitCode, 0);
+      assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+
     } finally {
       await restoreArtifactsWritable();
     }
   });
 
 });
-
-test("resumable Terminal omits top-level run id; durable artifact keeps original diagnostic", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-diagnostic-disclosure-001";
-    const { io } = captureIo();
-    const recurringFailureHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args) => {
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
-        await observeTyped429ViaProductionHandler({
-          runDirectory: join(sessionDir, ".."),
-          provider: "openai-codex",
-        });
-        await writeSessionProviderStop(sessionDir, {
-          provider: "openai-codex",
-          errorMessage: `upstream quota for run ${runId}: HTTP 429`,
-        });
-        return {
-          code: 1,
-          stderr: `provider refused run ${runId} with HTTP 429\n`,
-          timedOut: false,
-          args: [...args],
-          knownFailure: {
-            cause: "provider" as const,
-            identity: { name: "ProviderError", code: 429 },
-            diagnostic: `upstream quota for run ${runId}: HTTP 429`,
-          },
-        };
-      },
-    });
-
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider names the run"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: recurringFailureHost,
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    const errorPath = join(runDirectory, "artifacts", "error.json");
-    const errorBody = JSON.parse(await readFile(errorPath, "utf8")) as {
-      runId?: string;
-      diagnostic?: string;
-    };
-    // Private durable artifact retains original evidence, including exact run ID.
-    assert.equal(errorBody.runId, runId);
-    assert.equal(typeof errorBody.diagnostic, "string");
-    assert.equal(errorBody.diagnostic!.includes(runId), true);
-
-    const resumedIo = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: resumedIo.io,
-      roleTurnHost: recurringFailureHost,
-    });
-    assert.equal(resumed.exitCode, 1);
-    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
-    assert.equal(resumed.terminal?.artifacts.length, 0);
-    // #1058: the resumed caller must be pointed at this run's error record.
-    const resumedPointedPath = await pointedErrorRecordPath(runDirectory, resumedIo.stderr.join(""));
-    const resumedArtifact = JSON.parse(await readFile(resumedPointedPath, "utf8")) as {
-      runId?: unknown;
-      diagnostic?: unknown;
-    };
-    assert.equal(resumedArtifact.runId, runId);
-    assert.equal(typeof resumedArtifact.diagnostic, "string");
-  });
-});
-
 test("resume restores admitted identity and exact Pi session without resubmitting instruction", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -1043,7 +523,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const instruction = "original admitted instruction must not be resubmitted";
     const openedPrincipals = new Set<string>();
 
-    // First admission interrupted by typed 429.
+    // First admission interrupted by a nonzero host exit.
     {
       const { io } = captureIo();
       const first = await runAkRole([
@@ -1068,10 +548,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             openedPrincipals.add(args[args.indexOf("--session") + 1]!);
             await mkdir(sessionDir, { recursive: true });
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
             await writeSessionProviderStop(sessionDir, {
               provider: "xai",
               errorMessage: "upstream declined",
@@ -1086,7 +562,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           }),
         },
       );
-      assert.ok(first.terminal?.resume);
       // Mutate source attachment after admission — resume must keep frozen bytes.
       await writeFile(attachmentSrc, "authority-bytes-MUTATED\n", "utf8");
     }
@@ -1183,7 +658,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.ok(resumed.terminal);
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
-    assert.equal(resumed.terminal!.resume, undefined);
 
     // Frozen attachment bytes unchanged after source mutation.
     const frozenBytes = await readFile(frozenPath, "utf8");
@@ -1234,10 +708,6 @@ test("resume model override is temporary and does not rewrite persistent config"
           piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "openai-codex",
-          });
           await writeSessionProviderStop(sessionDir, {
             provider: "openai-codex",
             errorMessage: "declined",
@@ -1321,10 +791,6 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
             piRunner: async (args) => {
               const sessionDir = args[args.indexOf("--session-dir") + 1]!;
               await mkdir(sessionDir, { recursive: true });
-              await observeTyped429ViaProductionHandler({
-                runDirectory: join(sessionDir, ".."),
-                provider: "xai",
-              });
               await writeSessionProviderStop(sessionDir, {
                 provider: "xai",
                 errorMessage: "declined",
@@ -1339,7 +805,6 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
           }),
         },
       );
-      assert.ok(first.terminal?.resume, "first admission must settle resumable");
     }
 
     // Run A: bare resume follows the live seat table (not admitted birth model).
@@ -1567,10 +1032,6 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
-        await observeTyped429ViaProductionHandler({
-          runDirectory: join(sessionDir, ".."),
-          provider: "openai-codex",
-        });
         await writeSessionProviderStop(sessionDir, {
           provider: "openai-codex",
           errorMessage: "declined",
@@ -1668,11 +1129,10 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           .split("\n")
           .filter(Boolean)
           .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-        const diagnostic = entries.find(
+        const text = entries.find(
           (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-        );
-        assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-        assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
+        )?.data?.diagnostic;
+        assert.equal(typeof text, "string");
       },
       async () => {
         await lease.release();
@@ -1835,20 +1295,12 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
           (error: unknown) => error,
         );
         assert.ok(failure instanceof RunWriterLeaseHeldError);
-        // The refusal must carry the last reclaim failure's true identity, not
-        // just the dead-pid autopsy. The expected identity is derived from an
-        // unlink this test provokes on the same deny-delete lock, so the
-        // assertion is content equality with a real cause — not a search for
-        // generated diagnostic wording.
-        const provoked = await unlink(lockPath).then(
-          () => undefined,
-          (error: unknown) => error,
-        );
-        assert.ok(provoked !== undefined, "deny-delete ACE must fail this unlink too");
-        assert.ok(
-          String(failure.message).includes(describeErrorIdentity(provoked)),
-          `refusal must name the reclaim failure identity: ${String(failure.message)}`,
-        );
+        // The refusal carries the real reclaim errno structurally, not just the
+        // dead-pid autopsy — otherwise the true cause is laundered away. Both
+        // the wrapper's own code and the underlying EACCES are asserted, so
+        // dropping the reclaim identity fails this test.
+        assert.equal(failure.code, "AK_RUN_WRITER_LEASE_HELD");
+        assert.equal(failure.causeCode, "EACCES");
         // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
         assert.equal(existsSync(lockPath), true);
       },
@@ -1859,68 +1311,6 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
         await rm(lockPath, { force: true });
       },
     );
-  });
-});
-
-test("settleJudgeFailureTerminalResult attaches resume only for typed 429", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-settle-resume-unit";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    await mkdir(sessionDirectory, { recursive: true });
-    const admittedRequestPath = join(runDirectory, "admitted-request.json");
-    await writeFile(admittedRequestPath, "{}\n", "utf8");
-    const admitted = {
-      role: "judge" as const,
-      runId,
-      bookKey,
-      projectRoot: project,
-      instruction: "x",
-      instructionEmpty: false,
-      attachments: [],
-      runDirectory,
-      principal: fixturePrincipal(sessionDirectory, sessionFile),
-      admittedRequestPath,
-    };
-    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    await markRunResumable(runDirectory, {
-      httpStatus: 429,
-      provider: "xai",
-    });
-
-    const withResume = await settleJudgeFailureTerminalResult(
-      admitted,
-      { cause: "provider", diagnostic: "upstream declined" },
-      piDurablePrincipalAuthority,
-      {
-        resume: {
-          command: renderResumeCommand(runId),
-        },
-      },
-    );
-    assertRunIdOnlyInResumeCommand(withResume, runId);
-    assert.equal(withResume.artifacts.length, 0);
-
-    await markRunTerminal(runDirectory);
-    const without = await settleJudgeFailureTerminalResult(admitted, {
-      cause: "activation",
-      diagnostic: "boom",
-    }, piDurablePrincipalAuthority);
-    assert.equal(without.resume, undefined);
-    assert.equal(without.runId, runId);
-    assert.ok(without.artifacts.length > 0);
   });
 });
 
@@ -1973,10 +1363,6 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
             const sessionDir = (args as string[])[(args as string[]).indexOf("--session-dir") + 1]!;
             const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
             await mkdir(sessionDir, { recursive: true });
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "openai-codex",
-            });
             await writeSessionProviderStop(sessionDir, {
               provider: "openai-codex",
               errorMessage: "rate limited",
@@ -1992,7 +1378,6 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           }),
         },
       );
-      assert.ok(first.terminal?.resume);
       assert.equal(first.exitCode, 1);
       assert.equal(first.terminal?.roleOutcome.kind, "failure");
     }
@@ -2013,7 +1398,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       true,
       durable.sessionFile,
     );
-    assert.equal(durable.state, "resumable");
+    assert.equal(durable.state, "terminal");
 
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
     // #1091: package no longer gates resume on local session files.
@@ -2103,10 +1488,6 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       admittedRequestPath,
     }, piDurablePrincipalAuthority);
     await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
-    await markRunResumable(runDirectory, {
-      httpStatus: 429,
-      provider: "xai",
-    });
     // Principal path is bound but the file itself is missing — not a package gate (#1091).
 
     const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
@@ -2146,62 +1527,6 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(noted.details?.exitCode, 1);
   });
 });
-
-test("typed 429 is offered as resumable without a local session file", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-429-no-session-file";
-
-    const { io } = captureIo();
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "no session file"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          // Typed 429 observation only — no session principal materialised.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
-          return {
-            code: 1,
-            stderr: "fail\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-        }),
-      },
-    );
-
-    assert.notEqual(result.exitCode, 0);
-    assert.ok(result.terminal?.resume);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
-    assert.equal(durable?.state, "resumable");
-  });
-});
-
 /** #471 transport on existing resume owner: opaque stdin body + bare -- + extras reject. */
 test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras reject", async () => {
   await withTempHome(async (home) => {
@@ -2209,7 +1534,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
     const creds = { "openai-codex": true, xai: true } as const;
 
     function admitArgs(role: Role, project: string): string[] {
-      // Match typed-429 provider xai + credentials in this case.
+      // Host-failure admission uses the xai seat and credentials.
       const model = ["--model", "xai/grok-4.5:high"] as const;
       if (role === "judge") return ["judge", ...model, "--project", project, "admit"];
       if (role === "coder") return ["coder", ...model, "plan", "--project", project, "admit"];
@@ -2237,15 +1562,10 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
           const sd = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sd, { recursive: true });
           await writeFile(join(sd, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sd, ".."),
-            provider: "xai",
-          });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         },
         }),
       });
-      assert.ok(first.terminal?.resume, `${role}/${runId} must be resumable`);
       const sessionDirectory = join(
         home,
         ".ak-roles",
@@ -2348,6 +1668,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
           },
           }),
         });
+        // Nothing dispatched and the CLI rejected the argv; the help wording
+        // printed for it is presentation.
         assert.equal(n, 0, bad.join(" "));
         assert.notEqual(rejected.exitCode, 0);
       }

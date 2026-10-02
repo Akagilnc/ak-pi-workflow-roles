@@ -4,7 +4,7 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 
 /**
  * #1088: LLM gathers evidence via host CLI and submits the receipt.
- * Field declarations guide the model — host must not pure-shape-reject (第 0 条 / ADR 0057).
+ * Field declarations guide the model — host must not pure-shape-reject (仓内 CLAUDE.md 开篇 / ADR 0057).
  * Presence of `groups` remains the Collector terminal discriminator for settlement/analyst.
  */
 export const collectorOutputBaseSchema = openToolObject(

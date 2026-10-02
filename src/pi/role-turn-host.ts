@@ -26,6 +26,9 @@ import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
+import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
+import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
+import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -156,6 +159,7 @@ export type PiSpawnRunner = (
   code: number | null;
   stderr: string;
   timedOut: boolean;
+  signal?: string;
   knownFailure?: RoleTurnKnownFailure;
 }>;
 
@@ -287,7 +291,6 @@ export function createDefaultPiSpawnRunner(options: {
       // fall back to rejecting on `error` if `close` never fires (e.g. spawn
       // never succeeded so no `close` event will arrive).
       let hasSpawned = false;
-      let executionError: Error | undefined;
       const armTimeoutAfterChildReady = (): void => {
         if (spawnOptions.timeoutMs === undefined) return;
         timer = setTimeout(() => {
@@ -302,6 +305,8 @@ export function createDefaultPiSpawnRunner(options: {
         child.kill("SIGTERM");
       };
       parentSignal?.addEventListener("abort", terminateForParentAbort, { once: true });
+      const packageErrors: unknown[] = [];
+      let identityFailure: RoleTurnKnownFailure | undefined;
       let identityRecorded: Promise<void> = Promise.resolve();
       child.once("spawn", () => {
         hasSpawned = true;
@@ -313,7 +318,12 @@ export function createDefaultPiSpawnRunner(options: {
           runDirectory !== "" &&
           options.recordLaunchedPiIdentity !== undefined
         ) {
-          identityRecorded = options.recordLaunchedPiIdentity(runDirectory, piIdentity);
+          identityRecorded = Promise.resolve().then(() =>
+            options.recordLaunchedPiIdentity!(runDirectory, piIdentity),
+          ).catch((error) => {
+            packageErrors.push(error);
+            identityFailure = projectThrownFailureLeaf(error);
+          });
         }
       });
       child.stderr.setEncoding("utf8").on("data", (chunk) => {
@@ -323,8 +333,9 @@ export function createDefaultPiSpawnRunner(options: {
         // A pre-spawn error has no child lifecycle to close. After spawn,
         // retain the execution error and let the mandatory close event own
         // cleanup and the single settlement.
-        if (settled || hasSpawned) {
-          executionError = error;
+        if (settled) return;
+        if (hasSpawned) {
+          packageErrors.push(error);
           return;
         }
         if (timer !== undefined) clearTimeout(timer);
@@ -332,33 +343,37 @@ export function createDefaultPiSpawnRunner(options: {
         settled = true;
         reject(error);
       });
-      child.on("close", (code) => {
+      // `close` carries (code, signal): a signal-killed child reports code null.
+      // Both travel out so a signal death is never read as a clean exit.
+      child.on("close", (code, closeSignal) => {
         if (timer !== undefined) clearTimeout(timer);
         parentSignal?.removeEventListener("abort", terminateForParentAbort);
-        void identityRecorded.then(
-          () => {
-            if (settled) return;
-            settled = true;
-            if (executionError !== undefined) {
-              reject(executionError);
-              return;
+        void (async () => {
+          if (settled) return;
+          settled = true;
+          await identityRecorded;
+          if (stdinDeliveryError !== undefined) packageErrors.push(stdinDeliveryError);
+          for (const error of packageErrors) {
+            const diagnostic = `Pi transport handling failed beside host terminal: ${describeErrorIdentity(error)}`;
+            const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
+            if (runDirectory !== undefined) {
+              await retainPackageFault({ runDirectory, diagnostic, error });
+            } else {
+              // Bare runner callers have no admitted artifact directory.
+              try { process.stderr.write(`${diagnostic}\n`); }
+              catch { /* Best-effort presentation beside the already closed child. */ }
             }
-            if (stdinDeliveryError !== undefined) {
-              reject(stdinDeliveryError);
-              return;
-            }
-            resolveResult({
-              code,
-              stderr,
-              timedOut,
-            });
-          },
-          (error) => {
-            if (settled) return;
-            settled = true;
-            reject(error);
-          },
-        );
+          }
+          resolveResult({
+            code,
+            stderr,
+            timedOut,
+            ...(closeSignal === null ? {} : { signal: closeSignal }),
+            ...(code === 0 && !timedOut && closeSignal === null && identityFailure !== undefined
+              ? { knownFailure: identityFailure }
+              : {}),
+          });
+        })();
       });
     });
   };
@@ -404,6 +419,12 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // Selected host axis (#537 / ADR 0082): omit must not inherit a parent env value.
       if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
       else env.AK_ROLE_HOST = request.host.trim();
+      // #1132: the one effective delivery-request ceiling travels to the child
+      // on its own env so the in-child role runtime and the worker submission
+      // gate count with the same configured number the AK seam resolved. Omit
+      // must not inherit a parent value (same rule as the other AK_ROLE_ axes).
+      if (request.deliveryRequestLimit === undefined) delete env[RECEIPT_DELIVERY_LIMIT_ENV];
+      else env[RECEIPT_DELIVERY_LIMIT_ENV] = String(request.deliveryRequestLimit);
       applyEngineChildEnv(env, request.engine);
       // Nested auditor dossier tool binds the parent run pointer when published.
       if (

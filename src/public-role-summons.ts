@@ -27,6 +27,7 @@ import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
+import { serializeThrownValue } from "./serialize-thrown-value.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
@@ -588,15 +589,9 @@ export async function summonParallelReviewerLenses(options: {
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
-  const describeFailure = (error: unknown): string => {
-    if (error instanceof AggregateError) {
-      return [error.message, ...error.errors.map(describeFailure)].join("\n");
-    }
-    return errorText(error);
-  };
   const failedResult = (error: unknown): PublicSummonResult => ({
     exitCode: 1,
-    stderr: describeFailure(error),
+    stderr: serializeThrownValue(error),
   });
   const dualFailure = (error: unknown) => {
     const failure = failedResult(error);
@@ -720,7 +715,7 @@ export async function summonParallelReviewerLenses(options: {
       ].join("\n");
     }
   } catch (error) {
-    sealDiagnostic = `Reviewer target final seal failed:\n${describeFailure(error)}`;
+    sealDiagnostic = `Reviewer target final seal failed:\n${serializeThrownValue(error)}`;
   }
   if (sealDiagnostic !== undefined) {
     const withSealFailure = (result: PublicSummonResult): PublicSummonResult => ({

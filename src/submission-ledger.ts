@@ -194,15 +194,6 @@ function resolveReadScope(
   return homeOrScope;
 }
 
-function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
-  owned: readonly T[],
-  attemptId: string | undefined,
-): readonly T[] {
-  // #836: courtAttempt is a recording tag for new courts, not a visibility gate.
-  void attemptId;
-  return owned;
-}
-
 /** Recording tag a row was written under — subject first, historical payload fallback. */
 function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
   if (typeof record.subject === "object" && record.subject !== null) {
@@ -214,34 +205,6 @@ function recordAttemptId(record: { subject?: unknown; payload?: unknown }): stri
     if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
   }
   return undefined;
-}
-
-/**
- * True when the given attemptId itself already produced a sealed or
- * audit-escalation submission (#836 r12 class 2). This is a separate
- * freshness signal, not a presentation filter — `recordsForAttempt` above
- * stays a pass-through so every original payload keeps presenting honestly
- * (#836: attemptId is a recording tag, not a visibility gate). Settlement
- * consumes this only to stop a prior attempt's stale acceptance from
- * outranking the current attempt's own real host-turn failure signal
- * (#637 original intent, restored narrowly).
- */
-export async function hasFreshAttemptSubmission(
-  cwd: string,
-  runId: string,
-  attemptId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<boolean> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
-  return owned.some((record) => {
-    if (recordAttemptId(record) !== attemptId) return false;
-    if (record.kind === "sealed") return true;
-    if (record.kind === "outcome") {
-      const payload = record.payload as { type?: string; outcome?: string } | undefined;
-      return payload?.type === "outcome" && payload.outcome === "audit-escalation";
-    }
-    return false;
-  });
 }
 
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
@@ -359,55 +322,38 @@ function mapOwnedToSubmissionRows(
   };
 
   for (const record of scoped) {
-    const attemptId = recordAttemptId(record);
-    if (record.kind === "candidate") {
-      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "candidate" }>> & {
-        projection?: { role?: unknown };
-      } | undefined;
-      if (payload?.type !== "candidate" || payload.params === undefined) continue;
-      const callKey =
-        typeof payload.toolCallId === "string"
-          ? submissionCallKey(attemptId, payload.toolCallId)
-          : undefined;
-      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("candidate", payload, payload.params, fallback), callKey);
-      continue;
-    }
-    if (record.kind === "sealed") {
-      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> & {
-        projection?: { role?: unknown };
-      } | undefined;
-      if (payload?.type !== "sealed" || payload.accepted === undefined) continue;
-      const callKey =
-        typeof payload.toolCallId === "string"
-          ? submissionCallKey(attemptId, payload.toolCallId)
-          : undefined;
-      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("accepted", payload, payload.accepted, fallback), callKey);
-      continue;
-    }
-    if (record.kind !== "outcome") continue;
-    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> & {
+    const payload = record.payload as {
+      type?: unknown;
+      role?: unknown;
       projection?: { role?: unknown };
+      toolCallId?: unknown;
+      params?: unknown;
+      accepted?: unknown;
+      outcome?: unknown;
+      auditReceipt?: unknown;
+      auditOfficer?: unknown;
     } | undefined;
-    if (payload?.type !== "outcome" || payload.accepted === undefined) continue;
-    const outcome = payload.outcome;
-    const kind: RecordedSubmissionRow["kind"] |
-      undefined =
-      outcome === "audit-escalation"
-        ? "audit-escalation"
-        : outcome === "correctable-rejection"
-          ? "correctable-rejection"
-          : outcome === "infrastructure"
-            ? "infrastructure"
-            : undefined;
-    if (kind === undefined) continue;
-    const callKey =
-      typeof payload.toolCallId === "string"
-        ? submissionCallKey(attemptId, payload.toolCallId)
+    let kind: RecordedSubmissionRow["kind"] | undefined;
+    let original: unknown;
+    if (record.kind === "candidate" && payload?.type === "candidate") {
+      kind = "candidate";
+      original = payload.params;
+    } else if (record.kind === "sealed" && payload?.type === "sealed") {
+      kind = "accepted";
+      original = payload.accepted;
+    } else if (record.kind === "outcome" && payload?.type === "outcome") {
+      kind = payload.outcome === "audit-escalation" ? "audit-escalation"
+        : payload.outcome === "correctable-rejection" ? "correctable-rejection"
+        : payload.outcome === "infrastructure" ? "infrastructure"
         : undefined;
-    const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-    take(rowFromPayload(kind, payload, payload.accepted, fallback), callKey);
+      original = payload.accepted;
+    }
+    if (kind === undefined || original === undefined || payload === undefined) continue;
+    const callKey = typeof payload.toolCallId === "string"
+      ? submissionCallKey(recordAttemptId(record), payload.toolCallId)
+      : undefined;
+    const fallback = callKey === undefined ? undefined : roleByCall.get(callKey);
+    take(rowFromPayload(kind, payload, original, fallback), callKey);
   }
   return out;
 }
@@ -425,8 +371,7 @@ export async function readRecordedSubmissionRows(
 ): Promise<readonly RecordedSubmissionRow[]> {
   const scope = resolveReadScope(homeOrScope);
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
-  return mapOwnedToSubmissionRows(scoped);
+  return mapOwnedToSubmissionRows(owned);
 }
 
 /**
@@ -459,37 +404,6 @@ export async function readRecordedSubmissions(
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<readonly unknown[]> {
   return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).map((row) => row.accepted);
-}
-
-/** True when the run has at least one recorded original payload (any outcome class). */
-export async function hasRecordedSubmission(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<boolean> {
-  return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).length > 0;
-}
-
-export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "outcome" }>;
-
-/** Latest non-final outcome on the run ledger (settlement residual precedence). */
-export async function readLatestSubmissionOutcome(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<LatestSubmissionOutcome | undefined> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
-  for (let index = scoped.length - 1; index >= 0; index -= 1) {
-    const record = scoped[index];
-    if (record?.kind !== "outcome") continue;
-    const payload = record.payload as Partial<LatestSubmissionOutcome> | undefined;
-    if (payload?.type === "outcome" && typeof payload.outcome === "string") {
-      return payload as LatestSubmissionOutcome;
-    }
-  }
-  return undefined;
 }
 
 type LedgerState = { sequence: number };

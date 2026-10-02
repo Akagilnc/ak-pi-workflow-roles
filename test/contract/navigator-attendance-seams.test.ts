@@ -39,6 +39,7 @@ import {
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { flushEventLoopTurns, packageRoot, seedGitRepository, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -735,8 +736,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         { name: "pi" as const, create: () => ({ ok: true as const, host: countersignHost }) },
         { name: "grok-build" as const, create: () => ({ ok: true as const, host: countersignHost }) },
       ];
-      const stdout: string[] = [];
-      const stderr: string[] = [];
+      const { stdout, stderr, io } = captureIo();
       const countersignResult = await runPublicInstructionSeat(
         ["裁：继续审票 #582 是否足以开工。"],
         {
@@ -751,7 +751,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           hostAdapters,
           createRunId: () => "01a0sign00-0000-7000-8000-00000000a1b",
         },
-        { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) },
+        io,
         "countersign",
         (args) => parsePublicSeatArgv("countersign", args),
       );

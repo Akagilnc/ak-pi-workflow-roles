@@ -1,8 +1,11 @@
 /**
- * #1091/#1033: host adapters retain resume identity and cleanup failure contracts.
+ * Medium #1091/#1032 tracer: adapters retain resume identity, host facts,
+ * and independent package faults across the admitted filesystem boundary.
  * Seams: createAcpRoleTurnHost / createHeadlessRoleTurnHost executeTurn(resume).
  */
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -11,6 +14,13 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
+
+async function packageNotes(runDirectory: string): Promise<Array<{ diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }>> {
+  const dir = roleRunArtifactsDirectory(runDirectory);
+  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
+  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8")) as { diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }));
+}
 
 function baseRequest(runDirectory: string): RoleTurnRequest {
   return {
@@ -25,8 +35,10 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
   };
 }
 
-test("#1091 ACP resume without bound session id reports missing; never session/new", async () => {
-  const runDirectory = "/tmp/ak-1091-acp-missing-id";
+test("#1091 ACP resume without bound session id reports missing; never session/new", async (t) => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-acp-missing-", runName: "run@acp" });
+  t.after(() => ledger.dispose());
+  const runDirectory = ledger.runDirectory;
   const methods: string[] = [];
   const connection: AcpConnection = {
     async request(method) {
@@ -71,14 +83,20 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "AcpSessionFailure");
-  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
+  assert.equal(result.knownFailure?.details?.cleanupError, undefined);
+  assert.equal(result.code, null);
+  const notes = await packageNotes(runDirectory);
+  assert.equal(notes.length, 1);
+  assert.equal(typeof notes[0]?.diagnostic, "string");
   assert.equal(methods.includes("session/new"), false);
   assert.equal(methods.includes("session/load"), false);
   assert.equal(methods.includes("session/prompt"), false);
 });
 
-test("ACP successful turn reports dispose failure instead of success", async () => {
-  const runDirectory = "/tmp/ak-1033-acp-cleanup";
+test("ACP successful turn preserves host facts and carries required disposal failure", async (t) => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-acp-cleanup-", runName: "run@acp" });
+  t.after(() => ledger.dispose());
+  const runDirectory = ledger.runDirectory;
   const host = createAcpRoleTurnHost({
     hostName: "hermes",
     modelPassing: "argv",
@@ -90,10 +108,12 @@ test("ACP successful turn reports dispose failure instead of success", async () 
     connect: async () => ({
       async request(method) {
         if (method === "session/load") return { sessionId: "bound-session" };
+        if (method === "session/close") throw Object.assign(new Error("close failed"), { code: "ECLOSE" });
         return {};
       },
-      notify() {},
-      async close() {},
+      stderr: () => "HOST STDERR\n",
+      notify() { throw Object.assign(new Error("cancel failed"), { code: "ECANCEL" }); },
+      async close() { throw Object.assign(new Error("connection close failed"), { code: "ECONNECTION" }); },
     }),
     prepare: async () => ({
       mcpServers: [{ name: "ak-probe", type: "stdio" }],
@@ -103,23 +123,28 @@ test("ACP successful turn reports dispose failure instead of success", async () 
       terminatingToolName: "ak_judge_output",
       async ingestStructuredOutput() {},
       async closeRound() { return { accepted: true as const }; },
-      async dispose() { throw new Error("cleanup failed"); },
+      async dispose() { throw Object.assign(new Error("ledger flush failed"), { code: "ELEDGER" }); },
     }),
   });
   const result = await host.executeTurn({
     ...baseRequest(runDirectory),
     continuation: { kind: "resume", prompt: "continue", hostSessionId: "bound-session" },
   });
-  assert.equal(result.knownFailure?.cause, "session");
-  assert.equal(result.knownFailure?.identity?.code, "dispose-failed");
-  assert.equal(result.knownFailure?.identity?.name, "AcpDisposeFailure");
-  assert.equal(result.knownFailure?.details?.cleanupError, "cleanup failed");
+  assert.deepEqual(result.knownFailure?.identity, { name: "Error", code: "ELEDGER" });
+  assert.equal(result.knownFailure?.cause, undefined);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "HOST STDERR\n");
+  const notes = await packageNotes(runDirectory);
+  assert.deepEqual(notes.map((note) => note.failure?.identity?.code).sort(),
+    ["ECANCEL", "ECLOSE", "ECONNECTION", "ELEDGER"]);
 });
 
-test("#1091 headless resume without bound session id reports missing; never binds", async () => {
+test("#1091 headless resume without bound session id reports missing; never binds", async (t) => {
   const description = lookupHeadlessHostDescription("claude");
   assert.ok(description);
-  const runDirectory = "/tmp/ak-1091-headless-missing-id";
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-headless-missing-", runName: "run@claude" });
+  t.after(() => ledger.dispose());
+  const runDirectory = ledger.runDirectory;
   let bindCalls = 0;
   const host = createHeadlessRoleTurnHost({
     description,
@@ -153,6 +178,9 @@ test("#1091 headless resume without bound session id reports missing; never bind
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "HeadlessSessionFailure");
-  assert.ok(result.knownFailure?.details?.cleanupError);
+  assert.equal(result.knownFailure?.details?.cleanupError, undefined);
+  const notes = await packageNotes(runDirectory);
+  assert.equal(notes.length, 1);
+  assert.equal(typeof notes[0]?.diagnostic, "string");
   assert.equal(bindCalls, 0);
 });
