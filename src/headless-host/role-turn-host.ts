@@ -33,6 +33,7 @@ import {
   recordNativeSessionPointer,
 } from "../host-session-record.ts";
 import {
+  closeJsonSchemaForCodex,
   codexTurnArgs,
   headlessMcpConfigDocument,
   headlessTurnArgs,
@@ -466,16 +467,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
       if (codex) {
-        // Send the declaration unchanged. Any native rejection belongs to Codex;
-        // do not close the schema or substitute a different receipt outlet.
+        // #1148: Codex --output-schema requires a native strict transport schema.
+        // Project from the unique open declaration; do not alter package receipt rules.
         if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
           outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
-          await writeFile(outputSchemaPath, `${JSON.stringify(prepared.jsonSchema, null, 2)}\n`, "utf8");
-          await retainPackageFault({
-            runDirectory: request.runDirectory,
-            diagnostic:
-              "codex --output-schema cannot promise this open contract: native strict output requires all properties and additionalProperties:false; the declaration is sent unchanged",
-          });
+          await writeFile(
+            outputSchemaPath,
+            `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
+            "utf8",
+          );
         }
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");

@@ -131,6 +131,253 @@ function codexTomlStringTable(entries: Readonly<Record<string, string>>): string
 }
 
 /**
+ * Free-form JSON leaf for Type.Unknown under Codex strict transport.
+ * Declared contract objects still close with additionalProperties:false.
+ * For Unknown, a $defs anyOf of JSON values with nested additionalProperties
+ * as $ref is accepted by Codex and keeps non-empty object receipts expressible
+ * (native probe). Package code still does not validate or reject the receipt.
+ */
+const CODEX_JSON_VALUE_DEF = "codexJsonValue";
+const CODEX_JSON_VALUE_REF = `#/$defs/${CODEX_JSON_VALUE_DEF}`;
+const CODEX_JSON_VALUE_SCHEMA = Object.freeze({
+  anyOf: Object.freeze([
+    Object.freeze({ type: "string" }),
+    Object.freeze({ type: "number" }),
+    Object.freeze({ type: "boolean" }),
+    Object.freeze({ type: "null" }),
+    Object.freeze({ type: "array", items: Object.freeze({ $ref: CODEX_JSON_VALUE_REF }) }),
+    Object.freeze({
+      type: "object",
+      properties: Object.freeze({}),
+      required: Object.freeze([] as string[]),
+      additionalProperties: Object.freeze({ $ref: CODEX_JSON_VALUE_REF }),
+    }),
+  ]),
+});
+
+/**
+ * Derive a Codex/OpenAI-strict transport schema from the package open schema.
+ * Legal open schema is untouched; this is a host-only transmission projection
+ * (#1148 / #646 / ADR 0057 / ADR 0054): every object closes, every property is
+ * required, originally-optional fields become a null union (official guidance),
+ * and originally-required declared nullability stays. Nested open-tool anyOf
+ * wrappers are flattened so every branch carries `type`, keeping descriptions.
+ * Type.Unknown / description-only leaves become the closed JSON-value $ref.
+ * Package code still does not validate or reject the receipt.
+ */
+export function closeJsonSchemaForCodex(
+  schema: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const closed = closeSchemaNode(schema) as Record<string, unknown>;
+  const existingDefs = isRecord(closed.$defs)
+    ? (closed.$defs as Record<string, unknown>)
+    : {};
+  return {
+    ...closed,
+    $defs: {
+      ...existingDefs,
+      [CODEX_JSON_VALUE_DEF]: CODEX_JSON_VALUE_SCHEMA,
+    },
+  };
+}
+
+/** Pure null leaf only — composite type|null is stripped in-leaf, not dropped whole. */
+function isPureNullTypeSchema(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.type === "null") return true;
+  if (Array.isArray(value.type) && value.type.length > 0 && value.type.every((t) => t === "null")) {
+    return true;
+  }
+  return false;
+}
+
+/** Declared nullability on the open schema (type|null, anyOf null leaf, or pure null). */
+function schemaDeclaresNull(schema: unknown): boolean {
+  if (!isRecord(schema)) return false;
+  if (isPureNullTypeSchema(schema)) return true;
+  if (Array.isArray(schema.type) && schema.type.includes("null")) return true;
+  if (Array.isArray(schema.anyOf) && schema.anyOf.some(schemaDeclaresNull)) return true;
+  return false;
+}
+
+/**
+ * Within a leaf, remove null members from type arrays.
+ * Null is re-added when the union or property edge originally declared it.
+ */
+function stripNullFromLeafType(leaf: unknown): unknown {
+  if (!isRecord(leaf) || !Array.isArray(leaf.type)) return leaf;
+  const nonNull = leaf.type.filter((t) => t !== "null");
+  if (nonNull.length === leaf.type.length) return leaf;
+  if (nonNull.length === 0) return { ...leaf, type: "null" };
+  if (nonNull.length === 1) return { ...leaf, type: nonNull[0] };
+  return { ...leaf, type: nonNull };
+}
+
+/**
+ * Flatten nested anyOf wrappers into concrete leaf schemas.
+ * Open-tool unions often wrap leaves in description-only anyOf shells that
+ * lack `type`; strict structured output rejects those intermediate nodes.
+ * Nested shell descriptions attach to leaves that lack their own (not onto $ref).
+ * The outermost union keeps its description on the closed node via the caller.
+ */
+function flattenUnionLeaves(schema: unknown, attachShellDescription = false): unknown[] {
+  if (!isRecord(schema)) return [schema];
+  if (!Array.isArray(schema.anyOf)) return [schema];
+  const shellDescription =
+    attachShellDescription && typeof schema.description === "string"
+      ? schema.description
+      : undefined;
+  return schema.anyOf.flatMap((branch) => {
+    const leaves = flattenUnionLeaves(branch, true);
+    if (shellDescription === undefined) return leaves;
+    return leaves.map((leaf) => {
+      if (!isRecord(leaf) || typeof leaf.$ref === "string") return leaf;
+      if (typeof leaf.description === "string") return leaf;
+      return { ...leaf, description: shellDescription };
+    });
+  });
+}
+
+/** Drop pure-null leaves after in-leaf null stripping; property edge may re-add null. */
+function nonNullLeaves(schema: unknown): unknown[] {
+  return flattenUnionLeaves(schema)
+    .map(stripNullFromLeafType)
+    .filter((leaf) => !isPureNullTypeSchema(leaf));
+}
+
+function withDescription(closed: unknown, description: Readonly<{ description?: string }>): unknown {
+  if (description.description === undefined) return closed;
+  // Codex strict does not allow sibling keys on $ref; wrap so guidance is kept.
+  if (isRecord(closed) && typeof closed.$ref === "string") {
+    return { anyOf: [closed], ...description };
+  }
+  // Prefer a leaf's own description (nested anyOf shell) over the outer copy.
+  if (isRecord(closed) && typeof closed.description === "string") return closed;
+  return isRecord(closed) ? { ...closed, ...description } : closed;
+}
+
+/**
+ * Property edge under strict transport.
+ * Optional → closed leaf(s) + null. Required with declared nullability keeps null.
+ * Required without declared null stays non-nullable.
+ */
+function closePropertySchema(schema: unknown, optional: boolean): unknown {
+  const description =
+    isRecord(schema) && typeof schema.description === "string"
+      ? { description: schema.description }
+      : {};
+  const keepNull = optional || schemaDeclaresNull(schema);
+  const leaves = nonNullLeaves(schema).map(closeSchemaNode);
+  if (leaves.length === 0) return { type: "null", ...description };
+  if (!keepNull) {
+    const closed = leaves.length === 1 ? leaves[0] : { anyOf: leaves };
+    return withDescription(closed, description);
+  }
+  return { anyOf: [...leaves, { type: "null" }], ...description };
+}
+
+/**
+ * Strict generators require every schema node to declare `type` (or a $ref).
+ * Type.Unknown / description-only leaves → free JSON $ref (not string): array
+ * and object receipts stay expressible under --output-schema.
+ */
+function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknown> {
+  if (schema.type !== undefined) return schema;
+  if (typeof schema.$ref === "string") return schema;
+  if (isRecord(schema.properties) || schema.additionalProperties !== undefined) {
+    return { ...schema, type: "object" };
+  }
+  if (schema.items !== undefined) {
+    return { ...schema, type: "array" };
+  }
+  if (schema.const !== undefined) {
+    const value = schema.const;
+    if (value === null) return { ...schema, type: "null" };
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return { ...schema, type: typeof value };
+    }
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const sample = schema.enum.find((item) => item !== null);
+    if (typeof sample === "string" || typeof sample === "number" || typeof sample === "boolean") {
+      return { ...schema, type: typeof sample };
+    }
+  }
+  // Free JSON via $defs. $ref must stand alone (strict rejects sibling keys).
+  return { $ref: CODEX_JSON_VALUE_REF };
+}
+
+function originalRequiredNames(node: Record<string, unknown>): ReadonlySet<string> {
+  if (!Array.isArray(node.required)) return new Set();
+  return new Set(node.required.filter((item): item is string => typeof item === "string"));
+}
+
+function closeSchemaNode(node: unknown): unknown {
+  if (!isRecord(node)) return node;
+
+  // Already a ref (free-JSON leaf or pre-existing) — do not retype.
+  if (typeof node.$ref === "string") return node;
+
+  // Union node: flatten then close each concrete leaf (do not keep untyped shells).
+  // Declared null stays — including nested unions such as array items.
+  if (Array.isArray(node.anyOf)) {
+    const description =
+      typeof node.description === "string" ? { description: node.description } : {};
+    const keepNull = schemaDeclaresNull(node);
+    const leaves = nonNullLeaves(node).map(closeSchemaNode);
+    if (leaves.length === 0) return { type: "null", ...description };
+    if (!keepNull) {
+      if (leaves.length === 1) return withDescription(leaves[0], description);
+      return { anyOf: leaves, ...description };
+    }
+    return { anyOf: [...leaves, { type: "null" }], ...description };
+  }
+
+  let out: Record<string, unknown> = { ...node };
+
+  if (node.items !== undefined) {
+    out.items = closeSchemaNode(node.items);
+  }
+  if (isRecord(node.$defs)) {
+    out.$defs = Object.fromEntries(
+      Object.entries(node.$defs).map(([key, value]) => [key, closeSchemaNode(value)]),
+    );
+  }
+
+  const hasProperties = isRecord(node.properties);
+  const isObjectType =
+    node.type === "object"
+    || (Array.isArray(node.type) && node.type.includes("object"))
+    || hasProperties
+    || node.additionalProperties !== undefined;
+
+  if (hasProperties) {
+    const props = node.properties as Record<string, unknown>;
+    const wasRequired = originalRequiredNames(node);
+    const closedProps: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [name, propSchema] of Object.entries(props)) {
+      required.push(name);
+      closedProps[name] = closePropertySchema(propSchema, !wasRequired.has(name));
+    }
+    out.properties = closedProps;
+    out.required = required;
+    out.additionalProperties = false;
+    if (out.type === undefined) out.type = "object";
+    // Object nodes must not also carry residual anyOf from the open copy.
+    delete out.anyOf;
+  } else if (isObjectType) {
+    out.additionalProperties = false;
+    if (!Array.isArray(out.required)) out.required = [];
+    if (out.type === undefined) out.type = "object";
+  } else {
+    out = ensureTypedLeaf(out);
+  }
+
+  return out;
+}
+
+/**
  * Project shared-envelope MCP rows into `codex -c mcp_servers.<name>.*` argv pairs.
  * Dot-path + TOML values per official config-advanced; spawn argv (no shell).
  */
@@ -185,7 +432,7 @@ export function codexTurnArgs(options: {
   readonly systemPromptPath: string;
   /**
    * Absolute path for the native `--output-schema` flag.
-   * Pass the declaration unchanged; native strict output cannot promise an open contract.
+   * File holds the Codex-strict transport projection of the open declaration (#1148).
    * Optional for prose-exit seats (#959 navigator) so agent_message stays free text.
    */
   readonly outputSchemaPath?: string;
