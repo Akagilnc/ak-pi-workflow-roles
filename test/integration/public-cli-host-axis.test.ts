@@ -315,6 +315,138 @@ const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
   ...(roleTurnHost === undefined ? {} : { roleTurnHost }),
 });
 
+type AcpFrame = {
+  method?: string;
+  params?: {
+    prompt?: Array<{ type?: string; text?: string }>;
+    sessionId?: string;
+    modelId?: string;
+  };
+};
+
+async function readAcpFrames(framesPath: string): Promise<AcpFrame[]> {
+  return (await readFile(framesPath, "utf8"))
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as AcpFrame);
+}
+
+/** #1146: production ACP agent answers set_model; optional reject for fail-closed path. */
+function acpPlannedStdioAgentSource(input: {
+  readonly framesPath: string;
+  readonly sessionId: string;
+  readonly rejectSetModel?: boolean;
+}): string {
+  const setModelReply = input.rejectSetModel === true
+    ? `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params", data: "unknown model id" } }) + "\\n");`
+    : `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");`;
+  return `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { connect } from "node:net";
+import { createInterface } from "node:readline";
+const framesPath = ${JSON.stringify(input.framesPath)};
+let mcpInfo = null;
+function callPlanned(socketPath, token) {
+  return new Promise((resolve, reject) => {
+    const sock = connect(socketPath);
+    let buf = "";
+    let nextId = 1;
+    const waiters = new Map();
+    sock.setEncoding("utf8");
+    sock.on("data", (chunk) => {
+      buf += chunk;
+      for (;;) {
+        const i = buf.indexOf("\\n"); if (i < 0) break;
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        let msg; try { msg = JSON.parse(line); } catch { continue; }
+        const w = waiters.get(msg.id); if (!w) continue;
+        waiters.delete(msg.id);
+        if (msg.error) w.reject(new Error(JSON.stringify(msg.error)));
+        else w.resolve(msg.result);
+      }
+    });
+    sock.on("error", reject);
+    function req(method, params) {
+      const id = nextId++;
+      return new Promise((res, rej) => {
+        waiters.set(id, { resolve: res, reject: rej });
+        sock.write(JSON.stringify({ id, token, method, params }) + "\\n");
+      });
+    }
+    sock.on("connect", async () => {
+      try {
+        await req("tools/call", {
+          name: "ak_coder_output",
+          arguments: { status: "planned", report: "Plan only; no edits." },
+        });
+        sock.destroy();
+        resolve();
+      } catch (e) { sock.destroy(); reject(e); }
+    });
+  });
+}
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  appendFileSync(framesPath, line + "\\n");
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (typeof msg.method !== "string" || typeof msg.id !== "number") return;
+  void (async () => {
+    try {
+      if (msg.method === "initialize") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+        return;
+      }
+      if (msg.method === "session/new" || msg.method === "session/load") {
+        const servers = msg.params?.mcpServers ?? [];
+        const envRows = servers[0]?.env ?? [];
+        mcpInfo = {
+          socketPath: envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value,
+          token: envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value,
+        };
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: ${JSON.stringify(input.sessionId)} } }) + "\\n");
+        return;
+      }
+      if (msg.method === "session/set_model") {
+        ${setModelReply}
+        return;
+      }
+      if (msg.method === "session/prompt") {
+        if (mcpInfo?.socketPath && mcpInfo?.token) {
+          await callPlanned(mcpInfo.socketPath, mcpInfo.token);
+        }
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+        return;
+      }
+      // Accepted path awaits session/close before teardown (role-turn-host).
+      if (msg.method === "session/close") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+      }
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { message: String(e) } }) + "\\n");
+    }
+  })();
+});
+`;
+}
+
+function assertSetModelBeforePrompt(
+  frames: readonly AcpFrame[],
+  expected: { readonly modelId: string; readonly sessionId: string },
+): void {
+  const methods = frames.map((f) => f.method);
+  const setModelFrames = frames.filter((f) => f.method === "session/set_model");
+  assert.equal(setModelFrames.length, 1, `set_model count in ${methods.join(",")}`);
+  assert.deepEqual(setModelFrames[0]?.params, {
+    sessionId: expected.sessionId,
+    modelId: expected.modelId,
+  });
+  const promptIndex = methods.indexOf("session/prompt");
+  const setModelIndex = methods.indexOf("session/set_model");
+  assert.ok(promptIndex > 0, "session/prompt must reach the host");
+  assert.ok(setModelIndex >= 0 && setModelIndex < promptIndex, "set_model before prompt");
+}
+
 test("production adapter table registers grok-build and hermes and keeps pi selectable", async () => homeTest(async (home) => {
   let piTurns = 0;
   const countingPi: RoleTurnHost = {
@@ -683,97 +815,15 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; planned receipt", a
       assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "evidence"), `${label}: evidence artifact`);
     }
 
-    // --- ACP family: grok-build fake agent seals planned via MCP, answers session/close ---
+    // --- ACP family: grok-build fake agent seals planned via MCP; set_model bare id (#1146) ---
     {
       const framesPath = join(home, "grok-frames.jsonl");
       await mkdir(join(home, ".grok", "bin"), { recursive: true });
       const binary = join(home, ".grok", "bin", "grok");
+      const sessionId = "sess-822-grok";
       await writeFile(
         binary,
-        `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-import { connect } from "node:net";
-import { createInterface } from "node:readline";
-const framesPath = ${JSON.stringify(framesPath)};
-let mcpInfo = null;
-function callPlanned(socketPath, token) {
-  return new Promise((resolve, reject) => {
-    const sock = connect(socketPath);
-    let buf = "";
-    let nextId = 1;
-    const waiters = new Map();
-    sock.setEncoding("utf8");
-    sock.on("data", (chunk) => {
-      buf += chunk;
-      for (;;) {
-        const i = buf.indexOf("\\n"); if (i < 0) break;
-        const line = buf.slice(0, i); buf = buf.slice(i + 1);
-        let msg; try { msg = JSON.parse(line); } catch { continue; }
-        const w = waiters.get(msg.id); if (!w) continue;
-        waiters.delete(msg.id);
-        if (msg.error) w.reject(new Error(JSON.stringify(msg.error)));
-        else w.resolve(msg.result);
-      }
-    });
-    sock.on("error", reject);
-    function req(method, params) {
-      const id = nextId++;
-      return new Promise((res, rej) => {
-        waiters.set(id, { resolve: res, reject: rej });
-        sock.write(JSON.stringify({ id, token, method, params }) + "\\n");
-      });
-    }
-    sock.on("connect", async () => {
-      try {
-        await req("tools/call", {
-          name: "ak_coder_output",
-          arguments: { status: "planned", report: "Plan only; no edits." },
-        });
-        sock.destroy();
-        resolve();
-      } catch (e) { sock.destroy(); reject(e); }
-    });
-  });
-}
-const rl = createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  appendFileSync(framesPath, line + "\\n");
-  let msg;
-  try { msg = JSON.parse(line); } catch { return; }
-  if (typeof msg.method !== "string" || typeof msg.id !== "number") return;
-  void (async () => {
-    try {
-      if (msg.method === "initialize") {
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
-        return;
-      }
-      if (msg.method === "session/new" || msg.method === "session/load") {
-        const servers = msg.params?.mcpServers ?? [];
-        const envRows = servers[0]?.env ?? [];
-        mcpInfo = {
-          socketPath: envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value,
-          token: envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value,
-        };
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess-822-grok" } }) + "\\n");
-        return;
-      }
-      if (msg.method === "session/prompt") {
-        if (mcpInfo?.socketPath && mcpInfo?.token) {
-          await callPlanned(mcpInfo.socketPath, mcpInfo.token);
-        }
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
-        return;
-      }
-      // Accepted path awaits session/close before teardown (role-turn-host).
-      if (msg.method === "session/close") {
-        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
-      }
-    } catch (e) {
-      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { message: String(e) } }) + "\\n");
-    }
-  })();
-});
-`,
+        acpPlannedStdioAgentSource({ framesPath, sessionId }),
         { encoding: "utf8" },
       );
       await chmod(binary, 0o755);
@@ -787,13 +837,8 @@ rl.on("line", (line) => {
       assert.equal(result.hostFailure, undefined, grokIo.stderr.join(""));
       assert.equal(result.exitCode, 0, `${grokIo.stdout.join("")}\n${grokIo.stderr.join("")}`);
 
-      const frames = (await readFile(framesPath, "utf8"))
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as {
-          method?: string;
-          params?: { prompt?: Array<{ type?: string; text?: string }> };
-        });
+      const frames = await readAcpFrames(framesPath);
+      assertSetModelBeforePrompt(frames, { modelId: "grok-4.5", sessionId });
       const promptFrame = frames.find((f) => f.method === "session/prompt");
       assert.ok(promptFrame, "ACP session/prompt must reach the host");
       const hostPrompt = (promptFrame.params?.prompt ?? [])
@@ -802,6 +847,90 @@ rl.on("line", (line) => {
       assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
       assert.equal(hostPrompt.includes(assignment), true);
       await assertPlannedReceipt(result, "grok-build");
+
+      // Resume: load bound session, set_model bare id again, then prompt — no argv model.
+      await writeFile(framesPath, "", "utf8");
+      const resumeIo = captureIo();
+      const resumed = await runAkRole(["resume", "run-822-coder-grok", "continue after plan"], {
+        ...productionBase(home),
+        io: resumeIo.io,
+        cwd: project,
+      });
+      assert.equal(resumed.hostFailure, undefined, resumeIo.stderr.join(""));
+      assert.equal(resumed.exitCode, 0, `${resumeIo.stdout.join("")}\n${resumeIo.stderr.join("")}`);
+      const resumeFrames = await readAcpFrames(framesPath);
+      assert.equal(resumeFrames.some((f) => f.method === "session/load"), true);
+      assertSetModelBeforePrompt(resumeFrames, { modelId: "grok-4.5", sessionId });
+
+      // Rejected set_model: non-zero, no prompt, no default-model fallback.
+      const rejectFramesPath = join(home, "grok-reject-frames.jsonl");
+      await writeFile(
+        binary,
+        acpPlannedStdioAgentSource({
+          framesPath: rejectFramesPath,
+          sessionId: "sess-822-grok-reject",
+          rejectSetModel: true,
+        }),
+        { encoding: "utf8" },
+      );
+      await chmod(binary, 0o755);
+      const rejectIo = captureIo();
+      const rejected = await runAkRole(["coder", "--project", project, `${assignment} reject-model`], {
+        ...productionBase(home),
+        io: rejectIo.io,
+        cwd: project,
+        createRunId: () => "run-822-coder-grok-reject",
+      });
+      assert.notEqual(rejected.exitCode, 0, rejectIo.stderr.join(""));
+      const rejectFrames = await readAcpFrames(rejectFramesPath);
+      assert.equal(rejectFrames.filter((f) => f.method === "session/set_model").length, 1);
+      assert.equal(rejectFrames.some((f) => f.method === "session/prompt"), false);
+    }
+
+    // --- ACP family: hermes set_model modelId is seat provider:model (#644 / #1146) ---
+    {
+      const framesPath = join(home, "hermes-frames.jsonl");
+      await mkdir(join(home, ".local", "bin"), { recursive: true });
+      const binary = join(home, ".local", "bin", "hermes");
+      const sessionId = "sess-822-hermes";
+      await writeFile(
+        binary,
+        acpPlannedStdioAgentSource({ framesPath, sessionId }),
+        { encoding: "utf8" },
+      );
+      await chmod(binary, 0o755);
+      await mkdir(join(home, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(home, ".ak-roles", "host-providers.json"),
+        `${JSON.stringify({ hermes: { xai: "xai-oauth" } }, null, 2)}\n`,
+        "utf8",
+      );
+      await mkdir(join(home, ".hermes"), { recursive: true });
+      await writeFile(
+        join(home, ".hermes", "provider_models_cache.json"),
+        JSON.stringify({ "xai-oauth": { models: ["grok-4.5"] } }),
+        "utf8",
+      );
+
+      await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], productionBase(home));
+      await runAkRole(["config", "set-host", "coder", "hermes"], productionBase(home));
+      const hermesIo = captureIo();
+      const result = await runAkRole(["coder", "--project", project, assignment],
+        { ...productionBase(home), io: hermesIo.io, cwd: project, createRunId: () => "run-822-coder-hermes" },
+      );
+      assert.equal(result.hostFailure, undefined, hermesIo.stderr.join(""));
+      assert.equal(result.exitCode, 0, `${hermesIo.stdout.join("")}\n${hermesIo.stderr.join("")}`);
+
+      const frames = await readAcpFrames(framesPath);
+      assertSetModelBeforePrompt(frames, { modelId: "xai-oauth:grok-4.5", sessionId });
+      const promptFrame = frames.find((f) => f.method === "session/prompt");
+      assert.ok(promptFrame, "hermes session/prompt must reach the host");
+      const hostPrompt = (promptFrame.params?.prompt ?? [])
+        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .join("");
+      assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
+      assert.equal(hostPrompt.includes(assignment), true);
+      await assertPlannedReceipt(result, "hermes");
     }
 
     // --- headless family: claude fake returns planned structured_output ---
