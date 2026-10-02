@@ -1,18 +1,13 @@
 # Apply evidence packet (contributor template)
 
-This file is a **repository-contributor template** for a manually supplied Apply
-(executable-proof) artifact. The filename identifies an **evidence burden**, not
-a verdict, phase flag, transition, or required predecessor/successor.
-
-Selection, composition, and use are **caller-owned** (ADR 0010). Apply posture
-semantics remain solely in `souls/judge.md`. Git commit identity owns the code
-snapshot and any reviewed range. This template creates no receipt envelope,
-audit, runtime enforcement, trust tier, production hook, or package surface.
+Repository-contributor template for manually supplied Apply evidence.
+Template scope and preservation: [development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md).
+Composition: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
+Adjudication: [Judge Soul](../souls/judge.md).
 
 ## Sealed upstream identities
 
-Digests seal **artifact-byte identity only**. They do not prove truth,
-acceptance, or freshness.
+Artifact identity and preservation: [development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md#artifact-preservation-rules).
 
 | Artifact | Repository-relative path | SHA-256 of exact bytes |
 | --- | --- | --- |
@@ -34,7 +29,7 @@ Distinguish carefully:
 - **full base + target SHAs** → identify only the reviewed delta (not a commit-set membership rule or range syntax)
 - **tests / seam / boundary observations** → behavioral evidence
 
-None of these alone proves truth or acceptance.
+Adjudication duties: [Judge Soul](../souls/judge.md).
 
 ## Construction evidence
 
@@ -69,9 +64,3 @@ otherwise record `N/A — no guardrail added or approved` with disposition.
 | 1. Which real, reproducible failure proves this guardrail is needed? | |
 | 2. Which seam owns the invariant it protects? | |
 | 3. Why is deleting or simplifying the root cause insufficient for this failure class? | |
-
-## Explicit non-claims
-
-- Filename is not a verdict and does not imply Apply convergence.
-- This template does not define or alter role receipts, Soul audit, or runtime gates.
-- Instantiation does not route work to any role or require a successor packet.

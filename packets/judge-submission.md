@@ -1,12 +1,9 @@
 # Submission-case evidence template (contributor template)
 
-This file is a **repository-contributor template** for the evidence record of a
-manually supplied Submission case (ticket face / plan / disposition ledger /
-constitutional review). The submission-case duty law is solely in
-`souls/judge.md`; this file supplies its evidence-record format.
-
-Selection, composition, and use are **caller-owned** (ADR 0010). This template
-creates no routing, topology, role-order, or package memory.
+Repository-contributor template for manually supplied Submission-case evidence.
+Template scope and preservation: [development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md).
+Composition: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
+Adjudication: [Judge Soul](../souls/judge.md).
 
 ## Identity seal
 

@@ -8,7 +8,7 @@ relative to this note. This note only covers this CLI's technical parameters.
 
 ## Invocation examples (local Grok CLI)
 
-The machine entrypoint is `grok`. Run from the role project root.
+The machine entrypoint is `grok`.
 Non-interactive labor reads the prompt from a file and prints plain output:
 
 ```bash
@@ -44,11 +44,8 @@ grok --trust --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> 
 - Official docs list `-p/--single` as the canonical headless prompt input;
   `--prompt-file` exists in the installed CLI (`--help`) and is smoke-verified
   on this host — prefer it for long prompts, fall back to `-p` if absent.
-- `--output-format plain` keeps stdout clean for capture and is the only
-  format to use for labor. Do not use `streaming-json`: its NDJSON deltas go
-  back into the seat's context as noise (see `claude-code.md` for the measured
-  ratio); progress observability belongs to the runner's process watch, not to
-  the returned body.
+- `--output-format plain` selects plain output. Output-selection policy:
+  [engine dispatch](../engine-dispatch.md#process-shape).
 - Feeding raw JSON directly through `--prompt-file` is rejected by the CLI as
   non-ACP JSON (`JSON object must have a type field`; live-verified
   2026-08-21).

@@ -7,7 +7,7 @@
 
 ## 宿主轴（与角色命令面）
 
-游奕使自动出席，亦可 `ak-role navigator` 直调（自动出席不变）。主会话宿主由公开角色的 host 轴决定：调用 `--host` → 席位 `config set-host` → 默认 `pi`。配置默认 host 后，调用者仍用与 Pi 相同的 `ak-role <role> …` 命令面；游奕使随该宿主下的角色跑次出席，席位模型走 run 目录 `institutional-resolution.json` 的 navigator 座（显式 `config set navigator` 优先，否则继承父席有效模型），不再依赖父宿主 ExtensionContext。
+调用与 host 解析见 `ak-role help`、`ak-role help navigator`；机构边界见 [ADR 0082](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0082-three-layer-runtime-role-host-face.md)，席位解析见 [config 实现](../src/public-cli/config.ts)。
 
 ## 常用交付线
 
@@ -39,5 +39,4 @@ collector（收齐 current-head 材料）
 修内司 / 将作监 apply 以 unfinished 交棒时，工作仍未结清：
   → 续修（通常仍是同一 worker 的 apply），不要送大理寺
 
-refused / partially_completed 是已结清结算，送大理寺审计仍合法。
-unfinished 不是失败清理信号，也不豁免任何验收。
+refused / partially_completed 后可建议送大理寺审计。终态语义见 [worker 输出契约](../src/package-contracts/worker-output.ts)、[仓内宪法](../CLAUDE.md)，本段只给路线建议。

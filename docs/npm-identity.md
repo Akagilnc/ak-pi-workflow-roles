@@ -4,7 +4,7 @@ Maintainer-facing facts for portable package identity. Not a product CLI tutoria
 
 ## Package name
 
-Current `package.json` `name`: `@akagilnc/pi-workflow-roles`.
+Current package identity: [`package.json`](../package.json).
 
 Settled under authenticated registry evidence (2026-08-04, npm user `akagilnc`).
 The previous candidate `@ak/pi-workflow-roles` is **not** publishable by this
@@ -95,11 +95,12 @@ Read-only probes only; no `npm publish`.
 
 ## License posture
 
-- Project license: **Apache-2.0** (`package.json` `"license": "Apache-2.0"` + root `LICENSE` = complete Apache License 2.0 text).
-- Matt Pocock skills attribution: **separate** third-party notice in `THIRD_PARTY_NOTICES.md` (MIT). Not project license authority; not a dual-license expression.
+- Project license: [`package.json`](../package.json) and [`LICENSE`](../LICENSE).
+- Third-party attribution: [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 ## Host peer dependencies
 
-Pi supplies `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent`. Following Pi's package contract, both are optional `"*"` peers; ordinary npm install therefore does not materialize a private Pi runtime. Development and typecheck use snapshots `pi-ai@0.99.1` and `pi-coding-agent@0.99.1`. `typebox@1.3.8` is a regular dependency: the standalone `ak-role` bin imports it at runtime, and an optional peer is not installed by `pi update` (#1121).
+Peer optionality, dependency classes and development versions are owned by
+[`package.json`](../package.json). Dependency rationale: [#1121](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/1121).
 
 The packed-artifact npm seam and a real `pi install` in an isolated home verify that host peers remain absent from the package install tree, including after a repeated install.

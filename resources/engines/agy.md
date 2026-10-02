@@ -34,7 +34,6 @@ List the ids this host offers with `agy models` when an order names one.
 agy --sandbox --dangerously-skip-permissions --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
 ```
 
-When the dispatch order names a model, pass it verbatim via `--model`; an
-unknown model id is an engine-process failure (typed failure, stop — per
-`../engine-dispatch.md`). Never copy a model id from this note or from a
-previous run — ids here would go stale.
+When the dispatch order names a model, pass it verbatim via `--model`.
+Failure disposition is in [engine dispatch](../engine-dispatch.md#failure-handling).
+Never copy a model id from this note or from a previous run — ids here would go stale.

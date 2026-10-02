@@ -8,7 +8,7 @@ relative to this note. This note only covers this CLI's technical parameters.
 
 ## Invocation examples (local Claude Code CLI)
 
-The machine entrypoint is `claude`. Run from the role project root.
+The machine entrypoint is `claude`.
 Non-interactive print mode (`-p` / `--print`) is verified available on this
 host.
 
@@ -26,14 +26,11 @@ specified:
 claude -p --dangerously-skip-permissions --model <MODEL_ID> --output-format text "YOUR_LABOR_PROMPT"
 ```
 
-Use `--output-format text` (the default): stdout is the labor body and nothing
-else. Never use `--output-format=stream-json` / `--verbose` for labor — the
-returned body goes back into the seat's context, and the event stream is noise:
-measured 2026-09-06 on this host, the same one-sentence task returned 382 bytes
+`--output-format text` is the default. Output-selection policy is in
+[engine dispatch](../engine-dispatch.md#process-shape).
+Measured 2026-09-06 on this host: the same one-sentence task returned 382 bytes
 as `text` and 45,028 bytes as `stream-json --verbose` (118×); a 12-minute labor
 returned 957k chars and killed the seat with a 712k-token request (#675).
-Progress observability belongs to the runner's process watch, not to the
-returned body.
 
 ## Headless permissions
 
@@ -45,5 +42,4 @@ refused without the flag ("The read was not permitted — I don't have access to
 that file outside the current worktree") and succeeds with it (host-verified
 2026-08-28).
 
-Prefer `claude --help` on the host over any remembered flag set. Do not wrap
-this engine behind `ak-role` flags.
+CLI parameters: `claude --help`. Invocation boundaries: [engine dispatch](../engine-dispatch.md).

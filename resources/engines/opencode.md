@@ -9,7 +9,7 @@ parameters.
 
 ## Invocation examples (local OpenCode CLI)
 
-The machine entrypoint is `opencode`. Run from the role project root.
+The machine entrypoint is `opencode`.
 Non-interactive labor uses `run` with `--auto`. When the labor order specifies
 an engine model, pass it with `-m`:
 
@@ -37,7 +37,7 @@ opencode run --auto "YOUR_LABOR_PROMPT"
   migrate (verified 2026-08-21:
   GLM lives under `opencode-go/`, e.g. `opencode-go/glm-5.2`; the older
   `zai/glm-5.2` id errors with "Unexpected server error").
-- Plain text output only (never `--format json` for labor — the returned body
-  goes back into the seat's context).
+- Output-selection policy: [engine dispatch](../engine-dispatch.md#process-shape).
+  The JSON-event option is `--format json`.
 - Output goes to stdout; long prompts may be passed via shell heredoc or a
   file read into the argument — follow the installed CLI's actual interface.

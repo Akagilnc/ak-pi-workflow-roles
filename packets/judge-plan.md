@@ -1,19 +1,14 @@
 # Plan evidence packet (contributor template)
 
-This file is a **repository-contributor template** for a manually supplied Plan
-(construction-readiness) artifact. The filename identifies an **evidence
-burden**, not a verdict, phase flag, transition, or required
-predecessor/successor.
-
-Selection, composition, and use are **caller-owned** (ADR 0010). Plan posture
-semantics remain solely in `souls/judge.md`. This template does not restate or
-amend that law. It creates no routing, topology, role-order, package memory, or
-proof that construction occurred.
+Repository-contributor template for manually supplied Plan evidence.
+Template scope and preservation: [development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md).
+Composition: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
+Adjudication: [Judge Soul](../souls/judge.md).
 
 ## Sealed authority identity
 
-Bind the authority materials this plan consumes. Digests seal identity only—not
-truth, acceptance, or freshness.
+Bind the authority materials this plan consumes. Artifact identity and preservation:
+[development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md#artifact-preservation-rules).
 
 | Artifact | Repository-relative path | SHA-256 of exact bytes |
 | --- | --- | --- |
@@ -46,10 +41,3 @@ fixture pseudocode or blanket `file:line` here.
 
 Add P3… as needed. Every planned change must be reconcilable to the sealed
 authority identity above and must carry all five facts.
-
-## Explicit non-claims
-
-- Filename is not a verdict and does not authorize or prove Apply success.
-- This packet does not claim construction already happened.
-- No orchestration, next-role, or stage-machine semantics arise from this file.
-- No mechanical schema/runtime enforcement is claimed by this template.
