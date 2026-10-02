@@ -63,6 +63,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
     hostName,
     sessionIdentity: createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
     modelPassing: description.modelPassing,
+    ...(description.setModelId === undefined ? {} : { setModelId: description.setModelId }),
     roleRuntimeDependencies: createRoleRuntimeDependencies(packageRoot),
     async connect(request) {
       const seatProfile = description.seatProfileSoul;
