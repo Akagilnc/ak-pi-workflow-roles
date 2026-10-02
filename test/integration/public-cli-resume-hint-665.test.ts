@@ -8,6 +8,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -49,8 +50,7 @@ test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", asyn
     });
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
 
-    const stdout: string[] = [];
-    const stderr: string[] = [];
+    const { stdout, stderr, io } = captureIo();
     // Doctor-shaped adapters: trySettle only — no per-seat resume fork flags.
     const result = await presentControlledFailure(
       admitted,
@@ -63,14 +63,7 @@ test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", asyn
         trySettle: async () => undefined,
       },
       piDurablePrincipalAuthority,
-      {
-        stdout: (text) => {
-          stdout.push(text);
-        },
-        stderr: (text) => {
-          stderr.push(text);
-        },
-      },
+      io,
     );
 
     assert.equal(result.exitCode, 1);

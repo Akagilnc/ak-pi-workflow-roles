@@ -263,6 +263,19 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
+  // Accepted volumes do not dump decisiveFacts unless a failed attempt is
+  // recorded. The unsettled-direction fact still has to be visible on its own.
+  // audit_escalation already dumps every decisiveFact below.
+  if (
+    result.roleOutcome.kind === "accepted"
+    && result.roleOutcome.decisiveFacts?.directionUnsettled === true
+  ) {
+    lines.push("fact\tdirectionUnsettled\ttrue");
+    const subsequent = result.roleOutcome.decisiveFacts.subsequentAudit;
+    if (typeof subsequent === "string") {
+      lines.push(`fact\tsubsequentAudit\t${encodeTerminalField(subsequent)}`);
+    }
+  }
   if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt" || result.roleOutcome.kind === "audit_escalation" || result.roleOutcome.decisiveFacts?.failedAttempts !== undefined) {
     const facts = result.roleOutcome.kind === "accepted"
       ? { failedAttempts: result.roleOutcome.decisiveFacts?.failedAttempts }
@@ -337,11 +350,10 @@ export function formatTerminalResult(result: TerminalResult): string {
       lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
     }
   } else {
-    const payloads =
-      result.roleOutcome.kind === "accepted" ||
+    const payloads = result.roleOutcome.kind === "accepted" ||
       result.roleOutcome.kind === "audit_escalation"
-        ? coalesceSubmissionRows(result.roleOutcome.payloads, result.submissions)
-        : result.submissions ?? [];
+      ? coalesceSubmissionRows(result.submissions, result.roleOutcome.payloads)
+      : result.submissions ?? [];
     for (let i = payloads.length - 1; i >= 0; i -= 1) {
       const payload = payloads[i]!;
       const rendered =

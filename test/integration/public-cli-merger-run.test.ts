@@ -28,6 +28,7 @@ import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   noReceiptLifecycleFacts,
+  receiptAttemptPointer,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
@@ -282,7 +283,7 @@ function hostNeutralTypedTurn(options: {
                 rejectedReceipts: [],
                 deliveryTurns: 2,
                 runPointer: request.runDirectory,
-                attemptPointer: `current:${request.runDirectory}`,
+                attemptPointer: receiptAttemptPointer(request.runDirectory, request.invocationScopeId),
               }),
             );
             return { code: 0, stderr: "", timedOut: false };

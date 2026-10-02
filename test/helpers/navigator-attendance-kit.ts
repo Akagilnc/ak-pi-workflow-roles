@@ -3,7 +3,7 @@
  * #959: navigator speaks prose — fixtures submit free-form advice, not candidates.
  */
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
-import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
+import { type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
 export function context(home?: string) {
   return {
@@ -39,9 +39,6 @@ export function sessionHarness() {
       prompts += 1;
       promptTexts.push(text);
       providerFailure = undefined;
-      noReceipt = sessionNoReceipts.shift();
-      // A session that settled without an accepted receipt returns its turn.
-      if (noReceipt !== undefined) return;
       const rejected = rejectedPrepareReasons.shift();
       if (rejected !== undefined) {
         const id = `rejected-prepare-${prompts}`;
@@ -49,6 +46,9 @@ export function sessionHarness() {
         entries.push({ type: "message", message: { role: "toolResult", toolCallId: id, toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: rejected }] } });
         throw new Error(rejected);
       }
+      noReceipt = sessionNoReceipts.shift();
+      // A session that settled without an accepted receipt returns its turn.
+      if (noReceipt !== undefined) return;
       const transport = transportFailures.shift();
       if (transport !== undefined) {
         providerFailure = { source: "transport", cause: "transport" };
@@ -90,7 +90,8 @@ export function sessionHarness() {
       sessionNoReceipts.push({
         terminalToolCalled: rejectedReasons.length > 0,
         rejectedReceipts: rejectedReasons.map((reason) => ({ reason, diagnosticAvailable: reason.trim() !== "" })),
-        deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+        // The nested session issued no delivery prompt. Record that, not a quota.
+        deliveryTurns: 0,
         sessionCompletion: "settled-without-accepted-receipt",
         runPointer: "/fixture/nested-run",
         attemptPointer: "nested-attempt",

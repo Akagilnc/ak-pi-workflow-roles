@@ -58,8 +58,8 @@ export type GatekeeperResult =
   | {
       /**
        * Accepted reply whose conclusion is not converged|continue|escalate.
-       * Envelope resumes the officer with plain-language re-ask — never parent-stands,
-       * never forges continue (#753 / unreadable-conclusion-resume-speaker).
+       * Envelope reasks the officer in plain language against the configured
+       * ceiling, then keeps this receipt. Never parent-stands, never forges continue.
        */
       readonly status: "needs_reask";
       readonly officer: GateOfficer;

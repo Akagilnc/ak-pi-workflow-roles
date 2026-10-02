@@ -25,6 +25,7 @@ import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
+import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -403,6 +404,12 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // Selected host axis (#537 / ADR 0082): omit must not inherit a parent env value.
       if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
       else env.AK_ROLE_HOST = request.host.trim();
+      // #1132: the one effective delivery-request ceiling travels to the child
+      // on its own env so the in-child role runtime and the worker submission
+      // gate count with the same configured number the AK seam resolved. Omit
+      // must not inherit a parent value (same rule as the other AK_ROLE_ axes).
+      if (request.deliveryRequestLimit === undefined) delete env[RECEIPT_DELIVERY_LIMIT_ENV];
+      else env[RECEIPT_DELIVERY_LIMIT_ENV] = String(request.deliveryRequestLimit);
       applyEngineChildEnv(env, request.engine);
       // Nested auditor dossier tool binds the parent run pointer when published.
       if (

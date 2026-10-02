@@ -198,6 +198,13 @@ export type RoleTurnRequest = {
   readonly host?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   readonly stationChild?: boolean;
+  /**
+   * #1132: the effective delivery-request ceiling resolved once by the caller
+   * from the single configured `autoResumeLimit` value and projected here, so
+   * the AK execution seam and the host adapter's own re-ask loop share one
+   * number. Absent = package default. Never re-read from disk downstream.
+   */
+  readonly deliveryRequestLimit?: number;
 };
 
 /** Turn result — only fields upper layers currently consume. */

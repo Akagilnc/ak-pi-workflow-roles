@@ -16,6 +16,7 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
@@ -26,6 +27,7 @@ export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce";
+export const WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE = "unfinished-reason-bounce";
 
 /** Historical package hook ownership marker — uninstall criterion only. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
@@ -33,7 +35,6 @@ const HOOKS_DIR = "ak-roles-hooks";
 const HOOK_FILE = "reference-transaction";
 /** Open platform-prefix domain (constitution #10) — not a closed singleton. */
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
-const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
 
 export type WorkerSubmissionGateParent = RecordSessionParent;
 
@@ -171,14 +172,16 @@ function unfinishedReasonPresent(details?: unknown): boolean {
   return containsWrittenReason(details.reason);
 }
 
-function readGateState(session: HostRecordSession): {
+function readGateState(session: HostRecordSession, invocationScopeId?: string): {
   baseline: string | null | undefined;
   reminded: boolean;
   prefixReminded: boolean;
+  unfinishedReasonBounces: number;
 } {
   let baseline: string | null | undefined;
   let reminded = false;
   let prefixReminded = false;
+  let unfinishedReasonBounces = 0;
   for (const entry of session.getEntries()) {
     if (entry.type !== "custom") continue;
     if (entry.customType === WORKER_COMMIT_BASELINE_ENTRY_TYPE) {
@@ -190,9 +193,13 @@ function readGateState(session: HostRecordSession): {
       reminded = true;
     } else if (entry.customType === WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE) {
       prefixReminded = true;
+    } else if (entry.customType === WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE
+      && invocationScopeId !== undefined && isRecord(entry.data)
+      && entry.data.invocationScopeId === invocationScopeId) {
+      unfinishedReasonBounces += 1;
     }
   }
-  return { baseline, reminded, prefixReminded };
+  return { baseline, reminded, prefixReminded, unfinishedReasonBounces };
 }
 
 function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
@@ -234,13 +241,20 @@ export type CreateWorkerSubmissionGateOptions = {
    * Path still derives from required parent session; home only pins ledger root. #604 Scope 2.
    */
   readonly home?: string;
+  /**
+   * #1132: ADR 0050 缺理由催全次数 read from the single configured
+   * `autoResumeLimit` value. Absent = package default. Resolved once here; the
+   * gate never re-reads it per submission. Exhaustion still accepts (照收) —
+   * only the count changes.
+   */
+  readonly unfinishedReasonBounceLimit?: number;
 };
 
 export function createWorkerSubmissionGate(
   options: CreateWorkerSubmissionGateOptions = {},
 ): {
   /** Durable parent is required — ownership must be known at arm (#857 loud failure). */
-  arm(cwd: string, parent: WorkerSubmissionGateParent): void;
+  arm(cwd: string, parent: WorkerSubmissionGateParent, invocationScopeId?: string): void;
   assertAcceptable(status: string, details?: unknown): void;
 } {
   let baseline: string | null | undefined;
@@ -248,11 +262,14 @@ export function createWorkerSubmissionGate(
   let reminded = false;
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
+  let invocationScopeId: string | undefined;
   let record: HostRecordSession | undefined;
   /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
   let sessionParent: string | undefined;
   const explicitHome =
     typeof options.home === "string" && options.home.length > 0 ? options.home : undefined;
+  // #1132: one configured number, resolved once at gate construction.
+  const unfinishedReasonBounceLimit = deliveryLimitFromConfig(options.unfinishedReasonBounceLimit);
   const head = (cwd: string): string | null => {
     try {
       return git(cwd, ["rev-parse", "HEAD"]);
@@ -273,7 +290,8 @@ export function createWorkerSubmissionGate(
     });
   };
   return {
-    arm(cwd, parent) {
+    arm(cwd, parent, scope) {
+      invocationScopeId = scope;
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
       sessionParent = parent.getSessionFile();
@@ -282,7 +300,8 @@ export function createWorkerSubmissionGate(
         kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
         parent,
       });
-      const prior = readGateState(record);
+      const prior = readGateState(record, invocationScopeId);
+      unfinishedReasonBounces = prior.unfinishedReasonBounces;
       if (prior.baseline !== undefined) {
         baseline = prior.baseline;
         reminded = prior.reminded;
@@ -304,7 +323,10 @@ export function createWorkerSubmissionGate(
     },
     assertAcceptable(status, details) {
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
-        if (unfinishedReasonBounces < UNFINISHED_REASON_BOUNCE_LIMIT) {
+        if (unfinishedReasonBounces < unfinishedReasonBounceLimit) {
+          record?.appendCustomEntry(WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE, {
+            version: 1, invocationScopeId,
+          });
           unfinishedReasonBounces += 1;
           throw new WorkerUnfinishedReasonReminderError();
         }

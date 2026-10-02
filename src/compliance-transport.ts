@@ -8,14 +8,16 @@ import { officerConclusionReask } from "./gatekeeper-role.ts";
 import { receivedDiscriminator } from "./submission-errors.ts";
 import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isRecord } from "./unknown-value.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
  * #757 / #750: no unreadable/unusable judgment on auditor replies.
  * Known three-state (converged/continue/escalate) is read for queueing only.
- * Unknown accepted shape rides as `received` with the raw reply — parent stands,
- * no forged pass, no shape-death label. Resume-speaker for three pairs is #753/#756.
+ * Unknown accepted shape rides as `received` with the raw reply. The summon
+ * loop reasks until the configured ceiling, then keeps that reply. No forged
+ * pass, no shape-death label.
  */
 export type ComplianceReceived = {
   readonly status: "received";
@@ -120,6 +122,8 @@ export type RunComplianceAuditOptions = {
   submission?: unknown;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
+  /** This loop's ceiling. Absent uses the package default. */
+  autoResumeLimit?: number;
   /** Test seam — production uses summonPublicRole({ role: "auditor", argv: ["--subject", subject, "--source-run", …] }). */
   summonAuditor?: AuditorSummon;
 };
@@ -224,10 +228,14 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       });
     });
   let reask: string | undefined;
+  let reasksSpent = 0;
+  const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   for (;;) {
     const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
+      if (reasksSpent >= reaskLimit) return decision;
+      reasksSpent += 1;
       reask = officerConclusionReask(receivedDiscriminator(decision.reply, "status"));
       continue;
     }

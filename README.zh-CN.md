@@ -29,6 +29,8 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 全部可调用角色在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
+`autoResumeLimit` 同时是运行期各类自动催交的统一上限（#1132）。宿主正常结束而没交卷时**不直接结 `no_receipt`**：执行接缝先让同一 run 的原宿主 session 重交，次数取同一个值，只记实发次数——额度用尽仍无卷才记 `no_receipt`，`deliveryTurns` 记真正发出的催交次数（零次即记零）。催交取得的卷按既有顺序接回审核。同一个值也管 `unfinished` 缺理由催全（ADR 0050）与外部宿主自身的重交轮次；各循环的首轮都不计重交。一次软提醒（ADR 0066 / 0070）与审刑院重交无帽（ADR 0007）不变。
+
 席位与官席配置：
 
 ```bash

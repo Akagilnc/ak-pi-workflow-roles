@@ -23,10 +23,6 @@ import {
 } from "../../src/worker-role.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
-  WorkerCommitReminderError,
-  WorkerUnfinishedReasonReminderError,
-} from "../../src/worker-submission-gates.ts";
-import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
@@ -928,7 +924,7 @@ test("coder plan loads its task without construction skill and returns planned",
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
 });
 
-test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
+test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", () => withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -937,9 +933,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-  });
+  await harness.handlers.get("session_start")?.({}, activationCtx(home));
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const bare = {
@@ -958,12 +952,9 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   );
   // Positive: no reason → bounce → same-run reasoned resubmit accepted through Gatekeeper.
   await withInstitutionalRunDir(async () => {
-    await assert.rejects(
-      tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
-      (error: unknown) =>
-        error instanceof WorkerUnfinishedReasonReminderError &&
-        error.code === "worker_unfinished_reason_reminder",
-    );
+    const bounced = await tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare"));
+    assert.equal(bounced.isError, true);
+    assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
     assert.equal(bounceGatekeeperProviderRequests, 0);
     const context = await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
@@ -986,22 +977,48 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness2.handlers.get("session_start")?.({}, activationCtx(home));
-  });
+  await harness2.handlers.get("session_start")?.({}, activationCtx(home));
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
+  const deliveryPrompts: Array<{ customType: string; content: string }> = [];
+  (harness2.pi as { sendMessage?: (message: { customType: string; content: string }) => void }).sendMessage = (message) => {
+    deliveryPrompts.push(message);
+  };
+  const bounce = async (id: string) => {
+    const bounced = await tool2.execute(id, bare, undefined, undefined, bounceContext(id));
+    assert.equal(bounced.isError, true);
+    assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
+    const ctx = bounceContext(id);
+    await harness2.handlers.get("tool_result")?.({
+      toolCallId: id,
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      isError: true,
+      content: bounced.content,
+      details: bounced.details,
+    }, ctx);
+    await harness2.handlers.get("agent_end")?.({ messages: [] }, ctx);
+  };
   await withInstitutionalRunDir(async () => {
-    await assert.rejects(
-      tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
-      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-    );
-    await assert.rejects(
-      tool2.execute("u2", bare, undefined, undefined, bounceContext("u2")),
-      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-    );
+    await bounce("u1");
+    await bounce("u2");
     assert.equal(bounceGatekeeperProviderRequests, 0);
+    assert.deepEqual(deliveryPrompts.map((message) => message.customType), [
+      "ak-receipt-delivery-prompt",
+      "ak-receipt-delivery-prompt",
+    ]);
+    const delivered = deliveryPrompts.map((message) => JSON.parse(message.content) as {
+      terminalToolCalled: boolean;
+      deliveryTurns: number;
+      rejectedReceipts: Array<{ diagnosticAvailable: boolean }>;
+    });
+    assert.equal(delivered[0]?.terminalToolCalled, true);
+    assert.equal(delivered[0]?.deliveryTurns, 1);
+    assert.equal(delivered[0]?.rejectedReceipts.length, 1);
+    assert.equal(delivered[0]?.rejectedReceipts[0]?.diagnosticAvailable, true);
+    assert.equal(delivered[1]?.terminalToolCalled, true);
+    assert.equal(delivered[1]?.deliveryTurns, 2);
+    assert.equal(delivered[1]?.rejectedReceipts.length, 2);
     const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
       handlers: harness2.handlers,
@@ -1012,8 +1029,10 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       context: context2,
     });
     assert.deepEqual(sealed.accepted, bare);
+    await harness2.handlers.get("agent_end")?.({ messages: [] }, context2);
+    assert.equal(deliveryPrompts.length, 2);
   });
-});
+}));
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [
@@ -1083,12 +1102,15 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
       ],
     };
     await withInstitutionalRunDir(async () => {
-      await assert.rejects(
-        tool.execute("partial", partial, undefined, undefined, Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })),
-        (error: unknown) =>
-          error instanceof WorkerCommitReminderError &&
-          error.code === "worker_commit_reminder",
+      const reminded = await tool.execute(
+        "partial",
+        partial,
+        undefined,
+        undefined,
+        Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() }),
       );
+      assert.equal(reminded.isError, true);
+      assert.equal(reminded.details?.code, "worker_commit_reminder");
       const context2 = await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed } = await acceptThroughTypedRoundClosure({
         handlers: harness.handlers,
