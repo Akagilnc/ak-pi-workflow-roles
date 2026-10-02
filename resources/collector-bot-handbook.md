@@ -4,7 +4,7 @@
 内容是角色阅读与修正的工作记忆，不是代码状态规则；临时额度/故障不得固化为永久行为。
 参与者依本仓使用与现场活动辨认，不把下列名称当作全仓固定名单。
 
-取证职责见 [通进司 Soul](../souls/collector.md)；调用面见 `ak-role help collector`。
+#1088：用宿主 CLI（如 `gh`）自行取证与请求；代码不代收、不选择、不归并 finding。
 
 ## Codex（hosted GitHub connector）
 

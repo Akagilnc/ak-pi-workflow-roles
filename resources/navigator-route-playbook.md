@@ -39,4 +39,5 @@ collector（收齐 current-head 材料）
 修内司 / 将作监 apply 以 unfinished 交棒时，工作仍未结清：
   → 续修（通常仍是同一 worker 的 apply），不要送大理寺
 
-refused / partially_completed 后可建议送大理寺审计。终态语义见 [worker 输出契约](../src/package-contracts/worker-output.ts)、[仓内宪法](../CLAUDE.md)，本段只给路线建议。
+refused / partially_completed 是已结清结算，送大理寺审计仍合法。
+unfinished 不是失败清理信号，也不豁免任何验收。

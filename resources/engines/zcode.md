@@ -18,11 +18,12 @@ zcode --prompt 'YOUR_LABOR_PROMPT' --cwd /path/to/worktree
 
 `--prompt` defaults to permission mode `yolo` (no TTY permission stalls).
 Useful extras measured from `zcode --help`: `--attach <path>` (repeatable),
-`--mode build|edit|plan|yolo`, `--resume <sess_...>`. Output-selection policy:
-[engine dispatch](../engine-dispatch.md#process-shape).
-The headless CLI help exposes no per-invocation model flag; capability-gap
-handling is in [the repository constitution](../../CLAUDE.md).
-CLI parameters: `zcode --help`.
+`--mode build|edit|plan|yolo`, `--resume <sess_...>`. Never `--json` for
+labor (the returned body goes back into the seat's context as plain text). The
+headless CLI help exposes no per-invocation model flag; do not translate a
+requested model into a config edit or invent a CLI flag. Report that capability
+gap through the existing path. Prefer `zcode --help` on the host over any
+remembered flag set.
 
 ## Historical realm and model observations (host-verified 2026-08-29)
 

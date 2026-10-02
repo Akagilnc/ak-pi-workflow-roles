@@ -12,4 +12,4 @@
 
 只有确认目标 issue 存在且正文已更新为本票最终票面后，才以 `converged` 交卷，并携带该 issue 的实际票号。沿用既有交卷闸，将交卷原文交给给事中审这张有票号 issue；不以无号草稿替代 issue 审读。不另造传召或记账机制。
 
-宿主 CLI 使用边界见 [仓内宪法](../CLAUDE.md#宿主-cli-照原样调用陛下-2026-09-16-拍定)；证据与模型自报的区分见 [ADR 0042](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0042-runtime-may-own-facts-but-not-a-second-contract-factory.md)。
+宿主 CLI 使用边界见 [仓内宪法](../CLAUDE.md#宿主-cli-照原样调用陛下-2026-09-16-拍定)。记录足以核对身份和落地结果的证据，不把模型自报冒充为现场观察。

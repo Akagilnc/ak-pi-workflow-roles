@@ -9,7 +9,8 @@ parameters.
 
 ## Invocation examples (local Codex CLI)
 
-The machine entrypoint is `codex`. Non-interactive labor uses `codex exec` (alias `e`). Always pass `--skip-git-repo-check` so the
+The machine entrypoint is `codex`. Run from the role project root. Non-interactive
+labor uses `codex exec` (alias `e`). Always pass `--skip-git-repo-check` so the
 labor subprocess can start outside a Git work tree when needed. When the dispatch
 order specifies a model, pass it with `-m` / `--model`:
 
@@ -39,8 +40,9 @@ codex exec --skip-git-repo-check --ephemeral -C "$PROJECT_ROOT" "YOUR_LABOR_PROM
 
 Default (non-`--json`) mode prints the session banner and progress on stderr
 (measured on this host). Collect the labor body from stdout so that stderr log
-noise is not mixed into the returned body. Output-selection policy:
-[engine dispatch](../engine-dispatch.md#process-shape); measured comparison:
-[Claude Code observations](claude-code.md).
+noise is not mixed into the returned body. Never use `--json` for labor: its
+JSONL event rows go back into the seat's context as noise (see `claude-code.md` for the
+measured ratio).
 
-CLI parameters: `codex exec --help`. Invocation boundaries: [engine dispatch](../engine-dispatch.md).
+Prefer `codex exec --help` on the host over any remembered flag set. Do not wrap
+this engine behind `ak-role` flags.

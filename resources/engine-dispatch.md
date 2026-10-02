@@ -6,8 +6,7 @@ that engine's CLI technical parameters (executable, flags, output formats,
 host-measured constraints); it must not restate or contradict the dispatch
 rules here.
 
-Material is data for the model, not a code contract. CLI invocation boundaries:
-[repository constitution](../CLAUDE.md).
+Material is data for the model, not a code contract. Do not invent package flags.
 
 ## What goes into the prompt
 
@@ -34,13 +33,18 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
 
 - Once an engine is selected, start exactly one subprocess per labor
   invocation by calling that engine's local CLI, with argv assembled from the
-  engine note plus these dispatch rules. Return-path ownership is in
-  [ADR 0069](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0069-labor-outsourcing-engine-generic-one-logic.md).
-  Read the engine note and invoke the CLI it documents (bash or equivalent
-  is the ordinary path; a package detour tool is only another way to reach
-  the same CLI when the session already has one).
+  engine note plus these dispatch rules; return the stdout labor content to
+  the same role session for the existing typed submission path. Read the
+  engine note and invoke the CLI it documents (bash or equivalent is the
+  ordinary path; a package detour tool is only another way to reach the same
+  CLI when the session already has one).
+- One labor turn = one process (not one process for the whole role run).
 
 ## Failure handling
 
-Invocation obligation, failure disposition and its authority boundary are owned
-by [ADR 0071](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md).
+Once an engine is selected, invoking that engine CLI is mandatory: you MUST
+actually run it. On any spawn, auth, quota, model-id, stream-stall,
+connection-drop, or other engine-process failure, return the typed failure and
+STOP — the run fails. In-seat labor after an engine-process failure is
+FORBIDDEN, and so is skipping the engine CLI to work in-seat. Zero invocations
+is a violation, not a fallback. Do not silently swap to another engine id.

@@ -4,7 +4,7 @@
 
 ## 任务
 
-职掌见 [起居郎 Soul](../souls/diarist.md)，投影边界见 [ADR 0075](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0075-ticket-provenance-diarist-pipeline.md)；本文件只保留定界方法。
+判断本庭要办哪些票、每票对话起止于何处并交出各自边界；正文与定位由机械按边界从会话卷投影。不整块誊录正文，不自行搜集材料替代机械投影；本文件不新立职掌、不替 soul 立法、不复制 schema 与 CLI 说明。
 
 ## 如何定边界
 
@@ -25,10 +25,15 @@
 - 陛下（owner）原话、确认、否决、收口条件
 - 为上述裁决提供必要上下文的紧邻对话
 
-入录材料边界见 [ADR 0075](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0075-ticket-provenance-diarist-pipeline.md)。无关闲聊、与本票决策无涉的他票材料不划进边界。
+工具输出与机器块不入录。无关闲聊、与本票决策无涉的他票材料不划进边界。相关性由你裁决。
 
 ## 本票身份
 
-身份裁决职责见 [起居郎 Soul](../souls/diarist.md)；`status`、`ticketNumber` 与 `reason` 的语义见 [交卷工具 schema](../src/diarist-role.ts)，无号材料归卷见 [卷宗拓扑](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/dossier-topology.md)。
+由你（本席 LLM）判断当前要办的票；多票庭逐票划界，同时照旧申报本庭主票身份，在交卷对象上以 typed 字段交出。
 
-辨票时，传召文自然会提轮次、决定编号、commit sha、邻票号；要办的是指令明确列出的票，不是文中出现的每一个数字。
+- 认得出本庭对象：`status: completed` 且 `ticketNumber: N`，并交边界。
+- 真无票对象（方案/派单/处置案等）：`status: completed` 且 `ticketNumber: null`（或省略）。真无票是合法结果，不入录。
+- 本庭明确要新建票、但 issue 尚未建号：不是认票失败。以 `status: completed`、`ticketNumber: null` 交出已辨明的本案对话边界；起居录先随无号 run 暂存，建号后由既有归卷流程补归该号。不要借用旁票号。
+- 认不出本庭对象是哪一张：`status: escalate` 并写明 `reason`。识别不了就上抛，不得省略票号假装无录，也不得猜一个号。
+- 不得从旁及的他票或任何猜测里挑一个号顶替认不出的身份。
+- 传召文自然会提轮次、决定编号、commit sha、邻票号；要办的是指令明确列出的票，不是文中出现的每一个数字。

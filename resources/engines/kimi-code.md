@@ -10,7 +10,8 @@ parameters.
 ## Invocation examples (local Kimi Code CLI)
 
 The machine entrypoint on this host is installed at `~/.kimi-code/bin/kimi`
-(put that directory on PATH, or pass the absolute path as argv[0]).
+(put that directory on PATH, or pass the absolute path as argv[0]). Run from
+the role project root.
 
 Non-interactive labor uses `-p` / `--prompt` alone. On this host (kimi 0.36.1),
 `-p` cannot be combined with `--yolo` or `--auto` — both are rejected at parse
@@ -28,8 +29,10 @@ specified:
 kimi -m <MODEL_ID> -p "YOUR_LABOR_PROMPT"
 ```
 
-`--output-format text` is the default. Output-selection policy is in
-[engine dispatch](../engine-dispatch.md#process-shape). Measured on this host
+Use `--output-format text` (the default). Do not use `stream-json` for labor:
+the returned body goes back into the seat's context and the event stream is
+noise (see `claude-code.md` for the measured ratio). Progress observability belongs to
+the runner's process watch, not to the returned body. Measured on this host
 with separate fd redirects (`1>` / `2>`): stdout is the labor answer body;
 stderr carries the version line, thinking bullets, and the trailing
 `To resume this session:` hint. Collect the labor body from stdout only — do
@@ -40,4 +43,5 @@ on that stream; stripping bullet-shaped lines risks deleting answer content):
 kimi -p "YOUR_LABOR_PROMPT" --output-format text
 ```
 
-CLI parameters: `kimi --help`. Invocation boundaries: [engine dispatch](../engine-dispatch.md).
+Prefer `kimi --help` on the host over any remembered flag set. Do not wrap this
+engine behind `ak-role` flags.
