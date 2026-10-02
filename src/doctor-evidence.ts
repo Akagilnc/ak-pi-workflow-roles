@@ -1,6 +1,7 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "./sha256.ts";
+import { physicallyContainedIn } from "./activation-ledger-topology.ts";
 import type { DoctorCase, DoctorCaseCost, DoctorCount, DoctorEvidenceEntry } from "./doctor-contracts.ts";
 import { AcceptedDetailsContractError, acceptedFacts, isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.ts";
 
@@ -38,8 +39,11 @@ function deriveSession(content: string, id: string): SessionDerivation {
 }
 
 /** Read Pi's retained session directory as the sole raw material for one case. */
-export async function loadDoctorCase(runsPath: string): Promise<DoctorCase> {
+export async function loadDoctorCase(runsPath: string, projectRoot?: string): Promise<DoctorCase> {
   const root = await realpath(runsPath);
+  if (projectRoot !== undefined && !physicallyContainedIn(projectRoot, root)) {
+    throw new Error("doctor --runs escapes the project root");
+  }
   // Canonical <book>/<ticket>/runs; legacy issues/<n>/runs remains read-only compatible.
   const match = root.split(sep).join("/").match(/\/\.ak-roles\/books\/[^/]+\/(?:issues\/)?([1-9]\d*)\/runs$/);
   if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/<n>/runs directory");

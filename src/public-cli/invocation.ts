@@ -1654,7 +1654,10 @@ export async function admitPublicRole(
           }
           let caseIdentity: DoctorCaseIdentity;
           try {
-            const patient = await loadDoctorCase(caseRunsPath);
+            const patient = await loadDoctorCase(
+              caseRunsPath,
+              parsed.runs === undefined ? undefined : placed.projectRoot,
+            );
             if (patient.identity.issueNumber !== issueNumber) {
               throw new CliUsageError(
                 `doctor case issue ${patient.identity.issueNumber} does not match --issue ${issueNumber}`,

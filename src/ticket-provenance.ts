@@ -18,6 +18,7 @@ import {
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
+import { sitianVolumeRecordsFile } from "./sitian-appender.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   appendSitianRecordBlock,
@@ -150,7 +151,7 @@ export async function rehomeUnboundTicketProvenance(
   cwd: string,
   home: string,
 ): Promise<void> {
-  const source = join(runDirectory, "records.jsonl");
+  const source = sitianVolumeRecordsFile(runDirectory);
   let content: string;
   try {
     content = await readFile(source, "utf8");

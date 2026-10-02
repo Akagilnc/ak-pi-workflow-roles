@@ -1,10 +1,8 @@
 /**
  * Sole nested-volume reader for gate-cycle facts under session/auditor-roles/.
  *
- * Consumers: Analyst sole ledger scan (classifyScopedRun) and Terminal gate
- * projection (#478). Metric families must not open a second disk scan — they
- * consume retained facts. Terminal settlement reuses this same pairing seam
- * (no second auditor-roles scanner).
+ * Consumer: Analyst sole ledger scan (classifyScopedRun). Metric families must
+ * not open a second disk scan — they consume retained facts.
  *
  * Naming: records may carry pre-#440 menxia/jishizhong/fubaolang tool faces or
  * the current gatekeeper/inspector/notary English face. Projection always uses
@@ -38,9 +36,10 @@ import {
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
 
-import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
+import { isRecord, isEnoent } from "./unknown-value.ts";
 import { retainedRunPathsMatch } from "./role-run-relocation.ts";
 import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
+import { resolveOfficerSessionFromPointerFile } from "./archivist-record-pointer.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -418,32 +417,6 @@ function pairGateRounds(
     .map((round, index) => ({ ...round, roundIndex: index + 1 }));
 }
 
-/** Resolve a direct-officer-run-pointer file to the officer session 正本 path. */
-async function resolveOfficerSessionFromPointerFile(
-  pointerPath: string,
-): Promise<{ sessionFile: string; officer?: "inspector" | "notary" }> {
-  const { readFile } = await import("node:fs/promises");
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(pointerPath, "utf8"));
-  } catch (error) {
-    throw new Error(
-      `direct officer run pointer unreadable in ${pointerPath}: ${errorText(error)}`,
-      { cause: error },
-    );
-  }
-  if (!isRecord(raw) || raw.kind !== "direct-officer-run-pointer" || raw.version !== 1) {
-    throw new Error(`direct officer run pointer has unknown shape in ${pointerPath}`);
-  }
-  const sessionFile = raw.sessionFile;
-  if (typeof sessionFile !== "string" || sessionFile.trim() === "") {
-    throw new Error(`direct officer run pointer missing sessionFile in ${pointerPath}`);
-  }
-  const officer = raw.officer === "inspector" || raw.officer === "notary"
-    ? raw.officer : undefined;
-  return { sessionFile, ...(officer === undefined ? {} : { officer }) };
-}
-
 /**
  * Read and pair gate-cycle rounds from one or more auditor-roles directories.
  * Accepts historical nested JSONL volumes and #675 direct-officer-run-pointer
@@ -465,7 +438,7 @@ export async function readAnalystGateCyclesFromAuditorRoles(
   const volumes: ClassifiedVolume[] = [];
   // Same officer session pointed at N times (historical multi-mint pointers, or
   // one parent booking many leaves) must classify once — else each accepted
-  // seal is counted ×N in terminal gate-round (#753 acceptance A).
+  // seal is counted ×N in gate-cycle statistics (#753 acceptance A).
   const classifiedOfficerSessions = new Set<string>();
   for (const directory of directories) {
     let names: string[];
@@ -494,7 +467,9 @@ export async function readAnalystGateCyclesFromAuditorRoles(
         if (classifiedOfficerSessions.has(sessionPath)) continue;
         classifiedOfficerSessions.add(sessionPath);
       }
-      const classified = await classifyAuditorVolume(sessionPath, pointer?.officer);
+      const officer = pointer?.officer === "inspector" || pointer?.officer === "notary"
+        ? pointer.officer : undefined;
+      const classified = await classifyAuditorVolume(sessionPath, officer);
       for (const volume of classified) {
         if (
           options.parentSessionFile !== undefined &&

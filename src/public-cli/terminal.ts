@@ -103,44 +103,6 @@ export type TerminalNavigatorFact =
       advisoryDiagnostic?: string;
     };
 
-/** Current English gate seat faces projected on Terminal (#478). */
-export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
-
-/** Honest discriminant: direct summons vs historical province dispatch. */
-export type TerminalGateDispatch =
-  | { readonly kind: "direct"; readonly officer: "inspector" | "notary" }
-  | {
-      readonly kind: "historical_dispatch";
-      readonly officer: "inspector" | "notary";
-      /** Present only when the accepted dispatch wrote a non-empty reason. */
-      readonly reason?: string;
-    };
-
-/** One accepted officer report: seat, status, full typed findings. */
-export type TerminalGateOfficerReport = {
-  readonly seat: "inspector" | "notary";
-  readonly status: string;
-  readonly findings: readonly unknown[];
-};
-
-/** One direct or historical paired gate round on the public Terminal. */
-export type TerminalGateRound = {
-  readonly roundIndex: number;
-  readonly dispatch: TerminalGateDispatch;
-  readonly officer: TerminalGateOfficerReport;
-};
-
-/**
- * Optional gate projection (#478).
- * Absent when no accepted officer rounds exist. Only durable accepted child
- * receipts — never soul-derived expected/missing seats.
- */
-export type TerminalGateFact = {
-  /** Seats that actually ran, derived from accepted receipts. */
-  readonly actualSeats: readonly TerminalGateSeat[];
-  readonly rounds: readonly TerminalGateRound[];
-};
-
 /**
  * Parent-facing current reply: a court's own accepted/audit payloads only.
  * Run-scoped history stays on TerminalResult.submissions (#879 / #836), and a
@@ -177,11 +139,6 @@ export type TerminalResult = {
    * (#953 — not copied onto failure.payloads).
    */
   submissions?: readonly unknown[];
-  /**
-   * Optional gate facts (#478). Present when accepted direct or historical
-   * paired rounds exist under session/auditor-roles; omitted on no-gate runs.
-   */
-  gate?: TerminalGateFact;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
 } & (
@@ -271,23 +228,6 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
-  }
-  // Gate region is unfrozen presentation of typed facts (ADR 0052) — machines
-  // read result.gate, never these row labels.
-  if (result.gate !== undefined) {
-    lines.push(
-      `gate\t${encodeTerminalField(result.gate.actualSeats.join(","))}\t${result.gate.rounds.length}`,
-    );
-    for (const round of result.gate.rounds) {
-      const reason =
-        round.dispatch.kind === "historical_dispatch"
-        && round.dispatch.reason !== undefined
-          ? encodeTerminalField(round.dispatch.reason)
-          : "";
-      lines.push(
-        `gate-round\t${round.roundIndex}\t${round.dispatch.kind}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
-      );
-    }
   }
   if (result.reviewerChildOutcomes !== undefined) {
     for (const axis of ["completeness", "correctness"] as const) {

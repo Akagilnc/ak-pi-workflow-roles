@@ -24,6 +24,11 @@ export function isSafePositiveTicketNumber(value: unknown): value is number {
   return isPositiveTicketNumber(value) && Number.isSafeInteger(value);
 }
 
+/** Shared digit spelling, also used for consumer-specific rejection diagnostics. */
+export function isTicketNumberString(value: unknown): value is string {
+  return typeof value === "string" && /^[1-9][0-9]*$/.test(value);
+}
+
 /**
  * Ticket spelling shared by placement, migration, and sitian subject routing.
  * A number, or a digit string with no sign, zero-pad, decimal, or `#`.
@@ -31,7 +36,7 @@ export function isSafePositiveTicketNumber(value: unknown): value is number {
  */
 export function parseTicketNumber(value: unknown): number | undefined {
   if (isSafePositiveTicketNumber(value)) return value;
-  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  if (!isTicketNumberString(value)) return undefined;
   const parsed = Number(value);
   return isSafePositiveTicketNumber(parsed) ? parsed : undefined;
 }
@@ -69,8 +74,7 @@ export function readDeclaredTicketNumber(value: unknown): number | undefined {
   // (word-boundary alone would truncate at the decimal point).
   const match = /^#?([1-9]\d*)(?!\.\d)(?:\b|$)/.exec(trimmed);
   if (match === null) return undefined;
-  const ticketNumber = Number(match[1]);
-  return isSafePositiveTicketNumber(ticketNumber) ? ticketNumber : undefined;
+  return parseTicketNumber(match[1]);
 }
 
 /** Loud reject for non-safe-positive ticket numbers before placement or bind. */

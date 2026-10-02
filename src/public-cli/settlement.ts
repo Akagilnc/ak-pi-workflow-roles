@@ -7,14 +7,9 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
-import { sessionFileIn, sessionFileOf } from "../role-run-placement.ts";
-import { sitianVolumeDirectory } from "../sitian-appender.ts";
+import { sessionFileOf } from "../role-run-placement.ts";
 
 import { writeHardenedArtifactFile } from "./auto-resume.ts";
-import {
-  readAnalystGateCyclesFromAuditorRoles,
-  type AnalystGateCycleRound,
-} from "../analyst-gate-cycles-read.ts";
 import { sitianReport } from "../sitian-facade.ts";
 
 import {
@@ -59,7 +54,6 @@ import {
   packagedDurableOfficerEntry,
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
-  packagedSkipsGateOnInfrastructureStage,
   type PackagedArtifactFace,
   type PackagedArtifactLeaf,
 } from "../packaged-role-registry.ts";
@@ -473,7 +467,7 @@ async function settleNoReceiptTerminal(
     );
   }
   if (scope?.previewOnly !== true) await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-  return withOptionalGateProjection({
+  return attachEngineDetourToolUsage({
     roleOutcome,
     navigator: await extractNavigatorFactFromAdmittedSession(
       coordinates.sessionFile,
@@ -482,7 +476,7 @@ async function settleNoReceiptTerminal(
     ),
     artifacts: [],
     runId: admitted.runId,
-  }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
+  }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -499,8 +493,6 @@ import {
   adviceNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
-  type TerminalGateFact,
-  type TerminalGateSeat,
   type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalRoleName,
@@ -1151,73 +1143,6 @@ function parseNavigatorAttendanceDetails(
 }
 
 /**
- * Project direct and historical paired gate rounds onto the public Terminal.
- * actualSeats derive only from accepted receipts, never expected/missing seats.
- */
-export function projectTerminalGateFact(
-  rounds: readonly AnalystGateCycleRound[],
-): TerminalGateFact | undefined {
-  if (rounds.length === 0) return undefined;
-  const seen = new Set<TerminalGateSeat>();
-  for (const round of rounds) {
-    if (round.origin.kind === "historical_dispatch") seen.add("gatekeeper");
-    seen.add(round.officer);
-  }
-  const actualSeats = (["gatekeeper", "inspector", "notary"] as const).filter(
-    (seat) => seen.has(seat),
-  );
-  return {
-    actualSeats,
-    rounds: rounds.map((round) => ({
-      roundIndex: round.roundIndex,
-      dispatch:
-        round.origin.kind === "direct"
-          ? { kind: "direct" as const, officer: round.officer }
-          : {
-              kind: "historical_dispatch" as const,
-              officer: round.officer,
-              ...(round.origin.reason === undefined
-                ? {}
-                : { reason: round.origin.reason }),
-            },
-      officer: {
-        seat: round.officer,
-        status: round.status,
-        findings: round.findings,
-      },
-    })),
-  };
-}
-
-/**
- * Read gate facts from the run's session/auditor-roles nest (#446/#478).
- * Missing directories → undefined (no-gate zero change).
- * Damaged discovered volumes propagate — never wash to "no gate".
- */
-export async function extractGateFactFromSessionDirectory(
-  sessionDirectory: string,
-  options: {
-    readonly runDirectory?: string;
-    readonly parentSessionFile?: string;
-  } = {},
-): Promise<TerminalGateFact | undefined> {
-  const directories = [sitianVolumeDirectory(sessionDirectory, "auditor-roles")];
-  const parentSessionFile =
-    options.parentSessionFile ?? sessionFileIn(sessionDirectory);
-  const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
-    parentSessionFile,
-  });
-  return projectTerminalGateFact(rounds);
-}
-
-/**
- * Attach optional gate projection onto a settled Terminal base.
- * Shared by every settle path so auditor-roles is scanned once here only.
- * `runId` is optional only for a batch projection that has no parent run.
- * Gate read damage is a package note beside the host terminal. It does not
- * replace that terminal and it does not omit the gate without a trace.
- */
-/**
  * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
  * Absent when engine is not mounted; callCount 0 when mounted with zero calls.
  * Never mutates role payloads (ADR 0003 / 0042 / 0052).
@@ -1230,16 +1155,15 @@ async function attachEngineDetourToolUsage<
 >(
   base: T,
   sessionDirectory: string,
-  gateContext: {
+  detourContext: {
     readonly runDirectory?: string;
-    readonly courtAttemptId?: string;
     readonly invocationScopeId?: string;
     readonly notePackageFault?: SettlementCourtScope["notePackageFault"];
   } = {},
 ): Promise<T> {
   const runDirectory =
-    typeof gateContext.runDirectory === "string" && gateContext.runDirectory.length > 0
-      ? gateContext.runDirectory
+    typeof detourContext.runDirectory === "string" && detourContext.runDirectory.length > 0
+      ? detourContext.runDirectory
       : runDirectoryFromSessionDirectory(sessionDirectory);
   let engineMounted = false;
   try {
@@ -1247,9 +1171,9 @@ async function attachEngineDetourToolUsage<
   } catch (error) {
     await noteSettlementFault(
       runDirectory,
-      gateContext.notePackageFault === undefined
+      detourContext.notePackageFault === undefined
         ? undefined
-        : { notePackageFault: gateContext.notePackageFault },
+        : { notePackageFault: detourContext.notePackageFault },
       `engine mount read failed beside host terminal: ${describeErrorIdentity(error)}`,
     );
     return base;
@@ -1259,9 +1183,9 @@ async function attachEngineDetourToolUsage<
   // Public-invocation scope from the shared Host envelope (settlement scope), never
   // courtAttemptId and never a detour sidecar file.
   const invocationScopeId =
-    typeof gateContext.invocationScopeId === "string" &&
-    gateContext.invocationScopeId.length > 0
-      ? gateContext.invocationScopeId
+    typeof detourContext.invocationScopeId === "string" &&
+    detourContext.invocationScopeId.length > 0
+      ? detourContext.invocationScopeId
       : undefined;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
@@ -1276,9 +1200,9 @@ async function attachEngineDetourToolUsage<
   } catch (error) {
     await noteSettlementFault(
       runDirectory,
-      gateContext.notePackageFault === undefined
+      detourContext.notePackageFault === undefined
         ? undefined
-        : { notePackageFault: gateContext.notePackageFault },
+        : { notePackageFault: detourContext.notePackageFault },
       `engine detour read failed beside host terminal: ${describeErrorIdentity(error)}`,
     );
     return base;
@@ -1289,73 +1213,22 @@ async function attachEngineDetourToolUsage<
   };
 }
 
-/** Gate + detour projection context from admitted run + settlement scope. */
-function detourGateContext(
+/** Engine-detour usage context from admitted run + settlement scope. */
+function detourUsageContext(
   admitted: { readonly runDirectory: string },
   scope?: SettlementCourtScope,
 ): {
   readonly runDirectory: string;
-  readonly courtAttemptId?: string;
   readonly invocationScopeId?: string;
+  readonly notePackageFault?: SettlementCourtScope["notePackageFault"];
 } {
   return {
     runDirectory: admitted.runDirectory,
-    ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
-      ? {}
-      : { courtAttemptId: scope.courtAttemptId }),
     ...(scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
       ? {}
       : { invocationScopeId: scope.invocationScopeId }),
     ...(scope?.notePackageFault === undefined ? {} : { notePackageFault: scope.notePackageFault }),
   };
-}
-
-async function withOptionalGateProjection<
-  T extends {
-    roleOutcome: TerminalRoleOutcome;
-    navigator: TerminalNavigatorFact;
-    artifacts: readonly TerminalArtifactRef[];
-  },
->(
-  base: T,
-  sessionDirectory: string,
-  gateContext: {
-    readonly runDirectory?: string;
-    readonly parentSessionFile?: string;
-    readonly courtAttemptId?: string;
-    readonly invocationScopeId?: string;
-    readonly notePackageFault?: SettlementCourtScope["notePackageFault"];
-  } = {},
-): Promise<T & { gate?: TerminalGateFact }> {
-  // A gate transport failure is already represented by typed evidence and has no
-  // accepted gate cycle to project. Re-reading that rejected receipt as an
-  // accepted cycle would replace the original failure with a projection error.
-  const secondaryEvidence = base.roleOutcome.kind === "failure"
-    ? base.roleOutcome.decisiveFacts.secondaryEvidence
-    : undefined;
-  const skipGate =
-    isRecord(secondaryEvidence)
-    && secondaryEvidence.kind === "role_infrastructure_failure"
-    && packagedSkipsGateOnInfrastructureStage(secondaryEvidence.stage);
-
-  let next: T & { gate?: TerminalGateFact } = base;
-  if (!skipGate) {
-    try {
-      const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
-      if (gate !== undefined) next = { ...base, gate };
-    } catch (error) {
-      const runDirectory = gateContext.runDirectory ?? runDirectoryFromSessionDirectory(sessionDirectory);
-      await noteSettlementFault(
-        runDirectory,
-        gateContext.notePackageFault === undefined
-          ? undefined
-          : { notePackageFault: gateContext.notePackageFault },
-        `gate read failed beside host terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
-  }
-
-  return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
 }
 
 function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string | undefined {
@@ -1619,12 +1492,12 @@ async function finishLawfulSeat(
   const artifacts = scope?.previewOnly === true
     ? []
     : await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
-  const terminal = await withOptionalGateProjection({
+  const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
     artifacts,
     runId: admitted.runId,
-  }, coordinates.sessionDirectory, detourGateContext(admitted, scope));
+  }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
   return attachRecordedSubmissions(admitted, terminal, scope);
 }
 
@@ -1932,33 +1805,18 @@ async function applySecretariatCountersignTerminal(
 }
 
 /**
- * After the audit gate returns, attach gate rounds and the secretariat officer
- * fact onto the terminal this turn already settled. Does not publish again —
- * a second publish would append another attempt-history row for the same attempt.
+ * After the audit gate returns, attach the secretariat officer fact onto the
+ * terminal this turn already settled. Does not publish again — a second publish
+ * would append another attempt-history row for the same attempt.
  */
-export async function attachPostAuditProjection(
+export async function attachPostAuditCountersignFact(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   terminal: TerminalResult,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
-  let gate: TerminalGateFact | undefined;
-  try {
-    gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
-      runDirectory: admitted.runDirectory,
-      parentSessionFile: sessionFile,
-    });
-  } catch (error) {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `gate read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-  }
-  const withGate = gate === undefined ? terminal : { ...terminal, gate };
-  if (admitted.role !== "secretariat") return withGate;
-  return applySecretariatCountersignTerminal(admitted, authority, withGate, scope);
+  if (admitted.role !== "secretariat") return terminal;
+  return applySecretariatCountersignTerminal(admitted, authority, terminal, scope);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */
@@ -2245,10 +2103,10 @@ export async function settleFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
-  return withOptionalGateProjection(
+  return attachEngineDetourToolUsage(
     { roleOutcome, navigator, artifacts, runId: admitted.runId },
     sessionDirectory,
-    detourGateContext(admitted, options),
+    detourUsageContext(admitted, options),
   );
 }
 
