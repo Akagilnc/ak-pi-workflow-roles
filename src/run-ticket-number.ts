@@ -14,9 +14,48 @@ import { isEnoent, isRecord } from "./unknown-value.ts";
 export const MIGRATION_TICKET_DERIVATION_PAGE =
   "migration-ticket-derivation.json" as const;
 
+/** Positive-integer contract for display / snapshot inputs; binding uses the safe subset below. */
+export function isPositiveTicketNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+
 /** Sole safe-positive ticket invariant (bind / admission / placement / readers). */
 export function isSafePositiveTicketNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+  return isPositiveTicketNumber(value) && Number.isSafeInteger(value);
+}
+
+/** Shared digit spelling, also used for consumer-specific rejection diagnostics. */
+export function isTicketNumberString(value: unknown): value is string {
+  return typeof value === "string" && /^[1-9][0-9]*$/.test(value);
+}
+
+/**
+ * Ticket spelling shared by placement, migration, and sitian subject routing.
+ * A number, or a digit string with no sign, zero-pad, decimal, or `#`.
+ * Unsafe integers are unidentified. Leading `#N` stays on readDeclaredTicketNumber.
+ */
+export function parseTicketNumber(value: unknown): number | undefined {
+  if (isSafePositiveTicketNumber(value)) return value;
+  if (!isTicketNumberString(value)) return undefined;
+  const parsed = Number(value);
+  return isSafePositiveTicketNumber(parsed) ? parsed : undefined;
+}
+
+/** Ticket number carried by a sitian subject, when the subject is a ticket. */
+export function sitianSubjectTicketNumber(subject: unknown): number | undefined {
+  if (typeof subject === "string" || typeof subject === "number") {
+    return parseTicketNumber(subject);
+  }
+  if (subject !== null && typeof subject === "object" && !Array.isArray(subject)) {
+    return parseTicketNumber((subject as { ticketNumber?: unknown }).ticketNumber);
+  }
+  return undefined;
+}
+
+/** Ticket-provenance directory id from a sitian subject, when the subject is a ticket. */
+export function ticketNumberFromSitianSubject(subject: unknown): string | undefined {
+  const parsed = sitianSubjectTicketNumber(subject);
+  return parsed === undefined ? undefined : String(parsed);
 }
 
 /**
@@ -35,8 +74,7 @@ export function readDeclaredTicketNumber(value: unknown): number | undefined {
   // (word-boundary alone would truncate at the decimal point).
   const match = /^#?([1-9]\d*)(?!\.\d)(?:\b|$)/.exec(trimmed);
   if (match === null) return undefined;
-  const ticketNumber = Number(match[1]);
-  return isSafePositiveTicketNumber(ticketNumber) ? ticketNumber : undefined;
+  return parseTicketNumber(match[1]);
 }
 
 /** Loud reject for non-safe-positive ticket numbers before placement or bind. */

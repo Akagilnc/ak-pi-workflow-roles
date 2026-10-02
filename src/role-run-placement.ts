@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -20,6 +20,45 @@ export type RoleRunPlacement = {
   readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
 };
+
+/** Writer leaf `<runId>@<role>`. Empty sides stay empty; this is not a validator. */
+export function formatRunLeaf(runId: string, role: string): string {
+  return `${runId}@${role}`;
+}
+
+/**
+ * Inverse of formatRunLeaf: last `@`, both sides non-empty.
+ * `a@b@c` is runId `a@b`, role `c`. Charset is not a second grammar.
+ */
+export function parseRunLeaf(name: string): { readonly runId: string; readonly role: string } | undefined {
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return undefined;
+  return { runId: name.slice(0, at), role: name.slice(at + 1) };
+}
+
+export function sessionDirectoryOf(runDirectory: string): string {
+  return join(runDirectory, "session");
+}
+
+export const ROLE_RUN_SESSION_FILENAME = "session.jsonl";
+
+export function sessionFileIn(sessionDirectory: string): string {
+  return join(sessionDirectory, ROLE_RUN_SESSION_FILENAME);
+}
+
+export function sessionFileOf(runDirectory: string): string {
+  return sessionFileIn(sessionDirectoryOf(runDirectory));
+}
+
+/** `<run>/session/session.jsonl` → run directory. */
+export function runDirectoryOfSessionFile(sessionFile: string): string {
+  return dirname(dirname(sessionFile));
+}
+
+/** `<run>/session` → run directory. */
+export function runDirectoryFromSessionDirectory(sessionDirectory: string): string {
+  return dirname(sessionDirectory);
+}
 
 /**
  * Sole book-level run directory walk: flat legacy `runs/` plus each
@@ -64,6 +103,26 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
   return out.sort();
 }
 
+/** Resolve a complete run identity across the caller's books; ambiguity is never readdir-first. */
+export async function findRoleRunDirectory(
+  bookDirectories: readonly string[],
+  runId: string,
+  onlyRole?: string,
+): Promise<string | undefined> {
+  const matches: string[] = [];
+  for (const bookDirectory of bookDirectories) {
+    for (const runDirectory of await listBookRunDirectories(bookDirectory)) {
+      const parsed = parseRunLeaf(basename(runDirectory));
+      if (parsed === undefined || parsed.runId !== runId) continue;
+      if (onlyRole !== undefined && parsed.role !== onlyRole) continue;
+      matches.push(runDirectory);
+    }
+  }
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  throw new Error(`ambiguous role run id ${runId}: ${matches.join(", ")}`);
+}
+
 /** The single authority for every path belonging to an admitted role run. */
 export function roleRunPlacement(
   ledgerHome: string,
@@ -84,13 +143,13 @@ export function roleRunPlacement(
     activationBookDirectory(ledgerHome, input.bookKey),
     subjectDirectory,
     "runs",
-    `${input.runId}@${input.role}`,
+    formatRunLeaf(input.runId, input.role),
   );
-  const sessionDirectory = join(runDirectory, "session");
+  const sessionDirectory = sessionDirectoryOf(runDirectory);
   return {
     runDirectory,
     sessionDirectory,
-    sessionFile: join(sessionDirectory, "session.jsonl"),
+    sessionFile: sessionFileIn(sessionDirectory),
     artifactsDirectory: roleRunArtifactsDirectory(runDirectory),
     attachmentsDirectory: join(runDirectory, "attachments"),
   };

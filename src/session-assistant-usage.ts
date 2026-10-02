@@ -3,7 +3,8 @@
  * Accumulates real cost when rows carry it; never invents cost zeros (#675).
  */
 import type { Usage } from "@earendil-works/pi-ai";
-import { join } from "node:path";
+import { ROLE_RUN_SESSION_FILENAME, sessionFileOf } from "./role-run-placement.ts";
+import { readStrictPiSessionJsonl } from "./ledger-session-read.ts";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
 
@@ -12,25 +13,12 @@ import { errorText } from "./unknown-value.ts";
 export async function readAssistantUsageFromSessionFile(
   sessionFile: string,
 ): Promise<Usage | undefined> {
-  const { readFile } = await import("node:fs/promises");
-  let text: string;
-  try {
-    text = await readFile(sessionFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw error;
-  }
   let rows: Array<{ type?: string; message?: { role?: string; usage?: Usage } }>;
   try {
-    rows = text
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        message?: { role?: string; usage?: Usage };
-      });
+    rows = await readStrictPiSessionJsonl(sessionFile) as typeof rows;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
+    if (!(error instanceof SyntaxError)) throw error;
     throw new Error(
       `session usage parse failed (${sessionFile}): ${errorText(error)}`,
       { cause: error },
@@ -95,18 +83,18 @@ export function sessionFileFromPublicSummon(
   summoned: PublicSummonResult,
 ): string | undefined {
   if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
-    return join(summoned.runDirectory, "session", "session.jsonl");
+    return sessionFileOf(summoned.runDirectory);
   }
   const fromArtifacts = summoned.terminal?.artifacts
     ?.map((a) => (a as { path?: string }).path)
-    .find((p): p is string => typeof p === "string" && p.endsWith("session.jsonl"));
+    .find((p): p is string => typeof p === "string" && p.endsWith(ROLE_RUN_SESSION_FILENAME));
   if (fromArtifacts !== undefined) return fromArtifacts;
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) return undefined;
   const facts = (outcome as { decisiveFacts?: Record<string, unknown> }).decisiveFacts;
   const pointer = facts?.runPointer;
   if (typeof pointer === "string" && pointer.trim() !== "") {
-    return join(pointer, "session", "session.jsonl");
+    return sessionFileOf(pointer);
   }
   return undefined;
 }

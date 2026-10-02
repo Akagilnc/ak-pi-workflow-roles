@@ -83,7 +83,7 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   readBoundSessionEntries,
-  attachPostAuditProjection,
+  attachPostAuditCountersignFact,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -1399,10 +1399,10 @@ async function auditSubmittedRole(
     }
   }
   // The turn already settled this court (payloads, usage, autoResumeCount, history).
-  // Audit only adds gate rounds and, for 中书省, the officer fact. A second
-  // settle would republish the same attempt.
+  // Audit only adds, for 中书省, the officer fact. A second settle would
+  // republish the same attempt.
   if (turn.terminal === undefined) throw new Error(`audited ${admitted.role} submission did not settle`);
-  const terminal = await attachPostAuditProjection(
+  const terminal = await attachPostAuditCountersignFact(
     admitted,
     env.principalAuthority,
     turn.terminal,

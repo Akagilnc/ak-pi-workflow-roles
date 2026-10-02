@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
 
 import {
   resolveActivationLedgerHome,
@@ -133,7 +133,7 @@ async function submissionRecordFile(cwd: string, runId: string, scope: Submissio
   if (sessionParent === undefined) {
     const discoveredRun = await findRunDirectoryById(scope.home, runId);
     if (discoveredRun === undefined) return undefined;
-    sessionParent = join(discoveredRun, "session", "session.jsonl");
+    sessionParent = sessionFileOf(discoveredRun);
   }
   return resolveSitianRecordPathInLedger({
     level: "event",
@@ -432,12 +432,12 @@ async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerR
 /** Sole HostContext-derived session parent for ledger restore/append (never process.env). */
 function sessionParentFromHostContext(context: HostContext): string | undefined {
   const runDirectory = runDirectoryFromHostContext(context);
-  if (runDirectory !== undefined) return join(runDirectory, "session", "session.jsonl");
+  if (runDirectory !== undefined) return sessionFileOf(runDirectory);
   const sessionFile = context.sessionManager.getSessionFile?.();
   if (typeof sessionFile === "string" && sessionFile.length > 0) return sessionFile;
   const sessionDir = context.sessionManager.getSessionDir?.();
   if (typeof sessionDir === "string" && sessionDir.length > 0) {
-    return join(sessionDir, "session.jsonl");
+    return sessionFileIn(sessionDir);
   }
   return undefined;
 }

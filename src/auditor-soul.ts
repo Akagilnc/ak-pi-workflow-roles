@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { parseRunLeaf } from "./role-run-placement.ts";
 import { isRecord } from "./unknown-value.ts";
 
 import {
@@ -109,7 +110,7 @@ export function loadAuditorReferenceMaterialsFromSubjectInput(raw?: string): Pro
 }
 
 function subjectFromSourceDirectory(sourceRunDirectory: string): AuditorSoulRole | undefined {
-  const role = basename(sourceRunDirectory).split("@")[1];
+  const role = parseRunLeaf(basename(sourceRunDirectory))?.role;
   return isAuditorSoulRole(role) ? role : undefined;
 }
 

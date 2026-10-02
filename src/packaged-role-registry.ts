@@ -334,8 +334,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sourceRunStored: "raw",
     argvResult: "source-run",
     sameParent: "source-locator",
-    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
-    skipGateOnInfrastructureStage: true,
     /** 符宝郎 is a review officer and inherits the gatekeeper model. */
     reviewOfficer: true,
     provinceConfig: true,
@@ -443,8 +441,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "gate-pointer",
     /** Resume restores an optional source-run path onto the admitted face. */
     resumeSourcePath: true,
-    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
-    skipGateOnInfrastructureStage: true,
     /** 台院 is a review officer and inherits the gatekeeper model. */
     reviewOfficer: true,
     provinceConfig: true,
@@ -476,8 +472,6 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: true,
     admission: "instruction",
-    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
-    skipGateOnInfrastructureStage: true,
     sameParent: "none",
     /** Province model root. Officers name this seat via modelInheritsFrom. */
     provinceConfig: true,
@@ -723,15 +717,6 @@ export function packagedAuditToolName(role: string): string | undefined {
   const record = packagedRoleMetadata(role);
   if (record === undefined || !("auditTool" in record)) return undefined;
   return record.auditTool;
-}
-
-/** Infrastructure-failure stage that must not be re-read as an accepted gate cycle. */
-export function packagedSkipsGateOnInfrastructureStage(stage: unknown): boolean {
-  return typeof stage === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
-    "skipGateOnInfrastructureStage" in record
-    && record.skipGateOnInfrastructureStage === true
-    && record.role === stage
-  );
 }
 
 /** Durable officer entry whose name is the seat role. */

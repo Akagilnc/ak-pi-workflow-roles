@@ -14,6 +14,7 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
 import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { formatRunLeaf, parseRunLeaf } from "./role-run-placement.ts";
 
 async function readRetainedIdentity(runDirectory: string) {
   try {
@@ -26,22 +27,11 @@ async function readRetainedIdentity(runDirectory: string) {
   }
 }
 
-// Run directory leaf: <runId>@<role>. Production uses uuidv7 runIds; offline tracers
-// may use deterministic non-uuid leaves. Role token stays identifier-shaped.
-const RUN_DIR_NAME =
-  /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
-
 export class NotarySourceRunError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "NotarySourceRunError";
   }
-}
-
-function parseRunDirectoryName(name: string): { runId: string; role: string } | undefined {
-  const match = RUN_DIR_NAME.exec(name);
-  if (match === null) return undefined;
-  return { runId: match[1]!, role: match[2]! };
 }
 
 async function requireRunDirectory(candidate: string, display: string): Promise<string> {
@@ -68,7 +58,7 @@ async function requireRunDirectory(candidate: string, display: string): Promise<
       `notary --source-run must be a run directory: ${display}`,
     );
   }
-  const identity = parseRunDirectoryName(basename(real));
+  const identity = parseRunLeaf(basename(real));
   if (identity === undefined) {
     throw new NotarySourceRunError(
       `notary --source-run must be named <runId>@<role>: ${basename(real)}`,
@@ -102,13 +92,13 @@ export async function resolveNotarySourceRunLocator(options: {
   const bookRunsRoot = join(bookDirectory, "runs");
 
   let candidate: string;
-  const bare = parseRunDirectoryName(raw);
+  const bare = parseRunLeaf(raw);
   if (bare !== undefined && !raw.includes("/") && !raw.includes("\\")) {
     candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey, bare.role))
-      ?? join(bookRunsRoot, `${bare.runId}@${bare.role}`);
+      ?? join(bookRunsRoot, formatRunLeaf(bare.runId, bare.role));
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
-    const identity = parseRunDirectoryName(basename(candidate));
+    const identity = parseRunLeaf(basename(candidate));
     const subjectDirectory = dirname(dirname(candidate));
     const isLegacyUnboundLocator =
       identity !== undefined &&
@@ -126,7 +116,7 @@ export async function resolveNotarySourceRunLocator(options: {
   }
 
   const real = await requireRunDirectory(candidate, raw);
-  const identity = parseRunDirectoryName(basename(real))!;
+  const identity = parseRunLeaf(basename(real))!;
 
   const bookIdentity = physicalPathIdentity(bookDirectory);
   const parentIdentity = physicalPathIdentity(dirname(real));
@@ -176,7 +166,7 @@ export async function loadNotarySourceRunLocator(
   path: string,
 ): Promise<NotarySourceRunLocator> {
   const real = await requireRunDirectory(path, path);
-  const identity = parseRunDirectoryName(basename(real))!;
+  const identity = parseRunLeaf(basename(real))!;
   const runState = await readRetainedIdentity(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(

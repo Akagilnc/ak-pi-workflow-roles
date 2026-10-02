@@ -1,6 +1,6 @@
 /**
  * Single authority for rewriting durable run pages after a run directory moves.
- * Live unbound→ticket relocate and book-topology migration both call this.
+ * Live callers project typed fields; only historical migrators walk durable pages.
  *
  * Scope is typed machine-consumed path fields only — never free text, never
  * frozen attachment/artifact bytes. Nested walk is confined to package-owned
@@ -8,7 +8,11 @@
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
+
+import { activationBookDirectory, physicalPathIdentity } from "./activation-ledger-topology.ts";
+import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { findRoleRunDirectory, roleRunPlacement } from "./role-run-placement.ts";
 
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
@@ -65,6 +69,39 @@ export function rewriteRunDirectoryPathValue(
     return `${newRunDirectory}${value.slice(oldRunDirectory.length)}`;
   }
   return value;
+}
+
+/** Match physical aliases or a normal unbound→ticket bind, never historical migration layouts. */
+export async function retainedRunPathsMatch(
+  recordedPath: unknown,
+  currentPath: string,
+  currentRunDirectory?: string,
+): Promise<boolean> {
+  if (recordedPath === currentPath) return true;
+  if (typeof recordedPath !== "string") return false;
+  const recordedPathIdentity = physicalPathIdentity(recordedPath);
+  const currentPathIdentity = physicalPathIdentity(currentPath);
+  if (recordedPathIdentity === currentPathIdentity) return true;
+  if (currentRunDirectory === undefined) return false;
+  const runDirectory = physicalPathIdentity(currentRunDirectory);
+  const identity = await readRoleRunIdentity(runDirectory);
+  if (identity === undefined) return false;
+  for (let directory = runDirectory; dirname(directory) !== directory; directory = dirname(directory)) {
+    const ledgerHome = dirname(dirname(directory));
+    if (directory !== activationBookDirectory(ledgerHome, identity.bookKey)) continue;
+    const unbound = roleRunPlacement(ledgerHome, {
+      bookKey: identity.bookKey,
+      subject: { unbound: true },
+      runId: identity.runId,
+      role: identity.role,
+    });
+    if (rewriteRunDirectoryPathValue(recordedPathIdentity, unbound.runDirectory, runDirectory) !== currentPathIdentity) {
+      return false;
+    }
+    const placed = await findRoleRunDirectory([directory], identity.runId, identity.role);
+    return placed !== undefined && physicalPathIdentity(placed) === runDirectory;
+  }
+  return false;
 }
 
 /**

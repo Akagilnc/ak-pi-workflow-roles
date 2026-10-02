@@ -10,7 +10,8 @@ import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
+import { parseRunLeaf, roleRunArtifactsDirectory } from "./role-run-placement.ts";
+
 import { isRecord, errorText, isMissingPathError } from "./unknown-value.ts";
 
 export const RUN_TERMINAL_REPORT_FILE = "report.json" as const;
@@ -155,10 +156,7 @@ async function listUniqueErrorFallbackPaths(
  * Sole authority for runDirectory → runId (last `@` split).
  */
 export function runIdFromRunDirectory(runDirectory: string): string | undefined {
-  const name = basename(runDirectory);
-  const at = name.lastIndexOf("@");
-  if (at <= 0 || at === name.length - 1) return undefined;
-  return name.slice(0, at);
+  return parseRunLeaf(basename(runDirectory))?.runId;
 }
 
 /**

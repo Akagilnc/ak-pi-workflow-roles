@@ -5,7 +5,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, appendFile, readFile, realpath } from "node:fs/promises";
+import { access, appendFile, realpath } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
@@ -25,6 +25,7 @@ import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
+import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
@@ -462,9 +463,38 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
 import { sitianReport } from "../sitian-facade.ts";
 
+/** Last non-session entry id. Session headers are not parents of custom lines. */
+export function piSessionCustomParentId(
+  entries: readonly { id?: unknown; type?: unknown }[],
+): string | null {
+  let parentId: string | null = null;
+  for (const entry of entries) {
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+  }
+  return parentId;
+}
+
+/** One Pi custom JSONL line: type, customType, data, id, parentId, timestamp. */
+export function formatPiSessionCustomEntry(input: {
+  readonly customType: string;
+  readonly data: unknown;
+  readonly parentId: string | null;
+  readonly timestamp: string;
+}): string {
+  return `${JSON.stringify({
+    type: "custom",
+    customType: input.customType,
+    data: input.data,
+    id: randomUUID(),
+    parentId: input.parentId,
+    timestamp: input.timestamp,
+  })}\n`;
+}
+
 /**
  * Append one custom JSONL entry to the durable principal's session file.
  * Pi session codec only — AK artifact O_EXCL retention stays in public-cli.
+ * Read is raw JSON.parse (SyntaxError propagates). Sitian full-traversal stays elsewhere.
  */
 export async function appendPiSessionCustomEntry(
   authority: DurablePrincipalAuthority,
@@ -473,21 +503,14 @@ export async function appendPiSessionCustomEntry(
   data: unknown,
 ): Promise<void> {
   const { sessionFile } = authority.decode(principal);
-  const text = await readFile(sessionFile, "utf8");
-  let parentId: string | null = null;
-  for (const line of text.trim().split("\n").filter(Boolean)) {
-    const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-  }
+  const entries = await readStrictPiSessionJsonl(sessionFile) as { id?: unknown; type?: unknown }[];
   const timestamp = new Date().toISOString();
-  const pointerLine = `${JSON.stringify({
-    type: "custom",
+  const pointerLine = formatPiSessionCustomEntry({
     customType,
     data,
-    id: randomUUID(),
-    parentId,
+    parentId: piSessionCustomParentId(entries),
     timestamp,
-  })}\n`;
+  });
   await appendFile(sessionFile, pointerLine, "utf8");
   sitianReport({
     level: "event",

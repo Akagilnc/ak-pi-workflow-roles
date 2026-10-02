@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -8,7 +6,7 @@ import type {
 } from "../host-contracts.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import { resolveActivationLedgerHome } from "../activation-ledger-topology.ts";
-import { roleRunPlacement } from "../role-run-placement.ts";
+import { roleRunPlacement, sessionFileIn } from "../role-run-placement.ts";
 
 type PiDurablePrincipal = DurablePrincipal & {
   readonly sessionDirectory: string;
@@ -69,7 +67,7 @@ export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
       sessionFile:
         typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
           ? record.sessionFile
-          : join(record.sessionDirectory, "session.jsonl"),
+          : sessionFileIn(record.sessionDirectory),
     };
   },
 };

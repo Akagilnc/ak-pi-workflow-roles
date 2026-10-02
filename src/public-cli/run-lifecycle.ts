@@ -16,7 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { listBookRunDirectories } from "../role-run-placement.ts";
+import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
@@ -25,6 +25,7 @@ import { parseCollectorRepository } from "../collector-config.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
+  retainedRunPathsMatch,
   rewriteAdmittedRoleRunPage,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
@@ -915,31 +916,12 @@ export async function findRunDirectoryById(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  const matches: string[] = [];
-  for (const bookKey of bookKeys) {
-    if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
-    const bookDir = activationBookDirectory(ledgerHome, bookKey);
-    let runDirectories: string[];
-    try {
-      runDirectories = await listBookRunDirectories(bookDir);
-    } catch (error) {
-      if (errorCodeOf(error) === "ENOENT") continue;
-      throw error;
-    }
-    for (const runDirectory of runDirectories) {
-      const entry = basename(runDirectory);
-      if (
-        (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
-        entry === `${runId}@${onlyRole}`
-      ) {
-        matches.push(runDirectory);
-      }
-    }
-  }
-  if (matches.length === 0) return undefined;
-  if (matches.length === 1) return matches[0];
-  throw new Error(
-    `ambiguous role run id ${runId}: ${matches.join(", ")}`,
+  return findRoleRunDirectory(
+    bookKeys
+      .filter((bookKey) => onlyBookKey === undefined || bookKey === onlyBookKey)
+      .map((bookKey) => activationBookDirectory(ledgerHome, bookKey)),
+    runId,
+    onlyRole,
   );
 }
 
@@ -999,7 +981,7 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
     typeof disk.principalWire.sessionFile === "string" &&
     disk.principalWire.sessionFile.trim() !== ""
       ? disk.principalWire.sessionFile
-      : join(disk.principalWire.sessionDirectory, "session.jsonl");
+      : sessionFileIn(disk.principalWire.sessionDirectory);
   try {
     const stat = await lstat(sessionFile);
     return stat.isFile() && !stat.isSymbolicLink();
@@ -1040,17 +1022,14 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  const suffix = `@${input.role}`;
   let best: string | undefined;
   for (const runDirectory of runDirectories) {
-    const entry = basename(runDirectory);
-    if (!entry.endsWith(suffix)) continue;
-    const runId = entry.slice(0, entry.length - suffix.length);
-    if (runId.length === 0) continue;
+    const parsed = parseRunLeaf(basename(runDirectory));
+    if (parsed === undefined || parsed.role !== input.role) continue;
+    const runId = parsed.runId;
     const parentPath = await readRunParentPath(runDirectory);
-    // The parent's ticket can change after this child was admitted. Within one
-    // book the run leaf is its stable identity; directory placement is not.
-    if (parentPath !== input.parentRunPath && basename(parentPath ?? "") !== basename(input.parentRunPath)) continue;
+    // Follow the parent's retained placement without collapsing distinct book/subject bindings.
+    if (!await retainedRunPathsMatch(parentPath, input.parentRunPath, input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
@@ -1226,7 +1205,7 @@ async function loadResumableRunRecord(
         lens = record.lens;
       }
       // Collector — admitted repository/PR identity (#633 resume).
-      if (typeof record.prNumber === "number" && Number.isSafeInteger(record.prNumber) && record.prNumber >= 1) {
+      if (isSafePositiveTicketNumber(record.prNumber)) {
         prNumber = record.prNumber;
       }
       if (typeof record.repository === "string" && record.repository.trim() !== "") {
@@ -1245,7 +1224,7 @@ async function loadResumableRunRecord(
         waitWindowMs = record.waitWindowMs;
       }
       // Doctor — admitted single-case identity (#633 resume).
-      if (typeof record.issueNumber === "number" && Number.isSafeInteger(record.issueNumber) && record.issueNumber >= 1) {
+      if (isSafePositiveTicketNumber(record.issueNumber)) {
         issueNumber = record.issueNumber;
       }
       if (typeof record.caseRunsPath === "string" && record.caseRunsPath.trim() !== "") {
@@ -1256,9 +1235,7 @@ async function loadResumableRunRecord(
       ) {
         const ci = record.caseIdentity as Record<string, unknown>;
         if (
-          typeof ci.issueNumber === "number" &&
-          Number.isSafeInteger(ci.issueNumber) &&
-          ci.issueNumber >= 1 &&
+          isSafePositiveTicketNumber(ci.issueNumber) &&
           typeof ci.runsPath === "string" &&
           ci.runsPath.trim() !== ""
         ) {
@@ -1376,9 +1353,9 @@ async function loadResumableRunRecord(
       );
     }
   }
-  const sourceRunLeaf = basename(sourceRunPath ?? "").split("@");
-  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf[0];
-  const referencedRole = sourceRun?.role ?? sourceRunLeaf[1];
+  const sourceRunLeaf = parseRunLeaf(basename(sourceRunPath ?? ""));
+  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf?.runId;
+  const referencedRole = sourceRun?.role ?? sourceRunLeaf?.role;
   if (referencedRunId !== undefined && referencedRunId !== "") {
     const currentSourceRunDirectory = await findRunDirectoryById(
       home,

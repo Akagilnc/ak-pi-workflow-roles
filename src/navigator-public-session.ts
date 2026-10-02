@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
-import { sitianReport } from "./sitian-facade.ts";
+import { sitianReportSafe } from "./host-session-record.ts";
 import {
   NavigatorUnavailableError,
   navigatorProviderFailureFromPublicTerminal,
@@ -21,6 +21,7 @@ import {
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
+import { parseRunLeaf } from "./role-run-placement.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
@@ -57,11 +58,9 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
 export const NAVIGATOR_HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
 
 export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
-  const entry = basename(runDirectory);
-  const suffix = "@navigator";
-  if (!entry.endsWith(suffix)) return undefined;
-  const runId = entry.slice(0, entry.length - suffix.length);
-  return runId.length > 0 ? runId : undefined;
+  const parsed = parseRunLeaf(basename(runDirectory));
+  if (parsed === undefined || parsed.role !== "navigator") return undefined;
+  return parsed.runId;
 }
 
 export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
@@ -285,18 +284,14 @@ export function createNativeNavigatorSessionFactory(deps?: {
       routePlaybookReadFailure: () => routePlaybookReadFailure,
       appendEntry: (customType, data) => {
         sessionManager.appendCustomEntry(customType, data);
-        try {
-          sitianReport({
-            level: "event",
-            kind: "attendance",
-            cwd: context.cwd,
-            sessionParent: sessionManager.getSessionFile(),
-            payload: { customType, data },
-            source: "navigator-public-session",
-          });
-        } catch {
-          // best-effort
-        }
+        sitianReportSafe({
+          level: "event",
+          kind: "attendance",
+          cwd: context.cwd,
+          sessionParent: sessionManager.getSessionFile(),
+          payload: { customType, data },
+          source: "navigator-public-session",
+        });
       },
       entries: () => sessionManager.getEntries(),
       setModel: async (next, nextThinking) => {

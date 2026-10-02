@@ -14,6 +14,7 @@
 import { createGhApiRunner, type GhApiRunner } from "./gh-api-runner.ts";
 
 import { isRecord } from "./unknown-value.ts";
+import { isPositiveTicketNumber } from "./run-ticket-number.ts";
 
 export type BookRepoBinding = {
   bookKey: string;
@@ -171,7 +172,7 @@ function parseClosedAt(raw: unknown, label: string): string | null {
 function parseTicketNode(raw: unknown, label: string): ParsedTicketNode {
   if (!isRecord(raw)) throw new Error(`${label} is not an object`);
   const number = raw.number;
-  if (typeof number !== "number" || !Number.isInteger(number) || number < 1) {
+  if (!isPositiveTicketNumber(number)) {
     throw new Error(`${label}.number invalid`);
   }
   if (typeof raw.title !== "string") throw new Error(`${label}.title missing`);
@@ -536,7 +537,7 @@ export function createGhTicketSnapshotTransport(
       const closedNumbers = [
         ...new Set(
           input.closedIssueNumbers.filter(
-            (n) => Number.isInteger(n) && n > 0 && !tickets.has(n),
+            (n) => isPositiveTicketNumber(n) && !tickets.has(n),
           ),
         ),
       ].sort((a, b) => a - b);

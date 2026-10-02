@@ -18,10 +18,16 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { writeFileAtomically } from "./atomic-write.ts";
+import {
+  errnoCode,
+  pathContainedIn,
+  physicalPathIdentity,
+} from "./activation-ledger-topology.ts";
 
 import {
   formatDurationZh,
@@ -29,8 +35,9 @@ import {
   formatTokensCompact,
   formatUsdPrecise,
 } from "./human-format.ts";
-import { listBookRunDirectories } from "./role-run-placement.ts";
-import { readRunTicketNumber } from "./run-ticket-number.ts";
+import { listBookRunDirectories, sessionDirectoryOf } from "./role-run-placement.ts";
+import { sitianVolumeDirectory } from "./sitian-appender.ts";
+import { isPositiveTicketNumber, readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
@@ -350,7 +357,7 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 
 /** Reviewer parallel axis-leg sessions live under session/reviewer-legs/. */
 async function listAxisLegSessionFiles(sessionDir: string): Promise<string[]> {
-  return listSessionFiles(join(sessionDir, "reviewer-legs"));
+  return listSessionFiles(sitianVolumeDirectory(sessionDir, "reviewer-legs"));
 }
 
 async function maxMtimeMs(paths: readonly string[]): Promise<number> {
@@ -372,7 +379,7 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
   const runId = basename(runDir);
   const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
-  const sessionDir = join(runDir, "session");
+  const sessionDir = sessionDirectoryOf(runDir);
   const sessionFiles = await listSessionFiles(sessionDir);
   const axisLegFiles = await listAxisLegSessionFiles(sessionDir);
   const rows: SessionRow[] = [];
@@ -749,7 +756,7 @@ export async function loadTicketTrajectoryRuns(
   issueNumber: number,
   bookIndex?: TicketTrajectoryBookIndex,
 ): Promise<TicketTrajectoryRun[]> {
-  if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+  if (!isPositiveTicketNumber(issueNumber)) {
     throw new Error("issueNumber must be a positive integer");
   }
   const root = resolve(ledgerDir);
@@ -789,7 +796,7 @@ export async function renderTicketTrajectoryHtml(
   now: Date,
   options?: { refreshBoundarySeconds?: number },
 ): Promise<string> {
-  if (!isRecord(ticketSnapshot) || typeof ticketSnapshot.issueNumber !== "number" || !Number.isInteger(ticketSnapshot.issueNumber) || ticketSnapshot.issueNumber < 1) {
+  if (!isRecord(ticketSnapshot) || !isPositiveTicketNumber(ticketSnapshot.issueNumber)) {
     throw new Error("ticketSnapshot.issueNumber must be a positive integer");
   }
   const issueNumber = ticketSnapshot.issueNumber;
@@ -807,10 +814,80 @@ export async function renderTicketTrajectoryHtml(
   });
 }
 
-function isPathInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(".."));
+function landsInLedger(ledgerRoot: string, candidate: string): boolean {
+  // mkdir may have materialized a previously dangling ledger alias since the first gate.
+  const physicalRoot = physicalPathIdentity(ledgerRoot);
+  const lexical = resolve(candidate);
+  const physical = physicalPathIdentity(candidate);
+  const inside = (id: string) => physicalRoot === id || pathContainedIn(physicalRoot, id);
+  return inside(lexical) || inside(physical);
 }
+
+/**
+ * Prospective output must stay outside every ledger root.
+ * Equality counts as inside. Symlink parents are followed by physical identity.
+ */
+export async function assertOutputOutsideLedgers(
+  ledgerDirs: readonly string[],
+  outputPath: string,
+  refusalMessage: string,
+): Promise<{ ledgerRoots: string[]; outputAbsolute: string; prospectiveReal: string }> {
+  const outputAbsolute = resolve(outputPath);
+  const prospectiveReal = physicalPathIdentity(outputAbsolute);
+  const ledgerRoots: string[] = [];
+  for (const ledgerDir of ledgerDirs) {
+    const ledgerResolved = resolve(ledgerDir);
+    let ledgerRoot: string;
+    try {
+      ledgerRoot = await realpath(ledgerResolved);
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      ledgerRoot = physicalPathIdentity(ledgerResolved);
+    }
+    ledgerRoots.push(ledgerRoot);
+    if (landsInLedger(ledgerRoot, prospectiveReal) || landsInLedger(ledgerRoot, outputAbsolute)) {
+      throw new Error(refusalMessage);
+    }
+  }
+  return { ledgerRoots, outputAbsolute, prospectiveReal };
+}
+
+/**
+ * Write HTML outside the ledgers. Temp+rename does not open an existing inode.
+ * An existing symlink whose target is inside a ledger is refused.
+ */
+export async function writePageOutsideLedgers(
+  ledgerRoots: readonly string[],
+  outputAbsolute: string,
+  html: string,
+  refusalMessage: string,
+): Promise<string> {
+  const parent = dirname(outputAbsolute);
+  await mkdir(parent, { recursive: true });
+  const parentReal = await realpath(parent);
+  const destinationReal = resolve(parentReal, basename(outputAbsolute));
+  for (const root of ledgerRoots) {
+    if (landsInLedger(root, parentReal) || landsInLedger(root, destinationReal)) {
+      throw new Error(refusalMessage);
+    }
+  }
+  try {
+    const existing = await lstat(outputAbsolute);
+    if (existing.isSymbolicLink()) {
+      const target = await realpath(outputAbsolute);
+      for (const root of ledgerRoots) {
+        if (landsInLedger(root, target)) throw new Error(refusalMessage);
+      }
+    }
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT" && errnoCode(error) !== "ENOTDIR") throw error;
+  }
+  await writeFileAtomically(outputAbsolute, html);
+  return realpath(outputAbsolute);
+}
+
+const TRAJECTORY_OUTPUT_REFUSAL =
+  "ticket trajectory outputPath must be outside the ledger directory";
 
 /**
  * Resolve the prospective on-disk target of outputPath and refuse any landing
@@ -821,104 +898,12 @@ export async function assertTrajectoryOutputOutsideLedger(
   ledgerDir: string,
   outputPath: string,
 ): Promise<{ ledgerRoot: string; outputAbsolute: string; prospectiveReal: string }> {
-  const ledgerResolved = resolve(ledgerDir);
-  let ledgerRoot: string;
-  try {
-    ledgerRoot = await realpath(ledgerResolved);
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    ledgerRoot = ledgerResolved;
-  }
-  const outputAbsolute = resolve(outputPath);
-
-  // Walk up until an existing filesystem node is found; realpath that prefix
-  // and rejoin the missing tail so symlink parents are fully followed.
-  const missingTail: string[] = [];
-  let cursor = outputAbsolute;
-  for (;;) {
-    try {
-      await lstat(cursor);
-      break;
-    } catch (error) {
-      if (!isMissingPathError(error)) throw error;
-      const parent = dirname(cursor);
-      if (parent === cursor) break;
-      missingTail.push(basename(cursor));
-      cursor = parent;
-    }
-  }
-
-  let realPrefix: string;
-  try {
-    realPrefix = await realpath(cursor);
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    realPrefix = resolve(cursor);
-  }
-
-  const prospectiveReal =
-    missingTail.length === 0 ? realPrefix : resolve(realPrefix, ...missingTail.reverse());
-
-  if (isPathInside(ledgerRoot, prospectiveReal) || isPathInside(ledgerRoot, realPrefix)) {
-    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-  }
-
-  // Lexical absolute path must also stay outside (defense in depth before mkdir).
-  if (isPathInside(ledgerRoot, outputAbsolute)) {
-    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-  }
-
-  return { ledgerRoot, outputAbsolute, prospectiveReal };
-}
-
-/**
- * Write HTML to an explicit path outside the ledger without following an
- * existing destination inode (hard link / prior file). Temp file + rename
- * replaces the directory entry so a hard-linked ledger twin keeps its bytes.
- */
-async function writeHtmlAtomicallyOutsideLedger(input: {
-  ledgerRoot: string;
-  outputAbsolute: string;
-  html: string;
-}): Promise<string> {
-  const parent = dirname(input.outputAbsolute);
-  await mkdir(parent, { recursive: true });
-
-  // Re-resolve after mkdir: a race or symlink parent must still land outside.
-  const parentReal = await realpath(parent);
-  if (isPathInside(input.ledgerRoot, parentReal)) {
-    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-  }
-
-  const destinationReal = resolve(parentReal, basename(input.outputAbsolute));
-  if (isPathInside(input.ledgerRoot, destinationReal)) {
-    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-  }
-
-  // Refuse to write through an existing symlink whose target is inside the ledger.
-  try {
-    const existing = await lstat(input.outputAbsolute);
-    if (existing.isSymbolicLink()) {
-      const target = await realpath(input.outputAbsolute);
-      if (isPathInside(input.ledgerRoot, target)) {
-        throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-      }
-    }
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-  }
-
-  // Same-directory temp + rename: does not open/truncate an existing inode, so a
-  // hard link from outputPath into the ledger cannot smuggle writes back home.
-  const temporary = join(parent, `.ticket-trajectory-${randomUUID()}.html.tmp`);
-  try {
-    await writeFile(temporary, input.html, "utf8");
-    await rename(temporary, input.outputAbsolute);
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
-  }
-  return realpath(input.outputAbsolute);
+  const gate = await assertOutputOutsideLedgers([ledgerDir], outputPath, TRAJECTORY_OUTPUT_REFUSAL);
+  return {
+    ledgerRoot: gate.ledgerRoots[0]!,
+    outputAbsolute: gate.outputAbsolute,
+    prospectiveReal: gate.prospectiveReal,
+  };
 }
 
 /**
@@ -943,11 +928,12 @@ export async function writeTicketTrajectoryPage(input: {
       : undefined,
   );
 
-  const outputPath = await writeHtmlAtomicallyOutsideLedger({
-    ledgerRoot: gate.ledgerRoot,
-    outputAbsolute: gate.outputAbsolute,
+  const outputPath = await writePageOutsideLedgers(
+    [gate.ledgerRoot],
+    gate.outputAbsolute,
     html,
-  });
+    TRAJECTORY_OUTPUT_REFUSAL,
+  );
   return { outputPath, html };
 }
 

@@ -21,9 +21,15 @@ import {
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
-import { listBookRunDirectories } from "./role-run-placement.ts";
+import {
+  listBookRunDirectories,
+  parseRunLeaf,
+  sessionFileOf,
+} from "./role-run-placement.ts";
+import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import { autopsyWriterLock, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
@@ -124,14 +130,6 @@ async function classifyGhostCandidate(input: {
   };
 }
 
-function parseRunDirectoryName(
-  name: string,
-): { runId: string; role: string } | undefined {
-  const at = name.lastIndexOf("@");
-  if (at <= 0 || at === name.length - 1) return undefined;
-  return { runId: name.slice(0, at), role: name.slice(at + 1) };
-}
-
 /**
  * Invocation scope faces used for issue 圈定 (C4 / #399).
  * projectRoot is retained for narrow path match and conflict facts;
@@ -222,12 +220,14 @@ async function resolveSessionFile(
       && typeof parsed.sessionFile === "string"
       && parsed.sessionFile.trim() !== ""
     ) {
-      return parsed.sessionFile;
+      return typeof parsed.runDirectory === "string"
+        ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
+        : parsed.sessionFile;
     }
   } catch (error) {
     if (!isMissingPathError(error)) throw error;
   }
-  return join(runDirectory, "session", "session.jsonl");
+  return sessionFileOf(runDirectory);
 }
 
 /**
@@ -579,9 +579,9 @@ async function classifyScopedRun(input: {
   // nested JSONL is page-local unreadable — never silently under-count rounds.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
-    const parentSessionFile = join(input.runDirectory, "session", "session.jsonl");
+    const parentSessionFile = sessionFileOf(input.runDirectory);
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      join(input.runDirectory, "session", "auditor-roles"),
+      sitianRunVolumeDirectory(input.runDirectory, "auditor-roles"),
       { parentSessionFile },
     );
   } catch (error) {
@@ -697,7 +697,7 @@ export async function scanAnalystIssueRuns(input: {
 
     for (const runDirectory of runDirectories) {
       const runName = basename(runDirectory);
-      const parsed = parseRunDirectoryName(runName);
+      const parsed = parseRunLeaf(runName);
       if (parsed === undefined) continue;
 
       let scopeFields: InvocationScopeFields | undefined;

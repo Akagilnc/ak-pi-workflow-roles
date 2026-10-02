@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { sessionDirectoryOf } from "./role-run-placement.ts";
+import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
+
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -65,6 +68,18 @@ type SitianRecordPath = {
 /** Sole records leaf under every sitian volume directory. */
 const SITIAN_RECORDS_LEAF = "records.jsonl" as const;
 
+export function sitianVolumeDirectory(sessionDirectory: string, category: string): string {
+  return join(sessionDirectory, category);
+}
+
+export function sitianRunVolumeDirectory(runDirectory: string, category: string): string {
+  return sitianVolumeDirectory(sessionDirectoryOf(runDirectory), category);
+}
+
+export function sitianVolumeRecordsFile(volumeDirectory: string): string {
+  return join(volumeDirectory, SITIAN_RECORDS_LEAF);
+}
+
 /**
  * Ticket-provenance under-book paths (docs/dossier-topology.md sole authority).
  * Writer ticket branch and owner-visible shape share this join — one code path.
@@ -75,7 +90,7 @@ function ticketProvenanceUnderBookPaths(
   ticketId: string,
 ): { sessionDir: string; recordFile: string } {
   const sessionDir = join(activationBookDirectory(ledgerHome, bookKey), ticketId);
-  return { sessionDir, recordFile: join(sessionDir, SITIAN_RECORDS_LEAF) };
+  return { sessionDir, recordFile: sitianVolumeRecordsFile(sessionDir) };
 }
 
 /** Pure topology owner shared by ambient writes and explicit-home submission reads. */
@@ -85,14 +100,7 @@ export function resolveSitianRecordPathInLedger(
 ): SitianRecordPath {
   const category = resolveSitianVolumeCategory(input.kind);
   const ticketNumber = category === "ticket-provenance"
-    ? typeof input.subject === "string" && /^[1-9][0-9]*$/.test(input.subject)
-      ? input.subject
-      : typeof input.subject === "object"
-        && typeof input.subject.ticketNumber === "number"
-        && Number.isSafeInteger(input.subject.ticketNumber)
-        && input.subject.ticketNumber > 0
-        ? String(input.subject.ticketNumber)
-        : undefined
+    ? ticketNumberFromSitianSubject(input.subject)
     : undefined;
 
   let sessionDir: string;
@@ -108,7 +116,7 @@ export function resolveSitianRecordPathInLedger(
     recordFile = paths.recordFile;
   } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
     sessionDir = input.runDirectory;
-    recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
+    recordFile = sitianVolumeRecordsFile(sessionDir);
   } else {
     if (
       input.sessionParent === undefined
@@ -117,8 +125,8 @@ export function resolveSitianRecordPathInLedger(
     ) {
       throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
-    sessionDir = join(dirname(input.sessionParent), category);
-    recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
+    sessionDir = sitianVolumeDirectory(dirname(input.sessionParent), category);
+    recordFile = sitianVolumeRecordsFile(sessionDir);
   }
   if (!physicallyContainedIn(ledgerHome, sessionDir)) {
     throw new Error("Sitian record ownership requires a directory inside the ledger home");

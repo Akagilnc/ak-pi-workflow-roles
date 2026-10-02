@@ -11,7 +11,7 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile, readFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -39,7 +39,6 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -258,31 +257,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             // The court body receives its own scripted receipt; no diarist child.
-            piRunner: async (args, options) => {
-              const outcome = await scriptedCountersignSession(receipt)(args, options);
-              // #634: scriptedTerminatingToolSession writes only the countersign
-              // terminating receipt — it never opens a real pi role activation that
-              // would summon Notary. Seed the direct officer volume the production
-              // gate would leave, so Terminal projection still asserts typed seats.
-              if (receipt.status === "converged") {
-                const sessionFile = argvFlagValue(args, "--session");
-                assert.ok(sessionFile);
-                const auditorDir = join(dirname(sessionFile), "auditor-roles");
-                await mkdir(auditorDir, { recursive: true });
-                await writeFile(
-                  join(auditorDir, "o01_notary.jsonl"),
-                  gateToolSessionJsonl({
-                    id: "direct-notary",
-                    startedAt: "2026-09-04T00:00:00.000Z",
-                    endedAt: "2026-09-04T00:00:10.000Z",
-                    toolName: "ak_notary_output",
-                    args: { status: "converged", findings: [] },
-                  }),
-                  "utf8",
-                );
-              }
-              return outcome;
-            },
+            piRunner: scriptedCountersignSession(receipt),
           }),
         },
       );
@@ -305,10 +280,6 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       }
       if (receipt.status === "converged") {
         assert.equal(facts.note, receipt.note);
-        assert.ok(result.terminal.gate);
-        assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
-        assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
-        assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
       }
       const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,
@@ -682,54 +653,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     const laterBounceBody = "SECOND-TURN-BOUNCE-BODY";
     const reverseBounceBody = "REVERSE-ORDER-BOUNCE-BODY";
     const gateFindings = ["REJECTED-FIRST-findings-visible"] as const;
-    const reverseGateFindings = ["BOUNCED-AFTER-ACCEPT-VISIBLE"] as const;
     const runId = "01a0sign00-0000-7000-8000-000000000843";
     const seatModel = ["--model", "test/caller-seat:high"] as const;
-
-    type SeedGateRound = {
-      readonly id: string;
-      readonly startedAt: string;
-      readonly endedAt: string;
-      readonly status: "continue" | "converged";
-      readonly findings: readonly string[];
-    };
-    const gateRound = (
-      id: string,
-      startN: number,
-      status: "continue" | "converged",
-      findings: readonly string[],
-    ): SeedGateRound => ({
-      id,
-      startedAt: sessionRowTime(startN).iso,
-      endedAt: sessionRowTime(startN + 10).iso,
-      status,
-      findings,
-    });
-    const seedGateRounds = async (
-      sessionFile: string,
-      rounds: readonly SeedGateRound[],
-    ): Promise<void> => {
-      const auditorDir = join(dirname(sessionFile), "auditor-roles");
-      await mkdir(auditorDir, { recursive: true });
-      for (let i = 0; i < rounds.length; i += 1) {
-        const round = rounds[i]!;
-        await writeFile(
-          join(auditorDir, `o${String(i + 1).padStart(2, "0")}_notary.jsonl`),
-          gateToolSessionJsonl({
-            id: round.id,
-            startedAt: round.startedAt,
-            endedAt: round.endedAt,
-            toolName: "ak_notary_output",
-            args: { status: round.status, findings: [...round.findings] },
-          }),
-          "utf8",
-        );
-      }
-    };
-    const passThenBounceGates = [
-      gateRound("direct-notary-pass-rev", 2000, "converged", []),
-      gateRound("direct-notary-bounce-rev", 2020, "continue", reverseGateFindings),
-    ] as const;
 
     const runScripted = (
       argv: string[],
@@ -858,13 +783,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     assert.equal(payloads[2]!.note, "ACCEPTED-AFTER-CORRECTION");
     // submissions stay run-scoped (#836): prior seed + this turn's bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
-    assert.ok(result.terminal.gate);
-    assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
-    assert.equal(result.terminal.gate!.rounds.length, 1);
-    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
-    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
-    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "converged");
-    assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, []);
 
     // 2 / 2b / 2c) A later bounce is a rejection payload. It does not turn the
     // host's clean exit, or a prior lawful acceptance, into a failure.
@@ -1024,7 +942,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           toolCallId: "call-rev-bounce",
           findings: ["BOUNCED-AFTER-ACCEPT-VISIBLE"],
         });
-        await seedGateRounds(sessionFile, passThenBounceGates);
         return { code: 0, timedOut: false, stderr: "", args: [...args] };
       },
       () => reverseRunId,
@@ -1048,15 +965,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       (reversePayloads[1]!.fix as { summary?: string } | undefined)?.summary,
       "BOUNCED-AFTER-ACCEPT-VISIBLE",
     );
-    assert.ok(reversed.terminal!.gate);
-    // Two seeded volumes plus the live notary pass required before settlement.
-    const reverseRounds = reversed.terminal!.gate!.rounds;
-    assert.equal(reverseRounds.length, 3);
-    assert.ok(reverseRounds.some((round) =>
-      round.officer.status === "converged" && round.officer.findings.length === 0));
-    const bounced = reverseRounds.filter((round) => round.officer.status === "continue");
-    assert.equal(bounced.length, 1);
-    assert.deepEqual(bounced[0]!.officer.findings, [...reverseGateFindings]);
   });
 });
 

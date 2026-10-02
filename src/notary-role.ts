@@ -1,6 +1,7 @@
 import type { RoleHost, HostContext } from "./host-contracts.ts";
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
+import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.
@@ -44,7 +45,7 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
   }
   if (flag.trim() === "") return undefined;
   const n = Number(flag);
-  if (!Number.isSafeInteger(n) || n < 1) {
+  if (!isSafePositiveTicketNumber(n)) {
     throw new Error(
       "Notary ak-notary-ticket-number is present but not a safe positive integer string",
     );

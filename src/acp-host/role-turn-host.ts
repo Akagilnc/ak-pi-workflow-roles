@@ -1,8 +1,8 @@
-import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import { sessionDirectoryOf } from "../role-run-placement.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -496,7 +496,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             host: config.hostName,
             sessionId,
             cwd: request.cwd,
-            sessionDirectory: join(request.runDirectory, "session"),
+            sessionDirectory: sessionDirectoryOf(request.runDirectory),
             sessionParent,
             continuation: request.continuation,
             ...(request.model !== undefined ? { model: request.model } : {}),

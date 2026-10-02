@@ -17,9 +17,15 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+
+export {
+  runDirectoryFromSessionDirectory,
+  sessionFileIn as sessionFileFromSessionDirectory,
+} from "./role-run-placement.ts";
 
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
+import { sitianRunVolumeDirectory, sitianVolumeRecordsFile } from "./sitian-appender.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPath,
@@ -40,8 +46,9 @@ export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as cons
  * Openable once the run directory is known from the terminal's run id.
  * Contains no runId bytes itself (#108 + #537).
  */
-export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE =
-  `session/${ENGINE_DETOUR_CALL_KIND}/records.jsonl` as const;
+export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = sitianVolumeRecordsFile(
+  sitianRunVolumeDirectory("", ENGINE_DETOUR_CALL_KIND),
+);
 
 /** stdout UTF-8 byte length (ticket-frozen metric; empty stdout is real 0). */
 export function engineDetourStdoutByteLength(stdout: string): number {
@@ -286,16 +293,6 @@ export function withEngineDetourToolUsageFact<
       [ENGINE_DETOUR_TOOL_USAGE_FACT_KEY]: usage,
     },
   };
-}
-
-/** runDirectory owning a session directory (.../runs/<id>@role/session). */
-export function runDirectoryFromSessionDirectory(sessionDirectory: string): string {
-  return dirname(sessionDirectory);
-}
-
-/** session.jsonl under a session directory. */
-export function sessionFileFromSessionDirectory(sessionDirectory: string): string {
-  return join(sessionDirectory, "session.jsonl");
 }
 
 /**

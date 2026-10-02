@@ -12,12 +12,14 @@ import {
 
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
+import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
+import { isSafePositiveTicketNumber, parseTicketNumber } from "./run-ticket-number.ts";
 import {
   durableSessionPointer,
   resolveBookKeyFromGit,
@@ -207,12 +209,9 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     authorityRefs = Object.freeze(parsed as string[]);
   }
 
-  let ticketNumber: number | undefined;
   const rawTicketNumber = getFlag("ak-review-ticket-number");
   // Shape-invalid flag values do not abort: omit typed candidate; branch→commit→degrade continues.
-  if (typeof rawTicketNumber === "string" && /^[1-9]\d*$/.test(rawTicketNumber)) {
-    ticketNumber = Number(rawTicketNumber);
-  }
+  const ticketNumber = parseTicketNumber(rawTicketNumber);
 
   const baseRevision = getFlag("ak-review-base");
   if (typeof baseRevision !== "string" || !baseRevision.trim()) {
@@ -760,15 +759,8 @@ function readDiaristTicketAssertion(
   }
   const raw = submitted.ticketNumber;
   if (raw === null) return { kind: "true-unbound" };
-  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-    return { kind: "ticket", ticketNumber: raw };
-  }
-  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw)) {
-    const n = Number(raw);
-    if (Number.isSafeInteger(n) && n >= 1) {
-      return { kind: "ticket", ticketNumber: n };
-    }
-  }
+  const ticketNumber = parseTicketNumber(raw);
+  if (ticketNumber !== undefined) return { kind: "ticket", ticketNumber };
   return { kind: "invalid" };
 }
 
@@ -802,12 +794,9 @@ function readDiaristRunCoordinates(ctx: HostContext): {
   readonly boundTicketNumber?: number;
 } {
   const coordinates = readRoleRunCoordinates(ctx, "diarist accept");
-  const bound =
-    typeof coordinates.admitted.ticketNumber === "number" &&
-    Number.isSafeInteger(coordinates.admitted.ticketNumber) &&
-    coordinates.admitted.ticketNumber >= 1
-      ? coordinates.admitted.ticketNumber
-      : undefined;
+  const bound = isSafePositiveTicketNumber(coordinates.admitted.ticketNumber)
+    ? coordinates.admitted.ticketNumber
+    : undefined;
   return {
     runDirectory: coordinates.runDirectory,
     projectRoot: coordinates.projectRoot,
@@ -1344,16 +1333,14 @@ export function createRoleRuntimeExtension(
               attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
             });
             envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            try {
-              sitianReport({
-                level: "event",
-                kind: "no-receipt-lifecycle",
-                cwd: ctx.cwd,
-                sessionParent: ctx.sessionManager.getSessionFile(),
-                payload: facts,
-                source: "role-runtime",
-              });
-            } catch {}
+            sitianReportSafe({
+              level: "event",
+              kind: "no-receipt-lifecycle",
+              cwd: ctx.cwd,
+              sessionParent: ctx.sessionManager.getSessionFile(),
+              payload: facts,
+              source: "role-runtime",
+            });
           }
         }
         return;
@@ -1367,16 +1354,14 @@ export function createRoleRuntimeExtension(
           RECEIPT_DELIVERY_REQUEST_ENTRY,
           scopeId.length > 0 ? { invocationScopeId: scopeId } : undefined,
         );
-        try {
-          sitianReport({
-            level: "event",
-            kind: "receipt-delivery",
-            cwd: ctx.cwd,
-            sessionParent: ctx.sessionManager.getSessionFile(),
-            payload: { type: "ak-receipt-delivery-request" },
-            source: "role-runtime",
-          });
-        } catch {}
+        sitianReportSafe({
+          level: "event",
+          kind: "receipt-delivery",
+          cwd: ctx.cwd,
+          sessionParent: ctx.sessionManager.getSessionFile(),
+          payload: { type: "ak-receipt-delivery-request" },
+          source: "role-runtime",
+        });
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: JSON.stringify(receiptDelivery.deliveryState()),
@@ -1391,16 +1376,14 @@ export function createRoleRuntimeExtension(
             attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
           });
           envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-          try {
-            sitianReport({
-              level: "event",
-              kind: "no-receipt-lifecycle",
-              cwd: ctx.cwd,
-              sessionParent: ctx.sessionManager.getSessionFile(),
-              payload: facts,
-              source: "role-runtime",
-            });
-          } catch {}
+          sitianReportSafe({
+            level: "event",
+            kind: "no-receipt-lifecycle",
+            cwd: ctx.cwd,
+            sessionParent: ctx.sessionManager.getSessionFile(),
+            payload: facts,
+            source: "role-runtime",
+          });
         }
       }
     });
@@ -1765,16 +1748,14 @@ export function createRoleRuntimeExtension(
               subjectKey: work.subjectKey,
             };
             envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
-            try {
-              sitianReport({
-                level: "event",
-                kind: "attendance",
-                cwd: ctx.cwd,
-                sessionParent: ctx.sessionManager.getSessionFile(),
-                payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
-                source: "role-runtime",
-              });
-            } catch {}
+            sitianReportSafe({
+              level: "event",
+              kind: "attendance",
+              cwd: ctx.cwd,
+              sessionParent: ctx.sessionManager.getSessionFile(),
+              payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
+              source: "role-runtime",
+            });
           }
           const activation = navigatorActivation;
           navigatorAttendance = await dependencies.createNavigatorAttendance({
