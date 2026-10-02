@@ -11,6 +11,19 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
+function isNullUnion(schema: unknown): boolean {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return false;
+  const anyOf = (schema as { anyOf?: unknown }).anyOf;
+  if (!Array.isArray(anyOf)) return false;
+  return anyOf.some((leaf) => typeof leaf === "object" && leaf !== null && (leaf as { type?: unknown }).type === "null");
+}
+
+function nonNullBranch(schema: unknown): unknown {
+  if (!isNullUnion(schema)) return schema;
+  const anyOf = (schema as { anyOf: unknown[] }).anyOf;
+  return anyOf.find((leaf) => !(typeof leaf === "object" && leaf !== null && (leaf as { type?: unknown }).type === "null"));
+}
+
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
 test("codex headless host binds and resumes a structured turn", { timeout: 10000 }, async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
@@ -92,15 +105,17 @@ const waitForPointer = setInterval(() => {
         mcpServers: [{ name: "ak-probe", command: "/usr/bin/node", args: ["relay.mjs"] }],
         systemPrompt: { body: "system", materials: [] },
         prompt: request.continuation.prompt,
-        // The native send path must not narrow open declarations.
+        // Realistic open-schema shapes the Codex transport closer must preserve:
+        // required stays non-null; optional becomes type|null; nested/array/const/unknown kept.
         jsonSchema: {
           type: "object",
           properties: {
             status: { type: "string" },
             routingStatus: { description: "completed | refused — shape guidance, not a schema gate" },
-            // Nullable declarations stay nullable.
+            // Composite nullable type: strip null in-leaf; required keeps non-null.
             label: { type: ["string", "null"] },
             report: { type: "string" },
+            // Optional composite nullable → non-null leaf + unified null at the edge.
             note: { type: ["string", "null"] },
             nested: {
               type: "object",
@@ -147,16 +162,64 @@ const waitForPointer = setInterval(() => {
     assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
     assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
     assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
-    const sentSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
-    assert.equal(sentSchema.additionalProperties, true);
-    assert.deepEqual(sentSchema.required, ["status", "routingStatus", "label", "nested"]);
-    assert.deepEqual(sentSchema.properties.label.type, ["string", "null"]);
-    assert.equal(sentSchema.properties.nested.additionalProperties, true);
-    assert.equal(sentSchema.properties.free.type, undefined);
-    const gapNames = (await readdir(join(root, "artifacts"))).filter((name) => name.startsWith("post-admission-diagnostic-"));
-    assert.ok(gapNames.length >= 1);
-    const gap = JSON.parse(await readFile(join(root, "artifacts", gapNames[0]!), "utf8")) as { diagnostic?: unknown };
-    assert.equal(typeof gap.diagnostic, "string");
+    const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
+      additionalProperties: unknown;
+      required: string[];
+      properties: Record<string, unknown>;
+      $defs?: Record<string, unknown>;
+    };
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(
+      [...schema.required].sort(),
+      ["free", "kind", "label", "nested", "note", "report", "routingStatus", "status", "tags"],
+    );
+    // Required fields keep non-null closed types.
+    assert.equal(isNullUnion(schema.properties.status), false);
+    assert.deepEqual(schema.properties.status, { type: "string" });
+    const routingDescription =
+      (schema.properties.routingStatus as { description?: unknown }).description;
+    assert.equal(typeof routingDescription, "string");
+    assert.notEqual(routingDescription, "");
+    // Required composite type|["string","null"] → non-null string (not {type:"null"}).
+    assert.equal(isNullUnion(schema.properties.label), false);
+    assert.deepEqual(schema.properties.label, { type: "string" });
+    // Optional composite type|null → unified null at the property edge only.
+    assert.equal(isNullUnion(schema.properties.note), true);
+    assert.deepEqual(nonNullBranch(schema.properties.note), { type: "string" });
+    const nestedClosed = schema.properties.nested as {
+      type?: string;
+      required?: string[];
+      properties?: Record<string, unknown>;
+      additionalProperties?: unknown;
+    };
+    assert.equal(isNullUnion(nestedClosed), false);
+    assert.equal(nestedClosed.type, "object");
+    assert.equal(nestedClosed.additionalProperties, false);
+    assert.deepEqual([...(nestedClosed.required ?? [])].sort(), ["a", "b"]);
+    assert.equal(isNullUnion(nestedClosed.properties?.a), false);
+    assert.deepEqual(nestedClosed.properties?.a, { type: "string" });
+    assert.equal(isNullUnion(nestedClosed.properties?.b), true);
+    assert.deepEqual(nonNullBranch(nestedClosed.properties?.b), { type: "string" });
+    // Optional fields become type|null at the property edge.
+    assert.equal(isNullUnion(schema.properties.report), true);
+    assert.deepEqual(nonNullBranch(schema.properties.report), { type: "string" });
+    assert.equal(isNullUnion(schema.properties.tags), true);
+    assert.deepEqual(nonNullBranch(schema.properties.tags), { type: "array", items: { type: "string" } });
+    assert.equal(isNullUnion(schema.properties.kind), true);
+    assert.deepEqual(nonNullBranch(schema.properties.kind), { const: "probe", type: "string" });
+    assert.equal(isNullUnion(schema.properties.free), true);
+    assert.deepEqual(nonNullBranch(schema.properties.free), { $ref: "#/$defs/codexJsonValue" });
+    assert.ok(schema.$defs?.codexJsonValue);
+    // Normal call must not pre-record a package fault for the open declaration.
+    const gapNames = (await readdir(join(root, "artifacts")).catch(() => [] as string[]))
+      .filter((name) => name.startsWith("post-admission-diagnostic-"));
+    for (const name of gapNames) {
+      const gap = JSON.parse(await readFile(join(root, "artifacts", name), "utf8")) as { diagnostic?: unknown };
+      assert.notEqual(
+        gap.diagnostic,
+        "codex --output-schema cannot promise this open contract: native strict output requires all properties and additionalProperties:false; the declaration is sent unchanged",
+      );
+    }
 
     receipt = undefined;
     const resumed = await host.executeTurn({
@@ -166,6 +229,13 @@ const waitForPointer = setInterval(() => {
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
     assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    // Resume uses the same strict transport schema as the first call.
+    const resumedSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
+    assert.equal(resumedSchema.additionalProperties, false);
+    assert.deepEqual(
+      [...resumedSchema.required].sort(),
+      ["free", "kind", "label", "nested", "note", "report", "routingStatus", "status", "tags"],
+    );
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), ["work", "continue"]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
