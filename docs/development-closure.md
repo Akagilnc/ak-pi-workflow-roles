@@ -10,6 +10,8 @@ runtime budget. Callers outside this repository owe it nothing (ADR 0010).
 Role-result authority: [submission contracts](../src/package-contracts/terminating-tools.ts)
 and [ADR 0003](adr/0003-per-role-submission-tools.md). Caller-owned composition and
 budgets: [ADR 0010](adr/0010-callers-own-role-composition-and-repetition.md).
+A development-trail entry may preserve or cite the Receipt but is not
+itself a verdict and cannot replace the Receipt.
 
 ## Canonical manual record sequence
 

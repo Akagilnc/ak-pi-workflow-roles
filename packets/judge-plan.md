@@ -1,6 +1,7 @@
 # Plan evidence packet (contributor template)
 
 Repository-contributor template for manually supplied Plan evidence.
+This packet does not claim construction already happened.
 Template scope and preservation: [development closure](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/development-closure.md).
 Composition: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
 Adjudication: [Judge Soul](../souls/judge.md).

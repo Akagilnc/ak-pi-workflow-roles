@@ -4,7 +4,7 @@ Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `secre
 
 ## Install
 
-Installation policy: [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md). Example:
+Installation policy: [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md). Example:
 
 ```bash
 pi install npm:@akagilnc/pi-workflow-roles
@@ -13,23 +13,23 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 Update example: `pi update npm:@akagilnc/pi-workflow-roles`. Inspect with `ak-role roles` and `ak-role help <role>`; seat and Gate-officer configuration lives under Reading results below.
 
-Publish routing: [registry workflow](.github/workflows/publish-registry.yml).
+Publish routing: [registry workflow](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/.github/workflows/publish-registry.yml).
 
 ## Reading results
 
-Public entry and result delivery: [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md). Example:
+Public entry and result delivery: [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md). Example:
 
 ```bash
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
-Exit status and Terminal semantics: [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md), [Terminal implementation](src/public-cli/terminal.ts).
+Exit status and Terminal semantics: [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md), [Terminal implementation](src/public-cli/terminal.ts).
 
-Manual continuation and flag placement: `ak-role help resume`; model / host resolution: `ak-role help`; engine configuration: `ak-role help config`. Audit continuation: [ADR 0003](docs/adr/0003-per-role-submission-tools.md). Host switching and prior-record delivery: [ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md). Resume failure handling: [public execution seam](src/public-cli/post-admission.ts).
+Manual continuation and flag placement: `ak-role help resume`; model / host resolution: `ak-role help`; engine configuration: `ak-role help config`. Audit continuation: [ADR 0003](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0003-per-role-submission-tools.md). Host switching and prior-record delivery: [ADR 0086](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md). Resume failure handling: [public execution seam](src/public-cli/post-admission.ts).
 
 Automatic retry behavior: [auto-resume implementation](src/public-cli/auto-resume.ts); configuration usage: `ak-role help config`; effective limit: `ak-role config show`.
 
-Receipt re-requests and delivery accounting (#1132): [role runtime](src/role-runtime.ts), [receipt delivery policy](src/receipt-delivery-policy.ts), [external host loop](src/external-host-turn-loop.ts). Unfinished-reason handling: [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md).
+Receipt re-requests and delivery accounting (#1132): [role runtime](src/role-runtime.ts), [receipt delivery policy](src/receipt-delivery-policy.ts), [external host loop](src/external-host-turn-loop.ts). Unfinished-reason handling: [ADR 0050](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md).
 
 Seat and Gate-officer configuration:
 
@@ -53,17 +53,17 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**Host axis:** `ak-role help`; institutional boundaries: [ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md). Host recommendations and native compaction configuration: [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971).
+**Host axis:** `ak-role help`; institutional boundaries: [ADR 0082](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0082-three-layer-runtime-role-host-face.md). Host recommendations and native compaction configuration: [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971).
 
 **Host providers:** `ak-role help` and [provider resolution](src/public-cli/host-providers.ts); table inspection: `ak-role config show`.
 
-**Machine method Skills:** run `ak-role setup`; installation behavior: [machine Skill setup](src/public-cli/machine-method-skills.ts), [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md); host capabilities: [Pi Skill delivery](src/pi/role-turn-host.ts) and [external host descriptions](src/host-descriptions.ts).
+**Machine method Skills:** run `ak-role setup`; installation behavior: [machine Skill setup](src/public-cli/machine-method-skills.ts), [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md); host capabilities: [Pi Skill delivery](src/pi/role-turn-host.ts) and [external host descriptions](src/host-descriptions.ts).
 
 **Gate-officer resolution:** [institutional resolution](src/institutional-resolution.ts); configuration usage: `ak-role help config`; persisted-file reading: [config implementation](src/public-cli/config.ts).
 
-**Receipts:** [exported contracts](src/package-contracts/); Navigator's output face: `ak-role help navigator`. Composition and stopping: [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md).
+**Receipts:** [exported contracts](src/package-contracts/); Navigator's output face: `ak-role help navigator`. Composition and stopping: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
 
-**Submission gates:** [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md), [submission gate](src/submission-gate.ts), [role gate composition](src/worker-role.ts) and [judge gates](src/judge-role.ts). Labor-engine failure policy: [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). Engine usage measurement: [usage fact owner](src/engine-detour-usage.ts).
+**Submission gates:** [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md), [submission gate](src/submission-gate.ts), [role gate composition](src/worker-role.ts) and [judge gates](src/judge-role.ts). Labor-engine failure policy: [ADR 0071](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). Engine usage measurement: [usage fact owner](src/engine-detour-usage.ts).
 
 ## Call the roles
 
@@ -138,10 +138,10 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 
 ## Names
 
-Roster: [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md). Naming rule: [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md).
+Roster: [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md). Naming rule: [ADR 0051](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0051-roles-are-named-after-tang-song-offices.md).
 
 ## Normative pointers
 
 - Command usage, resolution, and refusal text: `ak-role help`, `ak-role help <command>`, `ak-role help config` (sole authority).
-- Decisions and rationale: `docs/adr/` (composition ADR 0010, public CLI face ADR 0052, submission gates ADR 0066/0067/0070/0072, labor engines ADR 0069/0071, court diary ADR 0075, among others; not exhaustive).
-- Glossary: [CONTEXT.md](CONTEXT.md). Programmatic contracts: `src/package-contracts/` exports.
+- Decisions and rationale: [docs/adr/](https://github.com/Akagilnc/ak-pi-workflow-roles/tree/main/docs/adr) (composition ADR 0010, public CLI face ADR 0052, submission gates ADR 0066/0067/0070/0072, labor engines ADR 0069/0071, court diary ADR 0075, among others; not exhaustive).
+- Glossary: [CONTEXT.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/CONTEXT.md). Programmatic contracts: `src/package-contracts/` exports.

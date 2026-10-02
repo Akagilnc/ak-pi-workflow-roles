@@ -21,7 +21,7 @@ Adjudication duties: [Judge Soul](../souls/judge.md).
 
 Record each item the contributor wants examined under the Authority burden.
 Do not invent Apply fixtures, blanket `file:line` demands, or implementation
-recipes here.
+recipes here. This packet does **not** require Apply-level executable proof.
 
 ### Clauses
 

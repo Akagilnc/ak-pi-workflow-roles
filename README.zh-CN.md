@@ -4,7 +4,7 @@
 
 ## 安装
 
-安装约定见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)。操作示例：
+安装约定见 [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)。操作示例：
 
 ```bash
 pi install npm:@akagilnc/pi-workflow-roles
@@ -13,23 +13,23 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 更新示例：`pi update npm:@akagilnc/pi-workflow-roles`。查看能力：`ak-role roles`、`ak-role help <role>`；席位与官席配置见下方「读结果」。
 
-发布路由见 [registry workflow](.github/workflows/publish-registry.yml)。
+发布路由见 [registry workflow](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/.github/workflows/publish-registry.yml)。
 
 ## 读结果
 
-公开入口与结果交付见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)。重定向示例：
+公开入口与结果交付见 [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)。重定向示例：
 
 ```bash
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
-退出码与 Terminal 语义见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
+退出码与 Terminal 语义见 [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
 
-手动续跑用法与旗位见 `ak-role help resume`；model / host 解析见 `ak-role help`，engine 配置见 `ak-role help config`。审核续跑归属见 [ADR 0003](docs/adr/0003-per-role-submission-tools.md)。换宿主与先前记录递送见 [ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。续跑失败处置见 [公开执行接缝](src/public-cli/post-admission.ts)。
+手动续跑用法与旗位见 `ak-role help resume`；model / host 解析见 `ak-role help`，engine 配置见 `ak-role help config`。审核续跑归属见 [ADR 0003](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0003-per-role-submission-tools.md)。换宿主与先前记录递送见 [ADR 0086](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。续跑失败处置见 [公开执行接缝](src/public-cli/post-admission.ts)。
 
 自动续跑行为见 [auto-resume 实现](src/public-cli/auto-resume.ts)；配置用法见 `ak-role help config`，有效上限用 `ak-role config show` 查看。
 
-催交与实发次数记账（#1132）见 [角色运行时](src/role-runtime.ts)、[回执递送策略](src/receipt-delivery-policy.ts)、[外部宿主循环](src/external-host-turn-loop.ts)。unfinished 缺理由处置见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。
+催交与实发次数记账（#1132）见 [角色运行时](src/role-runtime.ts)、[回执递送策略](src/receipt-delivery-policy.ts)、[外部宿主循环](src/external-host-turn-loop.ts)。unfinished 缺理由处置见 [ADR 0050](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。
 
 席位与官席配置：
 
@@ -53,17 +53,17 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴：** 用法与解析见 `ak-role help`；机构边界见 [ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)。宿主推荐与原生压缩配置见 [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)。
+**宿主轴：** 用法与解析见 `ak-role help`；机构边界见 [ADR 0082](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0082-three-layer-runtime-role-host-face.md)。宿主推荐与原生压缩配置见 [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)。
 
 **宿主 provider：** 见 `ak-role help` 与 [provider 解析](src/public-cli/host-providers.ts)；表内容用 `ak-role config show` 查看。
 
-**机器方法 Skill：** 运行 `ak-role setup`；安装行为见 [机器 Skill setup](src/public-cli/machine-method-skills.ts)、[ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)；宿主能力见 [Pi Skill 递送](src/pi/role-turn-host.ts)、[外部 host 描述](src/host-descriptions.ts)。
+**机器方法 Skill：** 运行 `ak-role setup`；安装行为见 [机器 Skill setup](src/public-cli/machine-method-skills.ts)、[ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)；宿主能力见 [Pi Skill 递送](src/pi/role-turn-host.ts)、[外部 host 描述](src/host-descriptions.ts)。
 
 **官席解析：** 见 [机构解析](src/institutional-resolution.ts)；配置用法见 `ak-role help config`，持久文件读取见 [config 实现](src/public-cli/config.ts)。
 
-**回执：** 见 [导出契约](src/package-contracts/)；游奕使出口见 `ak-role help navigator`。组合与停止见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)。
+**回执：** 见 [导出契约](src/package-contracts/)；游奕使出口见 `ak-role help navigator`。组合与停止见 [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md)。
 
-**交卷闸：** 见 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)、[交卷闸实现](src/submission-gate.ts)、[worker 审核组合](src/worker-role.ts)、[judge 审核组合](src/judge-role.ts)。劳务引擎失败处置见 [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)，使用量观测见 [usage fact 真源](src/engine-detour-usage.ts)。
+**交卷闸：** 见 [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)、[交卷闸实现](src/submission-gate.ts)、[worker 审核组合](src/worker-role.ts)、[judge 审核组合](src/judge-role.ts)。劳务引擎失败处置见 [ADR 0071](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)，使用量观测见 [usage fact 真源](src/engine-detour-usage.ts)。
 
 ## 调用百官
 
@@ -132,7 +132,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 
 ## 班子（唐宋官署命名）
 
-名号判据、朝廷对应与机器键边界见 [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。下表为名号索引。
+名号判据、朝廷对应与机器键边界见 [ADR 0051](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0051-roles-are-named-after-tang-song-offices.md)。下表为名号索引。
 
 | 名号 | 席位 | 职掌 |
 | --- | --- | --- |
@@ -141,11 +141,11 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | **御史台** | reviewer | 职掌见 [Soul](souls/reviewer.md)；调用面见 `ak-role help reviewer`。 |
 | **大理寺** | judge | 职掌见 [Soul](souls/judge.md)。 |
 | **审刑院** | auditor（调用面见 `ak-role help auditor`） | 依受审对象读取 [大理寺审计 Soul](souls/judge-auditor.md)／[太医署审计 Soul](souls/doctor-auditor.md)。 |
-| **门下省** | gatekeeper | 职掌见 [Soul](souls/gatekeeper.md)；独立调用见 `ak-role help gatekeeper`，交卷闸关系见 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
+| **门下省** | gatekeeper | 职掌见 [Soul](souls/gatekeeper.md)；独立调用见 `ak-role help gatekeeper`，交卷闸关系见 [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
 | **中书省** | secretariat | 职掌见 [Soul](souls/secretariat.md)；调用面见 `ak-role help secretariat`。 |
 | **给事中** | countersign | 职掌见 [Soul](souls/countersign.md)；调用面见 `ak-role help countersign`。 |
 | **左拾遗** | gleaner-left | 职掌见 [Soul](souls/gleaner-left.md)；调用面见 `ak-role help gleaner-left`。 |
-| **台院** | inspector | 职掌见 [Soul](souls/inspector.md)；调用面见 `ak-role help inspector`，名号沿革见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [#584](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/584)。 |
+| **台院** | inspector | 职掌见 [Soul](souls/inspector.md)；调用面见 `ak-role help inspector`，名号沿革见 [ADR 0074](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [#584](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/584)。 |
 | **符宝郎** | notary | 职掌见 [Soul](souls/notary.md)；调用面见 `ak-role help notary`。 |
 | **通进司** | collector | 职掌见 [Soul](souls/collector.md)。 |
 | **校书郎** | merger | 职掌见 [Soul](souls/merger.md)。 |
@@ -157,8 +157,8 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | 席位 | 名 | 职掌 | 状态 |
 | --- | --- | --- | --- |
 | doctor | **太医署** | 职掌见 [Soul](souls/doctor.md)；调用面见 `ak-role help doctor`。 | 已建 |
-| analyst | **太史** | 职掌见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；调用面见 `ak-role help analyst`。 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
-| — | **司天台** | 职掌见 [ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)、[ADR 0065](docs/adr/0065-sitian-phase-two-records-have-one-entry.md)。 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：确定性机制；两面对账已删 [#855](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/855)）；分析席已由太史承担；起居录见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| analyst | **太史** | 职掌见 [ADR 0068](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；调用面见 `ak-role help analyst`。 | 已建（[ADR 0068](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
+| — | **司天台** | 职掌见 [ADR 0047](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0047-sitian-phase-one-mechanism-not-role.md)、[ADR 0065](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0065-sitian-phase-two-records-have-one-entry.md)。 | **一期不是角色**（[ADR 0047](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：确定性机制；两面对账已删 [#855](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/855)）；分析席已由太史承担；起居录见 [ADR 0075](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
 | marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
 | — | **殿院** | [#560](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/560) 机械定点测试巡查件（产物 kind `test-report`） | 在建/待落地，非席位，不占机器键 |
 | — | **察院** | 巡按层名号占位 | 悬置，仅保留名号，巡按机制未建 |
@@ -166,12 +166,14 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |
 | — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
 
-角色组合、调用顺序、停止与内审关联见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)；通进司职责见 [Soul](souls/collector.md)。
+**merge 按钮归调用者**，没有任何角色握不可逆权限：通进司把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
+
+角色组合、调用顺序、停止与内审关联见 [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md)；通进司职责见 [Soul](souls/collector.md)。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
 ## 规范指针
 
 - 命令用法、解析与拒绝文案：`ak-role help`、`ak-role help <command>`、`ak-role help config`（唯一权威）。
-- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071、起居录 ADR 0075 等，未尽举）。
-- 术语表：[CONTEXT.md](CONTEXT.md)。编程契约：`src/package-contracts/` 导出。
+- 决策与法理：[docs/adr/](https://github.com/Akagilnc/ak-pi-workflow-roles/tree/main/docs/adr)（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071、起居录 ADR 0075 等，未尽举）。
+- 术语表：[CONTEXT.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/CONTEXT.md)。编程契约：`src/package-contracts/` 导出。

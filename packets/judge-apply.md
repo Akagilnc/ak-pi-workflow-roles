@@ -29,6 +29,8 @@ Distinguish carefully:
 - **full base + target SHAs** → identify only the reviewed delta (not a commit-set membership rule or range syntax)
 - **tests / seam / boundary observations** → behavioral evidence
 
+None of these alone proves truth or acceptance.
+
 Adjudication duties: [Judge Soul](../souls/judge.md).
 
 ## Construction evidence
