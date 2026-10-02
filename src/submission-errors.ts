@@ -51,10 +51,21 @@ export class WorkerPrefixReminderError extends Error {
   }
 }
 
+/**
+ * ADR 0066/0070 one-shot commit and prefix reminders.
+ * They stay a correction the same session may make, and they do not occupy
+ * the configured re-ask or 催交 budget (#1132).
+ */
+export function isOneShotWorkerReminderCode(code: unknown): boolean {
+  return code === "worker_commit_reminder" || code === "worker_prefix_reminder";
+}
+
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
-    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
+    // The ceiling is the configured unfinished-reason limit. This text reaches
+    // the model and does not restate a count.
+    super("本次 unfinished 回执未含 reason；请补上 reason 后再交。");
     this.name = "WorkerUnfinishedReasonReminderError";
   }
 }

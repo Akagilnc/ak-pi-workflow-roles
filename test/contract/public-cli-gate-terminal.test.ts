@@ -31,7 +31,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import type { TerminalGateFact, TerminalResult } from "../../src/public-cli/terminal.ts";
@@ -248,7 +248,7 @@ async function runJudgePublic(input: {
   readonly home: string;
   readonly project: string;
   readonly runId: string;
-  readonly seedSession: (sessionDir: string, runDir: string) => Promise<void>;
+  readonly seedSession: (sessionDir: string, runDir: string, invocationScopeId?: string) => Promise<void>;
   readonly piResult?: {
     readonly code: number;
     readonly stderr?: string;
@@ -282,7 +282,8 @@ async function runJudgePublic(input: {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });
-        await input.seedSession(sessionDir, runDir);
+        const scope = options.env.AK_ROLE_INVOCATION_SCOPE;
+        await input.seedSession(sessionDir, runDir, typeof scope === "string" ? scope : undefined);
         return {
           code: input.piResult?.code ?? 0,
           stderr: input.piResult?.stderr ?? "",
@@ -509,7 +510,7 @@ test("public CLI no_receipt Terminal projects accepted gate facts", async () => 
       runId,
       // code 0 + no lawful receipt → output cause → no_receipt lifecycle wins.
       piResult: { code: 0 },
-      seedSession: async (sessionDir, runDir) => {
+      seedSession: async (sessionDir, runDir, invocationScopeId) => {
         const lifecycle = {
           type: "custom",
           customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -519,7 +520,7 @@ test("public CLI no_receipt Terminal projects accepted gate facts", async () => 
             deliveryTurns: 2,
             sessionCompletion: "settled-without-accepted-receipt",
             runPointer: runDir,
-            attemptPointer: `current:${runDir}`,
+            attemptPointer: receiptAttemptPointer(runDir, invocationScopeId),
             acceptedReceipt: false,
           },
         };

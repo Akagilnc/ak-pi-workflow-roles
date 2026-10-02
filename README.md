@@ -29,6 +29,8 @@ Exit status reports lifecycle honesty, not business success: every lawful typed 
 
 All callable roles also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
+`autoResumeLimit` is the single ceiling for the runtime's automatic re-requests (#1132). A role turn that ends normally without submitting is **not** settled straight to `no_receipt`: the runtime first asks the same run's own host session to submit again, over that same value, counting only the requests it actually sent — `no_receipt` is recorded once the budget is spent, and `deliveryTurns` reports what really went out (zero stays zero). A receipt obtained that way goes on to audit in the usual order. The same value bounds the `unfinished`-without-reason reminder (ADR 0050) and the external host's own re-ask rounds; the first turn of each loop never counts as a re-request. The one-shot soft reminders (ADR 0066 / 0070) and the uncapped auditor re-submission (ADR 0007) are unchanged.
+
 Seat and Gate-officer configuration:
 
 ```bash

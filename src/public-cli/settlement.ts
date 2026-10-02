@@ -61,10 +61,10 @@ import {
 } from "../packaged-role-registry.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-  RECEIPT_DELIVERY_TURN_LIMIT,
-  currentAttemptPointer,
   noReceiptLifecycleFacts,
   parseNoReceiptLifecycleFacts,
+  priorReceiptContinuation,
+  receiptAttemptPointer,
   type NoReceiptLifecycleFacts,
 } from "../receipt-delivery-policy.ts";
 import type {
@@ -342,17 +342,24 @@ export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
+  /**
+   * #1132: delivery requests this run actually issued. Zero stays zero when
+   * nothing was sent and this attempt has no lifecycle fact. A fact already
+   * written for this run and attempt supplies the count when it is larger.
+   * The budget is never the count, and another loop's resumes are not催交.
+   */
+  issuedDeliveryRequests = 0,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const binding = {
     runPointer: admitted.runDirectory,
-    attemptPointer: currentAttemptPointer(admitted.runDirectory),
+    attemptPointer: receiptAttemptPointer(admitted.runDirectory, scope?.invocationScopeId),
   };
   // The delivery owner records what actually happened this attempt — whether the
   // terminal tool was called and what was rejected. Present those facts; a fixed
   // `false` / `[]` would assert an empty delivery that never happened
   // (#1032: 无回执如实呈 no_receipt; 单一真源).
-  const recorded = await readRecordedNoReceiptFacts(coordinates.sessionFile, binding);
+  const recorded = await readRecordedNoReceiptFacts(coordinates.sessionFile, binding, scope?.invocationScopeId);
   if (recorded instanceof LifecycleReadFailure) {
     // A present record that cannot be read is not an empty delivery. Omit the
     // facts and keep the real error beside the no_receipt terminal.
@@ -367,10 +374,10 @@ export async function settleHostEndedNoReceipt(
     admitted,
     authority,
     scope,
-    recorded ?? noReceiptLifecycleFacts({
-      terminalToolCalled: false,
-      rejectedReceipts: [],
-      deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    noReceiptLifecycleFacts({
+      terminalToolCalled: recorded?.terminalToolCalled ?? false,
+      rejectedReceipts: recorded?.rejectedReceipts ?? [],
+      deliveryTurns: Math.max(issuedDeliveryRequests, recorded?.deliveryTurns ?? 0),
       ...binding,
     }),
   );
@@ -395,6 +402,7 @@ export class LifecycleReadFailure extends Error {
 async function readRecordedNoReceiptFacts(
   sessionFile: string,
   binding: { runPointer: string; attemptPointer: string },
+  invocationScopeId?: string,
 ): Promise<NoReceiptLifecycleFacts | undefined | LifecycleReadFailure> {
   let entries: readonly SessionEntry[];
   try {
@@ -408,18 +416,27 @@ async function readRecordedNoReceiptFacts(
       { cause: error },
     );
   }
-  const entry = entries.slice(currentAttemptStartIndex(entries)).reverse().find(
-    (item: SessionEntry) =>
-      item.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
-      || item.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  const scoped = invocationScopeId !== undefined && invocationScopeId.trim() !== "";
+  const entry = (scoped ? entries : entries.slice(currentAttemptStartIndex(entries))).slice().reverse().find(
+    (item: SessionEntry) => {
+      if (item.customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
+        && item.message?.customType !== NO_RECEIPT_LIFECYCLE_ENTRY_TYPE) return false;
+      const raw = item.data ?? item.message?.details;
+      return !scoped || !isRecord(raw) || raw.attemptPointer === undefined
+        || raw.attemptPointer === binding.attemptPointer;
+    },
   );
   const raw = entry?.data ?? entry?.message?.details;
-  if (raw === undefined) return undefined;
+  if (raw === undefined) {
+    if (!scoped) return undefined;
+    const prior = priorReceiptContinuation(entries, invocationScopeId!);
+    return noReceiptLifecycleFacts({ ...prior, ...binding });
+  }
   try {
     const facts = parseNoReceiptLifecycleFacts(raw);
     return facts.runPointer === binding.runPointer
       && facts.attemptPointer === binding.attemptPointer
-      ? facts
+      ? (scoped ? noReceiptLifecycleFacts({ ...priorReceiptContinuation(entries, invocationScopeId!), ...binding }) : facts)
       : undefined;
   } catch (error) {
     return new LifecycleReadFailure(

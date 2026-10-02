@@ -1,6 +1,6 @@
 /**
  * Middle external-host role-turn loop (#820 / ADR 0082).
- * One copy: serial, abort merge/race, 8-round closeRound retry,
+ * One copy: serial, abort merge/race, closeRound re-ask rounds,
  * host-aborted, round-limit. Last hop = ExternalHostTurnDriver (four verbs).
  */
 import type {
@@ -12,8 +12,8 @@ import type {
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
 import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
-
-export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 
@@ -132,8 +132,14 @@ export async function driveExternalRoleTurnRounds(
   let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
   let result: RoleTurnResult = { code: 0, stderr: "", timedOut: false };
+  // #1132: the first round is the initial delivery. Each later counted re-ask
+  // spends the configured ceiling. The one commit reminder and the one prefix
+  // reminder are not counted re-asks (ADR 0066/0070).
+  const countedReaskLimit = deliveryLimitFromConfig(request.deliveryRequestLimit);
+  const exemptReminders = new Set<string>();
+  let countedReasks = 0;
 
-  for (let attempt = 0; attempt < EXTERNAL_ROLE_TURN_ROUND_LIMIT; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
 
     let round: ExternalHostRoundOutcome;
@@ -188,15 +194,23 @@ export async function driveExternalRoleTurnRounds(
         : result;
     }
     if (result.code !== 0 || result.signal !== undefined || result.timedOut) return result;
+    const reminderCode = closure.retry.code;
+    const exempt = isOneShotWorkerReminderCode(reminderCode) && !exemptReminders.has(reminderCode);
+    if (exempt) exemptReminders.add(reminderCode);
+    else {
+      countedReasks += 1;
+      if (countedReasks > countedReaskLimit) {
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `${driver.roundLimitName}: round-retry-limit`,
+        });
+        return result;
+      }
+    }
     prompt = closure.retry.message;
     driver.afterRetry?.();
   }
 
-  await retainPackageFault({
-    runDirectory: request.runDirectory,
-    diagnostic: `${driver.roundLimitName}: round-retry-limit`,
-  });
-  return result;
 }
 
 /** Required envelope shutdown fails a clean host result; an existing host

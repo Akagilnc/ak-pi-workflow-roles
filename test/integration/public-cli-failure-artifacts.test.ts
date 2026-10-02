@@ -18,7 +18,7 @@ import {
   settleHostEndedNoReceipt,
   trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
@@ -900,9 +900,10 @@ test(
             roleTurnHost: roleTurnHostFromLegacyPiRunner({
               packageRoot,
               principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (args) => {
+              piRunner: async (args, options) => {
                 const sessionDir = args[args.indexOf("--session-dir") + 1]!;
                 const runDirectory = join(sessionDir, "..");
+                const invocationScopeId = options.env.AK_ROLE_INVOCATION_SCOPE;
                 artifactsDir = join(runDirectory, "artifacts");
                 residualReportPath = join(artifactsDir, "report.json");
                 await mkdir(sessionDir, { recursive: true });
@@ -924,7 +925,10 @@ test(
                       deliveryTurns: 2,
                       sessionCompletion: "settled-without-accepted-receipt",
                       runPointer: runDirectory,
-                      attemptPointer: `current:${runDirectory}`,
+                      attemptPointer: receiptAttemptPointer(
+                        runDirectory,
+                        typeof invocationScopeId === "string" ? invocationScopeId : undefined,
+                      ),
                       acceptedReceipt: false,
                     },
                   })}\n`,

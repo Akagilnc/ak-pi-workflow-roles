@@ -437,12 +437,9 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // A bare resume carries no court, so the result face is the run's recorded
-    // sequence — the same rows terminal.submissions presents (#836).
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "converged",
-      "converged",
-    ]);
+    // Package-owned audit rework is a summons: only this court answers.
+    // Both original receipts remain on terminal.submissions (#1032 / #836).
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["converged"]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
     const facts = payloads[payloads.length - 1] as {
       secretariatStatus: string;

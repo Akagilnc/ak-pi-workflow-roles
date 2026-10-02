@@ -59,7 +59,10 @@ export {
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
+import {
+  createReceiptDeliveryPolicy,
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+} from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
 
@@ -156,6 +159,8 @@ export type NavigatorAttendanceOptions = {
   contextError?: unknown;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
+  /** Effective ceiling already resolved for this turn (#1132). */
+  deliveryRequestLimit?: number;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
@@ -416,11 +421,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          const delivery = createReceiptDeliveryPolicy();
+          // #1132: the ceiling this turn already resolved. Absent = package default.
+          const delivery = createReceiptDeliveryPolicy(options.deliveryRequestLimit);
           // Production prose arrives only via nested summon → prepare tool.execute
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).
-          const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
+          const promptAllowingRejectedPrepare = async (text: string) => {
             await persistNavigatorWorkBase(activeSession.recordPointer(), { subject, authority });
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -440,31 +446,30 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               // ineligible for publication before the correction turn starts.
               output = undefined;
               prepareBatchRejected = true;
+              // The correction prompt below is the one spend for this rejection.
               delivery.recordRejected(rejectedReason);
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;
             const sessionNoReceipt = activeSession.noReceipt?.();
             if (sessionNoReceipt !== undefined) {
-              // This session already settled without an accepted receipt on its own
-              // budget; one more prompt opens an independent summon, not a delivery
-              // request on the settled session (#675).
+              // This session already settled without an accepted receipt. Keep the
+              // larger issued count and stop; a nested zero must not wipe prompts
+              // this layer already sent (#675 / #1132).
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }
-            if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
-          await promptAllowingRejectedPrepare(request, false);
+          await promptAllowingRejectedPrepare(request);
           // Bound output only: correction after rejected prepare. Early ready-wait
           // does not 催交 final advice (owner: prepare then wait for settlement feed).
           if (boundSettlement !== undefined) {
             while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()), true);
+              delivery.recordDeliveryRequest();
+              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
             }
             if (output === undefined && delivery.nextAction() === "request-delivery") {
-              while (delivery.nextAction() === "request-delivery") {
-                delivery.recordDeliveryRequest();
-              }
+              delivery.closeBudget();
             }
             if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
               const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });

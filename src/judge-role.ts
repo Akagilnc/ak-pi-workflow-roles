@@ -7,6 +7,7 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -26,32 +27,50 @@ export async function runJudgeGates(input: {
     readonly receipt?: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
+    readonly terminal?: TerminalResult;
   } | void>;
 }): Promise<{
-  readonly status: ReviewQueueWord;
+  readonly status: ReviewQueueWord | "needs_reask";
   readonly passes: readonly {
     readonly subject: GatekeeperSubject;
-    readonly status: ReviewQueueWord;
+    readonly status: ReviewQueueWord | "needs_reask";
     readonly receipt: unknown;
     readonly runId?: string;
     readonly runDirectory?: string;
+    readonly terminal?: TerminalResult;
   }[];
 }> {
   const passes: {
     subject: GatekeeperSubject;
-    status: ReviewQueueWord;
+    status: ReviewQueueWord | "needs_reask";
     receipt: unknown;
     runId?: string;
     runDirectory?: string;
+    terminal?: TerminalResult;
   }[] = [];
   for (const subject of JUDGE_GATES) {
     if (await input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
     const received = pass?.status;
-    if (pass === undefined || typeof received !== "string" || !REVIEW_QUEUE_STATUSES.has(received)) {
+    if (pass === undefined || (
+      typeof received !== "string" || (!REVIEW_QUEUE_STATUSES.has(received) && received !== "needs_reask")
+    )) {
       throw new Error("judge gate returned no conclusion");
     }
-    const status = received as ReviewQueueWord;
+    const status = received as ReviewQueueWord | "needs_reask";
+    if (status === "needs_reask") {
+      return {
+        status,
+        passes: [{
+          subject,
+          status,
+          receipt: pass.receipt,
+          ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+          ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+          ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
+        }],
+      };
+    }
     passes.push({
       subject,
       status,

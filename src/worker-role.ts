@@ -22,6 +22,7 @@ import {
   WorkerUnfinishedReasonReminderError,
   type WorkerSubmissionGate,
 } from "./worker-submission-gates.ts";
+import { deliveryLimitFromEnv } from "./receipt-delivery-policy.ts";
 import {
   fixerBashSeatbeltDenyReason,
   matchFixerBashForbiddenLiteral,
@@ -83,7 +84,7 @@ export type CoderRoleDependencies = {
 export type WorkerRoleRuntime = {
   activate(ctx?: HostContext): Promise<void>;
   /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Durable parent required (#857). */
-  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
+  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string): void;
 };
 
 /** Read only the field that selects the worker's next package-owned path. */
@@ -174,6 +175,7 @@ export function createFixerRoleRuntime(
   pi: RoleHost,
   dependencies: FixerRoleDependencies,
   hostActions: WorkerRoleHostActions,
+  options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;
@@ -181,7 +183,12 @@ export function createFixerRoleRuntime(
   let prerequisitesPath: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  const submissionGate = createWorkerSubmissionGate();
+  // #1132: ADR 0050 缺理由催全次数. The in-process seam passes the value it
+  // already resolved; the Pi child has only the env that seam projected.
+  const submissionGate = createWorkerSubmissionGate({
+    unfinishedReasonBounceLimit: options?.unfinishedReasonBounceLimit
+      ?? deliveryLimitFromEnv(process.env),
+  });
 
   pi.registerFlag(
     FIXER_FLAG_DEFINITIONS.packet.name,
@@ -265,8 +272,8 @@ export function createFixerRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
-      submissionGate.arm(cwd, parent);
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string) {
+      submissionGate.arm(cwd, parent, invocationScopeId);
     },
   };
 }
@@ -275,12 +282,17 @@ export function createCoderRoleRuntime(
   pi: RoleHost,
   dependencies: CoderRoleDependencies,
   hostActions: WorkerRoleHostActions,
+  options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let task: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
-  const submissionGate = createWorkerSubmissionGate();
+  // #1132: same resolved ceiling as the fixer gate. Absent = Pi child env.
+  const submissionGate = createWorkerSubmissionGate({
+    unfinishedReasonBounceLimit: options?.unfinishedReasonBounceLimit
+      ?? deliveryLimitFromEnv(process.env),
+  });
 
   pi.registerFlag("ak-coder-task", {
     description: "Markdown task assigned to the coder role",
@@ -329,8 +341,8 @@ export function createCoderRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
-      submissionGate.arm(cwd, parent);
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string) {
+      submissionGate.arm(cwd, parent, invocationScopeId);
     },
   };
 }

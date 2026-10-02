@@ -19,6 +19,7 @@ import type {
   RoleTurnRequest,
 } from "./host-contracts.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
+import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
@@ -252,7 +253,10 @@ export async function prepareRoleEnvelope(options: {
     startKeepalive() {},
     stopKeepalive() {},
   };
-  createRoleRuntimeExtension(options.dependencies)(envelope);
+  createRoleRuntimeExtension(
+    options.dependencies,
+    deliveryLimitFromConfig(options.request.deliveryRequestLimit),
+  )(envelope);
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
