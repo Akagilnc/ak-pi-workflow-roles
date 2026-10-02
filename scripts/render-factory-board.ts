@@ -28,6 +28,7 @@
  * do not terminate before any page exists.
  */
 import { resolve } from "node:path";
+import { isPositiveTicketNumber } from "../src/run-ticket-number.ts";
 
 import { createGhApiRunner } from "../src/gh-api-runner.ts";
 import {
@@ -124,7 +125,7 @@ function parseClosed(raw: string): { bookKey: string; numbers: number[] } {
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => Number(part));
-  if (numbers.some((n) => !Number.isInteger(n) || n < 1)) {
+  if (numbers.some((n) => !isPositiveTicketNumber(n))) {
     console.error(`invalid --closed numbers: ${raw}`);
     process.exit(2);
   }

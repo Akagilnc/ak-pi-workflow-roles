@@ -14,9 +14,14 @@ import { isEnoent, isRecord } from "./unknown-value.ts";
 export const MIGRATION_TICKET_DERIVATION_PAGE =
   "migration-ticket-derivation.json" as const;
 
+/** Positive-integer contract for display / snapshot inputs; binding uses the safe subset below. */
+export function isPositiveTicketNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+
 /** Sole safe-positive ticket invariant (bind / admission / placement / readers). */
 export function isSafePositiveTicketNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+  return isPositiveTicketNumber(value) && Number.isSafeInteger(value);
 }
 
 /**

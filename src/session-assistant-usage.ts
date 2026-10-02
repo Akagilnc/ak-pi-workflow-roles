@@ -3,7 +3,7 @@
  * Accumulates real cost when rows carry it; never invents cost zeros (#675).
  */
 import type { Usage } from "@earendil-works/pi-ai";
-import { sessionFileOf } from "./role-run-placement.ts";
+import { ROLE_RUN_SESSION_FILENAME, sessionFileOf } from "./role-run-placement.ts";
 import { readStrictPiSessionJsonl } from "./ledger-session-read.ts";
 
 import type { PublicSummonResult } from "./public-role-summons.ts";
@@ -87,7 +87,7 @@ export function sessionFileFromPublicSummon(
   }
   const fromArtifacts = summoned.terminal?.artifacts
     ?.map((a) => (a as { path?: string }).path)
-    .find((p): p is string => typeof p === "string" && p.endsWith("session.jsonl"));
+    .find((p): p is string => typeof p === "string" && p.endsWith(ROLE_RUN_SESSION_FILENAME));
   if (fromArtifacts !== undefined) return fromArtifacts;
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) return undefined;

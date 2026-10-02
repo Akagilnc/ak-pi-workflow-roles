@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -40,8 +40,10 @@ export function sessionDirectoryOf(runDirectory: string): string {
   return join(runDirectory, "session");
 }
 
+export const ROLE_RUN_SESSION_FILENAME = "session.jsonl";
+
 export function sessionFileIn(sessionDirectory: string): string {
-  return join(sessionDirectory, "session.jsonl");
+  return join(sessionDirectory, ROLE_RUN_SESSION_FILENAME);
 }
 
 export function sessionFileOf(runDirectory: string): string {
@@ -126,6 +128,26 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
     }
   }
   return out.sort();
+}
+
+/** Resolve a complete run identity across the caller's books; ambiguity is never readdir-first. */
+export async function findRoleRunDirectory(
+  bookDirectories: readonly string[],
+  runId: string,
+  onlyRole?: string,
+): Promise<string | undefined> {
+  const matches: string[] = [];
+  for (const bookDirectory of bookDirectories) {
+    for (const runDirectory of await listBookRunDirectories(bookDirectory)) {
+      const parsed = parseRunLeaf(basename(runDirectory));
+      if (parsed === undefined || parsed.runId !== runId) continue;
+      if (onlyRole !== undefined && parsed.role !== onlyRole) continue;
+      matches.push(runDirectory);
+    }
+  }
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  throw new Error(`ambiguous role run id ${runId}: ${matches.join(", ")}`);
 }
 
 /** The single authority for every path belonging to an admitted role run. */

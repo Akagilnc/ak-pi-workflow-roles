@@ -29,6 +29,7 @@ import {
 import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import { autopsyWriterLock, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
@@ -219,7 +220,9 @@ async function resolveSessionFile(
       && typeof parsed.sessionFile === "string"
       && parsed.sessionFile.trim() !== ""
     ) {
-      return parsed.sessionFile;
+      return typeof parsed.runDirectory === "string"
+        ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
+        : parsed.sessionFile;
     }
   } catch (error) {
     if (!isMissingPathError(error)) throw error;

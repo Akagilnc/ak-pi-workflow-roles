@@ -27,6 +27,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  formatRunLeaf,
   isUnboundRunDirectory,
   listBookRunDirectories,
   roleRunArtifactsDirectory,
@@ -601,7 +602,7 @@ export async function relocateAdmittedRunToTicket(
     const childRunIds = parentPage.childDiaristRunIds;
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
-      const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
+      const childDirectory = join(dirname(oldRunDirectory), formatRunLeaf(childRunId, "diarist"));
       // A child that already filed under a ticket keeps its own assertion.
       if (!existsSync(childDirectory)) continue;
       const childTarget = roleRunPlacement(ledgerHome, {

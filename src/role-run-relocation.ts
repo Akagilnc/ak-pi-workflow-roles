@@ -1,6 +1,6 @@
 /**
- * Single authority for rewriting durable run pages after a run directory moves.
- * Live unbound→ticket relocate and book-topology migration both call this.
+ * Typed run-path projection shared by live bind/read and historical migration.
+ * Live readers project frozen machine-page locators; only migrators walk durable pages.
  *
  * Scope is typed machine-consumed path fields only — never free text, never
  * frozen attachment/artifact bytes. Nested walk is confined to package-owned
@@ -8,22 +8,15 @@
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import {
   activationBookDirectory,
-  pathContainedIn,
   physicalPathIdentity,
-  resolveActivationLedgerHome,
-  tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
-import {
-  findPlacedMigratingRun,
-  runRefFromBoundPath,
-} from "./book-topology-migration-placement.ts";
 
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { sessionDirectoryOf } from "./role-run-placement.ts";
+import { findRoleRunDirectory, roleRunPlacement, sessionDirectoryOf } from "./role-run-placement.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
@@ -77,7 +70,7 @@ export function rewriteRunDirectoryPathValue(
   return value;
 }
 
-/** Match a retained run/session locator through the existing complete placement authority. */
+/** Match physical aliases or a normal unbound→ticket bind, never historical migration layouts. */
 export async function retainedRunPathsMatch(
   recordedPath: unknown,
   currentPath: string,
@@ -85,49 +78,29 @@ export async function retainedRunPathsMatch(
 ): Promise<boolean> {
   if (recordedPath === currentPath) return true;
   if (typeof recordedPath !== "string") return false;
-  let bookDirectory: string | undefined;
-  if (currentRunDirectory !== undefined) {
-    const identity = await readRoleRunIdentity(currentRunDirectory);
-    if (identity !== undefined) {
-      for (
-        let directory = physicalPathIdentity(currentRunDirectory);
-        dirname(directory) !== directory;
-        directory = dirname(directory)
-      ) {
-        if (directory === activationBookDirectory(dirname(dirname(directory)), identity.bookKey)) {
-          bookDirectory = directory;
-          break;
-        }
-      }
-    }
-  }
-  // Preserve existing reads of default-family records lacking retained identity.
-  if (bookDirectory === undefined) {
-    const home = tryHomeFromAkRolesPath(currentPath);
-    if (home === undefined || home.length === 0) return false;
-    const booksDirectory = join(resolveActivationLedgerHome(home), "books");
-    if (!pathContainedIn(booksDirectory, currentPath)) return false;
-    bookDirectory = join(booksDirectory, relative(booksDirectory, currentPath).split(sep)[0]!);
-  }
-  bookDirectory = physicalPathIdentity(bookDirectory);
-  const currentPathIdentity = physicalPathIdentity(currentPath);
   const recordedPathIdentity = physicalPathIdentity(recordedPath);
-  const booksDirectory = dirname(bookDirectory);
-  const bookKey = basename(bookDirectory);
-  const current = runRefFromBoundPath(currentPathIdentity, [bookDirectory]);
-  const recorded = runRefFromBoundPath(recordedPathIdentity, [bookDirectory]);
-  if (current === undefined || recorded === undefined || current.leaf !== recorded.leaf) return false;
-  const placed = await findPlacedMigratingRun(
-    booksDirectory,
-    bookKey,
-    recorded.leaf,
-    recorded.sourceRelative,
-  );
-  return placed !== undefined && rewriteRunDirectoryPathValue(
-    recordedPathIdentity,
-    join(bookDirectory, recorded.sourceRelative),
-    placed.runDirectory,
-  ) === currentPathIdentity;
+  const currentPathIdentity = physicalPathIdentity(currentPath);
+  if (recordedPathIdentity === currentPathIdentity) return true;
+  if (currentRunDirectory === undefined) return false;
+  const runDirectory = physicalPathIdentity(currentRunDirectory);
+  const identity = await readRoleRunIdentity(runDirectory);
+  if (identity === undefined) return false;
+  for (let directory = runDirectory; dirname(directory) !== directory; directory = dirname(directory)) {
+    const ledgerHome = dirname(dirname(directory));
+    if (directory !== activationBookDirectory(ledgerHome, identity.bookKey)) continue;
+    const unbound = roleRunPlacement(ledgerHome, {
+      bookKey: identity.bookKey,
+      subject: { unbound: true },
+      runId: identity.runId,
+      role: identity.role,
+    });
+    if (rewriteRunDirectoryPathValue(recordedPathIdentity, unbound.runDirectory, runDirectory) !== currentPathIdentity) {
+      return false;
+    }
+    const placed = await findRoleRunDirectory([directory], identity.runId, identity.role);
+    return placed !== undefined && physicalPathIdentity(placed) === runDirectory;
+  }
+  return false;
 }
 
 /**

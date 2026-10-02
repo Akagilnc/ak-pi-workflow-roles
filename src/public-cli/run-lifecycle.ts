@@ -16,7 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
+import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -1011,28 +1011,12 @@ export async function findRunDirectoryById(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  const matches: string[] = [];
-  for (const bookKey of bookKeys) {
-    if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
-    const bookDir = activationBookDirectory(ledgerHome, bookKey);
-    let runDirectories: string[];
-    try {
-      runDirectories = await listBookRunDirectories(bookDir);
-    } catch (error) {
-      if (errorCodeOf(error) === "ENOENT") continue;
-      throw error;
-    }
-    for (const runDirectory of runDirectories) {
-      const parsed = parseRunLeaf(basename(runDirectory));
-      if (parsed === undefined || parsed.runId !== runId) continue;
-      if (onlyRole !== undefined && parsed.role !== onlyRole) continue;
-      matches.push(runDirectory);
-    }
-  }
-  if (matches.length === 0) return undefined;
-  if (matches.length === 1) return matches[0];
-  throw new Error(
-    `ambiguous role run id ${runId}: ${matches.join(", ")}`,
+  return findRoleRunDirectory(
+    bookKeys
+      .filter((bookKey) => onlyBookKey === undefined || bookKey === onlyBookKey)
+      .map((bookKey) => activationBookDirectory(ledgerHome, bookKey)),
+    runId,
+    onlyRole,
   );
 }
 

@@ -18,6 +18,7 @@
  * Output MUST sit outside the ledger. The ledger is read-only.
  */
 import { resolve } from "node:path";
+import { isPositiveTicketNumber } from "../src/run-ticket-number.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -55,7 +56,7 @@ const refreshRaw = arg("--refresh-seconds");
 if (!ledger || !issueRaw || !out) usage();
 
 const issueNumber = Number(issueRaw);
-if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+if (!isPositiveTicketNumber(issueNumber)) {
   console.error("--issue must be a positive integer");
   process.exit(2);
 }

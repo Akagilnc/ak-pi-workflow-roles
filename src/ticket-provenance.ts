@@ -4,7 +4,7 @@
  * 纯追加、不回读历史去重、不折叠。
  */
 import { readFile, unlink } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   errnoCode,
@@ -17,6 +17,7 @@ import {
   type LedgerSessionLine,
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
+import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   appendSitianRecordBlock,
@@ -76,10 +77,7 @@ function isLedgerRoleSessionFile(absolute: string, home?: string): boolean {
       : packageMachineHome();
   const ledgerHome = resolveActivationLedgerHome(machineHome);
   if (!physicallyContainedIn(ledgerHome, absolute)) return false;
-  return (
-    basename(absolute) === "session.jsonl" &&
-    basename(dirname(absolute)) === "session"
-  );
+  return sessionFileOf(runDirectoryOfSessionFile(absolute)) === absolute;
 }
 
 /** Real I/O seam gate: only host session stores or sitian role-run session.jsonl. */
