@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -7,21 +7,72 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isNullUnion(schema: unknown): boolean {
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return false;
-  const anyOf = (schema as { anyOf?: unknown }).anyOf;
-  if (!Array.isArray(anyOf)) return false;
-  return anyOf.some((leaf) => typeof leaf === "object" && leaf !== null && (leaf as { type?: unknown }).type === "null");
+  if (!isPlainObject(schema) || !Array.isArray(schema.anyOf)) return false;
+  return schema.anyOf.some((leaf) => isPlainObject(leaf) && leaf.type === "null");
 }
 
 function nonNullBranch(schema: unknown): unknown {
   if (!isNullUnion(schema)) return schema;
   const anyOf = (schema as { anyOf: unknown[] }).anyOf;
-  return anyOf.find((leaf) => !(typeof leaf === "object" && leaf !== null && (leaf as { type?: unknown }).type === "null"));
+  return anyOf.find((leaf) => !(isPlainObject(leaf) && leaf.type === "null"));
+}
+
+/** Official strict: every object sets additionalProperties:false and lists all properties in required. */
+function assertStrictObjectNodes(node: unknown, path: string): void {
+  if (!isPlainObject(node)) return;
+  const objectLike =
+    node.type === "object"
+    || (Array.isArray(node.type) && node.type.includes("object"))
+    || isPlainObject(node.properties)
+    || node.additionalProperties !== undefined;
+  if (objectLike) {
+    assert.equal(node.additionalProperties, false, `${path} additionalProperties`);
+    if (isPlainObject(node.properties)) {
+      assert.ok(Array.isArray(node.required), `${path} required`);
+      assert.deepEqual(
+        [...(node.required as string[])].sort(),
+        Object.keys(node.properties).sort(),
+        `${path} required covers properties`,
+      );
+    }
+  }
+  if (Array.isArray(node.anyOf)) {
+    node.anyOf.forEach((branch, index) => assertStrictObjectNodes(branch, `${path}.anyOf[${index}]`));
+  }
+  if (node.items !== undefined) assertStrictObjectNodes(node.items, `${path}.items`);
+  if (isPlainObject(node.properties)) {
+    for (const [name, prop] of Object.entries(node.properties)) {
+      assertStrictObjectNodes(prop, `${path}.properties.${name}`);
+    }
+  }
+  if (isPlainObject(node.$defs)) {
+    for (const [name, def] of Object.entries(node.$defs)) {
+      assertStrictObjectNodes(def, `${path}.$defs.${name}`);
+    }
+  }
+}
+
+/** Existing placement API + ENOENT-only absence; other fs errors stay loud. */
+async function packageFaultNotes(runDirectory: string): Promise<unknown[]> {
+  const dir = roleRunArtifactsDirectory(runDirectory);
+  try {
+    await access(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
+  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8"))));
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
@@ -105,23 +156,35 @@ const waitForPointer = setInterval(() => {
         mcpServers: [{ name: "ak-probe", command: "/usr/bin/node", args: ["relay.mjs"] }],
         systemPrompt: { body: "system", materials: [] },
         prompt: request.continuation.prompt,
-        // Realistic open-schema shapes the Codex transport closer must preserve:
-        // required stays non-null; optional becomes type|null; nested/array/const/unknown kept.
+        // Shapes drawn from shared declarations (review status union + Unknown leaves):
+        // required nullable keeps null; optional becomes type|null; anyOf description kept.
         jsonSchema: {
           type: "object",
           properties: {
-            status: { type: "string" },
-            routingStatus: { description: "completed | refused — shape guidance, not a schema gate" },
-            // Composite nullable type: strip null in-leaf; required keeps non-null.
-            label: { type: ["string", "null"] },
+            status: {
+              anyOf: [
+                { type: "string", const: "completed" },
+                { type: "string", const: "continue" },
+                { type: "string", const: "escalate" },
+              ],
+              description: "审核席本轮裁决的判别状态。",
+            },
+            // Required declared nullable (TypeBox Union[String, Null]) must keep null.
+            label: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+              description: "required nullable label",
+            },
             report: { type: "string" },
             // Optional composite nullable → non-null leaf + unified null at the edge.
-            note: { type: ["string", "null"] },
+            note: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+              description: "optional nullable note",
+            },
             nested: {
               type: "object",
               properties: {
-                a: { type: "string" },
-                b: { type: "string" },
+                a: { type: "string", description: "required a" },
+                b: { type: "string", description: "optional b" },
               },
               required: ["a"],
               additionalProperties: true,
@@ -130,7 +193,7 @@ const waitForPointer = setInterval(() => {
             kind: { const: "probe" },
             free: { description: "unknown free JSON leaf" },
           },
-          required: ["status", "routingStatus", "label", "nested"],
+          required: ["status", "label", "nested"],
           additionalProperties: true,
         },
         terminatingToolName: "ak_probe_output",
@@ -168,24 +231,35 @@ const waitForPointer = setInterval(() => {
       properties: Record<string, unknown>;
       $defs?: Record<string, unknown>;
     };
-    assert.equal(schema.additionalProperties, false);
+    assertStrictObjectNodes(schema, "schema");
     assert.deepEqual(
       [...schema.required].sort(),
-      ["free", "kind", "label", "nested", "note", "report", "routingStatus", "status", "tags"],
+      ["free", "kind", "label", "nested", "note", "report", "status", "tags"],
     );
-    // Required fields keep non-null closed types.
+    // Required union keeps non-null branches and its declared description.
     assert.equal(isNullUnion(schema.properties.status), false);
-    assert.deepEqual(schema.properties.status, { type: "string" });
-    const routingDescription =
-      (schema.properties.routingStatus as { description?: unknown }).description;
-    assert.equal(typeof routingDescription, "string");
-    assert.notEqual(routingDescription, "");
-    // Required composite type|["string","null"] → non-null string (not {type:"null"}).
-    assert.equal(isNullUnion(schema.properties.label), false);
-    assert.deepEqual(schema.properties.label, { type: "string" });
+    assert.deepEqual(schema.properties.status, {
+      anyOf: [
+        { type: "string", const: "completed" },
+        { type: "string", const: "continue" },
+        { type: "string", const: "escalate" },
+      ],
+      description: "审核席本轮裁决的判别状态。",
+    });
+    // Required declared nullable keeps null + description (not stripped to bare string).
+    assert.equal(isNullUnion(schema.properties.label), true);
+    assert.deepEqual(nonNullBranch(schema.properties.label), { type: "string" });
+    assert.equal(
+      (schema.properties.label as { description?: unknown }).description,
+      "required nullable label",
+    );
     // Optional composite type|null → unified null at the property edge only.
     assert.equal(isNullUnion(schema.properties.note), true);
     assert.deepEqual(nonNullBranch(schema.properties.note), { type: "string" });
+    assert.equal(
+      (schema.properties.note as { description?: unknown }).description,
+      "optional nullable note",
+    );
     const nestedClosed = schema.properties.nested as {
       type?: string;
       required?: string[];
@@ -197,9 +271,9 @@ const waitForPointer = setInterval(() => {
     assert.equal(nestedClosed.additionalProperties, false);
     assert.deepEqual([...(nestedClosed.required ?? [])].sort(), ["a", "b"]);
     assert.equal(isNullUnion(nestedClosed.properties?.a), false);
-    assert.deepEqual(nestedClosed.properties?.a, { type: "string" });
+    assert.deepEqual(nestedClosed.properties?.a, { type: "string", description: "required a" });
     assert.equal(isNullUnion(nestedClosed.properties?.b), true);
-    assert.deepEqual(nonNullBranch(nestedClosed.properties?.b), { type: "string" });
+    assert.deepEqual(nonNullBranch(nestedClosed.properties?.b), { type: "string", description: "optional b" });
     // Optional fields become type|null at the property edge.
     assert.equal(isNullUnion(schema.properties.report), true);
     assert.deepEqual(nonNullBranch(schema.properties.report), { type: "string" });
@@ -209,17 +283,13 @@ const waitForPointer = setInterval(() => {
     assert.deepEqual(nonNullBranch(schema.properties.kind), { const: "probe", type: "string" });
     assert.equal(isNullUnion(schema.properties.free), true);
     assert.deepEqual(nonNullBranch(schema.properties.free), { $ref: "#/$defs/codexJsonValue" });
+    assert.equal(
+      (schema.properties.free as { description?: unknown }).description,
+      "unknown free JSON leaf",
+    );
     assert.ok(schema.$defs?.codexJsonValue);
-    // Normal call must not pre-record a package fault for the open declaration.
-    const gapNames = (await readdir(join(root, "artifacts")).catch(() => [] as string[]))
-      .filter((name) => name.startsWith("post-admission-diagnostic-"));
-    for (const name of gapNames) {
-      const gap = JSON.parse(await readFile(join(root, "artifacts", name), "utf8")) as { diagnostic?: unknown };
-      assert.notEqual(
-        gap.diagnostic,
-        "codex --output-schema cannot promise this open contract: native strict output requires all properties and additionalProperties:false; the declaration is sent unchanged",
-      );
-    }
+    // Normal call: structured absence of package-fault notes (not free-text diagnostic matching).
+    assert.deepEqual(await packageFaultNotes(root), []);
 
     receipt = undefined;
     const resumed = await host.executeTurn({
@@ -231,10 +301,10 @@ const waitForPointer = setInterval(() => {
     assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     // Resume uses the same strict transport schema as the first call.
     const resumedSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
-    assert.equal(resumedSchema.additionalProperties, false);
+    assertStrictObjectNodes(resumedSchema, "resumedSchema");
     assert.deepEqual(
       [...resumedSchema.required].sort(),
-      ["free", "kind", "label", "nested", "note", "report", "routingStatus", "status", "tags"],
+      ["free", "kind", "label", "nested", "note", "report", "status", "tags"],
     );
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), ["work", "continue"]);
