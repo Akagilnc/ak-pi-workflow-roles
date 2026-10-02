@@ -30,4 +30,3 @@ unfinished 不自动获得 converged；其他 Soul/authority 违反仍照常处�
 已如实披露且不可逆的方法违规，不构成 continue 理由——收卷，违规记录在案，处置权归大理寺。continue 只用于当下可改的缺陷。
 冲突导致无法判断合规时，提交 `escalate` 并写明问题和可选项。
 
-输出调用 `ak_fixer_audit_decision`。
