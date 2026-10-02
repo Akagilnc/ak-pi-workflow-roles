@@ -131,12 +131,11 @@ function codexTomlStringTable(entries: Readonly<Record<string, string>>): string
 }
 
 /**
- * JSON-value leaf for Type.Unknown under Codex strict transport.
- * Official Structured Outputs require every object to set
- * `additionalProperties: false` and only generate declared keys — open object
- * keys cannot be expressed. Minimal legal form: primitives + arrays of the same
- * recursive value + a closed empty object. That host generation limit is stated
- * here; it is not a package fault and package receipt rules stay unchanged.
+ * Free-form JSON leaf for Type.Unknown under Codex strict transport.
+ * Declared contract objects still close with additionalProperties:false.
+ * For Unknown, a $defs anyOf of JSON values with nested additionalProperties
+ * as $ref is accepted by Codex and keeps non-empty object receipts expressible
+ * (native probe). Package code still does not validate or reject the receipt.
  */
 const CODEX_JSON_VALUE_DEF = "codexJsonValue";
 const CODEX_JSON_VALUE_REF = `#/$defs/${CODEX_JSON_VALUE_DEF}`;
@@ -151,7 +150,7 @@ const CODEX_JSON_VALUE_SCHEMA = Object.freeze({
       type: "object",
       properties: Object.freeze({}),
       required: Object.freeze([] as string[]),
-      additionalProperties: false,
+      additionalProperties: Object.freeze({ $ref: CODEX_JSON_VALUE_REF }),
     }),
   ]),
 });
@@ -170,7 +169,7 @@ export function closeJsonSchemaForCodex(
   schema: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
   const closed = closeSchemaNode(schema) as Record<string, unknown>;
-  const existingDefs = isPlainObject(closed.$defs)
+  const existingDefs = isRecord(closed.$defs)
     ? (closed.$defs as Record<string, unknown>)
     : {};
   return {
@@ -182,14 +181,9 @@ export function closeJsonSchemaForCodex(
   };
 }
 
-/** Shared plain-object guard for headless host schema/event reduction. */
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Pure null leaf only — composite type|null is stripped in-leaf, not dropped whole. */
 function isPureNullTypeSchema(value: unknown): boolean {
-  if (!isPlainObject(value)) return false;
+  if (!isRecord(value)) return false;
   if (value.type === "null") return true;
   if (Array.isArray(value.type) && value.type.length > 0 && value.type.every((t) => t === "null")) {
     return true;
@@ -199,7 +193,7 @@ function isPureNullTypeSchema(value: unknown): boolean {
 
 /** Declared nullability on the open schema (type|null, anyOf null leaf, or pure null). */
 function schemaDeclaresNull(schema: unknown): boolean {
-  if (!isPlainObject(schema)) return false;
+  if (!isRecord(schema)) return false;
   if (isPureNullTypeSchema(schema)) return true;
   if (Array.isArray(schema.type) && schema.type.includes("null")) return true;
   if (Array.isArray(schema.anyOf) && schema.anyOf.some(schemaDeclaresNull)) return true;
@@ -208,10 +202,10 @@ function schemaDeclaresNull(schema: unknown): boolean {
 
 /**
  * Within a leaf, remove null members from type arrays.
- * Null is re-added once at the property edge when optional or originally declared.
+ * Null is re-added when the union or property edge originally declared it.
  */
 function stripNullFromLeafType(leaf: unknown): unknown {
-  if (!isPlainObject(leaf) || !Array.isArray(leaf.type)) return leaf;
+  if (!isRecord(leaf) || !Array.isArray(leaf.type)) return leaf;
   const nonNull = leaf.type.filter((t) => t !== "null");
   if (nonNull.length === leaf.type.length) return leaf;
   if (nonNull.length === 0) return { ...leaf, type: "null" };
@@ -227,7 +221,7 @@ function stripNullFromLeafType(leaf: unknown): unknown {
  * The outermost union keeps its description on the closed node via the caller.
  */
 function flattenUnionLeaves(schema: unknown, attachShellDescription = false): unknown[] {
-  if (!isPlainObject(schema)) return [schema];
+  if (!isRecord(schema)) return [schema];
   if (!Array.isArray(schema.anyOf)) return [schema];
   const shellDescription =
     attachShellDescription && typeof schema.description === "string"
@@ -237,7 +231,7 @@ function flattenUnionLeaves(schema: unknown, attachShellDescription = false): un
     const leaves = flattenUnionLeaves(branch, true);
     if (shellDescription === undefined) return leaves;
     return leaves.map((leaf) => {
-      if (!isPlainObject(leaf) || typeof leaf.$ref === "string") return leaf;
+      if (!isRecord(leaf) || typeof leaf.$ref === "string") return leaf;
       if (typeof leaf.description === "string") return leaf;
       return { ...leaf, description: shellDescription };
     });
@@ -254,12 +248,12 @@ function nonNullLeaves(schema: unknown): unknown[] {
 function withDescription(closed: unknown, description: Readonly<{ description?: string }>): unknown {
   if (description.description === undefined) return closed;
   // Codex strict does not allow sibling keys on $ref; wrap so guidance is kept.
-  if (isPlainObject(closed) && typeof closed.$ref === "string") {
+  if (isRecord(closed) && typeof closed.$ref === "string") {
     return { anyOf: [closed], ...description };
   }
   // Prefer a leaf's own description (nested anyOf shell) over the outer copy.
-  if (isPlainObject(closed) && typeof closed.description === "string") return closed;
-  return isPlainObject(closed) ? { ...closed, ...description } : closed;
+  if (isRecord(closed) && typeof closed.description === "string") return closed;
+  return isRecord(closed) ? { ...closed, ...description } : closed;
 }
 
 /**
@@ -269,7 +263,7 @@ function withDescription(closed: unknown, description: Readonly<{ description?: 
  */
 function closePropertySchema(schema: unknown, optional: boolean): unknown {
   const description =
-    isPlainObject(schema) && typeof schema.description === "string"
+    isRecord(schema) && typeof schema.description === "string"
       ? { description: schema.description }
       : {};
   const keepNull = optional || schemaDeclaresNull(schema);
@@ -290,7 +284,7 @@ function closePropertySchema(schema: unknown, optional: boolean): unknown {
 function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknown> {
   if (schema.type !== undefined) return schema;
   if (typeof schema.$ref === "string") return schema;
-  if (isPlainObject(schema.properties) || schema.additionalProperties !== undefined) {
+  if (isRecord(schema.properties) || schema.additionalProperties !== undefined) {
     return { ...schema, type: "object" };
   }
   if (schema.items !== undefined) {
@@ -319,19 +313,24 @@ function originalRequiredNames(node: Record<string, unknown>): ReadonlySet<strin
 }
 
 function closeSchemaNode(node: unknown): unknown {
-  if (!isPlainObject(node)) return node;
+  if (!isRecord(node)) return node;
 
   // Already a ref (free-JSON leaf or pre-existing) — do not retype.
   if (typeof node.$ref === "string") return node;
 
   // Union node: flatten then close each concrete leaf (do not keep untyped shells).
+  // Declared null stays — including nested unions such as array items.
   if (Array.isArray(node.anyOf)) {
     const description =
       typeof node.description === "string" ? { description: node.description } : {};
+    const keepNull = schemaDeclaresNull(node);
     const leaves = nonNullLeaves(node).map(closeSchemaNode);
     if (leaves.length === 0) return { type: "null", ...description };
-    if (leaves.length === 1) return withDescription(leaves[0], description);
-    return { anyOf: leaves, ...description };
+    if (!keepNull) {
+      if (leaves.length === 1) return withDescription(leaves[0], description);
+      return { anyOf: leaves, ...description };
+    }
+    return { anyOf: [...leaves, { type: "null" }], ...description };
   }
 
   let out: Record<string, unknown> = { ...node };
@@ -339,13 +338,13 @@ function closeSchemaNode(node: unknown): unknown {
   if (node.items !== undefined) {
     out.items = closeSchemaNode(node.items);
   }
-  if (isPlainObject(node.$defs)) {
+  if (isRecord(node.$defs)) {
     out.$defs = Object.fromEntries(
       Object.entries(node.$defs).map(([key, value]) => [key, closeSchemaNode(value)]),
     );
   }
 
-  const hasProperties = isPlainObject(node.properties);
+  const hasProperties = isRecord(node.properties);
   const isObjectType =
     node.type === "object"
     || (Array.isArray(node.type) && node.type.includes("object"))

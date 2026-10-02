@@ -9,53 +9,57 @@ import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
+import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isNullUnion(schema: unknown): boolean {
-  if (!isPlainObject(schema) || !Array.isArray(schema.anyOf)) return false;
-  return schema.anyOf.some((leaf) => isPlainObject(leaf) && leaf.type === "null");
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
+  return schema.anyOf.some((leaf) => isRecord(leaf) && leaf.type === "null");
 }
 
 function nonNullBranch(schema: unknown): unknown {
   if (!isNullUnion(schema)) return schema;
   const anyOf = (schema as { anyOf: unknown[] }).anyOf;
-  return anyOf.find((leaf) => !(isPlainObject(leaf) && leaf.type === "null"));
+  return anyOf.find((leaf) => !(isRecord(leaf) && leaf.type === "null"));
 }
 
-/** Official strict: every object sets additionalProperties:false and lists all properties in required. */
+/**
+ * Declared contract objects close with additionalProperties:false + full required.
+ * Free-JSON map leaf keeps recursive additionalProperties:$ref (native probe).
+ */
 function assertStrictObjectNodes(node: unknown, path: string): void {
-  if (!isPlainObject(node)) return;
+  if (!isRecord(node)) return;
   const objectLike =
     node.type === "object"
     || (Array.isArray(node.type) && node.type.includes("object"))
-    || isPlainObject(node.properties)
+    || isRecord(node.properties)
     || node.additionalProperties !== undefined;
   if (objectLike) {
-    assert.equal(node.additionalProperties, false, `${path} additionalProperties`);
-    if (isPlainObject(node.properties)) {
-      assert.ok(Array.isArray(node.required), `${path} required`);
-      assert.deepEqual(
-        [...(node.required as string[])].sort(),
-        Object.keys(node.properties).sort(),
-        `${path} required covers properties`,
-      );
+    if (isRecord(node.additionalProperties)) {
+      assertStrictObjectNodes(node.additionalProperties, `${path}.additionalProperties`);
+    } else {
+      assert.equal(node.additionalProperties, false, `${path} additionalProperties`);
+      if (isRecord(node.properties)) {
+        assert.ok(Array.isArray(node.required), `${path} required`);
+        assert.deepEqual(
+          [...(node.required as string[])].sort(),
+          Object.keys(node.properties).sort(),
+          `${path} required covers properties`,
+        );
+      }
     }
   }
   if (Array.isArray(node.anyOf)) {
     node.anyOf.forEach((branch, index) => assertStrictObjectNodes(branch, `${path}.anyOf[${index}]`));
   }
   if (node.items !== undefined) assertStrictObjectNodes(node.items, `${path}.items`);
-  if (isPlainObject(node.properties)) {
+  if (isRecord(node.properties)) {
     for (const [name, prop] of Object.entries(node.properties)) {
       assertStrictObjectNodes(prop, `${path}.properties.${name}`);
     }
   }
-  if (isPlainObject(node.$defs)) {
+  if (isRecord(node.$defs)) {
     for (const [name, def] of Object.entries(node.$defs)) {
       assertStrictObjectNodes(def, `${path}.$defs.${name}`);
     }
@@ -189,7 +193,11 @@ const waitForPointer = setInterval(() => {
               required: ["a"],
               additionalProperties: true,
             },
-            tags: { type: "array", items: { type: "string" } },
+            // Declared nullable array items must keep null after projection.
+            tags: {
+              type: "array",
+              items: { anyOf: [{ type: "string" }, { type: "null" }] },
+            },
             kind: { const: "probe" },
             free: { description: "unknown free JSON leaf" },
           },
@@ -278,7 +286,10 @@ const waitForPointer = setInterval(() => {
     assert.equal(isNullUnion(schema.properties.report), true);
     assert.deepEqual(nonNullBranch(schema.properties.report), { type: "string" });
     assert.equal(isNullUnion(schema.properties.tags), true);
-    assert.deepEqual(nonNullBranch(schema.properties.tags), { type: "array", items: { type: "string" } });
+    assert.deepEqual(nonNullBranch(schema.properties.tags), {
+      type: "array",
+      items: { anyOf: [{ type: "string" }, { type: "null" }] },
+    });
     assert.equal(isNullUnion(schema.properties.kind), true);
     assert.deepEqual(nonNullBranch(schema.properties.kind), { const: "probe", type: "string" });
     assert.equal(isNullUnion(schema.properties.free), true);
@@ -287,7 +298,15 @@ const waitForPointer = setInterval(() => {
       (schema.properties.free as { description?: unknown }).description,
       "unknown free JSON leaf",
     );
-    assert.ok(schema.$defs?.codexJsonValue);
+    const freeJsonObject = (schema.$defs?.codexJsonValue as { anyOf?: unknown[] } | undefined)
+      ?.anyOf
+      ?.find((leaf) => isRecord(leaf) && leaf.type === "object");
+    assert.deepEqual(freeJsonObject, {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: { $ref: "#/$defs/codexJsonValue" },
+    });
     // Normal call: structured absence of package-fault notes (not free-text diagnostic matching).
     assert.deepEqual(await packageFaultNotes(root), []);
 
