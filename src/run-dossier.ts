@@ -18,7 +18,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
 import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE } from "./run-dossier-files.ts";
@@ -71,20 +71,25 @@ export function readSectionSync(
   return value;
 }
 
-type RowFile = { readonly rows: Record<string, unknown>[]; readonly bytes: number };
+type RowFile = {
+  readonly rows: Record<string, unknown>[];
+  readonly bytes: number;
+  /** The error code of a read that failed for a reason other than the file being absent. */
+  readonly fault?: string;
+};
 
 /**
- * The rows of one run file as of this read, with the byte length they came
- * from; a missing file is empty, a malformed line is skipped. `undefined` when
- * the file cannot be read at all.
+ * The rows of one run file as of this read, with the byte length they came from; a missing
+ * file is empty, a malformed line is skipped. A file that cannot be read for any other reason
+ * has no rows and carries its fault.
  */
-function readRowFile(path: string): RowFile | undefined {
+function readRowFile(path: string): RowFile {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
     if (isMissingPathError(error)) return { rows: [], bytes: 0 };
-    return undefined;
+    return { rows: [], bytes: 0, fault: String((error as NodeJS.ErrnoException).code ?? (error as Error).name) };
   }
   const rows: Record<string, unknown>[] = [];
   for (const line of raw.split("\n")) {
@@ -118,9 +123,11 @@ function lastPayload(rows: readonly Record<string, unknown>[], kind: string): Re
 
 /** `current.json` as the rows say right now. */
 function render(
+  runDirectory: string,
   history: readonly Record<string, unknown>[],
   state: readonly Record<string, unknown>[],
   log: readonly Record<string, unknown>[],
+  unreadable: Record<string, string>,
 ): Record<string, unknown> {
   const whole: Record<string, unknown> = {};
   for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
@@ -138,18 +145,26 @@ function render(
     }
   }
   const sessions: Record<string, unknown> = {};
-  let original: unknown;
-  for (const row of log) {
+  for (const row of state) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
     if (row.kind === "host-session-id" && payload !== undefined && typeof payload.host === "string") {
       sessions[payload.host] = payload.sessionId;
-    } else if (row.kind === "host-session" && payload?.type === "native-session-copy") {
+    }
+  }
+  let original: unknown;
+  for (const row of log) {
+    const payload = isRecord(row.payload) ? row.payload : undefined;
+    if (row.kind === "host-session" && payload?.type === "native-session-copy" && typeof payload.landingPath === "string") {
       original = payload.landingPath;
     }
   }
+  // The copy row keeps the absolute path it was written to; a run that was filed under its ticket
+  // since lives elsewhere. The original is projected from where this run directory is now.
+  if (typeof original === "string") original = join(runDirectory, "session", basename(original));
   whole.host = { sessions, ...(original === undefined ? {} : { original }) };
   whole.submission = latest === undefined ? {} : { latest };
   whole.officers = officers;
+  if (Object.keys(unreadable).length > 0) whole.unreadable = unreadable;
   return whole;
 }
 
@@ -172,29 +187,24 @@ function writeWhole(runDirectory: string, whole: Record<string, unknown>): void 
   }
 }
 
-/** Passes before a renderer gives up chasing appends (each pass means rows really grew). */
-const MAX_RENDER_PASSES = 32;
-
 /**
- * Write `current.json` from the rows as read now; then, if either row file grew
- * since that read, render again. A file that cannot be read keeps the rendering
- * from being written at all (the leg's own readers of that file fail loudly).
+ * Write `current.json` from the rows as read now; then, if a row file grew since that read,
+ * render again. The last appender renders after its own append, so the loop ends when the
+ * appends stop. A row file that cannot be read is rendered as having no rows and named in
+ * the rendering's `unreadable` marker (file to error code), so a stale or partial rendering
+ * is never silent.
  */
 export function renderCurrentSync(runDirectory: string): void {
-  const historyPath = join(runDirectory, RUN_HISTORY_FILE);
-  const statePath = join(runDirectory, RUN_STATE_FILE);
-  const logPath = join(runDirectory, RUN_LOG_FILE);
-  for (let pass = 0; pass < MAX_RENDER_PASSES; pass += 1) {
-    const history = readRowFile(historyPath);
-    const state = readRowFile(statePath);
-    const log = readRowFile(logPath);
-    if (history === undefined || state === undefined || log === undefined) return;
-    writeWhole(runDirectory, render(history.rows, state.rows, log.rows));
-    if (
-      fileBytes(historyPath) === history.bytes
-      && fileBytes(statePath) === state.bytes
-      && fileBytes(logPath) === log.bytes
-    ) return;
+  const paths = [RUN_HISTORY_FILE, RUN_STATE_FILE, RUN_LOG_FILE].map((name) => join(runDirectory, name));
+  for (;;) {
+    const [history, state, log] = paths.map(readRowFile) as [RowFile, RowFile, RowFile];
+    const unreadable: Record<string, string> = {};
+    for (const [name, file] of [[RUN_HISTORY_FILE, history], [RUN_STATE_FILE, state], [RUN_LOG_FILE, log]] as const) {
+      if (file.fault !== undefined) unreadable[name] = file.fault;
+    }
+    writeWhole(runDirectory, render(runDirectory, history.rows, state.rows, log.rows, unreadable));
+    const grew = [history, state, log].some((file, index) => file.fault === undefined && fileBytes(paths[index]!) !== file.bytes);
+    if (!grew) return;
   }
 }
 
@@ -211,7 +221,7 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 /** The current whole page of one section: the payload of its last row, never `current.json`. */
 function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
-  if (state === undefined) throw new Error(`${RUN_STATE_FILE} is unreadable: ${runDirectory}`);
+  if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
   return lastPayload(state.rows, PAGE_ROW_KIND[section]);
 }
 
@@ -224,7 +234,7 @@ function currentPage(runDirectory: string, section: CurrentSection): Record<stri
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
-  if (state === undefined) throw new Error(`${RUN_STATE_FILE} is unreadable: ${runDirectory}`);
+  if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
   return lastPayload(state.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
 }
 

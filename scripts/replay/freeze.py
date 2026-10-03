@@ -6,7 +6,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (current.json head, history.jsonl, log.jsonl, session.jsonl, attachments)
+  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
   pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
   sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
   schema.json    headless output schema when the run had one
@@ -48,10 +48,6 @@ def jsonl(path):
 
 def iso(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
-
-def current(run):
-    path = f"{run}/current.json"
-    return load_json(path) if os.path.exists(path) else {}
 
 def default_cut(run):
     sealed = [r["timestamp"] for r in jsonl(f"{run}/history.jsonl") if r.get("kind") == "sealed" and r.get("timestamp")]
@@ -117,19 +113,26 @@ def main():
     a = ap.parse_args()
 
     run = os.path.abspath(a.run_dir.rstrip("/"))
-    cur = current(run)
-    inv = cur.get("invocation")
+    if not os.path.exists(f"{run}/state.jsonl"):
+        sys.exit(f"not a run directory (no state.jsonl): {run}")
+    cut_raw, cut_src = (a.cut, "--cut") if a.cut else default_cut(run)
+    cut = iso(cut_raw)
+    # Identity and admission are the last rows of state.jsonl at or before the cut, not the live
+    # current.json (a later resume may have rewritten them).
+    at_cut = {}
+    for r in jsonl(f"{run}/state.jsonl"):
+        if (not r.get("timestamp") or iso(r["timestamp"]) <= cut) and isinstance(r.get("payload"), dict):
+            at_cut[r.get("kind")] = r["payload"]
+    inv = at_cut.get("invocation")
     if not inv:
-        sys.exit(f"not a run directory (no current.json invocation section): {run}")
-    adm = cur.get("admitted") or {}
+        sys.exit(f"no invocation row at or before the cut in {run}/state.jsonl")
+    adm = at_cut.get("admitted-request") or {}
     role, host, num = inv["role"], inv.get("host", "pi"), inv.get("ticketNumber") or adm.get("ticketNumber")
     if host not in SUPPORTED_HOSTS:
         sys.exit(f"recorded host {host!r} has no replay runner (supported: {', '.join(SUPPORTED_HOSTS)})")
     if num is None:
         sys.exit("run has no ticket number; cannot freeze the ticket body")
 
-    cut_raw, cut_src = (a.cut, "--cut") if a.cut else default_cut(run)
-    cut = iso(cut_raw)
     project = inv["projectRoot"]
     src_repo = a.repo or project
     if not os.path.isdir(src_repo):
@@ -204,7 +207,7 @@ def main():
         return text
     for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
         src_path = f"{run}/{name}"
-        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "log.jsonl"):
+        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "state.jsonl", "log.jsonl"):
             continue  # dossier files are rebuilt truncated below
         try:
             with open(src_path, encoding="utf-8") as f:
@@ -229,23 +232,23 @@ def main():
                         f.write(repoint(text))
                 except UnicodeDecodeError:
                     shutil.copy(src_path, dest)
-    kept_history = [r for r in jsonl(f"{run}/history.jsonl") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
-    with open(f"{frozen_run}/history.jsonl", "w") as f:
-        for r in kept_history:
-            f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
-    # current.json is rebuilt from what the run held at the cut: its identity and admitted request,
-    # the terminal only if it settled at or before the cut, and the latest sealed submission of the
-    # kept history. Nothing recorded after the cut survives.
+    def kept_rows(rel):
+        return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
+    kept_history = kept_rows("history.jsonl")
+    for rel in ("history.jsonl", "state.jsonl", "log.jsonl"):
+        rows = kept_history if rel == "history.jsonl" else kept_rows(rel)
+        if rows or os.path.exists(f"{run}/{rel}"):
+            with open(f"{frozen_run}/{rel}", "w") as f:
+                for r in rows:
+                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+    # current.json is the package's own rendering of the three truncated row files: nothing recorded
+    # after the cut survives, and identity, admission and terminal are the last rows at or before it.
+    p = subprocess.run(["node", "--import", "tsx", "-e",
+                        "import('" + os.path.abspath(f"{a.tool_dir}/../../src/run-dossier.ts") + "').then((m) => m.renderCurrentSync(process.argv[1]))",
+                        frozen_run], cwd=os.path.abspath(f"{a.tool_dir}/../.."), text=True, capture_output=True)
+    if p.returncode != 0:
+        sys.exit(f"rendering the frozen current.json failed:\n{p.stderr}")
     kept_sealed = [r for r in kept_history if r.get("kind") == "sealed"]
-    frozen_current = {k: cur[k] for k in ("invocation", "admitted") if k in cur}
-    terminal = cur.get("terminal")
-    if terminal and terminal.get("at") and iso(terminal["at"]) <= cut:
-        frozen_current["terminal"] = terminal
-    if kept_sealed:
-        last = kept_sealed[-1].get("payload") or {}
-        frozen_current["submission"] = {"latest": {"toolCallId": last.get("toolCallId"), "role": last.get("role"), "accepted": last.get("accepted"), "at": kept_sealed[-1].get("timestamp")}}
-    with open(f"{frozen_run}/current.json", "w") as f:
-        json.dump(json.loads(repoint(json.dumps(frozen_current, ensure_ascii=False))), f, ensure_ascii=False, indent=2)
     payloads_before = [(r.get("payload") or {}).get("accepted") for r in kept_sealed if (r.get("payload") or {}).get("accepted") is not None]
     sealed_before = len(payloads_before)
     # The host original (codex / claude single file, grok directory) up to the cut.

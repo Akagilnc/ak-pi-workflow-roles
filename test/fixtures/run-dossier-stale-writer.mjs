@@ -23,4 +23,4 @@ syncBuiltinESMExports();
 const { writeSectionSync } = await import("../../src/run-dossier.ts");
 // The earlier-settling writer records its lifecycle page (a different page than the one
 // the other writer changes).
-writeSectionSync(runDirectory, "runState", { state: "terminal", by: "earlier-settling-writer" });
+writeSectionSync(runDirectory, "runState", { state: "terminal" });

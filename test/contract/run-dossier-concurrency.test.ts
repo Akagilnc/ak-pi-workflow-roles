@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -61,8 +61,46 @@ test("an earlier-settling writer's late write cannot erase the model a resume re
 
     const current = JSON.parse(readFileSync(join(run, "current.json"), "utf8")) as Record<string, any>;
     assert.equal(current.invocation.model, "resumed-model");
-    assert.equal(current.runState.by, "earlier-settling-writer");
+    assert.equal(current.runState.state, "terminal", "the earlier writer's own page is there too");
     assertCurrentIsRenderingOfRows(run);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a row file that cannot be read is named in the rendering, the other facts still render", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-dossier-unreadable-"));
+  try {
+    const run = join(home, ".ak-roles", "books", "b", "unbound", "runs", "r1@judge");
+    await mkdir(join(run, "session"), { recursive: true });
+    writeSectionSync(run, "invocation", { role: "judge", runId: "r1", model: "old" });
+    // history.jsonl becomes unreadable (a directory); the state rows are untouched.
+    await mkdir(join(run, "history.jsonl"));
+    writeSectionSync(run, "invocation", { role: "judge", runId: "r1", model: "resumed" });
+    const current = JSON.parse(readFileSync(join(run, "current.json"), "utf8")) as Record<string, any>;
+    assert.equal(current.invocation.model, "resumed");
+    assert.deepEqual(Object.keys(current.unreadable), ["history.jsonl"]);
+    assert.equal(current.unreadable["history.jsonl"], "EISDIR");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the host original is pointed at where the run directory is now, after the leg is filed under its ticket", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-dossier-relocated-"));
+  try {
+    const before = join(home, ".ak-roles", "books", "b", "unbound", "runs", "r1@judge");
+    const after = join(home, ".ak-roles", "books", "b", "7", "runs", "r1@judge");
+    await mkdir(join(before, "session"), { recursive: true });
+    await writeFile(join(before, "session", "codex.jsonl"), "native\n");
+    writeSectionSync(before, "invocation", { role: "judge", runId: "r1", host: "codex" });
+    reportRunRecord(before, "host-session", { type: "native-session-copy", landingPath: join(before, "session", "codex.jsonl") }, "test");
+    await mkdir(join(home, ".ak-roles", "books", "b", "7", "runs"), { recursive: true });
+    await rename(before, after);
+    renderCurrentSync(after);
+    const original = (JSON.parse(readFileSync(join(after, "current.json"), "utf8")) as { host: { original: string } }).host.original;
+    assert.equal(original, join(after, "session", "codex.jsonl"));
+    assert.equal(existsSync(original), true);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
