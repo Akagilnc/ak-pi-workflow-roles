@@ -43,7 +43,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 | `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi/角色包版本 | `public-cli/invocation.ts`、`run-lifecycle.ts` |
 | `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针（`sourceRunPath`／`sourceRun`） | `public-cli/invocation.ts` |
 | `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | `public-cli/run-lifecycle.ts` |
-| `host` | 宿主会话 id（续跑读它） | `session-identity.ts` |
+| `host` | 宿主会话 id，按宿主分格（`sessions[<host>]`，换宿主续跑不会把一家的 id 交给另一家；续跑读它） | `session-identity.ts` |
 | `delivery` | 最近一轮发给宿主的系统提示与输出 schema 全文 | 各宿主适配器（headless／ACP／pi） |
 | `submission` | `latest`：最新一次交卷（不含系统提示与 schema） | `submission-ledger.ts` |
 | `officers` | 本腿传召的官员腿指针（每官一格，同官再召覆盖） | `submission-gate.ts`、`public-cli/instruction-seat-run.ts` |
