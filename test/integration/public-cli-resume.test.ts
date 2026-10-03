@@ -1,4 +1,4 @@
-import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -12,7 +12,7 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -120,7 +120,7 @@ function sealedPublicationBlockedHost(
   const restoreWritable = async () => {
     for (const file of lockedCurrents) {
       try {
-        await chmod(file, 0o644);
+        unlockCurrentJson(dirname(file));
       } catch {
         // cleanup best-effort
       }
@@ -132,7 +132,7 @@ function sealedPublicationBlockedHost(
       const out = await inner.executeTurn(request);
       if (blockReportPublication && request.activation.role === "judge") {
         const current = join(request.runDirectory, "current.json");
-        await chmod(current, 0o444);
+        lockCurrentJson(dirname(current));
         lockedCurrents.add(current);
       }
       return out;

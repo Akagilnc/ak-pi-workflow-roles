@@ -13,7 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { readCurrentSection, readHistoryRows } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, readHistoryRows, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
@@ -1317,11 +1317,11 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
   // clearCurrentCourt genuinely runs and can be fault-injected (not
   // resurrecting a prior attempt to paper over the contradiction).
   const scratch = await openNotaryScratch("home-cleanup-durable-");
+  let currentJsonLocked = "";
   try {
     const { home, project, io, credentials } = scratch;
     const seen: SeenTurn[] = [];
     let turn = 0;
-    let currentJsonLocked = "";
     // The seal lands through the real ledger; the turn wrapper below then makes
     // current.json read-only (an in-place rewrite of an existing file fails on its
     // own mode, a read-only directory would not stop it), so the leg's terminal
@@ -1371,7 +1371,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
       executeTurn: async (request) => {
         const out = await observed.executeTurn(request);
         // The seal is on the record; now make the terminal write of current.json fail.
-        if (sealingTurnArmed) await chmod(currentJsonLocked, 0o444);
+        if (sealingTurnArmed) lockCurrentJson(dirname(currentJsonLocked));
         return out;
       },
     };
@@ -1462,6 +1462,10 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
       "the two entries are distinct refused writes, not a standing duplicate",
     );
   } finally {
+    // The injected lock makes the run directory read-only; undo it so the scratch can go.
+    if (currentJsonLocked !== "") {
+      try { unlockCurrentJson(dirname(currentJsonLocked)); } catch { /* lock never took hold */ }
+    }
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }

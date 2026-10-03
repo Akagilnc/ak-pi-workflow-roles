@@ -232,6 +232,10 @@ export function copyAndRecordHostDossier(options: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       rmSync(staging, { recursive: true, force: true });
+      // A kill between the two renames below leaves the old original parked: put it back.
+      if (!existsSync(landingPath) && existsSync(`${landingPath}.previous`)) {
+        renameSync(`${landingPath}.previous`, landingPath);
+      }
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, staging);
       } else {
@@ -241,8 +245,19 @@ export function copyAndRecordHostDossier(options: {
         mkdirSync(dirname(landingPath), { recursive: true });
         copyFileCloneOrFallback(nativePath, staging);
       }
-      rmSync(landingPath, { recursive: true, force: true });
-      renameSync(staging, landingPath);
+      // Swap in without ever leaving the run with no original: park the previous
+      // one aside, move the new one in, and put the old one back if that move fails.
+      const previous = `${landingPath}.previous`;
+      rmSync(previous, { recursive: true, force: true });
+      const hadPrevious = existsSync(landingPath);
+      if (hadPrevious) renameSync(landingPath, previous);
+      try {
+        renameSync(staging, landingPath);
+      } catch (swapError) {
+        if (hadPrevious) renameSync(previous, landingPath);
+        throw swapError;
+      }
+      rmSync(previous, { recursive: true, force: true });
       copySuccess = true;
       break;
     } catch (error) {

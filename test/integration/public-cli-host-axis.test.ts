@@ -204,7 +204,7 @@ test("explicit resume hands the stored host session id to the selected host", as
           const suffix = `@${record.role}`;
           if (dirName.endsWith(suffix) && !request.runDirectory.includes(CANONICAL_SOURCE_RUN_ID)) {
             seatRunId = dirName.slice(0, -suffix.length);
-            seedCurrentSection(dirname(sessionDirectory), "host", { sessionId: nativeId });
+            seedCurrentSection(dirname(sessionDirectory), "host", { sessions: { "grok-build": nativeId } });
           }
           return { code: 1, stderr: "stop", timedOut: false };
         },
@@ -241,7 +241,7 @@ test("explicit resume hands the stored host session id to the selected host", as
           if (typeof admitted.sessionDirectory === "string" && typeof admitted.sessionFile === "string") {
             await mkdir(admitted.sessionDirectory, { recursive: true });
             await writeFile(admitted.sessionFile, "", "utf8");
-            seedCurrentSection(dirname(admitted.sessionDirectory), "host", { sessionId: nativeId });
+            seedCurrentSection(dirname(admitted.sessionDirectory), "host", { sessions: { "grok-build": nativeId } });
             const suffix = `@${record.role}`;
             seatRunId = basename(runDirectory).slice(0, -suffix.length);
           }

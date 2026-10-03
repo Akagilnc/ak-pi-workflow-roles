@@ -6,7 +6,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
-  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -1276,11 +1275,16 @@ async function freezeRegularFileAttachment(
 
 /** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
 async function freezeAttachments(
+  ledgerHome: string,
   attachmentPaths: readonly string[],
   attachmentsDirectory: string,
 ): Promise<readonly FrozenAttachment[]> {
   const attachments: FrozenAttachment[] = [];
-  if (attachmentPaths.length > 0) await mkdir(attachmentsDirectory, { recursive: true });
+  // attachments/ appears only when something is frozen; created through the
+  // ledger's symlink-rejecting tree walk, never a plain mkdir.
+  if (attachmentPaths.length > 0) {
+    ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  }
   for (let i = 0; i < attachmentPaths.length; i += 1) {
     const frozen = await freezeRegularFileAttachment(
       attachmentPaths[i]!,
@@ -1306,7 +1310,7 @@ export async function freezeAttachmentsIntoRun(
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
   const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  return freezeAttachments(attachmentPaths, attachmentsDirectory);
+  return freezeAttachments(ledgerHome, attachmentPaths, attachmentsDirectory);
 }
 
 /** Freeze prepared bytes and metadata through one path for birth or retained runs. */
@@ -1647,7 +1651,7 @@ export async function admitPublicRole(
               { cause: error },
             );
           }
-          frozenAttachments = await freezeAttachments(attachmentPaths, placed.attachmentsDirectory);
+          frozenAttachments = await freezeAttachments(placed.ledgerHome, attachmentPaths, placed.attachmentsDirectory);
           return {
             issueNumber,
             caseRunsPath,
@@ -1878,7 +1882,7 @@ async function placeRoleAdmission(options: {
   });
   const attachments = options.freezeAttachments === false
     ? []
-    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+    : await freezeAttachments(ledgerHome, options.attachmentPaths, attachmentsDirectory);
   return {
     runId,
     bookKey,

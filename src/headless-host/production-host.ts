@@ -36,7 +36,7 @@ export function createProductionHeadlessRoleTurnHost(
   options: ProductionHeadlessHostOptions,
 ): RoleTurnHost {
   const { packageRoot, principalAuthority, description, hostName } = options;
-  const sessionIdentity = createSessionIdentityAuthority(principalAuthority);
+  const sessionIdentity = createSessionIdentityAuthority(principalAuthority, hostName);
   const roleRuntimeDependencies = createRoleRuntimeDependencies(packageRoot);
 
   const innerFor = (operatorHome: string): RoleTurnHost =>

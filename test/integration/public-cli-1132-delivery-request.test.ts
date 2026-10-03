@@ -849,7 +849,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        seedCurrentSection(dirname(coordinates.sessionDirectory), "host", { sessionId: 42 });
+        seedCurrentSection(dirname(coordinates.sessionDirectory), "host", { sessions: { "grok-build": 42 } });
         return { code: 0, stderr: "", timedOut: false };
       },
     };

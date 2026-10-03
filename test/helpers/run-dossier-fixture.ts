@@ -5,7 +5,7 @@
  * production writer.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "terminal" | "officers";
@@ -134,4 +134,20 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
       `retired session entry present: ${entry}`,
     );
   }
+}
+
+/**
+ * Make every later write of `<run>/current.json` fail: the file is read-only and the
+ * directory takes no new entries (current.json is replaced atomically through a
+ * temp file, with an in-place fallback only when that is refused).
+ */
+export function lockCurrentJson(runDirectory: string): void {
+  chmodSync(join(runDirectory, "current.json"), 0o444);
+  chmodSync(runDirectory, 0o500);
+}
+
+/** Undo lockCurrentJson. */
+export function unlockCurrentJson(runDirectory: string): void {
+  chmodSync(runDirectory, 0o755);
+  chmodSync(join(runDirectory, "current.json"), 0o644);
 }

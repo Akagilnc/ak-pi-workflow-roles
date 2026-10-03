@@ -5,10 +5,13 @@
  * of `current.json`; no caller addresses the file path or serializes it itself.
  *
  * Read-modify-write is synchronous: within one process it cannot interleave.
- * Across processes the writers take turns by construction — the parent CLI is
- * parked on the child leg while the child writes (diarist ticket bind).
+ * Across processes the writers take turns by construction — one writer lease
+ * per run, and the parent CLI is parked on the child leg while the child
+ * writes (diarist ticket bind); there is no interprocess lock. Whole-file
+ * replacement is atomic for readers.
  */
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
@@ -47,9 +50,22 @@ export function readCurrentSync(runDirectory: string): Record<string, unknown> |
 }
 
 function writeCurrentSync(runDirectory: string, current: Record<string, unknown>): void {
-  // In-place overwrite, like the page files it replaces: a writable file in a
-  // read-only run directory (settlement after a chmod) must stay writable.
-  writeFileSync(runCurrentPath(runDirectory), `${JSON.stringify(current, null, 2)}\n`, "utf8");
+  const destination = runCurrentPath(runDirectory);
+  const body = `${JSON.stringify(current, null, 2)}\n`;
+  // Same-directory temp + rename: a concurrent reader (the analyst scans live
+  // runs) never sees a torn file. A run directory that cannot take a new entry
+  // (settlement after a chmod) still accepts an in-place overwrite of the
+  // writable file, so that case degrades instead of failing.
+  const temporary = join(runDirectory, `.${RUN_CURRENT_FILE}-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, body, "utf8");
+    renameSync(temporary, destination);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM" && code !== "EROFS") throw error;
+    writeFileSync(destination, body, "utf8");
+  }
 }
 
 /** One section of `current.json`; undefined when the file or the section is absent. */

@@ -9,9 +9,14 @@ import {
 import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 
-/** Durable session binding: the `host` section of the run's current.json. */
+/**
+ * Durable session binding: `host.sessions[<hostName>]` of the run's current.json.
+ * Scoped by host name — a run that changes hosts on resume must never hand one
+ * host's native session id to another.
+ */
 export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
+  hostName: string,
 ): SessionIdentityAuthority {
   const runDirectoryOf = (principal: DurablePrincipal): string =>
     dirname(authority.decode(principal).sessionDirectory);
@@ -20,14 +25,19 @@ export function createSessionIdentityAuthority(
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      const sessionId = readSectionSync(runDirectoryOf(principal), "host")?.sessionId;
+      const sessions = readSectionSync(runDirectoryOf(principal), "host")?.sessions;
+      if (sessions === undefined) return undefined;
+      if (typeof sessions !== "object" || sessions === null) throw new Error("durable session binding is invalid");
+      const sessionId = (sessions as Record<string, unknown>)[hostName];
       if (sessionId === undefined) return undefined;
       if (typeof sessionId !== "string") throw new Error("durable session binding is invalid");
       return sessionId;
     },
     async bind(principal, sessionId) {
       const runDirectory = runDirectoryOf(principal);
-      writeSectionSync(runDirectory, "host", { ...readSectionSync(runDirectory, "host"), sessionId });
+      const host = readSectionSync(runDirectory, "host");
+      const sessions = typeof host?.sessions === "object" && host.sessions !== null ? host.sessions : {};
+      writeSectionSync(runDirectory, "host", { ...host, sessions: { ...sessions, [hostName]: sessionId } });
     },
   };
 }
@@ -45,7 +55,7 @@ export async function readStoredHostSessionId(
   if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) return undefined;
   const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
   if (description === undefined) return undefined;
-  const sessionId = await createSessionIdentityAuthority(authority).load(principal);
+  const sessionId = await createSessionIdentityAuthority(authority, host).load(principal);
   if (sessionId === undefined || sessionId === "") return undefined;
   return sessionId;
 }

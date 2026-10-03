@@ -1,10 +1,10 @@
-import { readCurrentJson, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentJson, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -88,7 +88,7 @@ test("public report publication failure stays beside the accepted terminal", asy
               const out = await inner.executeTurn(request);
               // The seal is on the record; the leg's terminal write is next.
               lockedCurrent = join(request.runDirectory, "current.json");
-              await chmod(lockedCurrent, 0o444);
+              lockCurrentJson(dirname(lockedCurrent));
               return out;
             },
           },
@@ -120,7 +120,7 @@ test("public report publication failure stays beside the accepted terminal", asy
     } finally {
       if (lockedCurrent !== undefined) {
         try {
-          await chmod(lockedCurrent, 0o644);
+          unlockCurrentJson(dirname(lockedCurrent));
         } catch {
           // cleanup best-effort
         }

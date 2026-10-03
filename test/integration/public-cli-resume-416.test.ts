@@ -553,7 +553,7 @@ test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", as
           const description =
             lookupHostDescription(hostName) ?? lookupHeadlessHostDescription(hostName);
           assert.ok(description, `host description registered for ${hostName}`);
-          await createSessionIdentityAuthority(piDurablePrincipalAuthority).bind(request.principal, `native-session-${hostName}-${calls.n}`);
+          await createSessionIdentityAuthority(piDurablePrincipalAuthority, hostName).bind(request.principal, `native-session-${hostName}-${calls.n}`);
         }
         return { code: 1, stderr: `fail ${calls.n}\n`, timedOut: false };
       });

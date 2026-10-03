@@ -210,7 +210,7 @@ process.exit(0);
     await chmod(binary, 0o755);
     const description = lookupHeadlessHostDescription("claude");
     assert.ok(description);
-    const identity = createSessionIdentityAuthority(piDurablePrincipalAuthority);
+    const identity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
     let actualRunDirectory = "";
     const host = createHeadlessRoleTurnHost({
       description, hostName: "claude", binary, sessionIdentity: identity,

@@ -954,7 +954,7 @@ async function adapterBoundaryCase(input: {
       const host = createAcpRoleTurnHost({
         hostName: "grok-build",
         modelPassing: "argv",
-        sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority),
+        sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build"),
         connect: async () => connection,
         prepare,
       });
@@ -997,7 +997,7 @@ process.stdout.write(JSON.stringify({
       description,
       hostName: input.hostName,
       binary: fakeBin,
-      sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority),
+      sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, input.hostName),
       prepare,
     });
     const result = await host.executeTurn(request);

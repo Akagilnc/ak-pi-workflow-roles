@@ -1,4 +1,4 @@
-import { readCurrentJson, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentJson, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -8,7 +8,7 @@ import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -119,7 +119,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
             // Settlement must keep boom primary and still emit one Terminal — not
             // outer-catch EACCES alone.
             currentJson = join(runDir, "current.json");
-            await chmod(currentJson, 0o444);
+            lockCurrentJson(dirname(currentJson));
             return {
               code: 1,
               stderr: "Error: boom\n",
@@ -162,7 +162,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
     } finally {
       if (currentJson !== undefined) {
         try {
-          await chmod(currentJson, 0o644);
+          unlockCurrentJson(dirname(currentJson));
         } catch {
           // cleanup best-effort
         }

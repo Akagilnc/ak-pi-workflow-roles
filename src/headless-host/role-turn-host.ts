@@ -467,36 +467,42 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       // CLI start-up inputs (system prompt / schema / MCP config files) are not
       // dossier: they live in a throwaway directory, and what was delivered is
       // recorded once in current.json `delivery` for the submission rows.
+      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
       const inputsDirectory = await mkdtemp(join(tmpdir(), "ak-role-headless-"));
       const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
-      await writeFile(systemPromptPath, systemPrompt, "utf8");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
-      let deliveredSchema: unknown;
-      if (codex) {
-        // #1148: Codex --output-schema requires a native strict transport schema.
-        // Project from the unique open declaration; do not alter package receipt rules.
-        if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
-          outputSchemaPath = join(inputsDirectory, "output-schema.json");
-          deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
-          await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+      // A setup failure after mkdtemp must not leave the prompt material behind.
+      try {
+        await writeFile(systemPromptPath, systemPrompt, "utf8");
+        let deliveredSchema: unknown;
+        if (codex) {
+          // #1148: Codex --output-schema requires a native strict transport schema.
+          // Project from the unique open declaration; do not alter package receipt rules.
+          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
+            outputSchemaPath = join(inputsDirectory, "output-schema.json");
+            deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
+            await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+          }
+        } else {
+          mcpConfigPath = join(inputsDirectory, "mcp-config.json");
+          await writeFile(
+            mcpConfigPath,
+            `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
+            "utf8",
+          );
+          // #959: navigator prose exit — no closed JSON schema on claude either.
+          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
         }
-      } else {
-        mcpConfigPath = join(inputsDirectory, "mcp-config.json");
-        await writeFile(
-          mcpConfigPath,
-          `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-          "utf8",
-        );
-        // #959: navigator prose exit — no closed JSON schema on claude either.
-        if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
+        writeSectionSync(request.runDirectory, "delivery", {
+          systemPrompt,
+          ...(deliveredSchema === undefined ? {} : { outputSchema: deliveredSchema }),
+        });
+      } catch (setupError) {
+        await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
+        throw setupError;
       }
-      writeSectionSync(request.runDirectory, "delivery", {
-        systemPrompt,
-        ...(deliveredSchema === undefined ? {} : { outputSchema: deliveredSchema }),
-      });
 
-      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
       let exitedSessionId: string | undefined;
       try {
       outcome = await driveExternalRoleTurnRounds(prepared, request, {

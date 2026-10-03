@@ -241,6 +241,9 @@ def main():
     # request stay, the latest submission is the last kept row, and no post-cut terminal survives.
     kept_subs = [r for r in kept_history if r.get("type") == "submission"]
     frozen_current = {k: cur[k] for k in ("invocation", "admitted") if k in cur}
+    terminal = cur.get("terminal")
+    if terminal and terminal.get("at") and iso(terminal["at"]) <= cut:
+        frozen_current["terminal"] = terminal  # settled at or before the cut: part of that moment's state
     if kept_subs:
         frozen_current["submission"] = {"latest": {k: v for k, v in kept_subs[-1].items() if k not in ("systemPrompt", "outputSchema")}}
     with open(f"{frozen_run}/current.json", "w") as f:
