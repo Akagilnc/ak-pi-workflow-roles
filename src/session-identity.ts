@@ -1,42 +1,33 @@
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
-import { writeFileAtomically } from "./atomic-write.ts";
 import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
 import {
   DEFAULT_ROLE_TURN_HOST,
   lookupHeadlessHostDescription,
   lookupHostDescription,
 } from "./host-descriptions.ts";
+import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 
-/** Durable session binding stored beside the host-owned session principal. */
+/** Durable session binding: the `host` section of the run's current.json. */
 export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
-  sessionBindingFile: string,
 ): SessionIdentityAuthority {
-  const bindingPath = (principal: DurablePrincipal): string =>
-    join(authority.decode(principal).sessionDirectory, sessionBindingFile);
+  const runDirectoryOf = (principal: DurablePrincipal): string =>
+    dirname(authority.decode(principal).sessionDirectory);
   return {
     resolveSessionFile(principal) {
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      try {
-        const value: unknown = JSON.parse(await readFile(bindingPath(principal), "utf8"));
-        if (typeof value !== "object" || value === null || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
-          throw new Error("durable session binding is invalid");
-        }
-        return (value as { sessionId: string }).sessionId;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-        throw error;
-      }
+      const sessionId = readSectionSync(runDirectoryOf(principal), "host")?.sessionId;
+      if (sessionId === undefined) return undefined;
+      if (typeof sessionId !== "string") throw new Error("durable session binding is invalid");
+      return sessionId;
     },
     async bind(principal, sessionId) {
-      const target = bindingPath(principal);
-      await mkdir(dirname(target), { recursive: true });
-      await writeFileAtomically(target, `${JSON.stringify({ sessionId })}\n`, { mode: 0o600 });
+      const runDirectory = runDirectoryOf(principal);
+      writeSectionSync(runDirectory, "host", { ...readSectionSync(runDirectory, "host"), sessionId });
     },
   };
 }
@@ -54,10 +45,7 @@ export async function readStoredHostSessionId(
   if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) return undefined;
   const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
   if (description === undefined) return undefined;
-  const sessionId = await createSessionIdentityAuthority(
-    authority,
-    description.sessionBindingFile,
-  ).load(principal);
+  const sessionId = await createSessionIdentityAuthority(authority).load(principal);
   if (sessionId === undefined || sessionId === "") return undefined;
   return sessionId;
 }

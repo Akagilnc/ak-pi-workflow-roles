@@ -86,7 +86,6 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
-import { recordRunStart } from "../host-session-record.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -1186,7 +1185,6 @@ export async function dispatchPostAdmissionTurn<
       // host CLI's native resume. Nothing here may gate, redirect or reshape
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
-      recordRunStart(admitted.runDirectory);
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {

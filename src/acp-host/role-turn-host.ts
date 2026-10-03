@@ -498,8 +498,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             cwd: request.cwd,
             sessionDirectory: sessionDirectoryOf(request.runDirectory),
             sessionParent,
-            continuation: request.continuation,
-            ...(request.model !== undefined ? { model: request.model } : {}),
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
         } catch (error) {

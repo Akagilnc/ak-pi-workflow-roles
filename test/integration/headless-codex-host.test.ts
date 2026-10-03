@@ -229,7 +229,7 @@ const waitForPointer = setInterval(() => {
     assert.equal(first.knownFailure, undefined, JSON.stringify(first));
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
-    assert.equal(await readFile(join(root, "session", "codex-gpt-test-1.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     const sitianFile = join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
     const firstRecords = (await readSitianRecords(sitianFile)).records;
     assert.equal((firstRecords[0]?.payload as { type?: string })?.type, "native-session-pointer");
@@ -321,7 +321,9 @@ const waitForPointer = setInterval(() => {
     });
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
-    assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    // The resume overwrites the single original; no second numbered copy appears.
+    assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    assert.deepEqual((await readdir(join(root, "session"))).filter((entry) => entry.startsWith("codex")), ["codex.jsonl"]);
     // Resume uses the same strict transport schema as the first call.
     const resumedSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
     assertStrictObjectNodes(resumedSchema, "resumedSchema");
@@ -612,7 +614,7 @@ process.exit(0);
     const bodies = await Promise.all(notes.filter((name) => name.startsWith("post-admission-diagnostic-"))
       .map(async (name) => JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8"))));
     assert.ok(bodies.some((note) => note.failure?.identity?.code === "EPIPE"));
-    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex-gpt-test-1.jsonl"), "utf8"), "native after close\n");
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex.jsonl"), "utf8"), "native after close\n");
   } finally {
     ledger.dispose();
   }

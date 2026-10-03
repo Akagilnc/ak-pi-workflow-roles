@@ -21,7 +21,6 @@ import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 const description: HeadlessHostDescription = Object.freeze({
   protocol: "claude-print",
   binaryFromHome: Object.freeze(["bin", "fake-claude"]),
-  sessionBindingFile: "claude-headless-session.json",
   fixedArgs: Object.freeze(["--output-format", "stream-json", "--verbose"]),
   promptFlag: "-p",
   modelFlag: "--model",
@@ -126,8 +125,8 @@ process.stdout.write(JSON.stringify({
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
 
-    // 1. Verify copied dossier landing file: model slashes replaced with '-', ordinal 1
-    const landingFile = join(ledger.runDirectory, "session", "claude-anthropic-claude-3-opus-1.jsonl");
+    // 1. Verify copied dossier landing file: one unnumbered file per host
+    const landingFile = join(ledger.runDirectory, "session", "claude.jsonl");
     await access(landingFile);
     const content = await readFile(landingFile, "utf8");
     assert.equal(content, JSON.stringify({ native: "claude-session-data" }) + "\n");
@@ -153,7 +152,7 @@ process.stdout.write(JSON.stringify({
     assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
-    assert.equal((copyRec.payload as { ordinal: number }).ordinal, 1);
+    assert.equal("ordinal" in (copyRec.payload as object), false);
   } finally {
     ledger.dispose();
   }
@@ -231,11 +230,26 @@ process.stdout.write(JSON.stringify({
       await mkdir(join(recordDir, "records.jsonl"));
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
-      const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude-default-") && entry.endsWith(".jsonl"));
-      assert.equal(dossiers.length, 1);
+      const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude"));
+      // Only the single unnumbered original; no failed-ordinal marker from the earlier failed copy.
+      assert.deepEqual(dossiers, ["claude.jsonl"]);
       assert.equal(await readFile(join(sessionDir, dossiers[0]!), "utf8"), "native session");
       // The two pointers and successful-copy record each declare once.
       assert.equal(stderrChunks.length, 6);
+
+      // A later exit overwrites that same single original with the new source bytes.
+      await writeFile(native, "native session, second exit", "utf8");
+      const again = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+      assert.equal(again.knownFailure, undefined, JSON.stringify(again));
+      assert.deepEqual((await readdir(sessionDir)).filter((entry) => entry.startsWith("claude")), ["claude.jsonl"]);
+      assert.equal(await readFile(join(sessionDir, "claude.jsonl"), "utf8"), "native session, second exit");
+
+      // A failed copy keeps the previous good original.
+      await rm(native);
+      const failed = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+      assert.equal(failed.knownFailure, undefined, JSON.stringify(failed));
+      assert.deepEqual((await readdir(sessionDir)).filter((entry) => entry.startsWith("claude")), ["claude.jsonl"]);
+      assert.equal(await readFile(join(sessionDir, "claude.jsonl"), "utf8"), "native session, second exit");
     } finally {
       process.stderr.write = origStderrWrite;
     }

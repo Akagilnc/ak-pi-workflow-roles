@@ -7,14 +7,11 @@
  */
 import { spawnSync } from "node:child_process";
 import {
-  appendFileSync,
   copyFileSync,
-  closeSync,
   existsSync,
-  openSync,
-  readFileSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   type Dirent,
@@ -22,7 +19,6 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { RoleTurnContinuation } from "./host-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
@@ -118,55 +114,18 @@ function codexSessionsDirectory(home?: string): string {
   return join(process.env.CODEX_HOME || join(home || homedir(), ".codex"), "sessions");
 }
 
-/** Count each host activation, including Pi turns without an external copy. */
-export function recordRunStart(runDirectory: string): void {
-  try { appendFileSync(join(runDirectory, ".run-starts"), "\n"); }
-  catch (error) { declareHostSessionFailure(error); }
-}
-
 /**
- * Resolve the host dossier landing destination under `<run>/session/`.
- * Format: `<run>/session/<host>-<model>-<n>` (single file adds .jsonl; model slashes replaced with -).
- * Ordinal n is the start/resume count in the run (initial 1, each resume +1).
+ * Host original landing under `<run>/session/`: one file per host, never
+ * numbered — every exit overwrites the same name (#1161).
+ * codex / claude: `<host>.jsonl`; grok-build: directory `<host>`.
  */
 export function resolveHostDossierLandingPath(options: {
   readonly host: string;
-  readonly model?: { readonly model?: string; readonly thinking?: string } | undefined;
   readonly sessionDirectory: string;
-  readonly continuation: RoleTurnContinuation;
-}): { readonly landingPath: string; readonly ordinal: number; readonly sanitizedModel: string } {
-  const sanitizedModel = (options.model?.model ?? "default").replace(/[\/\\]+/g, "-");
-  let maxOrdinal = 0;
-
-  if (existsSync(options.sessionDirectory)) {
-    try {
-      const entries = readdirSync(options.sessionDirectory);
-      for (const entry of entries) {
-        const match = entry.match(/-(\d+)(?:\.jsonl|\.failed)?$/);
-        const first = match?.[1];
-        if (first !== undefined) {
-          const val = parseInt(first, 10);
-          if (!isNaN(val) && val > maxOrdinal) {
-            maxOrdinal = val;
-          }
-        }
-      }
-    } catch {
-      // Ignore directory read errors
-    }
-  }
-
-  const startsPath = join(dirname(options.sessionDirectory), ".run-starts");
-  let starts = 0;
-  if (existsSync(startsPath)) starts = readFileSync(startsPath, "utf8").length;
-  const ordinal = Math.max(maxOrdinal + 1, starts, options.continuation.kind === "resume" ? 2 : 1);
-
-  const baseName = `${options.host}-${sanitizedModel}-${ordinal}`;
-  const landingPath = options.host === "grok-build"
-    ? join(options.sessionDirectory, baseName)
-    : join(options.sessionDirectory, `${baseName}.jsonl`);
-
-  return { landingPath, ordinal, sanitizedModel };
+}): string {
+  return options.host === "grok-build"
+    ? join(options.sessionDirectory, options.host)
+    : join(options.sessionDirectory, `${options.host}.jsonl`);
 }
 
 /** Record native session pointer line to Sitian as soon as session ID is known. */
@@ -230,11 +189,12 @@ function copyGrokDossier(srcDir: string, destDir: string): void {
 }
 
 /**
- * Copy native host session original to run session dossier after child process exits.
- * If copy fails, retries once.
- * On success, appends native-session-copy line to Sitian.
- * On repeated failure, appends native-session-warning line to Sitian.
- * Does not throw; turn outcome is never altered by copy success or failure.
+ * Copy the native host session original over the run's single landing path
+ * after the child process exits. Copies beside the landing path and swaps in
+ * on success, so a failed copy never destroys the previous good original.
+ * Retries once. Success appends a native-session-copy line, repeated failure a
+ * native-session-warning line. Does not throw; the turn outcome is never
+ * altered by copy success or failure.
  */
 export function copyAndRecordHostDossier(options: {
   readonly host: string;
@@ -242,8 +202,6 @@ export function copyAndRecordHostDossier(options: {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly sessionParent: string;
-  readonly continuation: RoleTurnContinuation;
-  readonly model?: { readonly model?: string; readonly thinking?: string } | undefined;
   readonly home?: string | undefined;
 }): void {
   if (options.host === "pi" || options.host === "hermes") {
@@ -257,40 +215,34 @@ export function copyAndRecordHostDossier(options: {
   });
   if (nativePath === undefined && options.host !== "codex") return;
 
-  let destination: ReturnType<typeof resolveHostDossierLandingPath>;
-  try {
-    destination = resolveHostDossierLandingPath(options);
-  } catch (error) {
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-warning",
-        sessionId: options.sessionId,
-        error: errorText(error),
-      },
-    });
-    return;
-  }
-  const { landingPath, ordinal, sanitizedModel } = destination;
+  const landingPath = resolveHostDossierLandingPath(options);
+  const staging = `${landingPath}.copying`;
+  const report = (payload: Record<string, unknown>): void => sitianReportSafe({
+    level: "event",
+    kind: HOST_SESSION_RECORD_KIND,
+    host: options.host,
+    cwd: options.cwd,
+    sessionParent: options.sessionParent,
+    source: `${options.host}-dossier`,
+    payload,
+  });
 
   let lastError: unknown;
   let copySuccess = false;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      rmSync(staging, { recursive: true, force: true });
       if (options.host === "grok-build") {
-        copyGrokDossier(nativePath!, landingPath);
+        copyGrokDossier(nativePath!, staging);
       } else {
         if (nativePath === undefined || !existsSync(nativePath)) {
           throw new Error(`Native session file missing for ${options.host} session ${options.sessionId}`);
         }
         mkdirSync(dirname(landingPath), { recursive: true });
-        copyFileCloneOrFallback(nativePath, landingPath);
+        copyFileCloneOrFallback(nativePath, staging);
       }
+      rmSync(landingPath, { recursive: true, force: true });
+      renameSync(staging, landingPath);
       copySuccess = true;
       break;
     } catch (error) {
@@ -299,45 +251,17 @@ export function copyAndRecordHostDossier(options: {
   }
 
   if (copySuccess) {
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-copy",
-        nativePath,
-        landingPath,
-        ordinal,
-        sessionId: options.sessionId,
-      },
-    });
+    report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
   } else {
-    // A partial first attempt must not masquerade as a complete native original.
-    try { rmSync(landingPath, { recursive: options.host === "grok-build", force: true }); }
+    // A partial attempt must not masquerade as a complete native original.
+    try { rmSync(staging, { recursive: true, force: true }); }
     catch { /* warning below reports the original copy failure */ }
-    // Reserve the failed ordinal outside the native dossier landing namespace.
-    try {
-      mkdirSync(options.sessionDirectory, { recursive: true });
-      closeSync(openSync(join(options.sessionDirectory, `${options.host}-${sanitizedModel}-${ordinal}.failed`), "a"));
-    } catch { /* the warning below retains the original copy failure */ }
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-warning",
-        nativePath,
-        landingPath,
-        ordinal,
-        sessionId: options.sessionId,
-        error: errorText(lastError),
-      },
+    report({
+      type: "native-session-warning",
+      nativePath,
+      landingPath,
+      sessionId: options.sessionId,
+      error: errorText(lastError),
     });
   }
 }

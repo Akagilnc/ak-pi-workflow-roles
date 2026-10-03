@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -204,10 +204,7 @@ test("explicit resume hands the stored host session id to the selected host", as
           const suffix = `@${record.role}`;
           if (dirName.endsWith(suffix) && !request.runDirectory.includes(CANONICAL_SOURCE_RUN_ID)) {
             seatRunId = dirName.slice(0, -suffix.length);
-            await writeFile(
-              join(sessionDirectory, "grok-acp-session.json"),
-              `${JSON.stringify({ sessionId: nativeId })}\n`,
-            );
+            seedCurrentSection(dirname(sessionDirectory), "host", { sessionId: nativeId });
           }
           return { code: 1, stderr: "stop", timedOut: false };
         },
@@ -244,10 +241,7 @@ test("explicit resume hands the stored host session id to the selected host", as
           if (typeof admitted.sessionDirectory === "string" && typeof admitted.sessionFile === "string") {
             await mkdir(admitted.sessionDirectory, { recursive: true });
             await writeFile(admitted.sessionFile, "", "utf8");
-            await writeFile(
-              join(admitted.sessionDirectory, "grok-acp-session.json"),
-              `${JSON.stringify({ sessionId: nativeId })}\n`,
-            );
+            seedCurrentSection(dirname(admitted.sessionDirectory), "host", { sessionId: nativeId });
             const suffix = `@${record.role}`;
             seatRunId = basename(runDirectory).slice(0, -suffix.length);
           }

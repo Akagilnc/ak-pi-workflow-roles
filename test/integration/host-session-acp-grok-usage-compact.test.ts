@@ -1,12 +1,13 @@
 /**
  * ADR 0086: grok-build ACP host native dossier copying post-exit.
  * - Grok native session files (chat_history.jsonl, usage.json) are copied into
- *   <run>/session/grok-build-<model>-<n>/ after the ACP session ends.
+ *   <run>/session/grok-build/ after the ACP session ends; every exit overwrites
+ *   that one directory, and a failed copy keeps the previous good original.
  * - Hermes host is untouched (no native pointer, no dossier copy).
  * - Copy failure retries once and records native-session-warning without altering turn outcome.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -118,8 +119,8 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
 
-    // 1. Verify copied dossier landing directory: model slashes replaced with '-', ordinal 1
-    const landingDir = join(ledger.runDirectory, "session", "grok-build-xai-grok-4.7-1");
+    // 1. Verify copied dossier landing directory: one unnumbered directory per host
+    const landingDir = join(ledger.runDirectory, "session", "grok-build");
     const copiedChat = await readFile(join(landingDir, "chat_history.jsonl"), "utf8");
     assert.equal(copiedChat, chatContent);
 
@@ -141,7 +142,35 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingDir);
-    assert.equal((copyRec.payload as { ordinal: number }).ordinal, 1);
+    assert.equal("ordinal" in (copyRec.payload as object), false);
+
+    // 3. A second exit overwrites the same single original with the new source bytes.
+    const chatContent2 = '{"role":"assistant","content":"second exit"}\n';
+    await writeFile(join(grokNativeDir, "chat_history.jsonl"), chatContent2, "utf8");
+    const second = await host.executeTurn(
+      request(ledger.runDirectory, ledger.home, { model: "xai/grok-4.7", thinking: "high" }),
+    );
+    assert.equal(second.code, 0);
+    assert.equal(await readFile(join(landingDir, "chat_history.jsonl"), "utf8"), chatContent2);
+    assert.equal(await readFile(join(landingDir, "usage.json"), "utf8"), usageContent);
+    const originals = (await readdir(join(ledger.runDirectory, "session"))).filter((name) => name.startsWith("grok-build"));
+    assert.deepEqual(originals, ["grok-build"]);
+
+    // 4. A failed third copy leaves the previous good original intact.
+    await rm(join(grokNativeDir, "usage.json"));
+    await writeFile(join(grokNativeDir, "chat_history.jsonl"), "third exit, copy will fail\n", "utf8");
+    const third = await host.executeTurn(
+      request(ledger.runDirectory, ledger.home, { model: "xai/grok-4.7", thinking: "high" }),
+    );
+    assert.equal(third.code, 0);
+    assert.equal(await readFile(join(landingDir, "chat_history.jsonl"), "utf8"), chatContent2);
+    assert.equal(await readFile(join(landingDir, "usage.json"), "utf8"), usageContent);
+    assert.deepEqual(
+      (await readdir(join(ledger.runDirectory, "session"))).filter((name) => name.startsWith("grok-build")),
+      ["grok-build"],
+    );
+    const afterThird = (await readSitianRecords(hostSessionRecordFile(ledger.runDirectory))).records;
+    assert.equal((afterThird.at(-1)?.payload as { type?: string })?.type, "native-session-warning");
   } finally {
     ledger.dispose();
   }
@@ -176,32 +205,7 @@ test("grok-build dossier copy failure appends warning without altering turn (ADR
     const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
     assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
     assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
-    assert.equal((records[1]?.payload as { ordinal?: number })?.ordinal, 1);
     assert.ok((records[1]?.payload as { error?: string })?.error);
-  } finally {
-    ledger.dispose();
-  }
-});
-
-test("unreadable run-start ledger warns instead of copying with a guessed ordinal", async () => {
-  const ledger = createTempPackageHomeLedger({ prefix: "ak-0086-starts-unreadable-", runName: "run@coder" });
-  try {
-    const sessionId = "unreadable-starts";
-    const nativeDir = join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), sessionId);
-    await mkdir(nativeDir, { recursive: true });
-    await writeFile(join(nativeDir, "chat_history.jsonl"), "native chat\n");
-    await writeFile(join(nativeDir, "usage.json"), "native usage\n");
-    await mkdir(join(ledger.runDirectory, ".run-starts"));
-    const result = await createHost({ ledger, connection: mockConnection(sessionId) }).executeTurn(
-      request(ledger.runDirectory, ledger.home, { model: "grok-4.7" }),
-    );
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
-    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
-    assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
-    assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
-    assert.ok((records[1]?.payload as { error?: string })?.error);
-    await assert.rejects(readFile(join(ledger.runDirectory, "session", "grok-build-grok-4.7-1", "usage.json")));
   } finally {
     ledger.dispose();
   }
@@ -252,7 +256,7 @@ fi
     const copyRec = records[1]!;
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((await readFile(attempts, "utf8")).split("\n").filter(Boolean).length, 2);
-    assert.equal(await readFile(join(ledger.runDirectory, "session", "grok-build-grok-4.7-1", "usage.json"), "utf8"), "native usage\n");
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "grok-build", "usage.json"), "utf8"), "native usage\n");
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;

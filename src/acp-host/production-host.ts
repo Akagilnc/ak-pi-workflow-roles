@@ -61,7 +61,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
 
   return createComposedAcpRoleTurnHost({
     hostName,
-    sessionIdentity: createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
+    sessionIdentity: createSessionIdentityAuthority(principalAuthority),
     modelPassing: description.modelPassing,
     ...(description.setModelId === undefined ? {} : { setModelId: description.setModelId }),
     roleRuntimeDependencies: createRoleRuntimeDependencies(packageRoot),

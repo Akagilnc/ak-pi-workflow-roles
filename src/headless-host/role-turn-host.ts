@@ -719,8 +719,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
             host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
             sessionDirectory: sessionDirectoryOf(request.runDirectory), sessionParent,
-            continuation: request.continuation,
-            ...(request.model !== undefined ? { model: request.model } : {}),
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
         } catch (error) {

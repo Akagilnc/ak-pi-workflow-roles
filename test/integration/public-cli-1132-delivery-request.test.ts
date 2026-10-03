@@ -10,10 +10,10 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { randomUUID } from "node:crypto";
@@ -849,7 +849,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        await writeFile(join(coordinates.sessionDirectory, "grok-acp-session.json"), "not JSON\n");
+        seedCurrentSection(dirname(coordinates.sessionDirectory), "host", { sessionId: 42 });
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -873,7 +873,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.autoResumeCount, 1);
     if (result.terminal?.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
+      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "Error");
     }
     assert.ok(runDirectory !== undefined);
     const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
