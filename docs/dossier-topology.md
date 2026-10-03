@@ -93,7 +93,3 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 - 落盘调用方不选择目的地；唯一记录入口依身份和 run 所有权计算上述路径。
 - 太史分析目录不在本拓扑射程。
 - 存量卷宗不迁移：#1161 之前的 run 目录（十六个文件、逐次副本）不被读取，旧文件名在代码中不再被写入或读取；`src/book-topology-*.ts` 与 `scripts/migrate-book-topology.ts` 是 #852 的一次性迁移工具，其中提及旧名字处只服务存量迁移，不属于运行路径。
-
-## 已知缺口
-
-- 本腿 token 用量没有进 `current.json`：pi 可由 `session.jsonl` 汇总，grok 有 `usage.json`，codex、claude 的原件里取不到统一口径，按票面「取不到即为缺口」不补；`scripts/ledger/run-show.py` 读宿主原件给出 codex 的用量。

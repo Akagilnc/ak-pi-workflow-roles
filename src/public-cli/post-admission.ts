@@ -26,7 +26,7 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
-import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
+import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
@@ -899,6 +899,64 @@ async function settleCompletedHostTurn<
   return { kind: "still-missing" };
 }
 
+/**
+ * #858 / #1071: the first identifiable ticketNumber field declaration among the
+ * run's sealed rows files an unbound run (integer, digit string, or leading #N
+ * token). Terminal rows match settlement (#881): accepted and audit-escalation —
+ * an escalated submission still carries the original role params. Later
+ * receipts remain untouched; prose note/report is never consulted; this seam
+ * does not adjudicate a ticket change. Runs in the public call's own process
+ * (no role leg writes the run's current.json).
+ */
+export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+  if (admitted.ticketNumber !== undefined) return;
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted),
+  );
+  let ticketNumber: number | undefined;
+  for (const row of rows) {
+    if (
+      row.role !== admitted.role
+      || (row.kind !== "accepted" && row.kind !== "audit-escalation")
+    ) {
+      continue;
+    }
+    const payload = row.accepted;
+    if (!isRecord(payload)) continue;
+    ticketNumber = readDeclaredTicketNumber(
+      (payload as { ticketNumber?: unknown }).ticketNumber,
+    );
+    if (ticketNumber !== undefined) break;
+  }
+  if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
+}
+
+/**
+ * The ticket a diarist asserted on a completed submission, whether or not the
+ * rest of that submission was later accepted (a bounds reask does not unsay the
+ * ticket). Before this ran in the leg's accept hook; the leg now only appends its
+ * ledger rows and the public call's own process binds the ticket from them.
+ */
+export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+  if (admitted.ticketNumber !== undefined) return;
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted),
+  );
+  for (const row of rows) {
+    if (row.role !== admitted.role || !isRecord(row.accepted)) continue;
+    if (row.accepted.status !== "completed" || !("ticketNumber" in row.accepted)) continue;
+    const ticketNumber = parseTicketNumber(row.accepted.ticketNumber);
+    if (ticketNumber !== undefined) {
+      await bindAdmittedTicketNumber(admitted, ticketNumber);
+      return;
+    }
+  }
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -1037,29 +1095,7 @@ export async function dispatchPostAdmissionTurn<
       // an escalated submission still carries the original role params.
       // Later receipts remain untouched; prose note/report is never consulted;
       // this seam does not adjudicate a ticket change.
-      if (admitted.ticketNumber === undefined) {
-        const rows = await readRecordedSubmissionRows(
-          admitted.projectRoot,
-          admitted.runId,
-          ledgerReadScope(admitted),
-        );
-        let ticketNumber: number | undefined;
-        for (const row of rows) {
-          if (
-            row.role !== admitted.role
-            || (row.kind !== "accepted" && row.kind !== "audit-escalation")
-          ) {
-            continue;
-          }
-          const payload = row.accepted;
-          if (!isRecord(payload)) continue;
-          ticketNumber = readDeclaredTicketNumber(
-            (payload as { ticketNumber?: unknown }).ticketNumber,
-          );
-          if (ticketNumber !== undefined) break;
-        }
-        if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
-      }
+      await bindSealedTicketNumber(admitted);
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);

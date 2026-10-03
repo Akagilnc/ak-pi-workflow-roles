@@ -56,6 +56,7 @@ import {
   type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
+  bindDiaristAssertedTicketNumber,
   presentControlledFailure,
   packageFaultNoteFor,
   prepareSummonsResumeMaterials,
@@ -321,6 +322,8 @@ async function bindAndRelocateDiarist(
   authority: DurablePrincipalAuthority,
   lease?: RunWriterLease,
 ): Promise<RunDirectoryRelocation | undefined> {
+  // The diarist's asserted ticketNumber binds here, in the public call's process.
+  await bindDiaristAssertedTicketNumber(admitted);
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
   if (boardTicket === undefined) return undefined;
   if (admitted.ticketNumber === undefined) {

@@ -4,7 +4,7 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection, assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -458,6 +458,8 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
       join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
       "the first typed ticket remains the run identity after reviewer resubmission");
+    // The public-entry leg at rest carries none of the retired dossier files (#1161).
+    assertNoRetiredDossierFiles(join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`));
     // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
     const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
       ?.countersignTerminal as

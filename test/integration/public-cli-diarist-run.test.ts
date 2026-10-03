@@ -29,7 +29,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
@@ -134,7 +134,7 @@ type DiaristSubmit = unknown | ((round: number, lastReask?: string) => unknown);
 function diaristEnvelopeRunner(
   submitted: DiaristSubmit,
   behavior?: {
-    readonly afterAdmit?: "throw" | "host-exit-1";
+    readonly afterAdmit?: "throw";
     readonly afterReask?: () => Promise<boolean>;
   },
 ): LegacyFauxPiRunner {
@@ -159,9 +159,12 @@ function diaristEnvelopeRunner(
     if (!sessionAlreadyPresent) {
       await writeFile(sessionFile, "");
     }
-    const runtime = createDiaristRoleRuntime(host, {
-      loadSoul: async () => "起居郎职分（测试装载）",
-    });
+    // The production composition: the submission ledger wraps the output tool, so an
+    // accepted call leaves its sealed row even if the host turn then fails.
+    const runtime = createDiaristRoleRuntime(
+      createSubmissionLedgerHost(host, new Map([[DIARIST_OUTPUT_TOOL_NAME, "diarist" as const]])),
+      { loadSoul: async () => "起居郎职分（测试装载）" },
+    );
     await runtime.activate();
     assert.ok(registered, "diarist envelope registered no output tool");
 
@@ -210,14 +213,12 @@ function diaristEnvelopeRunner(
     if (behavior?.afterAdmit === "throw") {
       throw new Error("host turn failed after diarist board bind");
     }
-    const sealed = await scriptedTerminatingToolSession({
+    return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
       details: accepted.details,
       sessionWriteMode: sessionAlreadyPresent ? "append" : "replace",
     })(args, options);
-    // The receipt is sealed; the host CLI then reports a failed exit.
-    return behavior?.afterAdmit === "host-exit-1" ? { ...sealed, code: 1 } : sealed;
   };
 }
 
@@ -1818,11 +1819,9 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
 });
 
 /**
- * The diarist seals a receipt naming the ticket, then the host turn fails. The
- * child writes no ticket into the dossier (the parent binds it from the sealed
- * ticketNumber after a turn that settles), so the failed leg stays unbound and
- * the auto-resume dispatches there; the resumed turn settles, the parent binds,
- * and the run is filed under the ticket with both attempts in its dossier.
+ * Host turn already started + the receipt naming the ticket already sealed,
+ * then the turn fails: the run relocates under the ticket before auto-resume,
+ * whose next host request must use that current durable location.
  */
 test("ak-role diarist auto-resume uses the relocated board-bound run", async () => {
   await withTempHome(async (home) => {
@@ -1907,7 +1906,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     );
     assert.deepEqual(hostRunDirectories, [
       unboundPlacement.runDirectory,
-      unboundPlacement.runDirectory,
+      ticketPlacement.runDirectory,
     ]);
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
@@ -1994,11 +1993,18 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     assert.equal(interrupted.exitCode, 1);
     stderr.length = 0;
 
-    // The receipt seals and names the ticket, then the host exits 1: the parent
-    // binds the ticket from the sealed receipt and files the failed run under it.
-    const sealThenExit1 = diaristEnvelopeRunner(
-      { status: "completed", ticketNumber: TICKET, sessions: [] },
-      { afterAdmit: "host-exit-1" },
+    const reaskThen429 = diaristEnvelopeRunner(
+      { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
+      {
+        afterReask: async () => {
+          await writeFile(
+            join(unboundPlacement.runDirectory, "session", "session.jsonl"),
+            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,
+            "utf8",
+          );
+          return true;
+        },
+      },
     );
     // #1058: clear the interrupted run's output so the pointer read below is
     // the one this resume hands the caller.
@@ -2010,7 +2016,7 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: immutablePrincipalAuthority,
-          piRunner: sealThenExit1,
+          piRunner: reaskThen429,
         }),
       },
     );
