@@ -11,8 +11,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
-import { assertNoRetiredDossierFiles, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { assertNoRetiredDossierFiles, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -151,7 +150,6 @@ const waitForPointer = setInterval(() => {
     let bound: string | undefined;
     let receipt: unknown;
     let rejectLoad = false;
-    let ingested = 0;
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
@@ -214,14 +212,7 @@ const waitForPointer = setInterval(() => {
           additionalProperties: true,
         },
         terminatingToolName: "ak_probe_output",
-        // The production ledger producer records the accepted submission, as the live envelope does.
-        async ingestStructuredOutput(value) {
-          receipt = value;
-          await sealAcceptedSubmission({
-            cwd: root, runId: "run", role: "inspector", details: value, runDirectory: root,
-            toolCallId: `ingest-${++ingested}`,
-          });
-        },
+        async ingestStructuredOutput(value) { receipt = value; },
         async closeRound() { return { accepted: true as const }; },
       }),
     });
@@ -251,17 +242,15 @@ const waitForPointer = setInterval(() => {
     assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
     const delivered = (await readFile(deliveredLog, "utf8")).trim().split("\n")
       .map((line) => JSON.parse(line) as { systemPrompt: string; outputSchema: unknown });
-    // The accepted structured turn left one submission row on history.jsonl carrying exactly
+    // Starting the turn left one turn-delivery row on history.jsonl carrying exactly
     // the system prompt and closed schema the CLI was started with.
-    const history = (await readFile(join(root, "history.jsonl"), "utf8")).trim().split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const history = readHistoryRows(root);
     assert.equal(history.length, 1);
-    assert.equal(history[0]!.type, "submission");
-    assert.equal(history[0]!.disposition, "accepted");
-    assert.deepEqual(history[0]!.params, { status: "completed", report: "initial" });
-    assert.equal(history[0]!.systemPrompt, delivered[0]!.systemPrompt);
+    assert.equal(history[0]!.kind, "turn-delivery");
+    const startedWith = history[0]!.payload as { systemPrompt: string; outputSchema: unknown };
+    assert.equal(startedWith.systemPrompt, delivered[0]!.systemPrompt);
     assert.ok(delivered[0]!.systemPrompt.length > 0);
-    assert.deepEqual(history[0]!.outputSchema, delivered[0]!.outputSchema);
+    assert.deepEqual(startedWith.outputSchema, delivered[0]!.outputSchema);
     // The CLI start-up input files are not dossier; nothing retired survives at rest.
     assertNoRetiredDossierFiles(root);
     const schema = delivered[0]!.outputSchema as {

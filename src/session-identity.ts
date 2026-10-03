@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
 import {
@@ -6,13 +6,19 @@ import {
   lookupHeadlessHostDescription,
   lookupHostDescription,
 } from "./host-descriptions.ts";
-import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
+import { RUN_LOG_FILE } from "./run-dossier.ts";
+import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
+import { isRecord } from "./unknown-value.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 
+/** Log record kind of one host-session binding (a host's native session id for this run). */
+export const HOST_SESSION_ID_RECORD_KIND = "host-session-id" as const;
+
 /**
- * Durable session binding: `host.sessions[<hostName>]` of the run's current.json.
- * Scoped by host name — a run that changes hosts on resume must never hand one
- * host's native session id to another.
+ * Durable session binding: one log record per bind, scoped by host name — a run
+ * that changes hosts on resume must never hand one host's native session id to
+ * another. The latest record for the host wins; the settlement seam projects
+ * the bindings into current.json `host`.
  */
 export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
@@ -25,19 +31,18 @@ export function createSessionIdentityAuthority(
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      const sessions = readSectionSync(runDirectoryOf(principal), "host")?.sessions;
-      if (sessions === undefined) return undefined;
-      if (typeof sessions !== "object" || sessions === null) throw new Error("durable session binding is invalid");
-      const sessionId = (sessions as Record<string, unknown>)[hostName];
-      if (sessionId === undefined) return undefined;
-      if (typeof sessionId !== "string") throw new Error("durable session binding is invalid");
-      return sessionId;
+      const { records } = await readSitianRecords(join(runDirectoryOf(principal), RUN_LOG_FILE));
+      let bound: string | undefined;
+      for (const record of records) {
+        if (record.kind !== HOST_SESSION_ID_RECORD_KIND || !isRecord(record.payload)) continue;
+        if (record.payload.host !== hostName) continue;
+        if (typeof record.payload.sessionId !== "string") throw new Error("durable session binding is invalid");
+        bound = record.payload.sessionId;
+      }
+      return bound;
     },
     async bind(principal, sessionId) {
-      const runDirectory = runDirectoryOf(principal);
-      const host = readSectionSync(runDirectory, "host");
-      const sessions = typeof host?.sessions === "object" && host.sessions !== null ? host.sessions : {};
-      writeSectionSync(runDirectory, "host", { ...host, sessions: { ...sessions, [hostName]: sessionId } });
+      reportRunRecord(runDirectoryOf(principal), HOST_SESSION_ID_RECORD_KIND, { host: hostName, sessionId }, "session-identity");
     },
   };
 }

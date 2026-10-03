@@ -15,11 +15,11 @@ import type {
   RoleEnvelopeHost,
   RoleHost,
 } from "../host-contracts.ts";
-import { runDirectoryFromHostContext } from "../host-contracts.ts";
-import { writeSectionSync } from "../run-dossier.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { runDirectoryFromHostContext } from "../host-contracts.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
 import {
   WorkerCommitReminderError,
@@ -150,6 +150,7 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
+  let lastDeliveredPrompt: string | undefined;
   // Decode transport exactly once before Pi's native handler chain. Pi retains
   // its own transform/image propagation and per-handler error isolation.
   pi.on("input", (value) => {
@@ -178,14 +179,15 @@ export function createPiRoleHostAdapter(
         const [, handler] = registration;
         pi.on("before_agent_start", (value, ctx) => {
           const projected = context(ctx);
-          // The last handler's folded prompt is what Pi sends: record it as this turn's delivery.
+          // The prompt a handler leaves behind is what Pi sends if it is the last one: record
+          // each distinct prompt as a turn-delivery record, so the last record is the delivered one.
           const fold = (settled: unknown) => {
             const folded = foldBeforeAgentStartReturn(settled, value.systemPrompt);
             const runDirectory = runDirectoryFromHostContext(projected);
-            if (runDirectory !== undefined) {
-              writeSectionSync(runDirectory, "delivery", {
-                systemPrompt: (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt,
-              });
+            const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
+            if (runDirectory !== undefined && delivered !== lastDeliveredPrompt) {
+              lastDeliveredPrompt = delivered;
+              reportRunRecord(runDirectory, "turn-delivery", { systemPrompt: delivered }, "pi-adapter");
             }
             return folded;
           };
@@ -221,6 +223,15 @@ export function createPiRoleHostAdapter(
             ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
             ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
             ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+          })),
+        }, context(ctx)));
+      } else if (registration[0] === "turn_end") {
+        const [, handler] = registration;
+        pi.on("turn_end", (value, ctx) => handler({
+          turnIndex: value.turnIndex,
+          calls: value.toolResults.map((result) => ({
+            toolCallId: result.toolCallId,
+            toolName: result.toolName,
           })),
         }, context(ctx)));
       } else if (registration[0] === "agent_settled") {

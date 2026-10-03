@@ -1,4 +1,4 @@
-import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentJson, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -280,8 +280,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
-      const historyTypes = () => readHistoryRows(runDirectory).map((row) => row.type);
-      assert.deepEqual(historyTypes(), ["submission"],
+      const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
+        .map((payload) => payload.outcome?.kind);
+      assert.deepEqual(historyOutcomes(), ["accepted"],
         "the sealed attempt is recorded once; publication failure is not a second attempt");
 
       // Publication never wrote a success terminal under the locked current.json.
@@ -350,16 +351,13 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
-      assert.deepEqual(historyTypes(), ["submission", "resume"],
-        "the actual resume adds its own resume row and no second submission");
-      const resumeRow = readHistoryRows(runDirectory)[1]!;
-      assert.equal(resumeRow.cause, "explicit-resume");
-      assert.equal("previous" in resumeRow, false, "no terminal stood before the resumed turn");
+      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
+        "the actual resume adds its own accepted attempt");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyTypes(), ["submission", "resume"],
-        "re-reading the latest seal must not append another row");
+      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
+        "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }

@@ -36,31 +36,30 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `current.json`——当前
 
-审读席默认只读它。整文件重写，按分区各有归属；由 `src/run-dossier.ts` 唯一入口读改写（每次读改写持一把短的跨进程目录锁，写入为临时文件加 rename），调用方只指名分区：
+审读席默认只读它。整文件写出，**只有一个写者**：该腿公开调用自己的接缝（`public-cli/invocation.ts` 的受理、`run-lifecycle.ts` 的状态转换、`settlement.ts` 的终局），经 `src/run-dossier.ts` 写入；角色运行时、宿主适配器、闸都不写它，它们知道的事都追加成记录。每次写出都按 `history.jsonl`、`log.jsonl` 里已有的行重算派生分区，所以一个进程的写出不会丢掉另一个进程追加的记录；无锁，写入为临时文件加 rename。
 
-| 分区 | 内容 | 写方（接缝） |
+| 分区 | 内容 | 来源 |
 | --- | --- | --- |
-| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi/角色包版本 | `public-cli/invocation.ts`、`run-lifecycle.ts` |
-| `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针（`sourceRunPath`／`sourceRun`） | `public-cli/invocation.ts` |
-| `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | `public-cli/run-lifecycle.ts` |
-| `host` | 宿主会话 id，按宿主分格（`sessions[<host>]`，换宿主续跑不会把一家的 id 交给另一家；续跑读它），及 `original`（宿主原件路径） | `session-identity.ts` |
-| `delivery` | 最近一轮发给宿主的系统提示与输出 schema 全文 | 各宿主适配器（headless／ACP／pi） |
-| `submission` | `latest`：最新一次交卷（不含系统提示与 schema） | `submission-ledger.ts` |
-| `officers` | 本腿传召的官员腿指针（每官一格，同官再召覆盖） | `submission-gate.ts`、`public-cli/instruction-seat-run.ts` |
-| `terminal` | 终局：`face` 为 `report`（收）／`error`（真实失败）／`no_receipt`（无卷，#836），`body` 为终局事实；不含交卷原文 | `public-cli/settlement.ts` |
-
-`current.json` 是 `history.jsonl` 加终局的投影：任一写方失败，settlement 可由历史重投。
+| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | 受理 |
+| `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针（`sourceRunPath`／`sourceRun`） | 受理 |
+| `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 状态转换 |
+| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实 | 结算 |
+| `submission` | `latest`：最新一次封存的交卷原文（`history.jsonl` 里最后一条 `sealed` 行） | 派生 |
+| `officers` | 本腿传召的官员腿指针，每官一格（`history.jsonl` 里各官最后一条 `officer-pointer` 行） | 派生 |
+| `host` | `sessions[<host>]` 宿主会话 id（`log.jsonl` 的 `host-session-id` 行；按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（最近一次宿主原件复制的落点） | 派生 |
 
 ### `history.jsonl`——历史
 
-只追加，每行一个事实，翻旧账时才读：
+只追加，翻旧账时才读。行都是司天台 appender 写的原行（`kind`、`payload` 与旧账本一字不差，只是落地文件换了）：
 
-- `{"type":"submission", attempt, at, attemptId, toolCallId, toolName, role, params, disposition, reason?, systemPrompt?, outputSchema?}`：每次交卷一行，闸决定之后写一次。`params` 是角色原话；`disposition` 为 `accepted`（收）／`rejected`（退）／`infrastructure`／`continuing`（闸令回合继续、未收）；`systemPrompt`／`outputSchema` 取自 `current.json` 的 `delivery`，为当次发出的全文。
-- `{"type":"resume", at, cause?, previous?}`：每次续跑一行，写在续跑回合发出之前。`cause` 是机械名：`auto-resume`／`delivery-request`（回合无可用回执，包自己再入，即卡死）、`explicit-resume`（调用者 `ak-role resume`，即续派）、`summons-resume`（闸或同票同行把腿还回来，即打回）。`previous` 是被本回合覆盖前的终局摘要（面、种类、状态或失败起因），这是上一轮终局唯一的留存处。
+- 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
+- 原续跑记录：`attempt-history`（每个派发的回合一行，含催交回合）。
+- `turn-delivery`：每次起跑发出的系统提示与输出 schema（本票新增的记录）。
+- `officer-pointer`：闸传召官员腿的指针（本票新增的记录）。
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落这一本；父会话不是腿自己 session 的（navigator 嵌套等）仍落各自 `session/<kind>/records.jsonl`，不在本页射程。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`host-session-id`、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`（上列几种）或这一本；父会话不是腿自己 session 的（navigator 嵌套等）仍落各自 `session/<kind>/records.jsonl`，不在本页射程。
 
 ### 宿主原件
 
@@ -97,7 +96,4 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 
 ## 已知缺口
 
-- 交卷行没有「本轮其余工具调用 id」：turn_end 事件已删，同一轮的其它工具调用在宿主原件里，御史台 grep 得到；需要时补法是在回合边界追加一行 `{type:"round", calls}`。
-- 本腿 token 用量没有进 `current.json`：pi 可由 `session.jsonl` 汇总，grok 有 `usage.json`，codex、claude 的原件里取不到统一口径，按票面「取不到即为缺口」不补。
-- 四文件之外的保留项见上节「经陛下允许多出来的项」。
-- 历史上同一 toolCallId 的重试：每次调用各记一行，不再合并。
+- 本腿 token 用量没有进 `current.json`：pi 可由 `session.jsonl` 汇总，grok 有 `usage.json`，codex、claude 的原件里取不到统一口径，按票面「取不到即为缺口」不补；`scripts/ledger/run-show.py` 读宿主原件给出 codex 的用量。

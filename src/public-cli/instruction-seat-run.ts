@@ -436,7 +436,6 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            cause: "auto-resume",
             prompt: buildAutoResumeContinuationPrompt({
               packageRoot: activeEnv.packageRoot,
               ...pickEngineAxis(activeEnv),

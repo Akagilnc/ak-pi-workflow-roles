@@ -1,6 +1,7 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { isRecord } from "./unknown-value.ts";
-import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
+import { RUN_HISTORY_FILE } from "./run-dossier.ts";
+import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
@@ -25,13 +26,17 @@ export type DirectOfficerRunPointer = {
   readonly submissionToolCallId?: string;
 };
 
+/** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
+export const OFFICER_POINTER_RECORD_KIND = "officer-pointer" as const;
+
 /**
- * Book a typed pointer in the parent run's current.json `officers` section.
+ * Book a typed pointer as one history record of the parent run; the settlement
+ * seam projects the latest per officer into current.json `officers`.
  * Never fabricates user/assistant/toolResult rows (#675).
  *
- * Stable slot per officer under one parent (#753 gate-round accounting):
- * same-parent re-summons upsert the same slot instead of minting N pointers
- * that each re-scan the full officer session and multiply gate-cycle counts.
+ * Latest record wins per officer under one parent (#753 gate-round accounting):
+ * a same-parent re-summons supersedes the earlier pointer instead of adding a
+ * second one that re-scans the full officer session and multiplies gate-cycle counts.
  */
 export function bookDirectOfficerRunPointer(options: {
   readonly parentSessionFile: string;
@@ -51,11 +56,7 @@ export function bookDirectOfficerRunPointer(options: {
       : {}),
     ...(submissionToolCallId === "" ? {} : { submissionToolCallId }),
   };
-  const parentRunDirectory = runDirectoryOfSessionFile(options.parentSessionFile);
-  writeSectionSync(parentRunDirectory, "officers", {
-    ...readSectionSync(parentRunDirectory, "officers"),
-    [options.officer]: pointer,
-  });
+  reportRunRecord(runDirectoryOfSessionFile(options.parentSessionFile), OFFICER_POINTER_RECORD_KIND, pointer, "submission-gate");
   return pointer;
 }
 
@@ -103,10 +104,21 @@ export async function resolveOfficerPointer(
   };
 }
 
-/** Every pointer booked on one run, in officer-name order. Absent section → []. */
+/** The latest pointer booked per officer on one run, as stored. History absent → empty. */
+export async function readBookedOfficerPointers(parentRunDirectory: string): Promise<Readonly<Record<string, unknown>>> {
+  const { records } = await readSitianRecords(join(parentRunDirectory, RUN_HISTORY_FILE));
+  const latest: Record<string, unknown> = {};
+  for (const record of records) {
+    if (record.kind !== OFFICER_POINTER_RECORD_KIND || !isRecord(record.payload)) continue;
+    const officer = record.payload.officer;
+    if (typeof officer === "string") latest[officer] = record.payload;
+  }
+  return latest;
+}
+
+/** Every pointer booked on one run, in officer-name order. No pointers → []. */
 export async function readOfficerPointers(parentRunDirectory: string): Promise<readonly Awaited<ReturnType<typeof resolveOfficerPointer>>[]> {
-  const officers = readSectionSync(parentRunDirectory, "officers");
-  if (officers === undefined) return [];
+  const officers = await readBookedOfficerPointers(parentRunDirectory);
   return Promise.all(
     Object.keys(officers).sort().map((name) => resolveOfficerPointer(officers[name], parentRunDirectory)),
   );
@@ -120,7 +132,7 @@ export async function readDirectOfficerRunPointer(
   try {
     const parentRunDirectory = runDirectoryOfSessionFile(parentSessionFile);
     const pointer = await resolveOfficerPointer(
-      readSectionSync(parentRunDirectory, "officers")?.[officer],
+      (await readBookedOfficerPointers(parentRunDirectory))[officer],
       parentRunDirectory,
     );
     if (pointer.officer !== officer) return undefined;

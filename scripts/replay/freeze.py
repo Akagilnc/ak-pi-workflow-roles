@@ -53,14 +53,10 @@ def current(run):
     path = f"{run}/current.json"
     return load_json(path) if os.path.exists(path) else {}
 
-def submissions(run):
-    """History submission rows (one per submission call, with the gate's disposition)."""
-    return [r for r in jsonl(f"{run}/history.jsonl") if r.get("type") == "submission"]
-
 def default_cut(run):
-    sealed = [r["at"] for r in submissions(run) if r.get("disposition") == "accepted" and r.get("at")]
+    sealed = [r["timestamp"] for r in jsonl(f"{run}/history.jsonl") if r.get("kind") == "sealed" and r.get("timestamp")]
     if sealed:
-        return min(sealed), "first accepted submission"
+        return min(sealed), "first sealed submission"
     rows = jsonl(f"{run}/session/session.jsonl")
     if rows and rows[0].get("timestamp"):
         return rows[0]["timestamp"], "session start"
@@ -233,23 +229,44 @@ def main():
                         f.write(repoint(text))
                 except UnicodeDecodeError:
                     shutil.copy(src_path, dest)
-    kept_history = [r for r in jsonl(f"{run}/history.jsonl") if not r.get("at") or iso(r["at"]) <= cut]
+    kept_history = [r for r in jsonl(f"{run}/history.jsonl") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
     with open(f"{frozen_run}/history.jsonl", "w") as f:
         for r in kept_history:
             f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
-    # current.json is rebuilt from the truncated history alone: the run's identity and admitted
-    # request stay, the latest submission is the last kept row, and no post-cut terminal survives.
-    kept_subs = [r for r in kept_history if r.get("type") == "submission"]
+    # current.json is rebuilt from what the run held at the cut: its identity and admitted request,
+    # the terminal only if it settled at or before the cut, and the latest sealed submission of the
+    # kept history. Nothing recorded after the cut survives.
+    kept_sealed = [r for r in kept_history if r.get("kind") == "sealed"]
     frozen_current = {k: cur[k] for k in ("invocation", "admitted") if k in cur}
     terminal = cur.get("terminal")
     if terminal and terminal.get("at") and iso(terminal["at"]) <= cut:
-        frozen_current["terminal"] = terminal  # settled at or before the cut: part of that moment's state
-    if kept_subs:
-        frozen_current["submission"] = {"latest": {k: v for k, v in kept_subs[-1].items() if k not in ("systemPrompt", "outputSchema")}}
+        frozen_current["terminal"] = terminal
+    if kept_sealed:
+        last = kept_sealed[-1].get("payload") or {}
+        frozen_current["submission"] = {"latest": {"toolCallId": last.get("toolCallId"), "role": last.get("role"), "accepted": last.get("accepted"), "at": kept_sealed[-1].get("timestamp")}}
     with open(f"{frozen_run}/current.json", "w") as f:
         json.dump(json.loads(repoint(json.dumps(frozen_current, ensure_ascii=False))), f, ensure_ascii=False, indent=2)
-    sealed_before = sum(1 for r in kept_subs if r.get("disposition") == "accepted")
-    payloads_before = [r.get("params") for r in kept_subs if r.get("disposition") == "accepted" and r.get("params") is not None]
+    payloads_before = [(r.get("payload") or {}).get("accepted") for r in kept_sealed if (r.get("payload") or {}).get("accepted") is not None]
+    sealed_before = len(payloads_before)
+    # The host original (codex / claude single file, grok directory) up to the cut.
+    session_dir = f"{run}/session"
+    for name in (os.listdir(session_dir) if os.path.isdir(session_dir) else []):
+        path = f"{session_dir}/{name}"
+        if name in ("codex.jsonl", "claude.jsonl") and os.path.isfile(path):
+            os.makedirs(f"{frozen_run}/session", exist_ok=True)
+            with open(f"{frozen_run}/session/{name}", "w") as out, open(path) as src:
+                for line in src:
+                    try:
+                        ts = json.loads(line).get("timestamp") if line.strip() else None
+                    except (json.JSONDecodeError, AttributeError):
+                        ts = None
+                    if ts and iso(ts) > cut:
+                        break
+                    out.write(line if line.endswith("\n") else line + "\n")
+        elif name == "grok-build" and os.path.isdir(path):
+            os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
+            for leaf in os.listdir(path):
+                shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
     for rel in ("session/session.jsonl", "log.jsonl"):
         if os.path.exists(f"{run}/{rel}"):
             os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
@@ -269,13 +286,13 @@ def main():
         f.write(pointer)
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
-    # The prompt and schema the host delivered ride on the history submission rows (the last
-    # row before the cut). A pi run's delivered prompt is only the appended tail, which pi-tail.ts
-    # rebuilds from the frozen worktree, so only headless hosts take it from the row.
-    # Only rows at or before the cut: the live `delivery` section is rewritten by every later turn,
-    # so it can name a post-cut prompt. With no such row a headless run cannot be replayed (run.py
-    # refuses with a pointer to pass a full --sys).
-    delivered = next((r for r in reversed(kept_subs) if r.get("systemPrompt") is not None), None)
+    # The prompt and schema each turn was started with are turn-delivery records of history.jsonl;
+    # take the last one at or before the cut. A pi run's delivered prompt is only the appended tail,
+    # which pi-tail.ts rebuilds from the frozen worktree, so only headless hosts take it from the
+    # record. With no record before the cut a headless run cannot be replayed (run.py refuses with
+    # a pointer to pass a full --sys).
+    delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)
+    delivered = (delivered_row or {}).get("payload") or None
     delivered_prompt = delivered.get("systemPrompt") if delivered else None
     sys_kind = "headless-system-prompt" if host != "pi" and isinstance(delivered_prompt, str) else "pi-tail"
     sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None

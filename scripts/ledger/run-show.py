@@ -40,27 +40,27 @@ def main():
     inv = cur.get("invocation") or {}
     print(f"run: {run}\nrole: {inv.get('role')}  host: {inv.get('host')}  model: {inv.get('provider')}/{inv.get('model')}:{inv.get('thinking')}  ticket: {inv.get('ticketNumber')}")
     history = jsonl(f"{run}/history.jsonl")
-    subs = [r for r in history if r.get("type") == "submission"]
-    resumes = [r for r in history if r.get("type") == "resume"]
 
-    # 1. last verdict payload (the role's submitted words live on the history rows)
-    print(f"submissions: {len(subs)}  resumes: {len(resumes)}")
-    if subs:
-        print("last payload:", json.dumps(subs[-1].get("params"), ensure_ascii=False)[:limit])
+    # 1. last verdict payload (the role's submitted words are on the sealed rows)
+    sealed = [r for r in history if r.get("kind") == "sealed"]
+    attempts = [r for r in history if r.get("kind") == "attempt-history"]
+    print(f"sealed rows: {len(sealed)}  attempts: {len(attempts)}")
+    if sealed:
+        accepted = (sealed[-1].get("payload") or {}).get("accepted")
+        print("last payload:", json.dumps(accepted, ensure_ascii=False)[:limit])
     else:
-        print("last payload: unavailable (no submission rows in history.jsonl)")
+        print("last payload: unavailable (no sealed rows in history.jsonl)")
     terminal = cur.get("terminal")
     if terminal:
         print(f"terminal: {terminal.get('face')} at {terminal.get('at')}")
 
-    # 2. accepted rows
-    accepted = [r for r in subs if r.get("disposition") == "accepted"]
+    # 2. sealed rows
     damaged = [r for r in history if "_damaged" in r]
-    print(f"accepted rows: {len(accepted)}" + (f"  (damaged lines: {len(damaged)})" if damaged else ""))
-    for r in accepted:
-        acc = r.get("params") or {}
+    print("status of each sealed row:" + (f"  (damaged lines: {len(damaged)})" if damaged else ""))
+    for r in sealed:
+        acc = (r.get("payload") or {}).get("accepted") or {}
         status = acc.get("status") or acc.get("countersignStatus") or acc.get("secretariatStatus") if isinstance(acc, dict) else None
-        print(f"  {r.get('at')}  {status}")
+        print(f"  {r.get('timestamp')}  {status}")
 
     # 3. host session id
     ids = []

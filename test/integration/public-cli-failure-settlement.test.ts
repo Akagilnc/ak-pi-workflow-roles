@@ -1,4 +1,4 @@
-import { readHistoryRows, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
@@ -20,7 +20,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -446,7 +446,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
 });
 
 
-test("#419 a failed attempt is kept on the resume row and a later accepted attempt replaces the failure terminal", async () => {
+test("#419 failed attempt joins history and a later accepted attempt overwrites only pointer views", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -508,17 +508,21 @@ test("#419 a failed attempt is kept on the resume row and a later accepted attem
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    // The failed leg is kept on the resume row (what the terminal said before the
-    // resumed turn replaced it); the later accepted attempt replaces the failure
-    // terminal (last write wins).
+    // Settlement must not append to the host's native session; both attempts
+    // remain readable in the run's append-only history.jsonl after resume.
+    const hostRows = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
     const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
-    const rows = readHistoryRows(runDirectory);
-    assert.deepEqual(rows.map((row) => row.type), ["resume", "submission"]);
-    assert.equal(rows[0]!.cause, "auto-resume");
-    const previous = rows[0]!.previous as { face?: string; diagnostic?: unknown };
-    assert.equal(previous.face, "error", "failed leg's terminal is retained on the resume row");
-    assert.equal(typeof previous.diagnostic, "string");
-    assert.ok((previous.diagnostic as string).length > 0);
+    const history = historyPayloads<{
+      type?: string; outcome?: { kind?: string; diagnostic?: string };
+    }>(runDirectory, "attempt-history");
+    assert.equal(history.length, 2);
+    assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
+    assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
+    assert.equal(typeof history[0]?.outcome?.diagnostic, "string");
+    assert.equal(history[1]?.outcome?.kind, "accepted");
+
+    // The terminal section is a last-write-wins view of the final accepted attempt.
     const report = terminalBodyAt(join(runDirectory, "current.json"), "report") as { outcome?: TerminalRoleOutcome };
     assert.equal(report.outcome?.kind, "accepted");
     // #836: the role's original payload, not an invented top-level status, is what
@@ -535,7 +539,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     const { io, stdout, stderr } = captureIo();
     const bounceParams = { status: "converged", report: "bounce-verdict" };
     const infraParams = { status: "converged", report: "infra-verdict" };
-    let hostCalls = 0;
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "host aborts after non-sealed submissions"],
       {
@@ -548,7 +551,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args, spawnOptions) => {
-            hostCalls += 1;
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -595,13 +597,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
         || terminal.roleOutcome.payloads.length === 0,
       true,
     );
-    // One history row per submission call (no candidate+outcome doubling); the aborted
-    // host turn is retried, and each call contributes its own two rows.
-    assert.ok(hostCalls >= 1);
-    assert.deepEqual(
-      terminal.submissions,
-      Array.from({ length: hostCalls }, () => [bounceParams, infraParams]).flat(),
-    );
+    assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
     assert.equal(result.exitCode, 1);
   });
 });

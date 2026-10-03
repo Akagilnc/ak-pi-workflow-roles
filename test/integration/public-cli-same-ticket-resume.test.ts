@@ -13,7 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { readCurrentSection, readHistoryRows, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
@@ -828,9 +828,8 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     // Re-projecting a settled child is a read, not a second host attempt.
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
-    const historyRowTypes = (runDirectory: string) => readHistoryRows(runDirectory).map((row) => row.type);
-    assert.deepEqual(historyRowTypes(seen[0]!.runDirectory), ["submission"],
-      "re-projecting a settled child appends nothing to its history");
+    const firstHistory = () => historyPayloads(seen[0]!.runDirectory, "attempt-history");
+    assert.equal(firstHistory().length, 1);
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -898,12 +897,8 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
     });
     assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-    assert.deepEqual(historyRowTypes(firstRunDirectory), ["submission", "resume"],
-      "the second real host turn adds exactly one resume row and no submission");
-    const resumeRow = readHistoryRows(firstRunDirectory)[1]!;
-    assert.equal(resumeRow.cause, "summons-resume");
-    assert.deepEqual(resumeRow.previous, { face: "report", kind: "accepted" },
-      "the resume row keeps what the terminal said before this turn replaced it");
+    assert.equal(firstHistory().length, 2,
+      "the second real host turn adds exactly one no-receipt attempt");
     assert.equal(
       (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
       "no_receipt",

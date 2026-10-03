@@ -15,11 +15,11 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { bookDirectOfficerRunPointer, DIRECT_OFFICER_RUN_POINTER_KIND } from "../../src/archivist-record-pointer.ts";
+import { bookDirectOfficerRunPointer, DIRECT_OFFICER_RUN_POINTER_KIND, OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
+import { reportRunRecord } from "../../src/sitian-facade.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_B2_RUN as GATE_JUDGE_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
@@ -191,10 +191,11 @@ function judgeRunDirectory(home: string): string {
 type GateVolumeWriter = (name: string, content: string) => Promise<void>;
 
 /**
- * Write one gate session volume and book it as a pointer in the judge run's
- * current.json `officers` section — the only way the analyst reaches officer
- * sessions. Every booked pointer is read as its own volume, so the historical
- * dispatch/officer pairs use one pointer key per file.
+ * Write one gate session volume and book it as an officer-pointer record in the
+ * judge run's history.jsonl through the real appender — the only way the analyst
+ * reaches officer sessions (the latest pointer per officer slot wins). Every
+ * booked pointer is read as its own volume, so the historical dispatch/officer
+ * pairs book one slot per file, named after the file.
  */
 function gateVolumeWriter(home: string): GateVolumeWriter {
   const runDirectory = judgeRunDirectory(home);
@@ -202,10 +203,12 @@ function gateVolumeWriter(home: string): GateVolumeWriter {
     const sessionFile = join(runDirectory, "session", "gate-volumes", name);
     await mkdir(join(runDirectory, "session", "gate-volumes"), { recursive: true });
     await writeFile(sessionFile, content, "utf8");
-    seedCurrentSection(runDirectory, "officers", {
-      ...readCurrentSection(runDirectory, "officers"),
-      [name]: { version: 1, kind: DIRECT_OFFICER_RUN_POINTER_KIND, officer: "auditor", sessionFile },
-    });
+    reportRunRecord(
+      runDirectory,
+      OFFICER_POINTER_RECORD_KIND,
+      { version: 1, kind: DIRECT_OFFICER_RUN_POINTER_KIND, officer: name, sessionFile },
+      "submission-gate",
+    );
   };
 }
 
@@ -213,7 +216,7 @@ function gateVolumeWriter(home: string): GateVolumeWriter {
 async function clearGateVolumes(home: string): Promise<void> {
   const runDirectory = judgeRunDirectory(home);
   await rm(join(runDirectory, "session", "gate-volumes"), { recursive: true, force: true });
-  seedCurrentSection(runDirectory, "officers", {});
+  await rm(join(runDirectory, "history.jsonl"), { force: true });
 }
 
 test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblings", async () => {
@@ -618,9 +621,9 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await rm(join(judgeRunDirectory(home), "session", "gate-volumes", "vanished.jsonl"));
     await assertAuditorRolesUnreadable("missing officer session", home);
 
-    // A booked officers entry that is not a typed pointer is damaged, not lawful zero.
+    // A booked officer pointer that is not a typed pointer is damaged, not lawful zero.
     await clearGateVolumes(home);
-    seedCurrentSection(judgeRunDirectory(home), "officers", { inspector: { kind: "something-else" } });
+    reportRunRecord(judgeRunDirectory(home), OFFICER_POINTER_RECORD_KIND, { officer: "inspector", kind: "something-else" }, "submission-gate");
     await assertAuditorRolesUnreadable("unknown pointer shape", home);
 
     // Accepted gate receipt with inverted span must not silently omit the volume.

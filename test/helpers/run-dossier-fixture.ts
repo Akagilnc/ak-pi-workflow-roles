@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { reportRunRecord } from "../../src/sitian-facade.ts";
+
 export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "terminal" | "officers";
 
 /** Parsed `<run>/current.json`; `{}` when absent. */
@@ -69,6 +71,11 @@ export function readHistoryRows(runDirectory: string): Record<string, unknown>[]
   return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+/** The `payload` of every history.jsonl row of one kind, in append order. */
+export function historyPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
+  return readHistoryRows(runDirectory).filter((row) => row.kind === kind).map((row) => row.payload as T);
+}
+
 /**
  * Every line of `<run>/log.jsonl`, parsed raw (`[]` when absent), optionally
  * only rows of one `kind` (host stderr, dispatch-error, post-admission-diagnostic,
@@ -86,14 +93,24 @@ export function readRunLogRows(runDirectory: string, kind?: string): Record<stri
   return kind === undefined ? rows : rows.filter((row) => row.kind === kind);
 }
 
+/**
+ * Bind a host's native session id the way a host does: one `host-session-id`
+ * row appended to the run's log.jsonl through the real appender. `current.json`
+ * `host` is derived from these rows on the next write, so it cannot be seeded.
+ */
+export function seedHostSessionId(runDirectory: string, host: string, sessionId: unknown): void {
+  mkdirSync(runDirectory, { recursive: true });
+  reportRunRecord(runDirectory, "host-session-id", { host, sessionId }, "test-fixture");
+}
+
 /** The `payload` of every log row of one kind, in append order. */
 export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
   return readRunLogRows(runDirectory, kind).map((row) => row.payload as T);
 }
 
-/** What the role submitted, in order: the `params` of every submission row in history.jsonl. */
+/** What the role submitted and had accepted, in order: `accepted` of every `sealed` row in history.jsonl. */
 export function submittedParams(runDirectory: string): unknown[] {
-  return readHistoryRows(runDirectory).filter((row) => row.type === "submission").map((row) => row.params);
+  return historyPayloads<{ accepted?: unknown }>(runDirectory, "sealed").map((payload) => payload.accepted);
 }
 
 /**

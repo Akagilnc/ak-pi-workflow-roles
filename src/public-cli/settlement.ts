@@ -68,7 +68,7 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { runCurrentPath } from "../run-dossier.ts";
-import { reportRunLog } from "../sitian-facade.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 import { writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
@@ -81,6 +81,8 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
+  /** Only the dispatched host turn may record this attempt; later reads are projections. */
+  readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   readonly courtAttemptId?: string;
@@ -119,7 +121,7 @@ export async function retainPackageFault(input: {
   // The run's log is the fallback after the session append throws, and the only
   // channel when the caller has none.
   const writeLog = (appendFailure?: ControlledFailure): void => {
-    reportRunLog(input.runDirectory, "post-admission-diagnostic", {
+    reportRunRecord(input.runDirectory, "post-admission-diagnostic", {
       version: 1,
       ...payload,
       ...(appendFailure === undefined ? {} : { retentionFailure: appendFailure }),
@@ -421,6 +423,12 @@ async function settleNoReceiptTerminal(
         kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
         ...facts, decisiveFacts: facts,
       };
+  if (scope?.recordAttemptHistory === true) {
+    await appendRunAttemptHistory(
+      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+  }
   if (scope?.previewOnly !== true) {
     writeRunTerminal(admitted.runDirectory, "no_receipt", {
       role: admitted.role,
@@ -994,6 +1002,40 @@ export async function readBoundSessionEntries(
   return await readStrictPiSessionJsonl(sessionFile) as SessionEntry[];
 }
 
+/**
+ * #419 per-attempt process history. 史必追加，指针可覆盖；指针可以覆盖的前提是史已落。
+ * Reuses the run session principal's append-only JSONL custom-entry shape
+ * (plain custom entries are state records and never enter LLM context), so no
+ * second ledger mechanism is introduced.
+ */
+export const ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history" as const;
+
+/** Complete per-attempt result as recorded in the appended history. */
+type AttemptHistoryOutcome =
+  | TerminalRoleOutcome
+  | ({ kind: "failure"; role: string } & ControlledFailure);
+
+type AttemptHistorySource = {
+  readonly role: string;
+  readonly runId: string;
+  readonly sessionFile: string;
+};
+
+/** Append the complete attempt to the package ledger before overwriting pointer artifacts (#419). */
+export async function appendRunAttemptHistory(
+  source: AttemptHistorySource,
+  outcome: AttemptHistoryOutcome,
+): Promise<void> {
+  sitianReport({
+    level: "event",
+    kind: "attempt-history",
+    subject: { runId: source.runId },
+    sessionParent: source.sessionFile,
+    payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
+    source: "settlement",
+  });
+}
+
 function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
@@ -1266,10 +1308,21 @@ function acceptedArtifactAttachmentRefs(
  * submitted payloads live in history.jsonl, the latest also in current.json
  * `submission`.
  */
-function publishAcceptedTerminal(
+async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
+  recordAttemptHistory: boolean,
   report: Record<string, unknown>,
-): TerminalArtifactRef[] {
+): Promise<TerminalArtifactRef[]> {
+  // #419: a dispatched turn appends before rewriting last-write-wins views;
+  // a later projection may refresh views but must not invent another attempt.
+  if (recordAttemptHistory) {
+    await appendRunAttemptHistory(
+      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+  }
   writeRunTerminal(admitted.runDirectory, "report", report);
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
@@ -1333,7 +1386,7 @@ async function finishLawfulSeat(
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
-    : publishDeclaredSeatTerminal(admitted, roleOutcome, entries);
+    : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
   const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
@@ -1413,18 +1466,20 @@ function doctorReportFacts(
   };
 }
 
-function publishDeclaredSeatTerminal(
+async function publishDeclaredSeatTerminal(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
-): TerminalArtifactRef[] {
+  recordAttemptHistory: boolean,
+): Promise<TerminalArtifactRef[]> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
   // Payloads are the role's submitted words: they live in history.jsonl, not here.
   const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  return publishAcceptedTerminal(admitted, {
+  return publishAcceptedTerminal(admitted, roleOutcome, coordinates, recordAttemptHistory, {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
@@ -1628,11 +1683,27 @@ export async function attachPostAuditCountersignFact(
  * Replace the leg's terminal with the controlled failure. A write failure
  * propagates: the caller notes it beside the host terminal.
  */
-export function publishFailureTerminal(
+export async function publishFailureTerminal(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
+  coordinates: DurablePrincipalCoordinates,
   onErrorPublished?: (path: string) => void,
-): TerminalArtifactRef[] {
+  recordAttemptHistory = false,
+): Promise<TerminalArtifactRef[]> {
+  // #419: a dispatched failure joins history before the terminal changes. A history
+  // write failure never strands the failure terminal; it is rethrown after it.
+  let historyFailure: unknown;
+  let historyFailed = false;
+  if (recordAttemptHistory) {
+    try {
+      await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, {
+        kind: "failure", role: admitted.role, ...failure,
+      });
+    } catch (error) {
+      historyFailure = error;
+      historyFailed = true;
+    }
+  }
   writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,
@@ -1647,6 +1718,7 @@ export function publishFailureTerminal(
   });
   const path = runCurrentPath(admitted.runDirectory);
   onErrorPublished?.(path);
+  if (historyFailed) throw historyFailure;
   return [{ kind: "error", path }];
 }
 
@@ -1673,7 +1745,7 @@ export async function settleFailureTerminalResult(
   let artifacts: TerminalArtifactRef[] = [];
   if (options.previewOnly !== true) {
     try {
-      artifacts = publishFailureTerminal(admitted, failure, options.onErrorPublished);
+      artifacts = await publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options.recordAttemptHistory === true);
     } catch (error) {
       await noteSettlementFault(
         admitted.runDirectory,

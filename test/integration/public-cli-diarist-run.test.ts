@@ -3,8 +3,9 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
+import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { rewriteRoleRunDurablePages } from "../../src/role-run-relocation.ts";
-import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentJson, readCurrentSection, seedCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -133,7 +134,7 @@ type DiaristSubmit = unknown | ((round: number, lastReask?: string) => unknown);
 function diaristEnvelopeRunner(
   submitted: DiaristSubmit,
   behavior?: {
-    readonly afterAdmit?: "throw";
+    readonly afterAdmit?: "throw" | "host-exit-1";
     readonly afterReask?: () => Promise<boolean>;
   },
 ): LegacyFauxPiRunner {
@@ -209,12 +210,14 @@ function diaristEnvelopeRunner(
     if (behavior?.afterAdmit === "throw") {
       throw new Error("host turn failed after diarist board bind");
     }
-    return scriptedTerminatingToolSession({
+    const sealed = await scriptedTerminatingToolSession({
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
       details: accepted.details,
       sessionWriteMode: sessionAlreadyPresent ? "append" : "replace",
     })(args, options);
+    // The receipt is sealed; the host CLI then reports a failed exit.
+    return behavior?.afterAdmit === "host-exit-1" ? { ...sealed, code: 1 } : sealed;
   };
 }
 
@@ -1815,9 +1818,11 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
 });
 
 /**
- * Host turn already started + board ticket already written by the accept hook,
- * then the turn fails: the run relocates under the ticket before auto-resume,
- * whose next host request must use that current durable location.
+ * The diarist seals a receipt naming the ticket, then the host turn fails. The
+ * child writes no ticket into the dossier (the parent binds it from the sealed
+ * ticketNumber after a turn that settles), so the failed leg stays unbound and
+ * the auto-resume dispatches there; the resumed turn settles, the parent binds,
+ * and the run is filed under the ticket with both attempts in its dossier.
  */
 test("ak-role diarist auto-resume uses the relocated board-bound run", async () => {
   await withTempHome(async (home) => {
@@ -1902,7 +1907,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     );
     assert.deepEqual(hostRunDirectories, [
       unboundPlacement.runDirectory,
-      ticketPlacement.runDirectory,
+      unboundPlacement.runDirectory,
     ]);
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
@@ -1919,24 +1924,21 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
 
     // Relocation keeps both attempts in the package ledger, not the host original.
     const relocatedSessionFile = join(ticketPlacement.runDirectory, "session", "session.jsonl");
-    // Relocation keeps both attempts in the run's dossier, not the host original: the
-    // failed leg on the resume row, the accepted submission, and the accepted terminal
-    // that replaced the failure.
-    const rows = readHistoryRows(ticketPlacement.runDirectory);
-    assert.deepEqual(rows.map((row) => row.type), ["resume", "submission"]);
-    assert.equal(rows[0]!.cause, "auto-resume");
-    const previous = rows[0]!.previous as { face?: string; diagnostic?: unknown };
-    assert.equal(previous.face, "error");
-    assert.equal(typeof previous.diagnostic, "string");
-    assert.ok((previous.diagnostic as string).length > 0);
-    assert.equal((rows[1] as { role?: string }).role, "diarist");
-    assert.equal(submittedParams(ticketPlacement.runDirectory).length, 1);
-    const terminal = terminalBodyAt(join(ticketPlacement.runDirectory, "current.json"), "report") as {
-      role?: string; runId?: string; outcome?: { kind?: string };
-    };
-    assert.equal(terminal.role, "diarist");
-    assert.equal(terminal.runId, runId);
-    assert.equal(terminal.outcome?.kind, "accepted");
+    const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
+    const attemptHistory = historyPayloads<{
+      type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
+    }>(ticketPlacement.runDirectory, "attempt-history");
+    assert.equal(attemptHistory.length, 2);
+    assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
+    assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
+    assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
+    assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
+    assert.equal(attemptHistory[0]?.role, "diarist");
+    assert.equal(attemptHistory[0]?.runId, runId);
+    assert.equal(attemptHistory[1]?.outcome?.kind, "accepted");
+    assert.equal(attemptHistory[1]?.role, "diarist");
+    assert.equal(attemptHistory[1]?.runId, runId);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });
@@ -1992,18 +1994,11 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     assert.equal(interrupted.exitCode, 1);
     stderr.length = 0;
 
-    const reaskThen429 = diaristEnvelopeRunner(
-      { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
-      {
-        afterReask: async () => {
-          await writeFile(
-            join(unboundPlacement.runDirectory, "session", "session.jsonl"),
-            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,
-            "utf8",
-          );
-          return true;
-        },
-      },
+    // The receipt seals and names the ticket, then the host exits 1: the parent
+    // binds the ticket from the sealed receipt and files the failed run under it.
+    const sealThenExit1 = diaristEnvelopeRunner(
+      { status: "completed", ticketNumber: TICKET, sessions: [] },
+      { afterAdmit: "host-exit-1" },
     );
     // #1058: clear the interrupted run's output so the pointer read below is
     // the one this resume hands the caller.
@@ -2015,7 +2010,7 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: immutablePrincipalAuthority,
-          piRunner: reaskThen429,
+          piRunner: sealThenExit1,
         }),
       },
     );

@@ -170,6 +170,17 @@ test("terminal write failure is noted beside the host failure terminal and does 
     }
   });
 });
+/** The run's log.jsonl takes no more appends (it stays readable, as a permission fault leaves it). */
+async function blockLogAppends(runDirectory: string): Promise<void> {
+  const log = join(runDirectory, "log.jsonl");
+  await mkdir(runDirectory, { recursive: true });
+  // A resumed dispatch finds it already blocked.
+  await writeFile(log, "", { flag: "a" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EACCES") throw error;
+  });
+  await chmod(log, 0o400);
+}
+
 test("post-admission log.jsonl unwritable keeps the host terminal and notes the stderr log write", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -189,9 +200,9 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
-          // log.jsonl as a directory makes the post-admission stderr log line append raise EISDIR.
+          // A read-only log.jsonl makes the post-admission stderr log line append raise EACCES.
           // The log line is best-effort — must not wash the already-observed child cause.
-          await mkdir(join(runDir, "log.jsonl"), { recursive: true });
+          await blockLogAppends(runDir);
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
@@ -253,9 +264,9 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const runDir = join(sessionDir, "..");
             sealedSessionFile = join(sessionDir, "session.jsonl");
-            // log.jsonl as a directory makes the post-admission stderr log line
-            // append raise EISDIR — even though the child accepted a lawful verdict.
-            await mkdir(join(runDir, "log.jsonl"), { recursive: true });
+            // A read-only log.jsonl makes the post-admission stderr log line
+            // append raise EACCES — even though the child accepted a lawful verdict.
+            await blockLogAppends(runDir);
             await mkdir(sessionDir, { recursive: true });
             await writeFile(
               join(sessionDir, "session.jsonl"),
@@ -293,9 +304,12 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
       JSON.stringify(result.terminal?.submissions),
     );
     assert.equal(stdout.length, 1);
-    // One sealed attempt: one submission row, and the accepted terminal stands.
+    // One sealed attempt: one accepted attempt-history row, and the accepted terminal stands.
     const sealedRunDirectory = join(sealedSessionFile, "..", "..");
-    assert.deepEqual(readHistoryRows(sealedRunDirectory).map((row) => row.type), ["submission"]);
+    const outcomes = readHistoryRows(sealedRunDirectory)
+      .filter((row) => row.kind === "attempt-history")
+      .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
+    assert.deepEqual(outcomes, ["accepted"]);
     const sealedTerminal = readRunTerminal(sealedRunDirectory);
     assert.equal(sealedTerminal.status, "present");
     if (sealedTerminal.status === "present") assert.equal(sealedTerminal.face, "report");
@@ -662,7 +676,10 @@ test("#953 a later success replaces an earlier failure terminal, and a later fai
       assert.equal(afterSuccess.body.diagnostic, undefined, "the old failure's body is gone, not merged");
     }
 
-    publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" });
+    await publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" }, {
+      sessionDirectory,
+      sessionFile: join(sessionDirectory, "session.jsonl"),
+    });
     const afterFailure = readRunTerminal(runDirectory);
     assert.equal(afterFailure.status, "present");
     if (afterFailure.status === "present") {

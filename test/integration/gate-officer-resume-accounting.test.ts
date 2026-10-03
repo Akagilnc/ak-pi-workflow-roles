@@ -2,7 +2,7 @@
  * Medium #753 / #821 / #879 gate-officer resume accounting (FS / real officer entry).
  * Unit coverage: test/unit/gate-officer-resume-accounting.test.ts
  * - Multiple pointers to one officer session must not multiply rounds (#753).
- * - Direct officer pointer booking upserts one current.json slot per officer (#753).
+ * - Direct officer pointer booking: the latest history officer-pointer record per officer wins (#753).
  * - Officer seat host is not parent invocation host (#821).
  * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
@@ -17,7 +17,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
+import { OFFICER_POINTER_RECORD_KIND, readBookedOfficerPointers } from "../../src/archivist-record-pointer.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
+import { writeSectionSync } from "../../src/run-dossier.ts";
+import { reportRunRecord } from "../../src/sitian-facade.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -45,6 +49,11 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+
+/** A parent run inside a ledger home: the appender only books records for a real run leaf. */
+function parentRunDirectory(root: string): string {
+  return join(root, ".ak-roles", "books", "gate-pointers", "runs", "01a0753-parent-7000-8000-000000000001@judge");
+}
 
 function iso(ms: number): string {
   return new Date(Date.parse("2026-09-08T00:00:00.000Z") + ms).toISOString();
@@ -75,17 +84,17 @@ test("#753 multiple pointers to same officer session count seals once each", asy
   await withTempRoot("ak-gate-pointer-dedupe-", async (root) => {
     const officerSession = join(root, "officer", "session", "session.jsonl");
     await writeThreeBounceOfficerSession(officerSession);
-    const parentRun = join(root, "parent");
+    const parentRun = parentRunDirectory(root);
     // Historical multi-mint shape (pre-upsert): three pointers, one session.
-    seedCurrentSection(parentRun, "officers", Object.fromEntries(
-      ["notary-aaa", "notary-bbb", "notary-ccc"].map((name) => [name, {
+    for (const name of ["notary-aaa", "notary-bbb", "notary-ccc"]) {
+      reportRunRecord(parentRun, OFFICER_POINTER_RECORD_KIND, {
         version: 1,
         kind: "direct-officer-run-pointer",
-        officer: "notary",
+        officer: name,
         sessionFile: officerSession,
         runDirectory: join(root, "officer"),
-      }]),
-    ));
+      }, "submission-gate");
+    }
 
     const rounds = await readAnalystGateCyclesFromOfficers(parentRun);
     assert.equal(rounds.length, 3, "3 seals via 3 pointers must stay 3 rounds, not 9");
@@ -100,11 +109,10 @@ test("#753 multiple pointers to same officer session count seals once each", asy
   });
 });
 
-test("#753 bookDirectOfficerRunPointer upserts one slot per officer in current.json", async () => {
+test("#753 bookDirectOfficerRunPointer upserts one slot per officer", async () => {
   await withTempRoot("ak-gate-pointer-upsert-", async (root) => {
-    const parentSession = join(root, "parent", "session", "session.jsonl");
-    await mkdir(join(parentSession, ".."), { recursive: true });
-    await writeFile(parentSession, "", "utf8");
+    const parentRun = parentRunDirectory(root);
+    const parentSession = sessionFileOf(parentRun);
     const firstSession = join(root, "officer-a", "session", "session.jsonl");
     const secondSession = join(root, "officer-b", "session", "session.jsonl");
 
@@ -121,11 +129,15 @@ test("#753 bookDirectOfficerRunPointer upserts one slot per officer in current.j
       runDirectory: join(root, "officer-b"),
     });
 
-    const officers = readCurrentSection(join(root, "parent"), "officers");
-    assert.deepEqual(Object.keys(officers), ["notary"]);
-    const body = officers.notary as { sessionFile: string; runDirectory?: string };
+    const booked = await readBookedOfficerPointers(parentRun);
+    assert.deepEqual(Object.keys(booked), ["notary"]);
+    const body = booked.notary as { sessionFile: string; runDirectory?: string };
     assert.equal(body.sessionFile, secondSession);
     assert.equal(body.runDirectory, join(root, "officer-b"));
+
+    // The public call's next current.json write projects the same latest pointer.
+    writeSectionSync(parentRun, "runState", { phase: "settled" });
+    assert.deepEqual(readCurrentSection(parentRun, "officers"), { notary: body });
   });
 });
 

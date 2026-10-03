@@ -440,18 +440,10 @@ export async function rewriteRoleRunDurablePages(input: {
   const rewrites = collectRewrites(input);
 
   // One rewriter per page kind; each keeps its own field list.
-  const pageRewriters: Readonly<Record<"admitted" | "invocation" | "runState" | "officers", (page: Record<string, unknown>) => void>> = {
+  const pageRewriters: Readonly<Record<"admitted" | "invocation" | "runState", (page: Record<string, unknown>) => void>> = {
     admitted: (page) => rewriteAdmittedRoleRunPage(page, rewrites),
     invocation: (page) =>
       rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites),
-    // Booked officer pointers: only the typed direct-officer shape.
-    officers: (page) => {
-      for (const pointer of Object.values(page)) {
-        if (isRecord(pointer) && pointer.kind === "direct-officer-run-pointer") {
-          rewriteRunDirectoryPathFieldsAgainstRewrites(pointer, OFFICER_POINTER_FIELDS, rewrites);
-        }
-      }
-    },
     runState: (page) => {
       rewriteRunDirectoryPathFieldsAgainstRewrites(page, RUN_STATE_PAGE_FIELDS, rewrites);
       if (isRecord(page.principal)) {

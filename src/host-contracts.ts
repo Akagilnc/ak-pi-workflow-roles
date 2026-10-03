@@ -136,21 +136,11 @@ export type RoleTurnActivation =
   | { readonly role: "diarist" }
   | { readonly role: "secretariat" };
 
-/**
- * Which code path decided this resume (history.jsonl `resume` rows). Mechanical
- * names: auto-resume / delivery-request re-enter after a turn without a usable
- * receipt (stuck), explicit-resume is the caller's `ak-role resume`
- * (re-dispatch), summons-resume is a gate or same-ticket peer returning the run
- * (bounce).
- */
-export type ResumeCause = "auto-resume" | "delivery-request" | "explicit-resume" | "summons-resume";
-
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
   | {
       readonly kind: "resume";
       readonly prompt: string;
-      readonly cause?: ResumeCause;
       /**
        * Stored native host session/thread id for a public explicit resume.
        * Absent on in-call auto-resume and in-gate retries; those still load
@@ -201,7 +191,7 @@ export type RoleTurnRequest = {
   readonly invocationScopeId?: string;
   /**
    * Selected host axis for this turn (#537 / ADR 0082). Projected from the
-   * public-entry seat resolution — never re-read from current.json by tools.
+   * public-entry seat resolution — never re-read from invocation.json by tools.
    */
   readonly host?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
@@ -300,6 +290,8 @@ type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<strin
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
 type AgentEndEvent = { messages: readonly HostEventMessage[] };
+/** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
+type TurnEndEvent = { readonly turnIndex: number; readonly calls: readonly ToolExecutionEvent[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
@@ -312,6 +304,7 @@ type HostEventMap = {
   session_start: SessionStartEvent;
   session_shutdown: Record<never, never>;
   agent_end: AgentEndEvent;
+  turn_end: TurnEndEvent;
   agent_settled: Record<never, never>;
   tool_execution_start: ToolExecutionEvent;
   tool_execution_update: ToolExecutionUpdateEvent;
@@ -333,6 +326,7 @@ type HostEventResultMap = {
   session_start: void;
   session_shutdown: void;
   agent_end: void;
+  turn_end: void;
   agent_settled: void;
   tool_execution_start: void;
   tool_execution_update: void;
@@ -378,6 +372,7 @@ export interface RoleHost {
   on(event: "session_start", handler: HostEventHandler<"session_start">): void;
   on(event: "session_shutdown", handler: HostEventHandler<"session_shutdown">): void;
   on(event: "agent_end", handler: HostEventHandler<"agent_end">): void;
+  on(event: "turn_end", handler: HostEventHandler<"turn_end">): void;
   on(event: "agent_settled", handler: HostEventHandler<"agent_settled">): void;
   on(event: "tool_execution_start", handler: HostEventHandler<"tool_execution_start">): void;
   on(event: "tool_execution_update", handler: HostEventHandler<"tool_execution_update">): void;

@@ -22,7 +22,6 @@ import { dirname, join } from "node:path";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
-import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
 import { errorText } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
@@ -273,13 +272,6 @@ export function copyAndRecordHostDossier(options: {
 
   if (copySuccess) {
     report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
-    // current.json names the original (path beside the session id), so a reader needs no guess.
-    try {
-      const runDirectory = dirname(options.sessionDirectory);
-      writeSectionSync(runDirectory, "host", { ...readSectionSync(runDirectory, "host"), original: landingPath });
-    } catch (error) {
-      report({ type: "native-session-warning", landingPath, sessionId: options.sessionId, error: errorText(error) });
-    }
   } else {
     // A partial attempt must not masquerade as a complete native original.
     try { rmSync(staging, { recursive: true, force: true }); }

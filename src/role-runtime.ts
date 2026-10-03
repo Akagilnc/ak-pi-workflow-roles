@@ -90,7 +90,6 @@ import {
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
 import { TicketProvenanceInputError } from "./ticket-provenance.ts";
-import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
   type GatekeeperRuntimeDependencies,
@@ -838,11 +837,8 @@ export function createDiaristRoleRuntime(
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        if (ticketNumber !== undefined) {
-          if (coords.boundTicketNumber === undefined) {
-            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
-          }
-        }
+        // The ticket binds in the public call's own process after the turn, from the sealed
+        // ticketNumber (settlement seam); this leg never writes the run's current.json.
         // Strict-schema hosts emit ticketSessions: null for a single ticket.
         const multiTicket = submitted?.ticketSessions != null;
         const singleSessions = submitted && !multiTicket

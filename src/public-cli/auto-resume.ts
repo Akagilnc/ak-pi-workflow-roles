@@ -35,7 +35,7 @@ import {
 
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
-import { reportRunLog } from "../sitian-facade.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 
 import { errorText } from "../unknown-value.ts";
 
@@ -163,7 +163,7 @@ async function retainDispatchError(
   error: unknown,
 ): Promise<{ file: string; pointerError?: unknown }> {
   // Whole-object dump: everything the thrown value carries, nothing picked.
-  const filePath = reportRunLog(admitted.runDirectory, "dispatch-exception", JSON.parse(JSON.stringify({
+  const filePath = reportRunRecord(admitted.runDirectory, "dispatch-exception", JSON.parse(JSON.stringify({
     version: 1,
     attempt,
     recordedAt: new Date().toISOString(),

@@ -23,11 +23,12 @@ export function sitianReport(input: SitianRecordInput): RecordPointer {
 }
 
 /**
- * One line in a role run's log.jsonl: the run's own diagnostics (host dossier
- * pointers, dispatch / resume / post-admission faults, host stderr). Same
- * single entry as every other record; the run is named, never a file path.
+ * One record of a role run: history.jsonl for the history kinds (see the
+ * appender), log.jsonl for the run's own diagnostics (host dossier pointers,
+ * dispatch / resume / post-admission faults, host stderr). Same single entry
+ * as every other record; the run is named, never a file path.
  */
-export function reportRunLog(
+export function reportRunRecord(
   runDirectory: string,
   kind: string,
   payload: unknown,

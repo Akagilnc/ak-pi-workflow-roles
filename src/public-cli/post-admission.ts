@@ -30,8 +30,7 @@ import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
-import { appendResumeRowSync } from "../run-dossier.ts";
-import { reportRunLog } from "../sitian-facade.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
@@ -343,7 +342,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly previewOnly?: true },
+    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -543,6 +542,7 @@ export async function presentControlledFailure<
   let terminal: TerminalResult;
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
+      recordAttemptHistory: true,
       ...(notePackageFault === undefined ? {} : { notePackageFault }),
       ...(failureInput.invocationScopeId === undefined ||
         failureInput.invocationScopeId.length === 0
@@ -681,7 +681,6 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
     ...request,
     continuation: {
       kind: "resume",
-      cause: "delivery-request",
       prompt: JSON.stringify({
         ...receiptDelivery.deliveryState(),
         deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
@@ -760,7 +759,7 @@ async function settleCompletedHostTurn<
   // machinery once the retry budget is exhausted.
   let stderrLogWriteFailure: unknown;
   try {
-    reportRunLog(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
+    reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
   } catch (error) {
     stderrLogWriteFailure = error;
     // Best-effort: the stderr log line is secondary to the host terminal. A write
@@ -900,28 +899,6 @@ async function settleCompletedHostTurn<
   return { kind: "still-missing" };
 }
 
-/**
- * The resume line in history.jsonl, written right before a resumed turn is
- * dispatched (every dispatch site: the normal turn and the receipt-delivery
- * request). It is history, not ledger authority (#833): a history that cannot
- * be written is retained as a fault and the resume proceeds.
- */
-async function recordResumeBeforeDispatch(
-  runDirectory: string,
-  continuation: RoleTurnRequest["continuation"],
-): Promise<void> {
-  if (continuation.kind !== "resume") return;
-  try {
-    appendResumeRowSync(runDirectory, continuation.cause);
-  } catch (historyError) {
-    await retainPackageFault({
-      runDirectory,
-      diagnostic: `resume history row write failed before dispatch: ${describeErrorIdentity(historyError)}`,
-      error: historyError,
-    });
-  }
-}
-
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -1027,10 +1004,10 @@ export async function dispatchPostAdmissionTurn<
       try {
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
-              courtScope)
+              { ...courtScope, recordAttemptHistory: true })
           : await attachRecordedSubmissions(admitted,
               await settleHostEndedNoReceipt(admitted, env.principalAuthority,
-                courtScope, receiptDelivery.issuedDeliveryRequests()) as T,
+                { ...courtScope, recordAttemptHistory: true }, receiptDelivery.issuedDeliveryRequests()) as T,
               courtScope);
         if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
         result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
@@ -1205,7 +1182,6 @@ export async function dispatchPostAdmissionTurn<
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
-      await recordResumeBeforeDispatch(admitted.runDirectory, turnRequest.continuation);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
@@ -1283,7 +1259,6 @@ export async function dispatchPostAdmissionTurn<
           ...(env.signal === undefined ? {} : { signal: env.signal }),
         };
         receiptDelivery.recordDeliveryRequest();
-        await recordResumeBeforeDispatch(admitted.runDirectory, deliveryTurnRequest.continuation);
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
@@ -1499,7 +1474,6 @@ export function resumeTurnRequestProjectionOptions(
       : { correlationId: env.correlationId ?? admitted.correlationId }),
     continuation: {
       kind: "resume",
-      cause: request.summons === undefined ? "explicit-resume" : "summons-resume",
       prompt,
     },
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
@@ -1862,7 +1836,6 @@ export async function runPostAdmissionSeatResume<
               ...firstTurn,
               continuation: {
                 kind: "resume",
-                cause: "auto-resume",
                 prompt: RESUME_TRANSPORT_ENVELOPE,
               },
             };
@@ -1993,7 +1966,7 @@ async function writeResumeDiagnostic(
   failure: ControlledFailure,
   role?: AdmittedRoleInvocation["role"],
 ): Promise<string> {
-  return reportRunLog(runDirectory, "resume-diagnostic", {
+  return reportRunRecord(runDirectory, "resume-diagnostic", {
     runId,
     ...(role === undefined ? {} : { role }),
     diagnostic: failure.diagnostic,
@@ -2033,7 +2006,6 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
-        cause: "auto-resume",
         prompt: buildAutoResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
           ...pickEngineAxis({

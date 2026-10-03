@@ -27,14 +27,18 @@ async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
-  /** When set, execute throws and the rejected/infrastructure history row is written (non-sealed paths). */
+  /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
 }): Promise<void> {
   const toolName = toolNameForRole(input.role);
   let registered: HostToolDefinition | undefined;
+  const handlers = new Map<string, (...args: any[]) => unknown>();
   const host = {
     registerTool(tool: HostToolDefinition) {
       registered = tool;
+    },
+    on(event: string, handler: (...args: any[]) => unknown) {
+      handlers.set(event, handler);
     },
   } as RoleHost;
   createSubmissionLedgerHost(
@@ -72,13 +76,20 @@ async function driveLedgerProducer(input: {
         },
         abort() {},
       } as HostContext;
-    // #836: recording happens on execute from LLM params (one history row per call).
+    // #836: recording happens on execute from LLM params; turn_end only books roundContext.
     // Fixture details stand in for the model tool-call arguments.
     try {
       await registered.execute(input.toolCallId, input.details, undefined, undefined, context);
     } catch (error) {
       if (!Object.hasOwn(input, "executeError")) throw error;
-      // Non-sealed path: the history row is already written; swallow for fixtures.
+      // Non-sealed path: candidate + outcome already on the ledger; swallow for fixtures.
+    }
+    const turnEnd = handlers.get("turn_end");
+    if (turnEnd !== undefined) {
+      await turnEnd({
+        turnIndex: 0,
+        calls: [{ toolCallId: input.toolCallId, toolName }],
+      }, context);
     }
 }
 

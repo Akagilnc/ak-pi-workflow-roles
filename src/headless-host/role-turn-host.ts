@@ -12,7 +12,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { sessionDirectoryOf } from "../role-run-placement.ts";
-import { writeSectionSync } from "../run-dossier.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -494,10 +494,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           // #959: navigator prose exit — no closed JSON schema on claude either.
           if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
         }
-        writeSectionSync(request.runDirectory, "delivery", {
+        // What this turn was started with: one history record per start.
+        reportRunRecord(request.runDirectory, "turn-delivery", {
           systemPrompt,
           ...(deliveredSchema === undefined ? {} : { outputSchema: deliveredSchema }),
-        });
+        }, "headless-host");
       } catch (setupError) {
         await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
         throw setupError;
