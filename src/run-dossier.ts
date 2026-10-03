@@ -55,7 +55,11 @@ export function readSectionSync(
   section: CurrentSection,
 ): Record<string, unknown> | undefined {
   const value = readCurrentSync(runDirectory)?.[section];
-  return isRecord(value) ? value : undefined;
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new TypeError(`${RUN_CURRENT_FILE} ${section} section is not an object: ${runCurrentPath(runDirectory)}`);
+  }
+  return value;
 }
 
 /** Replace one section, creating `current.json` when this is the first write. */

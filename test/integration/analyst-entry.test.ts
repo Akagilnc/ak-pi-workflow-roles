@@ -1088,8 +1088,9 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     await rm(join(runDirectory, "artifacts", "report.json"));
-    // Whole-file corruption: current.json carries the runState section.
-    await writeFile(join(runDirectory, "current.json"), "{broken", "utf8");
+    // The runState section is damaged (not an object); the other sections stay readable.
+    const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as Record<string, unknown>;
+    await writeFile(join(runDirectory, "current.json"), JSON.stringify({ ...current, runState: "{broken" }), "utf8");
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
