@@ -12,6 +12,8 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -1071,9 +1073,21 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     clearCurrentSection(runDirectory, "terminal");
-    // Fact path is state.jsonl (#1161); damage the live run-state row, not the derived render.
-    // Payload is present but not a valid identity object — must stay unreadable, not no-receipt.
-    seedCurrentSection(runDirectory, "runState", { broken: "{broken" });
+    // Same illegal value as the pre-move current.json runState: the string "{broken".
+    // Fact path is state.jsonl (#1161); do not change the failure shape into an object.
+    appendFileSync(
+      join(runDirectory, "state.jsonl"),
+      `${JSON.stringify({
+        level: "event",
+        kind: "run-state",
+        identity: randomUUID(),
+        timestamp: "2026-10-04T00:00:00.000Z",
+        host: "pi",
+        source: "test-seed",
+        payload: "{broken",
+      })}\n`,
+      "utf8",
+    );
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

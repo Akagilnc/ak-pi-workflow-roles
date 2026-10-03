@@ -113,13 +113,31 @@ function fileBytes(path: string): number | undefined {
   }
 }
 
-/** The payload of the last row of `kind`, or undefined. */
-function lastPayload(rows: readonly Record<string, unknown>[], kind: string): Record<string, unknown> | undefined {
+/**
+ * Payload of the last row of `kind`, or undefined when no such row exists.
+ * Non-object payloads are returned as-is: a later illegal whole page must not
+ * be washed into an older valid page or into absence.
+ */
+function lastPayloadOfKind(rows: readonly Record<string, unknown>[], kind: string): unknown {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index]!;
-    if (row.kind === kind && isRecord(row.payload)) return row.payload;
+    if (row.kind === kind) return row.payload;
   }
   return undefined;
+}
+
+/** Last whole-page payload as an object, or undefined when absent; illegal values throw. */
+function lastPagePayload(
+  rows: readonly Record<string, unknown>[],
+  kind: string,
+  runDirectory: string,
+): Record<string, unknown> | undefined {
+  const payload = lastPayloadOfKind(rows, kind);
+  if (payload === undefined) return undefined;
+  if (!isRecord(payload)) {
+    throw new TypeError(`${RUN_STATE_FILE} ${kind} payload is not an object: ${runDirectory}`);
+  }
+  return payload;
 }
 
 /** `current.json` as the rows say right now. */
@@ -132,7 +150,7 @@ function render(
 ): Record<string, unknown> {
   const whole: Record<string, unknown> = {};
   for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
-    const page = lastPayload(state, PAGE_ROW_KIND[section]);
+    const page = lastPayloadOfKind(state, PAGE_ROW_KIND[section]);
     if (page !== undefined) whole[section] = page;
   }
   let latest: Record<string, unknown> | undefined;
@@ -242,19 +260,20 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  return lastPayload(state.rows, PAGE_ROW_KIND[section]);
+  return lastPagePayload(state.rows, PAGE_ROW_KIND[section], runDirectory);
 }
 
 /**
  * The fact itself: a whole-page section as its last row says. The public call
  * reads its own facts here, not from the rendering, so a rendering that is stale
  * or refused changes nothing. Absence of a row is absence — never a `current.json`
- * fallback. A row file that cannot be read fails closed.
+ * fallback. A row file that cannot be read fails closed. An illegal (non-object)
+ * latest payload keeps its failure identity; it is not filtered into absence.
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  return lastPayload(state.rows, PAGE_ROW_KIND[section]);
+  return lastPagePayload(state.rows, PAGE_ROW_KIND[section], runDirectory);
 }
 
 /** Every row of history.jsonl, in order; a file that cannot be read throws. */

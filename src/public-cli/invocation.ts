@@ -684,7 +684,7 @@ export async function recordLaunchedPiIdentity(
 }
 
 /**
- * Observed role-package launch provenance written onto the same current.json invocation section.
+ * Observed role-package launch provenance written onto the same state.jsonl invocation row.
  * Values are field observations from the public CLI activation seam — never fixed schema markers.
  */
 export type LaunchedRolePackageIdentity = {
@@ -1810,7 +1810,7 @@ export type AdmitJudgeInvocationOptions = {
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
-  /** Effective model for this invocation — written onto the current.json invocation section. */
+  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons (起居录 / parent board). Never parsed from prose. */
   assertedTicketNumber?: number;
@@ -2118,7 +2118,7 @@ export type AdmitCountersignInvocationOptions = {
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
-  /** Effective model for this invocation — written onto the current.json invocation section. */
+  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
   model?: InvocationEffectiveModel;
   correlationId?: string;
   /** Same-ticket lookup may select an existing run before a new run is persisted. */
@@ -2205,7 +2205,7 @@ export type AdmitFixerInvocationOptions = {
   prerequisitesPath?: string;
   project?: string;
   createRunId?: () => string;
-  /** Effective model for this invocation — written onto the current.json invocation section. */
+  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
@@ -2360,7 +2360,7 @@ export type AdmitReviewerInvocationOptions = {
   project?: string;
   createRunId?: () => string;
   correlationId?: string;
-  /** Effective model for this invocation — written onto the current.json invocation section. */
+  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
@@ -2413,7 +2413,7 @@ export type AdmitMergerInvocationOptions = {
   attachmentPaths: readonly string[];
   project?: string;
   createRunId?: () => string;
-  /** Effective model for this invocation — written onto the current.json invocation section. */
+  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;

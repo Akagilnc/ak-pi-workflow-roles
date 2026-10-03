@@ -28,7 +28,7 @@ import {
 } from "./role-run-relocation.ts";
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
-  readBoardTicketNumber,
+  readMigrationBoardTicketNumber,
 } from "./run-ticket-number.ts";
 
 import { isEnoent } from "./unknown-value.ts";
@@ -151,7 +151,7 @@ async function planBookMoves(
       // #863: board typed ticket on an unbound leaf → place under that ticket.
       // No board ticket → stay unbound. Never invent from prose or derivation.
       const boardTicket = leaf.isDirectory
-        ? await readBoardTicketNumber(leaf.sourcePath)
+        ? await readMigrationBoardTicketNumber(leaf.sourcePath)
         : undefined;
       if (parsed !== undefined && boardTicket !== undefined) {
         targetPath = destinationRunDirectory(
@@ -318,7 +318,7 @@ export async function relocateBoardBoundUnboundRunsInBook(
     const parsed = parseRunLeaf(entry.name);
     if (parsed === undefined) continue;
     const sourcePath = join(unboundRuns, entry.name);
-    const boardTicket = await readBoardTicketNumber(sourcePath);
+    const boardTicket = await readMigrationBoardTicketNumber(sourcePath);
     if (boardTicket === undefined) continue;
     const targetPath = destinationRunDirectory(
       booksDirectory,

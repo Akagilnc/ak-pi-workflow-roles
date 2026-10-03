@@ -165,7 +165,7 @@ export async function writeRoleRunState(
 }
 
 /**
- * Uninterpreted principal wire as stored on current.json runState.
+ * Uninterpreted principal wire as stored on the state.jsonl run-state row.
  * Legacy rows may omit sessionFile; only DurablePrincipalAuthority decodes it.
  */
 type RoleRunPrincipalWire = {
@@ -257,12 +257,12 @@ function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
 }
 
 async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | undefined> {
-  // Only true absence (no current.json / no runState section) is a lawful "no
-  // run state yet". A real read failure (EISDIR, EACCES, ...) or a JSON.parse
-  // SyntaxError on a present file is genuine infrastructure/data damage and
-  // must keep its own identity — callers route it through the controlled-failure
-  // seam (markRunRunning/markRunTerminal/recordCurrentCourt) instead of it
-  // being relabeled "run state missing" (#836). readPageSync throws those.
+  // Only true absence (no state.jsonl run-state row) is a lawful "no run state
+  // yet". A real read failure (EISDIR, EACCES, ...) or an illegal latest payload
+  // is genuine infrastructure/data damage and must keep its own identity —
+  // callers route it through the controlled-failure seam
+  // (markRunRunning/markRunTerminal/recordCurrentCourt) instead of it being
+  // relabeled "run state missing" (#836). readPageSync throws those.
   return readPageSync(runDirectory, "runState");
 }
 
@@ -274,15 +274,15 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
   readonly state: RoleRunState;
 } {
   if (!isRecord(raw)) {
-    throw new TypeError("Invalid current.json runState");
+    throw new TypeError("Invalid state.jsonl run-state");
   }
   const record = raw;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
-    throw new TypeError("Invalid current.json runState");
+    throw new TypeError("Invalid state.jsonl run-state");
   }
   const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
   if (role === undefined) {
-    throw new TypeError("Invalid current.json runState");
+    throw new TypeError("Invalid state.jsonl run-state");
   }
   if (
     record.state !== "admitted" &&
@@ -290,9 +290,9 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
     record.state !== "resumable" &&
     record.state !== "terminal"
   ) {
-    throw new TypeError("Invalid current.json runState");
+    throw new TypeError("Invalid state.jsonl run-state");
   }
-  if (typeof record.bookKey !== "string") throw new TypeError("Invalid current.json runState");
+  if (typeof record.bookKey !== "string") throw new TypeError("Invalid state.jsonl run-state");
   return {
     runId: record.runId,
     role,
@@ -309,8 +309,8 @@ async function readRoleRunStateDisk(
   if (raw === undefined) return undefined;
   const identity = parseRoleRunIdentity(raw, runDirectory);
   const record = raw as Record<string, unknown>;
-  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid current.json runState");
-  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid current.json runState");
+  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid state.jsonl run-state");
+  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid state.jsonl run-state");
   const storedRunDirectory =
     typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
       ? record.runDirectory
@@ -1119,7 +1119,7 @@ async function loadResumableRunRecord(
   let sourceRun: NotarySourceRunLocator | undefined;
   try {
     const record = readPageSync(run.runDirectory, "admitted");
-    if (record === undefined) throw new Error("current.json has no admitted section");
+    if (record === undefined) throw new Error("state.jsonl has no admitted-request row");
     {
       const storedRunDirectory =
         typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""

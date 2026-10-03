@@ -423,7 +423,7 @@ async function rewriteNestedMachinePathPages(
 }
 
 /**
- * Rewrite the admitted / invocation / runState sections of current.json (path fields (attachment
+ * Rewrite the admitted / invocation / runState fact rows (path fields: attachment
  * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
  * session seams. Callers may rewrite before or after the filesystem move/copy:
  * `pagesDirectory` is where the pages currently live on disk; path strings that

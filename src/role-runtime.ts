@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readPageSync, runCurrentPath } from "./run-dossier.ts";
+import { readPageSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -775,7 +775,7 @@ function readRoleRunCoordinates(ctx: HostContext, label: string): {
   if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
   const admitted = readPageSync(runDirectory, "admitted");
   if (typeof admitted?.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
-    throw new Error(`${label} current.json admitted section missing projectRoot (${runCurrentPath(runDirectory)})`);
+    throw new Error(`${label} state.jsonl admitted-request row missing projectRoot (${join(runDirectory, RUN_STATE_FILE)})`);
   }
   return {
     runDirectory,

@@ -251,7 +251,7 @@ export async function readEngineDetourToolUsage(input: {
   return { callCount: calls.length, calls };
 }
 
-/** One shared current.json invocation-section reader (ENOENT → undefined; other errors propagate). */
+/** One shared state.jsonl invocation-row reader (absent → undefined; other errors propagate). */
 function readInvocationRecord(
   runDirectory: string,
 ): Record<string, unknown> | undefined {

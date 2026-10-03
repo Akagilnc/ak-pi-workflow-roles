@@ -63,7 +63,7 @@ export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);
 
 /**
- * Read lifecycle state from the current.json runState section.
+ * Read lifecycle state from the state.jsonl run-state fact row.
  * Used only to distinguish live in-flight runs from terminal no-receipt.
  */
 async function readExistingRunLifecycleState(

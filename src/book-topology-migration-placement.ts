@@ -15,7 +15,7 @@ import { isUnboundRunDirectory, roleRunPlacement } from "./role-run-placement.ts
 export { isUnboundRunDirectory };
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
-  readBoardTicketNumber,
+  readMigrationBoardTicketNumber,
   readMigrationDerivedTicketNumber,
 } from "./run-ticket-number.ts";
 import { readPageSync } from "./run-dossier.ts";
@@ -136,7 +136,7 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
   readonly ticketNumber: number | undefined;
   readonly derivation: MigratingRunTicketDerivation | undefined;
 }> {
-  const boardTicket = await readBoardTicketNumber(runDirectory);
+  const boardTicket = await readMigrationBoardTicketNumber(runDirectory);
   if (boardTicket !== undefined) {
     return {
       ticketNumber: boardTicket,
