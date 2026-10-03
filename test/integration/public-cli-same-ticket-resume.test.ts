@@ -13,6 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
+import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -1214,6 +1215,10 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
       (await readdir(join(coderRunDirectory, "session"))).sort(),
       ["session.jsonl", "worker-submission-gate"],
     );
+    // The analyst's reader finds the summoned inspector through the officer pointer the
+    // gate booked, and counts its rounds from that officer's own session.
+    const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
+    assert.deepEqual(rounds.map(({ officer, status }) => ({ officer, status })), [{ officer: "inspector", status: "converged" }]);
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true });

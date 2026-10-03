@@ -13,7 +13,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
-import { assertNoRetiredDossierFiles, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { assertNoRetiredDossierFiles, historyPayloads, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -649,6 +649,14 @@ for (const scenario of ["log-unwritable", "history-unwritable", "re-asked-round"
     await writeFile(fakeBin, `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from "node:fs";
 appendFileSync(${JSON.stringify(startsFile)}, "start\\n");
+// What this start was handed: the system prompt file and the closed schema (removed after the turn).
+const args = process.argv.slice(2);
+const instructions = args.find((arg) => arg.startsWith("model_instructions_file="));
+const schemaAt = args.indexOf("--output-schema");
+appendFileSync(${JSON.stringify(join(root, "handed.jsonl"))}, JSON.stringify({
+  systemPrompt: readFileSync(JSON.parse(instructions.slice("model_instructions_file=".length)), "utf8"),
+  outputSchema: JSON.parse(readFileSync(args[schemaAt + 1], "utf8")),
+}) + "\\n");
 readFileSync(0, "utf8");
 const events = [
   { type: "thread.started", thread_id: "thread-1" },
@@ -714,6 +722,8 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
         assert.equal(packageFaultNotes(root).length > 0, true, "the lost turn-delivery row is noted");
       } else {
         assert.equal(delivered, starts, "one turn-delivery row per CLI start");
+        const handed = (await readFile(join(root, "handed.jsonl"), "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        assert.deepEqual(historyPayloads(root, "turn-delivery"), handed, "each row is what that start was handed");
         assert.equal(starts, scenario === "re-asked-round" ? 2 : 1);
       }
     } finally {

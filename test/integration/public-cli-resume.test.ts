@@ -439,6 +439,13 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       { blockReportPublication: false },
     );
 
+    // What the run declares on stderr outside the CLI's own io.
+    const declared: string[] = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
+      declared.push(String(chunk));
+      return (realWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof process.stderr.write;
     try {
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then ledger read fails under 429"],
         {
@@ -464,6 +471,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           },
         },
       );
+      process.stderr.write = realWrite;
+      // The unreadable history file is named in current.json and declared once beside it.
+      assert.equal(declared.some((line) => line.includes("history.jsonl cannot be read")), true);
       // Ledger damage is a package note. It does not invent a host failure,
       // and a lawful no_receipt stops the loop.
       assert.equal(dispatches(), 1);
@@ -511,6 +521,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
     } finally {
+      process.stderr.write = realWrite;
       await restoreWritable();
     }
   });
