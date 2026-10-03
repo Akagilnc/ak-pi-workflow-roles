@@ -431,7 +431,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
     assert.deepEqual(blank.authorityRefs, ["CLAUDE.md"]);
     assert.equal("taskPath" in blank, false);
     await assert.rejects(
-      () => access(join(blank.runDirectory, "attachments", "task.md")),
+      () => access(join(blank.runDirectory, "task.md")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
 
@@ -454,7 +454,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
     assert.deepEqual(admitted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
     assert.equal("taskPath" in admitted, false);
     await assert.rejects(
-      () => access(join(admitted.runDirectory, "attachments", "task.md")),
+      () => access(join(admitted.runDirectory, "task.md")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
 

@@ -1273,20 +1273,6 @@ async function freezeRegularFileAttachment(
   };
 }
 
-/**
- * A seat's frozen input file (task, fix packet, prerequisites, request manifest,
- * merger input) lives under the run's attachments/, so the run directory itself
- * holds only the four dossier files. Created through the ledger's
- * symlink-rejecting tree walk.
- */
-function seatInputPath(
-  placed: { readonly ledgerHome: string; readonly attachmentsDirectory: string },
-  name: string,
-): string {
-  ensureRealDirectoryTree(placed.ledgerHome, placed.attachmentsDirectory);
-  return join(placed.attachmentsDirectory, name);
-}
-
 /** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
 async function freezeAttachments(
   ledgerHome: string,
@@ -1498,7 +1484,7 @@ export async function admitPublicRole(
         attachmentPaths,
         ...project,
         placedFields: async (placed) => {
-          const taskPath = seatInputPath(placed, "task.md");
+          const taskPath = join(placed.runDirectory, "task.md");
           await writeFile(taskPath, instruction, "utf8");
           return { phase, taskPath };
         },
@@ -1543,14 +1529,14 @@ export async function admitPublicRole(
         placedFields: async (placed) => {
           let prerequisitesPath: string | undefined;
           if (prerequisitesSource !== undefined) {
-            prerequisitesPath = seatInputPath(placed, "prerequisites.json");
+            prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
             await writeFile(
               prerequisitesPath,
               `${JSON.stringify(prerequisites, null, 2)}\n`,
               "utf8",
             );
           }
-          const packetPath = seatInputPath(placed, "fix-packet.md");
+          const packetPath = join(placed.runDirectory, "fix-packet.md");
           await writeFile(packetPath, instruction, "utf8");
           return {
             phase,
@@ -1598,7 +1584,7 @@ export async function admitPublicRole(
           // #1088: explicit --pr only. Unbound PR is located by the LLM via host CLI.
           let requestManifestPath: string | undefined;
           if (manifestCanonicalJson !== undefined) {
-            requestManifestPath = seatInputPath(placed, "request-manifest.json");
+            requestManifestPath = join(placed.runDirectory, "request-manifest.json");
             await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
           }
           return {
@@ -1787,7 +1773,7 @@ export async function admitPublicRole(
             resolutionScope: [...derived.resolutionScope],
             authorizedChecks: [],
           });
-          const mergerInputPath = seatInputPath(placed, "merger-input.json");
+          const mergerInputPath = join(placed.runDirectory, "merger-input.json");
           await writeFile(
             mergerInputPath,
             `${JSON.stringify(mergerInput, null, 2)}\n`,

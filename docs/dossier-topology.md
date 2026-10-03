@@ -16,7 +16,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
     │       ├── history.jsonl                历史（只追加）
     │       ├── log.jsonl                    司天台流水（只追加）
     │       ├── session/                     宿主原件（见下）
-    │       └── attachments/                 附件与各席受理时冻结的输入（task.md、fix-packet.md、prerequisites.json、request-manifest.json、merger-input.json）；都没有时不建
+    │       └── attachments/                 有附件时才有
     ├── unbound/
     │   └── runs/<runId>@<role>/             同上形状
     ├── navigator/<work-subject>/
@@ -71,13 +71,21 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 - grok：`session/grok-build/` 目录（`chat_history.jsonl`、`usage.json`）。
 - hermes：原件在 sqlite，沿 ADR 0086 既有边界暂不覆盖，其余三文件照常。
 
-headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合、无卷生命周期事实、导航员到场等 custom entry（pi 格式）。它有读者且不可删：太史取帧起止与工具区间（`analyst-ledger`）、票轨迹（`ticket-trajectory`）、起居郎取原生会话区间（`ticket-provenance`）、settlement 取无卷生命周期事实与导航员到场；它与宿主原件同在 `session/`。
+headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合、无卷生命周期事实、导航员到场等 custom entry（pi 格式），settlement 与太史读它；它与宿主原件同在 `session/`。
 
 ## 读法
 
 - 大理寺、给事中、符宝郎读本票 `records.jsonl` 与被审腿 `current.json`。
 - 御史台另读被审腿宿主原件，只 grep 工具调用。
 - `history.jsonl` 只在争议涉及早先轮次时读；`log.jsonl` 查故障才翻。
+
+## 经陛下允许多出来的项
+
+陛下 2026-10-03 逐字：「允许多出来」（本票施工会话，源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-worktree-roles-1161/6d409146-5717-4ff6-83cf-728f50533a24.jsonl`，对施工者列出的这三样的答复）。run 目录里四文件之外保留：
+
+- `session/session.jsonl`（headless／ACP 腿包自己写的那份）：太史取帧起止与工具区间（`analyst-ledger`）、票轨迹（`ticket-trajectory`）、起居郎取原生会话区间（`ticket-provenance`）、settlement 取无卷生命周期事实与导航员到场都读它。
+- `session/worker-submission-gate/`：worker 闸跨续跑保存的状态（提交基线、已提醒标记、缺理由催办次数），续跑时读回；由 ADR 0065 的 `createRecordSession` 持有，不是日志副本。
+- 各席受理时冻结的输入，在 run 目录顶层：`task.md`、`fix-packet.md`、`prerequisites.json`、`request-manifest.json`、`merger-input.json`，席位运行时按路径读取。
 
 ## 边界
 
@@ -91,5 +99,5 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 
 - 交卷行没有「本轮其余工具调用 id」：turn_end 事件已删，同一轮的其它工具调用在宿主原件里，御史台 grep 得到；需要时补法是在回合边界追加一行 `{type:"round", calls}`。
 - 本腿 token 用量没有进 `current.json`：pi 可由 `session.jsonl` 汇总，grok 有 `usage.json`，codex、claude 的原件里取不到统一口径，按票面「取不到即为缺口」不补。
-- gate 官员的嵌套 session 在 `session/worker-submission-gate/`：它是 worker 闸跨续跑保存的状态（提交基线、已提醒标记、缺理由催办次数），由 ADR 0065 的 `createRecordSession` 持有，续跑时读回，不是日志副本，故保留在 `session/` 之下。
+- 四文件之外的保留项见上节「经陛下允许多出来的项」。
 - 历史上同一 toolCallId 的重试：每次调用各记一行，不再合并。

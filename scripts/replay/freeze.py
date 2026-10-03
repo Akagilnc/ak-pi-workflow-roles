@@ -206,6 +206,17 @@ def main():
             if live.startswith(home):  # historical command text often spells the home as ~
                 text = text.replace("~" + live[len(home):], frozen)
         return text
+    for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
+        src_path = f"{run}/{name}"
+        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "log.jsonl"):
+            continue  # dossier files are rebuilt truncated below
+        try:
+            with open(src_path, encoding="utf-8") as f:
+                text = f.read()
+            with open(f"{frozen_run}/{name}", "w", encoding="utf-8") as f:
+                f.write(repoint(text))
+        except UnicodeDecodeError:
+            shutil.copy(src_path, f"{frozen_run}/{name}")
     if os.path.isdir(f"{run}/attachments"):  # only what the run held at the cut
         for root, _dirs, files in os.walk(f"{run}/attachments"):
             for name in files:
