@@ -15,6 +15,7 @@
  * `ak-role resume`) mints a new one. Never courtAttemptId, never Pi session
  * toolResult join keys, and never a detour-owned sidecar file.
  */
+import { readSectionSync } from "./run-dossier.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -257,15 +258,7 @@ export async function readEngineDetourToolUsage(input: {
 function readInvocationRecord(
   runDirectory: string,
 ): Record<string, unknown> | undefined {
-  try {
-    const raw = JSON.parse(
-      readFileSync(join(runDirectory, "invocation.json"), "utf8"),
-    ) as unknown;
-    return isRecord(raw) ? raw : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw error;
-  }
+  return readSectionSync(runDirectory, "invocation");
 }
 
 /** True when invocation.json carries a non-empty engine axis. */

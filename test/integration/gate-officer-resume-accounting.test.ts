@@ -8,6 +8,7 @@
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
  * - Station-child: #1092 drops case-dossier pointer delivery; dialogue stays peer-only.
  */
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
@@ -155,16 +156,12 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     await mkdir(join(home, ".pi", "agent"), { recursive: true });
     await writeFile(join(home, ".pi", "agent", "auth.json"), `${JSON.stringify({ "openai-codex": {} })}\n`, "utf8");
 
-    await writeFile(
-      join(sourceRunPath, "invocation.json"),
-      `${JSON.stringify({
-        role: "countersign",
-        runId: "01a082100-0000-7000-8000-0000000p001",
-        host: "claude",
-        model: "sonnet",
-      })}\n`,
-      "utf8",
-    );
+    seedCurrentSection(sourceRunPath, "invocation", {
+      role: "countersign",
+      runId: "01a082100-0000-7000-8000-0000000p001",
+      host: "claude",
+      model: "sonnet",
+    });
 
     const leaf = {
       type: "message",
@@ -216,9 +213,9 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     });
     assert.equal(projected.result.status, "converged");
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
-    const nestedInvocation = JSON.parse(
-      await readFile(join(projected.summoned!.runDirectory!, "invocation.json"), "utf8"),
-    ) as { host?: string; model?: string; provider?: string };
+    const nestedInvocation = readCurrentSection(projected.summoned!.runDirectory!, "invocation") as {
+      host?: string; model?: string; provider?: string;
+    };
     assert.equal(
       nestedInvocation.host,
       "pi",
@@ -385,7 +382,6 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       attachments: [],
       runDirectory: runDir,
       principal: fixturePrincipal(sessionDirectory, sessionFile),
-      admittedRequestPath: join(runDir, "admitted-request.json"),
       sourceRunPath: join(root, "parent-source"),
       sourceRun: {
         runDirectory: join(root, "parent-source"),

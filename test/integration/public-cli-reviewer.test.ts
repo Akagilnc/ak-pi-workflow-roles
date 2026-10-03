@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -489,9 +490,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
         "run-reviewer-admit-001@reviewer",
       ),
     );
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as Record<string, unknown>;
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted");
     assert.equal(persisted.role, "reviewer");
     assert.equal(persisted.baseRevision, "origin/main");
     assert.equal(persisted.lens, "correctness");
@@ -499,9 +498,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
     assert.deepEqual(persisted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
     assert.equal("taskPath" in persisted, false);
     assert.equal("taskSha256" in persisted, false);
-    const persistedRefs = JSON.parse(
-      await readFile(withRefs.admittedRequestPath, "utf8"),
-    ) as Record<string, unknown>;
+    const persistedRefs = readCurrentSection(withRefs.runDirectory, "admitted");
     assert.deepEqual(persistedRefs.authorityRefs, [
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
@@ -629,7 +626,7 @@ test("default dual-lens admits both axes without a parent run", async () => {
     await assert.rejects(
       () => access(join(
         home, ".ak-roles", "books", bookKey, "unbound", "runs",
-        "run-cli-reviewer-blank-ok@reviewer", "admitted-request.json",
+        "run-cli-reviewer-blank-ok@reviewer", "current.json",
       )),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
@@ -1009,15 +1006,9 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
 
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as Record<string, unknown>;
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted");
     persisted.authorityRefs = ["", "The system SHALL launch two workers"];
-    await writeFile(
-      admitted.admittedRequestPath,
-      `${JSON.stringify(persisted, null, 2)}\n`,
-      "utf8",
-    );
+    seedCurrentSection(admitted.runDirectory, "admitted", persisted);
 
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
@@ -1027,11 +1018,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
 
     persisted.authorityRefs = ["https://example.com/durable-ref"];
     persisted.lens = "all";
-    await writeFile(
-      admitted.admittedRequestPath,
-      `${JSON.stringify(persisted, null, 2)}\n`,
-      "utf8",
-    );
+    seedCurrentSection(admitted.runDirectory, "admitted", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
@@ -1040,11 +1027,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
 
     persisted.lens = "correctness";
     persisted.baseRevision = "";
-    await writeFile(
-      admitted.admittedRequestPath,
-      `${JSON.stringify(persisted, null, 2)}\n`,
-      "utf8",
-    );
+    seedCurrentSection(admitted.runDirectory, "admitted", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
@@ -1052,11 +1035,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     persisted.baseRevision = "--lens";
-    await writeFile(
-      admitted.admittedRequestPath,
-      `${JSON.stringify(persisted, null, 2)}\n`,
-      "utf8",
-    );
+    seedCurrentSection(admitted.runDirectory, "admitted", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
@@ -1101,9 +1080,7 @@ test("ak-role resume continues reviewer with fixed base", async () => {
       home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`,
     );
     const sessionDirectory = join(runDirectory, "session");
-    const admitted = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as Record<string, unknown> & {
+    const admitted = readCurrentSection(runDirectory, "admitted") as Record<string, unknown> & {
       role: string;
       baseRevision?: string;
       lens?: string;
@@ -1225,14 +1202,9 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
 
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
-    const admitted = JSON.parse(
-      await readFile(
-        join(
-          home, ".ak-roles", "books", bookKey, "unbound", "runs",
-          `${completenessRunId}@reviewer`, "admitted-request.json",
-        ),
-        "utf8",
-      ),
+    const admitted = readCurrentSection(
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${completenessRunId}@reviewer`),
+      "admitted",
     ) as { projectRoot: string; baseRevision: string; lens: string };
     assert.equal(realpathSync(admitted.projectRoot), callerProjectRoot);
     assert.equal(admitted.baseRevision, "HEAD~1");
@@ -1305,15 +1277,9 @@ test("default dual-lens relative --project and inline --base fail closed like si
         assert.fail("completeness child must disclose runId");
       }
       const bookKey = resolveBookKeyFromGit(project);
-      const admitted = JSON.parse(
-        await readFile(
-          join(
-            home, ".ak-roles", "books", bookKey, "unbound", "runs",
-            `${completenessRunId}@reviewer`,
-            "admitted-request.json",
-          ),
-          "utf8",
-        ),
+      const admitted = readCurrentSection(
+        join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${completenessRunId}@reviewer`),
+        "admitted",
       ) as { projectRoot: string; baseRevision: string };
       assert.equal(realpathSync(admitted.projectRoot), expectedProjectRoot);
       assert.equal(admitted.baseRevision, "HEAD~1");

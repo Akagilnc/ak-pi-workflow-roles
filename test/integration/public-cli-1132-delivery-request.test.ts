@@ -10,6 +10,7 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -208,9 +209,7 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
     assert.ok(run.runDirectory !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
   });
 });
@@ -284,9 +283,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       `催交得卷必须继续；seats=${JSON.stringify(seatsDispatched)}`,
     );
     assert.ok(runDirectorySeen !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(runDirectorySeen, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(runDirectorySeen, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
@@ -519,9 +516,7 @@ test("#1132: a failing催交 turn records the host failure and leaves the run ou
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
     assert.ok(run.runDirectory !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(run.runDirectory, "runState") as { state: string };
     assert.notEqual(runState.state, "running");
   });
 });
@@ -881,7 +876,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
       assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
     }
     assert.ok(runDirectory !== undefined);
-    const runState = JSON.parse(await readFile(join(runDirectory!, "run-state.json"), "utf8")) as { state?: string };
+    const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
     assert.equal(runState.state, "terminal");
   });
 });

@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 /**
@@ -175,7 +176,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-freeze-001@judge"),
     );
     assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
-    await access(admitted.admittedRequestPath);
+    await access(join(admitted.runDirectory, "current.json"));
     // #855: two-face waiting.jsonl deleted — admit must not create it.
     await assert.rejects(
       () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),

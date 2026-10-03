@@ -4,12 +4,12 @@
  * behavior tests.
  */
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import {
   issuePiDurablePrincipalCoordinates,
 } from "../../src/pi/durable-principal.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { seedCurrentSection } from "./run-dossier-fixture.ts";
 
 export const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
 export const CANONICAL_SOURCE_ROLE = "judge" as const;
@@ -32,7 +32,6 @@ export async function seedCanonicalSourceRun(
     home,
   });
   await mkdir(coords.sessionDirectory, { recursive: true });
-  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
   await writeFile(
     coords.sessionFile,
     `${JSON.stringify({
@@ -41,26 +40,18 @@ export async function seedCanonicalSourceRun(
     })}\n`,
     "utf8",
   );
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify({
-      role: CANONICAL_SOURCE_ROLE,
-      runId,
-      ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
-    })}\n`,
-    "utf8",
-  );
-  // Realistic source-run identity page (production always writes invocation.json).
-  await writeFile(
-    join(coords.runDirectory, "invocation.json"),
-    `${JSON.stringify({
-      role: CANONICAL_SOURCE_ROLE,
-      runId,
-      host: "pi",
-      ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
-    })}\n`,
-    "utf8",
-  );
+  seedCurrentSection(coords.runDirectory, "admitted", {
+    role: CANONICAL_SOURCE_ROLE,
+    runId,
+    ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
+  });
+  // Realistic source-run identity section (production always writes invocation).
+  seedCurrentSection(coords.runDirectory, "invocation", {
+    role: CANONICAL_SOURCE_ROLE,
+    runId,
+    host: "pi",
+    ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
+  });
   await writeRoleRunState(coords.runDirectory, {
     runId,
     role: CANONICAL_SOURCE_ROLE,
@@ -69,7 +60,6 @@ export async function seedCanonicalSourceRun(
     projectRoot: project,
     sessionDirectory: coords.sessionDirectory,
     sessionFile: coords.sessionFile,
-    admittedRequestPath,
   });
   return await realpath(coords.runDirectory);
 }

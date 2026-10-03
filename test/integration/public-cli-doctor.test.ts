@@ -1,3 +1,4 @@
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -105,9 +106,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as {
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
       role: string;
       issueNumber: number;
       caseRunsPath: string;
@@ -394,11 +393,9 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.deepEqual(report.cost, candidateCost);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
-    const runState = JSON.parse(
-      await readFile(
-        join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor", "run-state.json"),
-        "utf8",
-      ),
+    const runState = readCurrentSection(
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor"),
+      "runState",
     ) as { state: string };
     assert.deepEqual(runState.state, "terminal", "doctor run must settle run-state terminal");
 
@@ -687,9 +684,9 @@ test("terminal persistence failure is noted and the auditor read of that run is 
       `${runId}@doctor`,
     );
     const captured = captureIo();
-    // The accepted Doctor payload is the terminal. The run-state read failure
+    // The accepted Doctor payload is the terminal. The current.json read failure
     // is a note beside it. This run records a real submission (sealedAcceptance)
-    // before the run-state path is occupied. The assertion checks those bytes.
+    // before current.json is occupied. The assertion checks those bytes.
     // Mandatory auditor still runs; the note is not a substitute for that gate.
     await configurePassingReviewSeats(home);
     let recordedDetails: unknown;
@@ -729,15 +726,16 @@ test("terminal persistence failure is noted and the auditor read of that run is 
             "utf8",
           );
           // Real run-state seam: the facade admitted the run and the
-          // coordinator already marked it running; now occupy run-state.json
-          // with a directory. markRunTerminal reads current run-state before
+          // coordinator already marked it running; now occupy current.json
+          // (the file holding the runState section) with a directory.
+          // markRunTerminal reads current run-state before
           // it writes, so this actually fails that precondition read
           // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
           // write step. The real EISDIR identity must propagate through, not
           // The accepted doctor terminal stays. EISDIR is a package note.
           // No production hook, no direct markRunTerminal call, no new fixture.
-          await rm(join(runDirectory, "run-state.json"));
-          await mkdir(join(runDirectory, "run-state.json"));
+          await rm(join(runDirectory, "current.json"));
+          await mkdir(join(runDirectory, "current.json"));
           return {
             code: 0,
             sealedAcceptance: { role: "doctor" as const, details },

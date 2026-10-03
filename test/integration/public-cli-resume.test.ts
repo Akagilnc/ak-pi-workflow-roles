@@ -1,3 +1,4 @@
+import { readCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -389,7 +390,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
               if (request.activation.role === "judge") {
-                const statePath = join(request.runDirectory, "run-state.json");
+                const statePath = join(request.runDirectory, "current.json");
                 await rm(statePath, { force: true });
                 await mkdir(statePath);
               }
@@ -400,7 +401,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       );
 
       // Persist notes the directory. The later mandatory audit reads that same
-      // run-state, so the parent is not delivered as accepted.
+      // current.json runState, so the parent is not delivered as accepted.
       assert.equal(result.exitCode, 1);
       assert.equal(result.terminal, undefined);
       assert.equal(dispatches(), 1);
@@ -577,20 +578,15 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     );
     const sessionDirectory = join(runDirectory, "session");
     // Simulate a resumable run-state written before sessionFile was persisted.
-    const legacyStatePath = join(runDirectory, "run-state.json");
-    const legacyState = JSON.parse(
-      await readFile(legacyStatePath, "utf8"),
-    ) as Record<string, unknown>;
+    const legacyState = readCurrentSection(runDirectory, "runState");
     delete legacyState.sessionFile;
-    await writeFile(legacyStatePath, `${JSON.stringify(legacyState, null, 2)}\n`, "utf8");
+    seedCurrentSection(runDirectory, "runState", legacyState);
     // The persisted principal survives project relocation. Keep the original
     // project coordinate reachable for the required post-submission audit.
     const movedProject = join(home, "moved-non-git-project");
     await rename(project, movedProject);
     await symlink(movedProject, project);
-    const admittedBefore = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as {
+    const admittedBefore = readCurrentSection(runDirectory, "admitted") as {
       instruction: string;
       attachments: Array<{ frozenPath: string; sha256: string }>;
     };
@@ -662,9 +658,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     // Frozen attachment bytes unchanged after source mutation.
     const frozenBytes = await readFile(frozenPath, "utf8");
     assert.equal(frozenBytes, "authority-bytes-v1\n");
-    const admittedAfter = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { attachments: Array<{ sha256: string }> };
+    const admittedAfter = readCurrentSection(runDirectory, "admitted") as { attachments: Array<{ sha256: string }> };
     assert.equal(admittedAfter.attachments[0]!.sha256, frozenSha);
 
     const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
@@ -1066,8 +1060,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           stderr: () => {
             // The failed parent write has already been observed. Restore the
             // source run before the mandatory Notary/Auditor summons reads it.
-            rmSync(join(runDirectory, "run-state.json"), { recursive: true });
-            writeFileSync(join(runDirectory, "run-state.json"), savedRunState);
+            rmSync(join(runDirectory, "current.json"), { recursive: true });
+            writeFileSync(join(runDirectory, "current.json"), savedRunState);
             throw new Error("stderr sink failed");
           },
         };
@@ -1111,7 +1105,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                 },
               })).executeTurn(request);
               if (request.activation.role === "judge") {
-                const statePath = join(runDirectory, "run-state.json");
+                const statePath = join(runDirectory, "current.json");
                 savedRunState = await readFile(statePath, "utf8");
                 await rm(statePath, { force: true });
                 await mkdir(statePath);
@@ -1464,17 +1458,12 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     const sessionDirectory = join(runDirectory, "session");
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
-    const admittedRequestPath = join(runDirectory, "admitted-request.json");
-    await writeFile(
-      admittedRequestPath,
-      `${JSON.stringify({
-        role: "judge",
-        instruction: "x",
-        instructionEmpty: false,
-        attachments: [],
-      })}\n`,
-      "utf8",
-    );
+    seedCurrentSection(runDirectory, "admitted", {
+      role: "judge",
+      instruction: "x",
+      instructionEmpty: false,
+      attachments: [],
+    });
     await markRunAdmitted({
       role: "judge",
       runId,
@@ -1485,9 +1474,8 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       attachments: [],
       runDirectory,
       principal: fixturePrincipal(sessionDirectory, sessionFile),
-      admittedRequestPath,
     }, piDurablePrincipalAuthority);
-    await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
+    seedCurrentSection(runDirectory, "invocation", {});
     // Principal path is bound but the file itself is missing — not a package gate (#1091).
 
     const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
@@ -1703,11 +1691,10 @@ test("public resume failures persist structured diagnostics", async () => {
         const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
         const sessionDirectory = join(runDirectory, "session");
         const sessionFile = join(sessionDirectory, "session.jsonl");
-        const admittedRequestPath = join(runDirectory, "admitted-request.json");
         await mkdir(sessionDirectory, { recursive: true });
         if (input.session) await writeFile(sessionFile, "\n", "utf8");
-        await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
-        await writeFile(admittedRequestPath, `${JSON.stringify({
+        seedCurrentSection(runDirectory, "invocation", {});
+        seedCurrentSection(runDirectory, "admitted", {
           role: input.role,
           instruction: "x",
           instructionEmpty: false,
@@ -1715,7 +1702,7 @@ test("public resume failures persist structured diagnostics", async () => {
           ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
           ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
-        })}\n`, "utf8");
+        });
         await markRunAdmitted({
           role: input.role,
           runId: input.runId,
@@ -1726,7 +1713,6 @@ test("public resume failures persist structured diagnostics", async () => {
           attachments: [],
           runDirectory,
           principal: fixturePrincipal(sessionDirectory, sessionFile),
-          admittedRequestPath,
         }, piDurablePrincipalAuthority);
         return { runDirectory, sessionFile, sessionDirectory };
       }
@@ -1820,9 +1806,9 @@ test("public resume failures persist structured diagnostics", async () => {
       const priorReportPath = join(corruptRunState.runDirectory, "artifacts", "report.json");
       await mkdir(join(corruptRunState.runDirectory, "artifacts"), { recursive: true });
       await writeFile(priorReportPath, '{"status":"prior"}\n', "utf8");
-      await writeFile(join(corruptRunState.runDirectory, "run-state.json"), "{}\n", "utf8");
+      seedCurrentSection(corruptRunState.runDirectory, "runState", {});
       await assertRecordedFailure(corruptRunState.runDirectory, "1058-corrupt-run-state");
-      assert.equal(await readFile(join(corruptRunState.runDirectory, "run-state.json"), "utf8"), "{}\n");
+      assert.deepEqual(readCurrentSection(corruptRunState.runDirectory, "runState"), {});
       assert.equal(
         (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
         "prior",
@@ -1869,7 +1855,14 @@ test("public resume failures persist structured diagnostics", async () => {
         runId: "1058-child-before-parent-dispatch", role: "judge", session: true,
         projectRoot: project, correlationId: "1058-parent-dispatch-failure",
       });
-      await rm(join(parent.runDirectory, "admitted-request.json"));
+      {
+        const { admitted: _removed, ...withoutAdmitted } = readCurrentJson(parent.runDirectory);
+        writeFileSync(
+          join(parent.runDirectory, "current.json"),
+          `${JSON.stringify(withoutAdmitted, null, 2)}\n`,
+          "utf8",
+        );
+      }
       const priorParentReport = join(parent.runDirectory, "artifacts", "report.json");
       await mkdir(join(parent.runDirectory, "artifacts"), { recursive: true });
       await writeFile(priorParentReport, '{"status":"prior-parent"}\n', "utf8");
@@ -1926,7 +1919,7 @@ test("public resume failures persist structured diagnostics", async () => {
         0,
         `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
       );
-      assert.equal(existsSync(join(parent.runDirectory, "admitted-request.json")), false);
+      assert.equal(readCurrentJson(parent.runDirectory).admitted, undefined);
       assert.equal(
         (JSON.parse(await readFile(priorParentReport, "utf8")) as { status?: unknown }).status,
         "prior-parent",

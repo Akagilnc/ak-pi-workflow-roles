@@ -16,11 +16,11 @@ import { findRoleRunDirectory, roleRunPlacement } from "./role-run-placement.ts"
 
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
+import { readSectionSync, updateSectionSync } from "./run-dossier.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",
-  "admittedRequestPath",
   "sessionDirectory",
   "sessionFile",
   "taskPath",
@@ -39,7 +39,6 @@ const INVOCATION_PAGE_FIELDS = [
 
 const RUN_STATE_PAGE_FIELDS = [
   "runDirectory",
-  "admittedRequestPath",
   "sessionDirectory",
   "sessionFile",
 ] as const;
@@ -430,7 +429,7 @@ async function rewriteNestedMachinePathPages(
 }
 
 /**
- * Rewrite admitted-request / invocation / run-state path fields (attachment
+ * Rewrite the admitted / invocation / runState sections of current.json (path fields (attachment
  * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
  * session seams. Callers may rewrite before or after the filesystem move/copy:
  * `pagesDirectory` is where the pages currently live on disk; path strings that
@@ -446,41 +445,23 @@ export async function rewriteRoleRunDurablePages(input: {
   const { pagesDirectory } = input;
   const rewrites = collectRewrites(input);
 
-  const admittedPath = join(pagesDirectory, "admitted-request.json");
-  if (existsSync(admittedPath)) {
-    const page = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const before = JSON.stringify(page);
-    rewriteAdmittedRoleRunPage(page, rewrites);
-    if (JSON.stringify(page) !== before) {
-      await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-    }
-  }
-
-  const invocationPath = join(pagesDirectory, "invocation.json");
-  if (existsSync(invocationPath)) {
-    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<string, unknown>;
-    const before = JSON.stringify(page);
-    rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites);
-    if (JSON.stringify(page) !== before) {
-      await writeFile(invocationPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-    }
-  }
-
-  const statePath = join(pagesDirectory, "run-state.json");
-  if (existsSync(statePath)) {
-    const page = JSON.parse(await readFile(statePath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const before = JSON.stringify(page);
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      page,
-      RUN_STATE_PAGE_FIELDS,
-      rewrites,
-    );
+  // Each section keeps its own field list; a section is rewritten only when it changed.
+  const rewriteSection = (
+    section: "admitted" | "invocation" | "runState",
+    rewrite: (page: Record<string, unknown>) => void,
+  ): void => {
+    if (readSectionSync(pagesDirectory, section) === undefined) return;
+    updateSectionSync(pagesDirectory, section, (current) => {
+      const page = structuredClone(current);
+      rewrite(page);
+      return JSON.stringify(page) === JSON.stringify(current) ? undefined : page;
+    });
+  };
+  rewriteSection("admitted", (page) => rewriteAdmittedRoleRunPage(page, rewrites));
+  rewriteSection("invocation", (page) =>
+    rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites));
+  rewriteSection("runState", (page) => {
+    rewriteRunDirectoryPathFieldsAgainstRewrites(page, RUN_STATE_PAGE_FIELDS, rewrites);
     if (isRecord(page.principal)) {
       rewriteRunDirectoryPathFieldsAgainstRewrites(
         page.principal,
@@ -492,10 +473,7 @@ export async function rewriteRoleRunDurablePages(input: {
     if (isRecord(page.currentCourt)) {
       rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
     }
-    if (JSON.stringify(page) !== before) {
-      await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-    }
-  }
+  });
 
   await rewriteNestedMachinePathPages(pagesDirectory, rewrites);
 }

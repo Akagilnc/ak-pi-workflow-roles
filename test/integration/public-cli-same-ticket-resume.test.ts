@@ -1299,10 +1299,12 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     const { home, project, io: baseIo, credentials } = scratch;
     const seen: SeenTurn[] = [];
     let turn = 0;
-    let runStateFile = "";
+    let runDirectoryLocked = "";
     // Manual resume dispatches with the real io given to runAkRole (no
     // dummyIo — that only wraps the auto-resume loop's own attempts). This
-    // callback restores write access to run-state.json the instant the
+    // callback restores write access to the run directory (current.json is
+    // rewritten via a same-directory temp file + rename, so a read-only
+    // directory — not a read-only file — is what makes its write fail) the instant the
     // sealing turn reports *any* diagnostic — a structural "a best-effort
     // diagnostic fired" signal (armed only for this turn), never inspecting
     // what the diagnostic text says (#840 bounce class 2: the earlier version
@@ -1310,7 +1312,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     // when to restore, and separately locked that wording as pass/fail —
     // both are free-text mechanical dependencies the quality law forbids).
     // The restore must land before the caller's own later lawful persist
-    // (markRunTerminal) also touches run-state.json, or this test's fault
+    // (markRunTerminal) also rewrites current.json, or this test's fault
     // injection would collide with it too; io.stderr is the only synchronous,
     // real (non-dummy) seam available at that exact point in the manual-
     // resume dispatch chain.
@@ -1321,7 +1323,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
       stderr: (_text: string) => {
         if (sealingTurnArmed && !cleanupDiagnosticObserved) {
           cleanupDiagnosticObserved = true;
-          chmodSync(runStateFile, 0o644);
+          chmodSync(runDirectoryLocked, 0o755);
         }
       },
     };
@@ -1351,10 +1353,10 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
           })(extraArgs, options);
         }
         // Bare resume of the still-open court seals it for the first time:
-        // make the run-state write that clearCurrentCourt performs fail (its
+        // make the current.json runState write that clearCurrentCourt performs fail (its
         // read still succeeds). Arm the stderr-restore hook only for this turn.
         sealingTurnArmed = true;
-        await chmod(runStateFile, 0o400);
+        await chmod(runDirectoryLocked, 0o500);
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -1379,7 +1381,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
-    runStateFile = join(runDirectory, "run-state.json");
+    runDirectoryLocked = runDirectory;
 
     const opened = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {

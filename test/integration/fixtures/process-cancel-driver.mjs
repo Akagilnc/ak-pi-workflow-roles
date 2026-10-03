@@ -162,8 +162,8 @@ try {
   );
   try {
     const { readFile } = await import("node:fs/promises");
-    const raw = JSON.parse(await readFile(join(runDirectory, "run-state.json"), "utf8"));
-    runState = raw.state;
+    const raw = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8"));
+    runState = raw.runState?.state;
   } catch {
     runState = undefined;
   }

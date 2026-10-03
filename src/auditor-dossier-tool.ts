@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 
+import { runCurrentPath } from "./run-dossier.ts";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 import {
@@ -13,7 +14,7 @@ export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier" as const;
 
 export type AuditorDossierLocation = {
   readonly runDirectory: string;
-  readonly admittedRequest: string;
+  readonly current: string;
   readonly parentSessionCandidate: string;
   readonly attachments: string;
   readonly artifacts: string;
@@ -47,7 +48,7 @@ export function createAuditorDossierTool(
       // #836: whole run directory pointer — officer finds materials; no leaf preference (A7.2).
       const details: AuditorDossierLocation = {
         runDirectory,
-        admittedRequest: join(runDirectory, "admitted-request.json"),
+        current: runCurrentPath(runDirectory),
         parentSessionCandidate: sessionFileOf(runDirectory),
         attachments: join(runDirectory, "attachments"),
         artifacts: roleRunArtifactsDirectory(runDirectory),

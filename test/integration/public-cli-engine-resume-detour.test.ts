@@ -1,7 +1,7 @@
 /**
  * #526 / #600 / #617: engine field stays effective across the initial / auto-resume /
  * explicit-resume typed request for all seven resumable seats; resume also
- * projects engine onto invocation.json. Engine present→absent resume clears
+ * projects engine onto current.json invocation section. Engine present→absent resume clears
  * invocation.engine (authoritative seat axis).
  *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
@@ -14,6 +14,7 @@
  * Contract surface is typed only: `request.engine` and `invocation.engine`.
  * Zero free-text / continuation-prompt oracle (anchoring constitution).
  */
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -193,16 +194,12 @@ async function seedMergeProject(project: string): Promise<void> {
 }
 
 async function readInvocationEngine(runDirectory: string): Promise<unknown> {
-  const invocation = JSON.parse(
-    await readFile(join(runDirectory, "invocation.json"), "utf8"),
-  ) as Record<string, unknown>;
+  const invocation = readCurrentSection(runDirectory, "invocation");
   return invocation.engine;
 }
 
 async function readInvocationEngineModel(runDirectory: string): Promise<unknown> {
-  const invocation = JSON.parse(
-    await readFile(join(runDirectory, "invocation.json"), "utf8"),
-  ) as Record<string, unknown>;
+  const invocation = readCurrentSection(runDirectory, "invocation");
   return invocation.engineModel;
 }
 
@@ -387,7 +384,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
       assert.equal(
         resumedInvocationEngine,
         ENGINE,
-        `${seat}: explicit resume must write engine onto invocation.json`,
+        `${seat}: explicit resume must write engine onto current.json invocation section`,
       );
     }
   });
@@ -472,7 +469,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
     assert.equal(
       invocationModel,
       ENGINE_MODEL,
-      "resume must write live seat engineModel onto invocation.json",
+      "resume must write live seat engineModel onto current.json invocation section",
     );
   });
 });

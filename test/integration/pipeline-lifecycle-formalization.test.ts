@@ -1,3 +1,4 @@
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -88,16 +89,14 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     assert.ok(result.terminal, "judge run must settle a typed terminal");
     assert.equal(result.terminal!.roleOutcome.role, "judge");
 
-    // ②: AK-owned run-state ledger reaches terminal regardless of the substituted host.
+    // ②: AK-owned current.json runState ledger reaches terminal regardless of the substituted host.
     const bookKey = resolveBookKeyFromGit(project);
     const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
     const runDirs = await readdir(runsRoot);
     const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
     assert.ok(judgeRun, `expected judge run under ${runsRoot}, got ${runDirs.join(", ")}`);
     const runDirectory = join(runsRoot, judgeRun!);
-    const runState = JSON.parse(
-      await readFile(join(runDirectory, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(runDirectory, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");
 
     // A real artifact is produced by AK settlement for the terminal. Open the

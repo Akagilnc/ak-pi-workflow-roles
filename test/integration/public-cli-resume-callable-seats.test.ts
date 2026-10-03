@@ -3,6 +3,7 @@
  * public resume entry: same session principal reopened, each seat settles its
  * own typed terminal. Shortest deterministic four-seat dispatch-table coverage.
  */
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -204,7 +205,6 @@ for (const spec of SEAT_SPECS) {
         projectRoot: admitted.projectRoot,
         sessionDirectory,
         sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
       });
       // An interrupted run has an opened session principal — seed its first row.
       await mkdir(sessionDirectory, { recursive: true });
@@ -214,9 +214,7 @@ for (const spec of SEAT_SPECS) {
         "utf8",
       );
 
-      const admittedRequest = JSON.parse(
-        await readFile(admitted.admittedRequestPath, "utf8"),
-      ) as Record<string, unknown>;
+      const admittedRequest = readCurrentSection(admitted.runDirectory, "admitted");
 
       const baseRunner: LegacyFauxPiRunner = scriptedTerminatingToolSession({
         role: spec.role,

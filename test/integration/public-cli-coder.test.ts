@@ -4,6 +4,7 @@ import {
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -395,7 +396,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           resolveBookKeyFromGit(project),
           "unbound", "runs",
           "run-cli-coder-plan@coder",
-          "admitted-request.json",
+          "current.json",
         ),
       );
     }
@@ -530,9 +531,9 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
       `${runId}@coder`,
     );
     const sessionDirectory = join(runDirectory, "session");
-    const admitted = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; taskPath: string; ticketNumber?: number };
+    const admitted = readCurrentSection(runDirectory, "admitted") as {
+      phase: string; role: string; taskPath: string; ticketNumber?: number;
+    };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
@@ -684,20 +685,17 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured!.includes("--thinking"), false);
       // invocation evidence: model identity is the override; thinking stays absent.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = JSON.parse(
-        await readFile(
-          join(
-            home,
-            ".ak-roles",
-            "books",
-            bookKey,
-            "unbound", "runs",
-            "run-cli-coder-bare-model@coder",
-            "invocation.json",
-          ),
-          "utf8",
+      const invocation = readCurrentSection(
+        join(
+          home,
+          ".ak-roles",
+          "books",
+          bookKey,
+          "unbound", "runs",
+          "run-cli-coder-bare-model@coder",
         ),
-      ) as Record<string, unknown>;
+        "invocation",
+      );
       // invocation evidence records the effective provider/model; thinking stays absent for bare model.
       assert.equal(invocation.provider, "kimi-coding");
       assert.equal(invocation.model, "k3-256k");
@@ -753,20 +751,17 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured![captured!.indexOf("--thinking") + 1], "high");
       // invocation evidence records provider/model and the supplied thinking level.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = JSON.parse(
-        await readFile(
-          join(
-            home,
-            ".ak-roles",
-            "books",
-            bookKey,
-            "unbound", "runs",
-            "run-cli-coder-thinking-suffix@coder",
-            "invocation.json",
-          ),
-          "utf8",
+      const invocation = readCurrentSection(
+        join(
+          home,
+          ".ak-roles",
+          "books",
+          bookKey,
+          "unbound", "runs",
+          "run-cli-coder-thinking-suffix@coder",
         ),
-      ) as Record<string, unknown>;
+        "invocation",
+      );
       assert.equal(invocation.provider, "openai-codex");
       assert.equal(invocation.model, "gpt-5.6-luna");
       assert.equal(invocation.thinking, "high");

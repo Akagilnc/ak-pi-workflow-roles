@@ -1055,7 +1055,7 @@ test("public countersign path: invalid attachment rejects before identity or run
       runId,
       role: "countersign",
     });
-    await assert.rejects(readFile(join(placement.runDirectory, "invocation.json")));
+    await assert.rejects(readFile(join(placement.runDirectory, "current.json")));
   });
 });
 

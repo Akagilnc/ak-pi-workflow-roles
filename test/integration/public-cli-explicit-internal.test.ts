@@ -410,7 +410,7 @@ test("turn host masks ambient ledger and machine Pi home after env remerge", asy
     const machineRun = join(home, "machine-run");
     const machineAgent = join(home, "machine-agent");
     const testAgent = join(home, "test-agent");
-    const invocation = join(machineRun, "invocation.json");
+    const invocation = join(machineRun, "current.json");
     const machineMarker = join(machineAgent, "marker");
     const observed = join(home, "observed.json");
     await mkdir(machineRun, { recursive: true });
@@ -465,7 +465,7 @@ process.exit(0);
 test("parent discards child stdout without inheriting the parent role ledger", async () => {
   await withTempHome(async (home) => {
     const parentRun = join(home, "parent-run");
-    const invocation = join(parentRun, "invocation.json");
+    const invocation = join(parentRun, "current.json");
     await mkdir(parentRun, { recursive: true });
     await writeFile(invocation, "parent-identity", "utf8");
     const stub = join(home, "flood-stdout.mjs");
@@ -475,7 +475,7 @@ test("parent discards child stdout without inheriting the parent role ledger", a
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const chunk = "X".repeat(64 * 1024);
-if (process.env.AK_ROLE_RUN_DIR) writeFileSync(join(process.env.AK_ROLE_RUN_DIR, "invocation.json"), "overwritten", "utf8");
+if (process.env.AK_ROLE_RUN_DIR) writeFileSync(join(process.env.AK_ROLE_RUN_DIR, "current.json"), "overwritten", "utf8");
 for (let i = 0; i < 200; i++) process.stdout.write(chunk);
 process.stderr.write("stderr-ok");
 process.exit(0);

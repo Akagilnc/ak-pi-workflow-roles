@@ -18,6 +18,7 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
+import { readSectionSync } from "./run-dossier.ts";
 import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -286,9 +287,8 @@ type InvocationInfo = {
 
 async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
   try {
-    const raw = await readFile(join(runDir, "invocation.json"), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return undefined;
+    const parsed = readSectionSync(runDir, "invocation");
+    if (parsed === undefined) return undefined;
     const info: InvocationInfo = {};
     if (typeof parsed.role === "string" && parsed.role.trim()) info.role = parsed.role.trim();
     if (typeof parsed.thinking === "string" && parsed.thinking.trim()) info.thinking = parsed.thinking.trim();

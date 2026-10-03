@@ -5,6 +5,7 @@
  * board assertion. Missing page (ENOENT) → try next / undefined; damage and
  * non-ENOENT IO failures propagate.
  */
+import { readSectionSync } from "./run-dossier.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -113,9 +114,9 @@ async function readJsonObject(
 
 async function readBoardPageTicketNumber(
   runDirectory: string,
-  page: "admitted-request.json" | "invocation.json",
+  section: "admitted" | "invocation",
 ): Promise<number | undefined> {
-  const record = await readJsonObject(join(runDirectory, page));
+  const record = readSectionSync(runDirectory, section);
   if (record === undefined) return undefined;
   return ticketFromRecord(record);
 }
@@ -128,8 +129,8 @@ export async function readBoardTicketNumber(
   runDirectory: string,
 ): Promise<number | undefined> {
   return (
-    (await readBoardPageTicketNumber(runDirectory, "admitted-request.json")) ??
-    (await readBoardPageTicketNumber(runDirectory, "invocation.json"))
+    (await readBoardPageTicketNumber(runDirectory, "admitted")) ??
+    (await readBoardPageTicketNumber(runDirectory, "invocation"))
   );
 }
 

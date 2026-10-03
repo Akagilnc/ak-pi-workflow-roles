@@ -1,3 +1,4 @@
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -149,9 +150,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     assert.deepEqual([...input.resolutionScope], [fixture.conflictPath]);
     assert.equal(input.attemptId, "run-merger-admit-001");
     // Durable admitted identity retains adapter-derived envelope facts (not caller packet fields).
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as { derived: { targetObjectId: string } };
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as { derived: { targetObjectId: string } };
     assert.equal(persisted.derived.targetObjectId, fixture.target);
     assert.equal(Array.isArray(input.authorizedChecks), true);
 
@@ -359,9 +358,7 @@ test("ak-role resume continues merger with exact session", async () => {
       `${runId}@merger`,
     );
     const sessionDirectory = join(runDirectory, "session");
-    const admitted = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { role: string; mergerInputPath: string; ticketNumber?: number };
+    const admitted = readCurrentSection(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
     assert.equal(admitted.ticketNumber, undefined);
 

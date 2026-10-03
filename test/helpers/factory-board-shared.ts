@@ -16,6 +16,7 @@ import {
 } from "../../src/package-contracts/terminating-tools.ts";
 import type { TerminatingToolName } from "../../src/package-contracts/terminating-tools.ts";
 import type { SnapshotTicket } from "../../src/ticket-snapshot.ts";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 export type BoardPageSortMode = "ticket-asc" | "cost-desc" | "cost-asc";
 
@@ -317,7 +318,7 @@ export async function independentIssueUsage(ledgerDir: string, issueNumber: numb
 
     let role: string | undefined;
     try {
-      const inv = JSON.parse(await readFile(join(runDir, "invocation.json"), "utf8")) as {
+      const inv = readCurrentSection(runDir, "invocation") as {
         role?: string;
       };
       if (typeof inv.role === "string") role = inv.role;

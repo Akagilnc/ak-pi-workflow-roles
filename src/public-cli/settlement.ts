@@ -1622,7 +1622,6 @@ async function publishDeclaredSeatArtifacts(
       ...evidenceLeaves(admitted, face.leaves),
       sessionDirectory: coordinates.sessionDirectory,
       sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     },
   });
@@ -2020,7 +2019,6 @@ export async function publishFailureArtifacts(
     runId: admitted.runId,
     sessionDirectory: sessionDirectory,
     sessionFile: sessionFile,
-    admittedRequestPath: admitted.admittedRequestPath,
     attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     ...(failure.cause === undefined ? {} : { failureCause: failure.cause }),
   };

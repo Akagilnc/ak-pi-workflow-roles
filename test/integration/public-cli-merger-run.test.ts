@@ -1,3 +1,4 @@
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
@@ -109,17 +110,12 @@ async function seedNotarySourceRun(home: string, project: string): Promise<strin
     home,
   });
   await mkdir(coords.sessionDirectory, { recursive: true });
-  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
   await writeFile(
     coords.sessionFile,
     `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
     "utf8",
   );
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify({ role: "judge", runId })}\n`,
-    "utf8",
-  );
+  seedCurrentSection(coords.runDirectory, "admitted", { role: "judge", runId });
   await writeRoleRunState(coords.runDirectory, {
     runId,
     role: "judge",
@@ -128,7 +124,6 @@ async function seedNotarySourceRun(home: string, project: string): Promise<strin
     projectRoot: project,
     sessionDirectory: coords.sessionDirectory,
     sessionFile: coords.sessionFile,
-    admittedRequestPath,
   });
   return await realpath(coords.runDirectory);
 }

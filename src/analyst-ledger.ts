@@ -12,6 +12,7 @@
  * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
  * terminal face) for metric-family modules — no longer discarded after checks.
  */
+import { readSectionSync } from "./run-dossier.ts";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -154,15 +155,8 @@ async function listLedgerBookNames(booksRoot: string): Promise<string[]> {
 async function readInvocationScopeFields(
   runDirectory: string,
 ): Promise<InvocationScopeFields | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(join(runDirectory, "invocation.json"), "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw error;
-  }
-  const parsed: unknown = JSON.parse(raw);
-  if (!isRecord(parsed)) return undefined;
+  const parsed = readSectionSync(runDirectory, "invocation");
+  if (parsed === undefined) return undefined;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return undefined;
   }
@@ -212,20 +206,11 @@ async function resolveSessionFile(
   runDirectory: string,
 ): Promise<string> {
   // Prefer invocation.sessionFile when present; fall back to S-family principal.
-  try {
-    const raw = await readFile(join(runDirectory, "invocation.json"), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      isRecord(parsed)
-      && typeof parsed.sessionFile === "string"
-      && parsed.sessionFile.trim() !== ""
-    ) {
-      return typeof parsed.runDirectory === "string"
-        ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
-        : parsed.sessionFile;
-    }
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
+  const parsed = readSectionSync(runDirectory, "invocation");
+  if (parsed !== undefined && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    return typeof parsed.runDirectory === "string"
+      ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
+      : parsed.sessionFile;
   }
   return sessionFileOf(runDirectory);
 }

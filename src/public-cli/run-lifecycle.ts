@@ -63,6 +63,7 @@ import {
   type ReviewerLens,
 } from "./invocation.ts";
 
+import { readSectionSync, writeSectionSync } from "../run-dossier.ts";
 import { isRecord, errorText, isEnoent } from "../unknown-value.ts";
 
 export type RoleRunState = "admitted" | "running" | "resumable" | "terminal";
@@ -83,7 +84,6 @@ export type RoleRunRecord = {
   /** Exact Pi session file principal reopened on resume (not directory-latest). */
   readonly sessionFile: string;
   readonly runDirectory: string;
-  readonly admittedRequestPath: string;
   /** Coder/Fixer — preserved for resume continuation. */
   readonly phase?: CoderPhase | FixerPhase;
 };
@@ -154,7 +154,6 @@ export function buildAutoResumeContinuationPrompt(options: {
   ).join("\n");
 }
 
-const RUN_STATE_FILE = "run-state.json";
 const WRITER_LOCK_FILE = "writer.lock";
 
 export async function writeRoleRunState(
@@ -162,15 +161,11 @@ export async function writeRoleRunState(
   record: Omit<RoleRunRecord, "runDirectory">,
 ): Promise<void> {
   const payload: RoleRunRecord = { ...record, runDirectory };
-  await writeFile(
-    join(runDirectory, RUN_STATE_FILE),
-    `${JSON.stringify(payload, null, 2)}\n`,
-    "utf8",
-  );
+  writeSectionSync(runDirectory, "runState", { ...payload });
 }
 
 /**
- * Uninterpreted principal wire as stored on run-state.json.
+ * Uninterpreted principal wire as stored on current.json runState.
  * Legacy rows may omit sessionFile; only DurablePrincipalAuthority decodes it.
  */
 type RoleRunPrincipalWire = {
@@ -186,7 +181,6 @@ type RoleRunStateDisk = {
   readonly bookKey: string;
   readonly projectRoot: string;
   readonly runDirectory: string;
-  readonly admittedRequestPath: string;
   readonly principalWire: RoleRunPrincipalWire;
   readonly phase?: CoderPhase | FixerPhase;
   /** Open court turn (#637); omit when no unsealed current court. */
@@ -263,20 +257,13 @@ function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
 }
 
 async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | undefined> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
-  } catch (error) {
-    // Only true absence (ENOENT) is a lawful "no run state yet". A real read
-    // failure (EISDIR, EACCES, ...) or a JSON.parse SyntaxError on a present
-    // file is genuine infrastructure/data damage and must keep its own
-    // identity — callers route it through the controlled-failure seam
-    // (markRunRunning/markRunTerminal/recordCurrentCourt)
-    // instead of it being relabeled "run state missing" (#836).
-    if (errorCodeOf(error) === "ENOENT") return undefined;
-    throw error;
-  }
-  return raw;
+  // Only true absence (no current.json / no runState section) is a lawful "no
+  // run state yet". A real read failure (EISDIR, EACCES, ...) or a JSON.parse
+  // SyntaxError on a present file is genuine infrastructure/data damage and
+  // must keep its own identity — callers route it through the controlled-failure
+  // seam (markRunRunning/markRunTerminal/recordCurrentCourt) instead of it
+  // being relabeled "run state missing" (#836). readSectionSync throws those.
+  return readSectionSync(runDirectory, "runState");
 }
 
 function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
@@ -287,15 +274,15 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
   readonly state: RoleRunState;
 } {
   if (!isRecord(raw)) {
-    throw new TypeError("Invalid run-state.json");
+    throw new TypeError("Invalid current.json runState");
   }
   const record = raw;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
-    throw new TypeError("Invalid run-state.json");
+    throw new TypeError("Invalid current.json runState");
   }
   const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
   if (role === undefined) {
-    throw new TypeError("Invalid run-state.json");
+    throw new TypeError("Invalid current.json runState");
   }
   if (
     record.state !== "admitted" &&
@@ -303,9 +290,9 @@ function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
     record.state !== "resumable" &&
     record.state !== "terminal"
   ) {
-    throw new TypeError("Invalid run-state.json");
+    throw new TypeError("Invalid current.json runState");
   }
-  if (typeof record.bookKey !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.bookKey !== "string") throw new TypeError("Invalid current.json runState");
   return {
     runId: record.runId,
     role,
@@ -322,9 +309,8 @@ async function readRoleRunStateDisk(
   if (raw === undefined) return undefined;
   const identity = parseRoleRunIdentity(raw, runDirectory);
   const record = raw as Record<string, unknown>;
-  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid run-state.json");
-  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid run-state.json");
-  if (typeof record.admittedRequestPath !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid current.json runState");
+  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid current.json runState");
   const storedRunDirectory =
     typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
       ? record.runDirectory
@@ -353,11 +339,6 @@ async function readRoleRunStateDisk(
     bookKey: identity.bookKey,
     projectRoot: record.projectRoot,
     runDirectory: runDir,
-    admittedRequestPath: rewriteRunDirectoryPathValue(
-      record.admittedRequestPath,
-      storedRunDirectory,
-      runDirectory,
-    ) as string,
     principalWire,
     ...(phase === undefined ? {} : { phase }),
     ...(currentCourt === undefined ? {} : { currentCourt }),
@@ -379,15 +360,10 @@ async function writeRoleRunStateDisk(
     ...(disk.principalWire.sessionFile === undefined
       ? {}
       : { sessionFile: disk.principalWire.sessionFile }),
-    admittedRequestPath: disk.admittedRequestPath,
     ...(disk.phase === undefined ? {} : { phase: disk.phase }),
     ...(disk.currentCourt === undefined ? {} : { currentCourt: disk.currentCourt }),
   };
-  await writeFile(
-    join(runDirectory, RUN_STATE_FILE),
-    `${JSON.stringify(payload, null, 2)}\n`,
-    "utf8",
-  );
+  writeSectionSync(runDirectory, "runState", payload);
 }
 
 /** One authority.decode of the uninterpreted wire → record + opaque principal (frozen wire itself). */
@@ -408,7 +384,6 @@ function materializeRoleRunFromDisk(
         sessionDirectory: coordinates.sessionDirectory,
         sessionFile: coordinates.sessionFile,
         runDirectory: disk.runDirectory,
-        admittedRequestPath: disk.admittedRequestPath,
         ...(disk.phase === undefined ? {} : { phase: disk.phase }),
       },
     };
@@ -467,7 +442,6 @@ export async function markRunAdmitted(
     projectRoot: admitted.projectRoot,
     sessionDirectory,
     sessionFile,
-    admittedRequestPath: admitted.admittedRequestPath,
     ...(workerPhase === undefined ? {} : { phase: workerPhase }),
   });
 }
@@ -475,7 +449,7 @@ export async function markRunAdmitted(
 /**
  * Shared dispatch execution seam: transition to running, then record the
  * effective launch model (initial or resume override) and the authoritative
- * seat engine/host onto invocation.json.
+ * seat engine/host onto the invocation section.
  * Role runners must not coordinate lifecycle ledger writes themselves.
  * Engine axis is authoritative here (#617): present string is written; omit/undefined
  * clears any prior engine key so unset-engine + resume does not keep a stale value.
@@ -945,19 +919,8 @@ export function parentRunPathFromGatePointerInstruction(
 export async function readRunParentPath(
   runDirectory: string,
 ): Promise<string | undefined> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    );
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return undefined;
-    throw error;
-  }
-  if (!isRecord(raw)) {
-    return undefined;
-  }
-  const record = raw;
+  const record = readSectionSync(runDirectory, "admitted");
+  if (record === undefined) return undefined;
   if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
     return record.sourceRunPath;
   }
@@ -1127,7 +1090,7 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  // Reconstruct admitted identity from durable run record + admitted-request.json.
+  // Reconstruct admitted identity from durable run record + the admitted section.
   let instruction = "";
   let instructionEmpty = true;
   let attachments: FrozenAttachment[] = [];
@@ -1155,11 +1118,9 @@ async function loadResumableRunRecord(
   let sourceRunPath: string | undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
   try {
-    const raw: unknown = JSON.parse(
-      await readFile(run.admittedRequestPath, "utf8"),
-    );
-    if (isRecord(raw)) {
-      const record = raw as Record<string, unknown>;
+    const record = readSectionSync(run.runDirectory, "admitted");
+    if (record === undefined) throw new Error("current.json has no admitted section");
+    {
       const storedRunDirectory =
         typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
           ? record.runDirectory
@@ -1318,13 +1279,8 @@ async function loadResumableRunRecord(
   }
   let model: InvocationEffectiveModel | undefined;
   try {
-    const invocationRaw: unknown = JSON.parse(
-      await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
-    );
-    if (
-      isRecord(invocationRaw)
-    ) {
-      const rec = invocationRaw as Record<string, unknown>;
+    const rec = readSectionSync(run.runDirectory, "invocation");
+    if (rec !== undefined) {
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
         model = {
           provider: rec.provider,
@@ -1423,7 +1379,6 @@ function resumedBaseAdmitted(loaded: {
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
     principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
     ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };

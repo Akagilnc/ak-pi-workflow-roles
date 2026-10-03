@@ -29,6 +29,7 @@ import {
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -120,7 +121,7 @@ async function writeReadableRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  await writeFile(join(runDir, "invocation.json"), `${JSON.stringify(invocation, null, 2)}\n`);
+  seedCurrentSection(runDir, "invocation", invocation);
   await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
   await writeFile(
     join(runDir, "artifacts", "report.json"),
@@ -156,7 +157,7 @@ async function writeDamagedRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  await writeFile(join(runDir, "invocation.json"), `${JSON.stringify(invocation, null, 2)}\n`);
+  seedCurrentSection(runDir, "invocation", invocation);
   // Broken session JSONL — unreadable exclusion, not silent drop.
   await writeFile(join(runDir, "session", "session.jsonl"), "{not-json\n");
 }

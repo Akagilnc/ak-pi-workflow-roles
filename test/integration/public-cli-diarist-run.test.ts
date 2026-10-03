@@ -3,6 +3,7 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
+import { readCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1345,16 +1346,8 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       page: Record<string, unknown>,
     ): Promise<void> {
       await mkdir(join(runDir, "session"), { recursive: true });
-      await writeFile(
-        join(runDir, "admitted-request.json"),
-        `${JSON.stringify(page, null, 2)}\n`,
-        "utf8",
-      );
-      await writeFile(
-        join(runDir, "invocation.json"),
-        `${JSON.stringify({ runDirectory: runDir }, null, 2)}\n`,
-        "utf8",
-      );
+      seedCurrentSection(runDir, "admitted", page);
+      seedCurrentSection(runDir, "invocation", { runDirectory: runDir });
     }
 
     await seedRun(boundSource, {
@@ -1399,15 +1392,11 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
     );
     assert.equal(existsSync(peerSource), true);
 
-    const boundAdmitted = JSON.parse(
-      await readFile(join(boundTarget, "admitted-request.json"), "utf8"),
-    ) as { runDirectory?: string; ticketNumber?: number };
+    const boundAdmitted = readCurrentSection(boundTarget, "admitted") as { runDirectory?: string; ticketNumber?: number };
     assert.equal(boundAdmitted.ticketNumber, 863);
     assert.equal(boundAdmitted.runDirectory, boundTarget);
 
-    const peerAdmitted = JSON.parse(
-      await readFile(join(peerSource, "admitted-request.json"), "utf8"),
-    ) as { sourceRun?: { runDirectory?: string } };
+    const peerAdmitted = readCurrentSection(peerSource, "admitted") as { sourceRun?: { runDirectory?: string } };
     assert.equal(
       peerAdmitted.sourceRun?.runDirectory,
       boundTarget,
@@ -1820,7 +1809,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((submissions.at(-1)?.accepted as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
-      const admitted = JSON.parse(await readFile(join(runDir, "admitted-request.json"), "utf8"));
+      const admitted = readCurrentSection(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);
     });
   }
@@ -1919,14 +1908,14 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
-      existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
+      readCurrentJson(ticketPlacement.runDirectory).runState !== undefined,
       true,
       `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
     );
     assert.equal(
-      existsSync(join(unboundPlacement.runDirectory, "run-state.json")),
+      readCurrentJson(unboundPlacement.runDirectory).runState !== undefined,
       false,
-      "unbound must not keep the durable run-state after relocate",
+      "unbound must not keep the durable runState section after relocate",
     );
 
     // Relocation keeps both attempts in the package ledger, not the host original.

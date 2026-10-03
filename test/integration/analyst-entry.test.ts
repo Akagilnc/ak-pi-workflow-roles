@@ -41,6 +41,7 @@ import {
   withBusinessRepo,
   withTempHome,
 } from "../helpers/analyst-fixture-kit.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 /** Family sections are discovery-contributed — not on the A1 page envelope type. */
 type PageWithMetricFamilies = AnalystIssueMetricsPage & {
@@ -1087,7 +1088,8 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     await rm(join(runDirectory, "artifacts", "report.json"));
-    await writeFile(join(runDirectory, "run-state.json"), "{broken", "utf8");
+    // Whole-file corruption: current.json carries the runState section.
+    await writeFile(join(runDirectory, "current.json"), "{broken", "utf8");
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
@@ -1100,7 +1102,7 @@ test("analyst entry does not turn an incomplete live run state into no-receipt",
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     await rm(join(runDirectory, "artifacts", "report.json"));
-    await writeFile(join(runDirectory, "run-state.json"), JSON.stringify({ state: "running" }), "utf8");
+    seedCurrentSection(runDirectory, "runState", { state: "running" });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

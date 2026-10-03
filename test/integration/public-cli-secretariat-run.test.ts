@@ -4,6 +4,7 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -756,7 +757,7 @@ for (const preliminaryTicket of [null, 923] as const) {
     const book = join(home, ".ak-roles", "books", "project");
     const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
     assert.equal(
-      JSON.parse(await readFile(join(book, "924", "runs", runName, "admitted-request.json"), "utf8")).ticketNumber,
+      readCurrentSection(join(book, "924", "runs", runName), "admitted").ticketNumber,
       924,
       "the completed new-ticket run must be archived under its ticket",
     );
@@ -848,21 +849,13 @@ async function adapterBoundaryCase(input: {
       "01a0adp969-0000-7000-8000-000000000001@secretariat",
     );
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    await writeFile(
-      join(runDirectory, "admitted-request.json"),
-      `${JSON.stringify({
-        ticketNumber: 924,
-        projectRoot: project,
-        runId: "01a0adp969-0000-7000-8000-000000000001",
-        role: "secretariat",
-      })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "invocation.json"),
-      `${JSON.stringify({ ticketNumber: 924, role: "secretariat" })}\n`,
-      "utf8",
-    );
+    seedCurrentSection(runDirectory, "admitted", {
+      ticketNumber: 924,
+      projectRoot: project,
+      runId: "01a0adp969-0000-7000-8000-000000000001",
+      role: "secretariat",
+    });
+    seedCurrentSection(runDirectory, "invocation", { ticketNumber: 924, role: "secretariat" });
 
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
