@@ -6,7 +6,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (ledger rows, payloads, attachments)
+  run/<run>/     the replayed run itself truncated at the cut (current.json head, history.jsonl, log.jsonl, session.jsonl, attachments)
   pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
   sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
   schema.json    headless output schema when the run had one
@@ -49,10 +49,18 @@ def jsonl(path):
 def iso(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
 
+def current(run):
+    path = f"{run}/current.json"
+    return load_json(path) if os.path.exists(path) else {}
+
+def submissions(run):
+    """History submission rows (one per submission call, with the gate's disposition)."""
+    return [r for r in jsonl(f"{run}/history.jsonl") if r.get("type") == "submission"]
+
 def default_cut(run):
-    sealed = [r["timestamp"] for r in jsonl(f"{run}/session/submission-ledger/records.jsonl") if r.get("kind") == "sealed" and r.get("timestamp")]
+    sealed = [r["at"] for r in submissions(run) if r.get("disposition") == "accepted" and r.get("at")]
     if sealed:
-        return min(sealed), "first sealed submission"
+        return min(sealed), "first accepted submission"
     rows = jsonl(f"{run}/session/session.jsonl")
     if rows and rows[0].get("timestamp"):
         return rows[0]["timestamp"], "session start"
@@ -113,8 +121,11 @@ def main():
     a = ap.parse_args()
 
     run = os.path.abspath(a.run_dir.rstrip("/"))
-    inv = load_json(f"{run}/invocation.json")
-    adm = load_json(f"{run}/admitted-request.json") if os.path.exists(f"{run}/admitted-request.json") else {}
+    cur = current(run)
+    inv = cur.get("invocation")
+    if not inv:
+        sys.exit(f"not a run directory (no current.json invocation section): {run}")
+    adm = cur.get("admitted") or {}
     role, host, num = inv["role"], inv.get("host", "pi"), inv.get("ticketNumber") or adm.get("ticketNumber")
     if host not in SUPPORTED_HOSTS:
         sys.exit(f"recorded host {host!r} has no replay runner (supported: {', '.join(SUPPORTED_HOSTS)})")
@@ -186,7 +197,7 @@ def main():
     # The run's own directory keeps growing after the cut (later verdicts, ledger rows). Freeze a
     # copy truncated at the cut and point every prompt reference at it.
     frozen_run = f"{kit}/run/{os.path.basename(run)}"
-    os.makedirs(f"{frozen_run}/session/submission-ledger", exist_ok=True)
+    os.makedirs(f"{frozen_run}/session", exist_ok=True)
     cut_epoch = cut.timestamp()
     home = os.path.expanduser("~")
     def repoint(text):
@@ -197,8 +208,8 @@ def main():
         return text
     for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
         src_path = f"{run}/{name}"
-        if not os.path.isfile(src_path):
-            continue
+        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "log.jsonl"):
+            continue  # dossier files are rebuilt truncated below
         try:
             with open(src_path, encoding="utf-8") as f:
                 text = f.read()
@@ -222,26 +233,21 @@ def main():
                         f.write(repoint(text))
                 except UnicodeDecodeError:
                     shutil.copy(src_path, dest)
-    ledger_rows = jsonl(f"{run}/session/submission-ledger/records.jsonl")
-    kept_ledger = [r for r in ledger_rows if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
-    with open(f"{frozen_run}/session/submission-ledger/records.jsonl", "w") as f:
-        for r in kept_ledger:
+    kept_history = [r for r in jsonl(f"{run}/history.jsonl") if not r.get("at") or iso(r["at"]) <= cut]
+    with open(f"{frozen_run}/history.jsonl", "w") as f:
+        for r in kept_history:
             f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
-    # The report face is rebuilt from the truncated ledger alone: payloads are the sealed rows'
-    # accepted bodies in order, and no post-cut terminal fields survive.
-    payloads_before = []
-    for r in kept_ledger:
-        if r.get("kind") != "sealed":
-            continue
-        accepted = (r.get("payload") or {}).get("accepted", r.get("accepted"))
-        if accepted is not None:
-            payloads_before.append(accepted)
-    sealed_before = len(payloads_before)
-    if os.path.exists(f"{run}/artifacts/report.json"):
-        os.makedirs(f"{frozen_run}/artifacts", exist_ok=True)
-        with open(f"{frozen_run}/artifacts/report.json", "w") as f:
-            json.dump({"frozenAt": cut_raw, "outcome": {"payloads": payloads_before}}, f, ensure_ascii=False, indent=1)
-    for rel in ("session/session.jsonl", "session/host-session/records.jsonl"):
+    # current.json is rebuilt from the truncated history alone: the run's identity and admitted
+    # request stay, the latest submission is the last kept row, and no post-cut terminal survives.
+    kept_subs = [r for r in kept_history if r.get("type") == "submission"]
+    frozen_current = {k: cur[k] for k in ("invocation", "admitted") if k in cur}
+    if kept_subs:
+        frozen_current["submission"] = {"latest": {k: v for k, v in kept_subs[-1].items() if k not in ("systemPrompt", "outputSchema")}}
+    with open(f"{frozen_run}/current.json", "w") as f:
+        json.dump(json.loads(repoint(json.dumps(frozen_current, ensure_ascii=False))), f, ensure_ascii=False, indent=2)
+    sealed_before = sum(1 for r in kept_subs if r.get("disposition") == "accepted")
+    payloads_before = [r.get("params") for r in kept_subs if r.get("disposition") == "accepted" and r.get("params") is not None]
+    for rel in ("session/session.jsonl", "log.jsonl"):
         if os.path.exists(f"{run}/{rel}"):
             os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
             with open(f"{frozen_run}/{rel}", "w") as f:
@@ -260,9 +266,13 @@ def main():
         f.write(pointer)
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
-    hp = f"{run}/headless-system-prompt.txt"
-    sys_kind = "headless-system-prompt" if os.path.exists(hp) else "pi-tail"
-    sysprompt = open(hp).read().replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
+    # The prompt and schema the host delivered ride on the history submission rows (the last
+    # row before the cut). A pi run's delivered prompt is only the appended tail, which pi-tail.ts
+    # rebuilds from the frozen worktree, so only headless hosts take it from the row.
+    delivered = next((r for r in reversed(kept_subs) if r.get("systemPrompt") is not None), None) or cur.get("delivery")
+    delivered_prompt = delivered.get("systemPrompt") if delivered else None
+    sys_kind = "headless-system-prompt" if host != "pi" and isinstance(delivered_prompt, str) else "pi-tail"
+    sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
 
     sh("git", "-C", repo, "worktree", "prune")
     sh("git", "-C", repo, "worktree", "add", "--detach", f"{kit}/wt", head)
@@ -280,8 +290,9 @@ def main():
     with open(f"{kit}/sys.txt", "w") as f:
         f.write(notice + sysprompt)
 
-    if os.path.exists(f"{run}/headless-output-schema.json"):
-        shutil.copy(f"{run}/headless-output-schema.json", f"{kit}/schema.json")
+    if delivered is not None and delivered.get("outputSchema") is not None:
+        with open(f"{kit}/schema.json", "w") as f:
+            json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
     with open(f"{kit}/instr.txt", "w") as f:
         f.write((adm.get("instruction") or "").replace(run, frozen_run))
 
