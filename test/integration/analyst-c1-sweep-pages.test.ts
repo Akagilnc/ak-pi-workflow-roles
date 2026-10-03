@@ -7,14 +7,14 @@
  * C1 fixture runs use exclusive runId segment 019ff000-1xxx.
  */
 import assert from "node:assert/strict";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // 太史 C1 sweep——页与索引写路径家族（#420 整改拆分第二片）。
 
@@ -113,8 +113,8 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
       "runs",
       `${C1_ALPHA_RUN}@coder`,
     );
-    // Drop prior artifacts so live run-state is not classified via leftover receipts.
-    await rm(join(runDir, "artifacts"), { recursive: true, force: true });
+    // Drop the prior terminal so live run-state is not classified via a leftover receipt.
+    clearCurrentSection(runDir, "terminal");
     seedCurrentSection(runDir, "runState", {
       runId: C1_ALPHA_RUN,
       role: "coder",
@@ -154,7 +154,7 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
     assert.equal(coder?.appearanceLaneCount ?? 0, 0);
   });
 });
-test("analyst reads publisher durable error.settlement fallback as terminal failure", async () => {
+test("analyst reads the error face of the terminal section as terminal failure", async () => {
   await withTempHome(async (home) => {
     const runDir = join(
       home,
@@ -164,19 +164,14 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
       "runs",
       `${C1_ALPHA_RUN}@coder`,
     );
-    // Drop prior artifacts so durable error.settlement is the sole terminal face.
-    await rm(join(runDir, "artifacts"), { recursive: true, force: true });
-    await writeFile(
-      join(runDir, "error.settlement.json"),
-      `${JSON.stringify({
-        kind: "error",
-        role: "coder",
-        runId: C1_ALPHA_RUN,
-        cause: "provider",
-        diagnostic: "settled fallback failure",
-      }, null, 2)}\n`,
-      "utf8",
-    );
+    // The terminal section replaced by a failure: it is the sole terminal face.
+    seedTerminal(runDir, "error", {
+      kind: "error",
+      role: "coder",
+      runId: C1_ALPHA_RUN,
+      cause: "provider",
+      diagnostic: "settled failure",
+    });
 
     const result = await runAnalyst({
       mode: "issue",
@@ -185,7 +180,7 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
     assert.equal(
       result.page.legs.some((leg) => leg.runId === C1_ALPHA_RUN),
       true,
-      "run with durable fallback error must remain readable",
+      "run with an error terminal must remain readable",
     );
     const page = result.page as AnalystIssueMetricsPage & {
       roundTimeline?: {
@@ -202,7 +197,7 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
     const row = page.roundTimeline?.lanes
       .flatMap((lane) => lane.rows)
       .find((entry) => entry.kind === "run" && entry.runId === C1_ALPHA_RUN);
-    assert.ok(row, "timeline must keep the fallback-error run");
+    assert.ok(row, "timeline must keep the error-terminal run");
     assert.equal(row.terminal?.kind, "death");
     assert.equal(row.terminal?.channel, "error");
   });

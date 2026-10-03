@@ -5,5 +5,20 @@
     "bookKey": "fixture-book-c2-a",
     "projectRoot": "/analyst-fixture/c2-issue-201",
     "ticketNumber": 201
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "coder",
+      "runId": "019ff000-2001-7000-8000-0000000002a1",
+      "phase": "apply",
+      "outcome": {
+        "kind": "accepted",
+        "role": "coder",
+        "status": "completed",
+        "decisiveFacts": {}
+      }
+    }
   }
 }

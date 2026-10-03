@@ -82,13 +82,10 @@ function projectTerminal(facts: AnalystReadableRunFacts): AnalystRoundTimelineTe
   if (facts.terminal.status === "absent") {
     return { kind: "death", channel: "no-receipt" };
   }
-  if (facts.terminal.file === "error.json") {
+  if (facts.terminal.face === "error") {
     return { kind: "death", channel: "error" };
   }
-  if (facts.terminal.file === "audit-incomplete.json") {
-    return { kind: "death", channel: "audit-incomplete" };
-  }
-  // report.json — receipt face; classCount only when producer wrote a number.
+  // report face — receipt; classCount only when producer wrote a number.
   const status = extractStatus(facts.terminal.body);
   const classCount = readClassCount(facts.terminal.body);
   const receiptStatus = status ?? "unparsed";

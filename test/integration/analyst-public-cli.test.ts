@@ -30,7 +30,7 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { snapshotAnalystDir, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
-import { seedCurrentSection, readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedCurrentSection, seedTerminal, readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -89,7 +89,6 @@ async function seedBookTicketRun(input: {
     `${input.runId}@coder`,
   );
   await mkdir(join(runDir, "session"), { recursive: true });
-  await mkdir(join(runDir, "artifacts"), { recursive: true });
   seedCurrentSection(runDir, "invocation", {
     role: "coder",
     runId: input.runId,
@@ -98,20 +97,17 @@ async function seedBookTicketRun(input: {
     ticketNumber: input.ticketNumber,
   });
   await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
-  await writeFile(
-    join(runDir, "artifacts", "report.json"),
-    `${JSON.stringify({
+  seedTerminal(runDir, "report", {
+    role: "coder",
+    runId: input.runId,
+    phase: "apply",
+    outcome: {
+      kind: "accepted",
       role: "coder",
-      runId: input.runId,
-      phase: "apply",
-      outcome: {
-        kind: "accepted",
-        role: "coder",
-        status: "completed",
-        decisiveFacts: {},
-      },
-    }, null, 2)}\n`,
-  );
+      status: "completed",
+      decisiveFacts: {},
+    },
+  });
   return bookKey;
 }
 
@@ -410,30 +406,23 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           await writeFile(join(runDir, "writer.lock"), input.lock, "utf8");
         }
         if (input.terminal !== undefined) {
-          await mkdir(join(runDir, "artifacts"), { recursive: true });
           // Session face so present-terminal can still emit readable metrics.
           await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
           if (input.terminal === "present") {
-            await writeFile(
-              join(runDir, "artifacts", "report.json"),
-              `${JSON.stringify({
+            seedTerminal(runDir, "report", {
+              role: input.role,
+              runId: input.runId,
+              phase: "apply",
+              outcome: {
+                kind: "accepted",
                 role: input.role,
-                runId: input.runId,
-                phase: "apply",
-                outcome: {
-                  kind: "accepted",
-                  role: input.role,
-                  status: "completed",
-                  decisiveFacts: {},
-                },
-              }, null, 2)}\n`,
-            );
+                status: "completed",
+                decisiveFacts: {},
+              },
+            });
           } else {
-            await writeFile(
-              join(runDir, "artifacts", "report.json"),
-              "not-json{",
-              "utf8",
-            );
+            // A terminal section whose body is not a typed object is unreadable.
+            seedTerminal(runDir, "report", "not-json{");
           }
         }
         return runDir;

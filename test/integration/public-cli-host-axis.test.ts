@@ -797,7 +797,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; planned receipt", a
         ["planned"],
         label,
       );
-      assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "evidence"), `${label}: evidence artifact`);
+      assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "report"), `${label}: report artifact`);
     }
 
     // --- ACP family: grok-build fake agent seals planned via MCP; set_model bare id (#1146) ---

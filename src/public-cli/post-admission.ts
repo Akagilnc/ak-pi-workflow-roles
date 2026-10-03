@@ -30,6 +30,7 @@ import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
+import { appendResumeRowSync } from "../run-dossier.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
@@ -342,7 +343,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
+    scope?: { readonly courtAttemptId?: string; readonly previewOnly?: true },
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -542,7 +543,6 @@ export async function presentControlledFailure<
   let terminal: TerminalResult;
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
-      recordAttemptHistory: true,
       ...(notePackageFault === undefined ? {} : { notePackageFault }),
       ...(failureInput.invocationScopeId === undefined ||
         failureInput.invocationScopeId.length === 0
@@ -681,6 +681,7 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
     ...request,
     continuation: {
       kind: "resume",
+      cause: "delivery-request",
       prompt: JSON.stringify({
         ...receiptDelivery.deliveryState(),
         deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
@@ -1008,10 +1009,10 @@ export async function dispatchPostAdmissionTurn<
       try {
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
-              { ...courtScope, recordAttemptHistory: true })
+              courtScope)
           : await attachRecordedSubmissions(admitted,
               await settleHostEndedNoReceipt(admitted, env.principalAuthority,
-                { ...courtScope, recordAttemptHistory: true }, receiptDelivery.issuedDeliveryRequests()) as T,
+                courtScope, receiptDelivery.issuedDeliveryRequests()) as T,
               courtScope);
         if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
         result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
@@ -1186,6 +1187,19 @@ export async function dispatchPostAdmissionTurn<
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
+      if (turnRequest.continuation.kind === "resume") {
+        // The resume line is history, not ledger authority (#833): a history
+        // that cannot be written is retained as a fault and the resume proceeds.
+        try {
+          appendResumeRowSync(admitted.runDirectory, turnRequest.continuation.cause);
+        } catch (historyError) {
+          await retainPackageFault({
+            runDirectory: admitted.runDirectory,
+            diagnostic: `resume history row write failed before dispatch: ${describeErrorIdentity(historyError)}`,
+            error: historyError,
+          });
+        }
+      }
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
@@ -1478,6 +1492,7 @@ export function resumeTurnRequestProjectionOptions(
       : { correlationId: env.correlationId ?? admitted.correlationId }),
     continuation: {
       kind: "resume",
+      cause: request.summons === undefined ? "explicit-resume" : "summons-resume",
       prompt,
     },
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
@@ -1840,6 +1855,7 @@ export async function runPostAdmissionSeatResume<
               ...firstTurn,
               continuation: {
                 kind: "resume",
+                cause: "auto-resume",
                 prompt: RESUME_TRANSPORT_ENVELOPE,
               },
             };
@@ -2017,6 +2033,7 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
+        cause: "auto-resume",
         prompt: buildAutoResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
           ...pickEngineAxis({

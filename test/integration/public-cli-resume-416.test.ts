@@ -1,4 +1,4 @@
-import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
@@ -215,8 +215,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
     // #1058: read the record the caller was pointed at, not a test-known path.
-    const diagnosticPath=await pointedErrorRecordPath(runDir,stderr.join(""));
-    const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
+    const recorded=await pointedErrorRecord(runDir,stderr.join("")) as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);

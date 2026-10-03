@@ -263,6 +263,8 @@ function recordSubmission(
   runDirectory: string,
   state: LedgerState,
   row: Omit<SubmissionHistoryRow, "type" | "attempt" | "at" | "systemPrompt" | "outputSchema">,
+  /** The tool's own parameter schema: what a host that recorded no delivery schema (Pi) sent. */
+  toolSchema?: unknown,
 ): void {
   const delivery = readSectionSync(runDirectory, "delivery");
   const full: SubmissionHistoryRow = {
@@ -271,7 +273,9 @@ function recordSubmission(
     at: new Date().toISOString(),
     ...row,
     ...(delivery?.systemPrompt === undefined ? {} : { systemPrompt: delivery.systemPrompt }),
-    ...(delivery?.outputSchema === undefined ? {} : { outputSchema: delivery.outputSchema }),
+    ...(delivery?.outputSchema === undefined
+      ? toolSchema === undefined ? {} : { outputSchema: toolSchema }
+      : { outputSchema: delivery.outputSchema }),
   };
   appendHistoryRowSync(runDirectory, { ...full });
   const { systemPrompt: _prompt, outputSchema: _schema, ...latest } = full;
@@ -357,7 +361,7 @@ export function createSubmissionLedgerHost(
               params,
               disposition,
               ...(reason === undefined ? {} : { reason }),
-            });
+            }, tool.parameters);
           let result: HostToolResult<unknown>;
           try {
             // #541 / #575: shared infra-declaration fail lives on the ledger seam.

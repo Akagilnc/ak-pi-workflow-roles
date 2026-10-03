@@ -13,6 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
+import { readCurrentSection, readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
@@ -28,7 +29,6 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -828,11 +828,9 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     // Re-projecting a settled child is a read, not a second host attempt.
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
-    const { recordFile: firstHistoryFile } = resolveSitianRecordPath({
-      level: "event", kind: "attempt-history",
-      sessionParent: piDurablePrincipalAuthority.decode(settledChild.admitted.principal).sessionFile,
-    });
-    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 1);
+    const historyRowTypes = (runDirectory: string) => readHistoryRows(runDirectory).map((row) => row.type);
+    assert.deepEqual(historyRowTypes(seen[0]!.runDirectory), ["submission"],
+      "re-projecting a settled child appends nothing to its history");
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -900,8 +898,17 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
     });
     assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 2,
-      "the second real host turn adds exactly one no-receipt attempt");
+    assert.deepEqual(historyRowTypes(firstRunDirectory), ["submission", "resume"],
+      "the second real host turn adds exactly one resume row and no submission");
+    const resumeRow = readHistoryRows(firstRunDirectory)[1]!;
+    assert.equal(resumeRow.cause, "summons-resume");
+    assert.deepEqual(resumeRow.previous, { face: "report", kind: "accepted" },
+      "the resume row keeps what the terminal said before this turn replaced it");
+    assert.equal(
+      (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
+      "no_receipt",
+      "the leg's terminal is now this court's no_receipt (last write wins)",
+    );
     assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume", "same-parent auditor re-summons must resume");
@@ -1277,7 +1284,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
   }
 });
 
-test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
+test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
   // Real public entry (not an internal dispatchPostAdmissionTurn call): a
   // bare `ak-role resume` that seals an open court is the one production path
   // where courtAttemptId is set and clearCurrentCourt actually runs.
@@ -1296,37 +1303,17 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
   // resurrecting a prior attempt to paper over the contradiction).
   const scratch = await openNotaryScratch("home-cleanup-durable-");
   try {
-    const { home, project, io: baseIo, credentials } = scratch;
+    const { home, project, io, credentials } = scratch;
     const seen: SeenTurn[] = [];
     let turn = 0;
-    let runDirectoryLocked = "";
-    // Manual resume dispatches with the real io given to runAkRole (no
-    // dummyIo — that only wraps the auto-resume loop's own attempts). This
-    // callback restores write access to the run directory (current.json is
-    // rewritten via a same-directory temp file + rename, so a read-only
-    // directory — not a read-only file — is what makes its write fail) the instant the
-    // sealing turn reports *any* diagnostic — a structural "a best-effort
-    // diagnostic fired" signal (armed only for this turn), never inspecting
-    // what the diagnostic text says (#840 bounce class 2: the earlier version
-    // of this test matched the diagnostic's exact English wording to decide
-    // when to restore, and separately locked that wording as pass/fail —
-    // both are free-text mechanical dependencies the quality law forbids).
-    // The restore must land before the caller's own later lawful persist
-    // (markRunTerminal) also rewrites current.json, or this test's fault
-    // injection would collide with it too; io.stderr is the only synchronous,
-    // real (non-dummy) seam available at that exact point in the manual-
-    // resume dispatch chain.
+    let currentJsonLocked = "";
+    // The seal lands through the real ledger; the turn wrapper below then makes
+    // current.json read-only (an in-place rewrite of an existing file fails on its
+    // own mode, a read-only directory would not stop it), so the leg's terminal
+    // write is refused while reads and history.jsonl appends still work. The proof
+    // that the injection fired is structural, never the diagnostic's wording
+    // (#840 bounce class 2): the stale terminal face and the one dossier entry.
     let sealingTurnArmed = false;
-    let cleanupDiagnosticObserved = false;
-    const io = {
-      stdout: baseIo.stdout,
-      stderr: (_text: string) => {
-        if (sealingTurnArmed && !cleanupDiagnosticObserved) {
-          cleanupDiagnosticObserved = true;
-          chmodSync(runDirectoryLocked, 0o755);
-        }
-      },
-    };
     const inner = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1354,8 +1341,8 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         }
         // Bare resume of the still-open court seals it for the first time. The seal
         // writes history.jsonl and current.json in the run directory, so the lock that
-        // makes clearCurrentCourt's runState write fail is applied by the host wrapper
-        // below, after the seal landed. Arm the stderr-restore hook only for this turn.
+        // makes the terminal write fail is applied by the host wrapper below, after
+        // the seal landed. Armed only for this turn.
         sealingTurnArmed = true;
         return scriptedTerminatingToolSession({
           role: "notary",
@@ -1368,9 +1355,8 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     const host: RoleTurnHost = {
       executeTurn: async (request) => {
         const out = await observed.executeTurn(request);
-        // The seal is on the record; now make the same-directory temp+rename rewrite of
-        // current.json (clearCurrentCourt's runState write) fail while reads still work.
-        if (sealingTurnArmed && !cleanupDiagnosticObserved) await chmod(runDirectoryLocked, 0o500);
+        // The seal is on the record; now make the terminal write of current.json fail.
+        if (sealingTurnArmed) await chmod(currentJsonLocked, 0o444);
         return out;
       },
     };
@@ -1390,7 +1376,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
-    runDirectoryLocked = runDirectory;
+    currentJsonLocked = join(runDirectory, "current.json");
 
     const opened = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
@@ -1430,9 +1416,15 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     // The dispatch fact must survive the cleanup failure: the real public
     // entry still delivers accepted, not redone or lost (structured terminal
     // field, not stdout presentation text).
-    assert.equal(resumed.exitCode, 0, "cleanup failure after accepted settlement must not fail the command");
+    assert.equal(resumed.exitCode, 0, "terminal write failure after accepted settlement must not fail the command");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.ok(cleanupDiagnosticObserved, "the injected cleanup failure must actually have been observed");
+    // The injection really fired: the refused write left the earlier no_receipt face
+    // standing in the dossier while the caller was handed accepted.
+    assert.equal(
+      (readCurrentSection(runDirectory, "terminal") as { face?: string }).face,
+      "no_receipt",
+      "the injected terminal write failure must actually have been observed",
+    );
 
     // The dossier is the single authoritative durable channel here (the
     // session it appends to is healthy, so no run-artifacts fallback file is
@@ -1445,9 +1437,15 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     const dossierEntries = sessionLines
       .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
       .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-    assert.equal(dossierEntries.length, 1, "the dossier channel must carry exactly one cleanup diagnostic entry");
-    const cleanupText = dossierEntries[0]?.data?.diagnostic;
-    assert.equal(typeof cleanupText, "string");
+    // One entry per refused dossier write (the run-state persist and the terminal
+    // publish), none duplicated.
+    assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
+    for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    assert.equal(
+      new Set(dossierEntries.map((entry) => entry.data?.diagnostic)).size,
+      dossierEntries.length,
+      "the two entries are distinct refused writes, not a standing duplicate",
+    );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);

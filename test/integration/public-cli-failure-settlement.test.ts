@@ -1,3 +1,4 @@
+import { readHistoryRows, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
@@ -19,8 +20,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
+import { exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -234,7 +234,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
         stderr,
         diagnosticEquals: stderrText,
       });
-      const body = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      const body = terminalBodyAt(errorRef!.path, "error") as {
         diagnostic: string;
       };
       assert.equal(body.diagnostic, stderrText);
@@ -430,7 +430,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       cause: string;
       details?: { timedOut?: boolean };
     };
@@ -446,7 +446,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
 });
 
 
-test("#419 failed attempt joins history and a later accepted attempt overwrites only pointer views", async () => {
+test("#419 a failed attempt is kept on the resume row and a later accepted attempt replaces the failure terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -508,28 +508,22 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    // Settlement must not append to the host's native session; both attempts
-    // remain readable in the package-owned append-only volume after resume.
-    const hostRows = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
-    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: sessionFile });
-    const history = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
-      type?: string; outcome?: { kind?: string; diagnostic?: string };
-    });
-    assert.equal(history.length, 2);
-    assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
-    assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
-    assert.equal(typeof history[0]?.outcome?.diagnostic, "string");
-    assert.equal(history[1]?.outcome?.kind, "accepted");
-
-    // report/evidence stay last-write-wins views of the final accepted attempt.
+    // The failed leg is kept on the resume row (what the terminal said before the
+    // resumed turn replaced it); the later accepted attempt replaces the failure
+    // terminal (last write wins).
     const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
-    const report = JSON.parse(await readFile(join(runDirectory, "artifacts", "report.json"), "utf8")) as { outcome?: TerminalRoleOutcome };
+    const rows = readHistoryRows(runDirectory);
+    assert.deepEqual(rows.map((row) => row.type), ["resume", "submission"]);
+    assert.equal(rows[0]!.cause, "auto-resume");
+    const previous = rows[0]!.previous as { face?: string; diagnostic?: unknown };
+    assert.equal(previous.face, "error", "failed leg's terminal is retained on the resume row");
+    assert.equal(typeof previous.diagnostic, "string");
+    assert.ok((previous.diagnostic as string).length > 0);
+    const report = terminalBodyAt(join(runDirectory, "current.json"), "report") as { outcome?: TerminalRoleOutcome };
     assert.equal(report.outcome?.kind, "accepted");
-    // #836: the persisted report carries the role's original payload, not an
-    // invented top-level status.
-    assert.deepEqual(report.outcome === undefined ? [] : payloadStatusSequence(report.outcome), ["converged"]);
-    await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8");
+    // #836: the role's original payload, not an invented top-level status, is what
+    // history.jsonl kept.
+    assert.deepEqual(submittedParams(runDirectory).map((params) => (params as { status?: string }).status), ["converged"]);
   });
 });
 

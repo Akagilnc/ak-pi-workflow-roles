@@ -4,8 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
 import { withTempRoot } from "./primary-aware-cleanup.ts";
+import { terminalBodyAt } from "./run-dossier-fixture.ts";
 
 import {
   exitCodeForTerminalOutcome,
@@ -121,10 +121,11 @@ export async function assertPublicFailureSettlement(input: {
   assert.ok(Array.isArray(terminal.artifacts));
   assert.ok(terminal.artifacts.length >= 1);
 
-  // Durability via typed artifact refs — never private layout/filenames.
+  // Durability via the typed artifact ref: it names the run's current.json, whose
+  // terminal section is the failure the caller was handed.
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
   assert.ok(errorRef, "failure Terminal must carry error artifact ref");
-  const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+  const errorBody = terminalBodyAt(errorRef!.path, "error") as {
     kind: string;
     cause?: string;
     diagnostic: string;
@@ -143,10 +144,6 @@ export async function assertPublicFailureSettlement(input: {
   // #881: never mint a fabricated classification label.
   assert.notEqual(errorBody.cause, "unrecognized");
   assert.notEqual(terminal.roleOutcome.cause, "unrecognized");
-
-  const evidenceRef = terminal.artifacts.find((a) => a.kind === "evidence");
-  assert.ok(evidenceRef, "failure Terminal must carry evidence artifact ref");
-  await access(evidenceRef!.path);
 
   return { terminal, errorRef: errorRef! };
 }

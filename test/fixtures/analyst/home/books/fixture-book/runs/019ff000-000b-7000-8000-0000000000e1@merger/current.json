@@ -4,5 +4,22 @@
     "runId": "019ff000-000b-7000-8000-0000000000e1",
     "bookKey": "fixture-book",
     "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "merger",
+      "runId": "019ff000-000b-7000-8000-0000000000e1",
+      "outcome": {
+        "kind": "accepted",
+        "role": "merger",
+        "status": "completed",
+        "decisiveFacts": {}
+      },
+      "receipt": {
+        "status": "completed"
+      }
+    }
   }
 }

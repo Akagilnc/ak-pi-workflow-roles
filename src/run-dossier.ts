@@ -25,6 +25,7 @@ export type CurrentSection =
   | "host"
   | "delivery"
   | "submission"
+  | "terminal"
   | "officers";
 
 export function runCurrentPath(runDirectory: string): string {
@@ -118,4 +119,28 @@ export function readHistoryRowsSync(runDirectory: string): readonly Record<strin
     rows.push(parsed);
   }
   return rows;
+}
+
+/**
+ * One `resume` line in history.jsonl, written when a resumed turn is about to
+ * dispatch. `previous` is what the leg's terminal said before this turn
+ * overwrites it (the only place that earlier outcome survives).
+ */
+export function appendResumeRowSync(runDirectory: string, cause: string | undefined): void {
+  const terminal = readSectionSync(runDirectory, "terminal");
+  const body = isRecord(terminal?.body) ? terminal.body : undefined;
+  const outcome = isRecord(body?.outcome) ? body.outcome : undefined;
+  const previous = terminal === undefined ? undefined : {
+    face: terminal.face,
+    ...(outcome?.kind === undefined ? {} : { kind: outcome.kind }),
+    ...(outcome?.status === undefined ? {} : { status: outcome.status }),
+    ...(body?.cause === undefined ? {} : { cause: body.cause }),
+    ...(body?.diagnostic === undefined ? {} : { diagnostic: body.diagnostic }),
+  };
+  appendHistoryRowSync(runDirectory, {
+    type: "resume",
+    at: new Date().toISOString(),
+    ...(cause === undefined ? {} : { cause }),
+    ...(previous === undefined ? {} : { previous }),
+  });
 }

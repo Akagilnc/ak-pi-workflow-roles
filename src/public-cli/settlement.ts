@@ -55,7 +55,6 @@ import {
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   type PackagedArtifactFace,
-  type PackagedArtifactLeaf,
 } from "../packaged-role-registry.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -71,17 +70,8 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
-import {
-  listSeamOwnedUniqueErrorFacePaths,
-  uniqueErrorFallbackName,
-  UNIQUE_ERROR_FALLBACK_STEM,
-  RUN_TERMINAL_ARTIFACT_FILES,
-  RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
-  RUN_TERMINAL_REPORT_FILE,
-  RUN_TERMINAL_ERROR_FILE,
-  RUN_TERMINAL_EVIDENCE_FILE,
-  RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
-} from "../run-terminal-artifacts.ts";
+import { runCurrentPath } from "../run-dossier.ts";
+import { writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
 function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
@@ -93,8 +83,6 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
-  /** Only the dispatched host turn may record this attempt; later reads are projections. */
-  readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   readonly courtAttemptId?: string;
@@ -460,13 +448,13 @@ async function settleNoReceiptTerminal(
         kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
         ...facts, decisiveFacts: facts,
       };
-  if (scope?.recordAttemptHistory === true) {
-    await appendRunAttemptHistory(
-      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
-      roleOutcome,
-    );
+  if (scope?.previewOnly !== true) {
+    writeRunTerminal(admitted.runDirectory, "no_receipt", {
+      role: admitted.role,
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    });
   }
-  if (scope?.previewOnly !== true) await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return attachEngineDetourToolUsage({
     roleOutcome,
     navigator: await extractNavigatorFactFromAdmittedSession(
@@ -1033,40 +1021,6 @@ export async function readBoundSessionEntries(
   return await readStrictPiSessionJsonl(sessionFile) as SessionEntry[];
 }
 
-/**
- * #419 per-attempt process history. 史必追加，指针可覆盖；指针可以覆盖的前提是史已落。
- * Reuses the run session principal's append-only JSONL custom-entry shape
- * (plain custom entries are state records and never enter LLM context), so no
- * second ledger mechanism is introduced.
- */
-export const ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history" as const;
-
-/** Complete per-attempt result as recorded in the appended history. */
-type AttemptHistoryOutcome =
-  | TerminalRoleOutcome
-  | ({ kind: "failure"; role: string } & ControlledFailure);
-
-type AttemptHistorySource = {
-  readonly role: string;
-  readonly runId: string;
-  readonly sessionFile: string;
-};
-
-/** Append the complete attempt to the package ledger before overwriting pointer artifacts (#419). */
-export async function appendRunAttemptHistory(
-  source: AttemptHistorySource,
-  outcome: AttemptHistoryOutcome,
-): Promise<void> {
-  sitianReport({
-    level: "event",
-    kind: "attempt-history",
-    subject: { runId: source.runId },
-    sessionParent: source.sessionFile,
-    payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
-    source: "settlement",
-  });
-}
-
 function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
@@ -1315,63 +1269,6 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-/**
- * Remove one face path (file or directory collision plant).
- * Only missing target is silent — other errno stay loud (失败诚实).
- * recursive: publication may have occupied a face name as a directory (EISDIR plant).
- */
-async function removeFaceIfPresent(path: string): Promise<void> {
-  try {
-    await rm(path, { recursive: true, force: true });
-  } catch (error) {
-    // force:true already ignores ENOENT; ENOTDIR = face path not enterable
-    // (artifacts-as-file mid-path) — same absent-face semantics as the reader.
-    // Other errno stay loud (失败诚实).
-    if (isMissingPathError(error)) return;
-    throw error;
-  }
-}
-
-/**
- * #953: artifact face reflects the current terminal only.
- * Reader contract owns the full adoptable set (conventional trio + fixed
- * fallbacks + seam-owned unique). Clear every seam-owned face before the
- * new current publishes — including the conventional name about to be
- * rewritten. Retaining that name left directory collision plants in place
- * (supported publish input); writer then fell back while the reader stopped
- * at EISDIR on the stale conventional path and never adopted the fallback.
- * report / error / empty share one method (no per-branch face list).
- * empty publishes nothing; does not create a no_receipt-shaped public artifact.
- * Non-terminal materials stay. Face names may be directory collision plants —
- * remove recursively. Unique ownership is listSeamOwnedUniqueErrorFacePaths:
- * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
- * Path absence (ENOENT/ENOTDIR) is silent; other delete failures stay loud.
- */
-async function clearOppositeTerminalArtifactFace(
-  runDirectory: string,
-): Promise<void> {
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    await removeFaceIfPresent(join(artifactsDir, file));
-  }
-  // Fixed fallbacks + unique clear too; subsequent publish writes the new
-  // durable path after this clear (conventional first when writable).
-  for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    await removeFaceIfPresent(join(runDirectory, relative));
-  }
-  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
-    await removeFaceIfPresent(path);
-  }
-}
-
-async function ensureTerminalArtifactFace(
-  runDirectory: string,
-): Promise<string> {
-  const artifactsDir = await ensureRunArtifactsDir(runDirectory);
-  await clearOppositeTerminalArtifactFace(runDirectory);
-  return artifactsDir;
-}
-
 type AcceptedArtifactAttachment = {
   readonly provenancePath: string;
   readonly frozenPath: string;
@@ -1391,45 +1288,17 @@ function acceptedArtifactAttachmentRefs(
 }
 
 /**
- * Sole success-terminal artifact publisher (#953): append attempt history,
- * refresh the public terminal face, write report/evidence, return refs.
- * Seat-specific structured fields stay in callers; do not fork this flow.
+ * Sole success-terminal publisher (#953): replace the leg's terminal in
+ * current.json. The report carries the outcome's verdict facts; the role's
+ * submitted payloads live in history.jsonl, the latest also in current.json
+ * `submission`.
  */
-async function publishAcceptedTerminalArtifacts(
+function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  recordAttemptHistory: boolean,
-  bodies: {
-    readonly report: Record<string, unknown>;
-    readonly evidence: Record<string, unknown>;
-  },
-): Promise<TerminalArtifactRef[]> {
-  // #419: a dispatched turn appends before rewriting last-write-wins views;
-  // a later projection may refresh views but must not invent another attempt.
-  if (recordAttemptHistory) {
-    await appendRunAttemptHistory(
-      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
-      roleOutcome,
-    );
-  }
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, RUN_TERMINAL_REPORT_FILE);
-  const evidencePath = join(artifactsDir, RUN_TERMINAL_EVIDENCE_FILE);
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(bodies.report, null, 2)}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(bodies.evidence, null, 2)}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  report: Record<string, unknown>,
+): TerminalArtifactRef[] {
+  writeRunTerminal(admitted.runDirectory, "report", report);
+  return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
 type LawfulSessionRead =
@@ -1491,7 +1360,7 @@ async function finishLawfulSeat(
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
-    : await publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
+    : publishDeclaredSeatTerminal(admitted, roleOutcome, entries);
   const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
@@ -1547,41 +1416,15 @@ function extractDoctorCandidateFacts(
   return {};
 }
 
-const EMPTY_ARTIFACT_FACE: PackagedArtifactFace = { leaves: [] };
+const EMPTY_ARTIFACT_FACE: PackagedArtifactFace = {};
 
-/** Artifact face for one seat. Absent means report/evidence carry only shared leaves. */
+/** Terminal face for one seat. Absent means the report carries only the shared facts. */
 function seatArtifactFace(role: string): PackagedArtifactFace {
   const record = packagedRoleMetadata(role);
   if (record !== undefined && "artifactFace" in record && record.artifactFace !== undefined) {
     return record.artifactFace;
   }
   return EMPTY_ARTIFACT_FACE;
-}
-
-function readAdmittedPath(source: object, path: string): unknown {
-  let current: unknown = source;
-  for (const part of path.split(".")) {
-    if (typeof current !== "object" || current === null) return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-function evidenceLeaves(
-  admitted: AdmittedRoleInvocation,
-  leaves: readonly PackagedArtifactLeaf[],
-): Record<string, unknown> {
-  const evidence: Record<string, unknown> = {};
-  for (const leaf of leaves) {
-    if (leaf.callerProvenance === true) {
-      if (!admitted.instructionEmpty) evidence[leaf.key] = admitted.instruction;
-      continue;
-    }
-    const value = readAdmittedPath(admitted, leaf.from ?? leaf.key);
-    if (value === undefined && leaf.omitUndefined === true) continue;
-    evidence[leaf.key] = leaf.copyArray === true && Array.isArray(value) ? [...value] : value;
-  }
-  return evidence;
 }
 
 function doctorReportFacts(
@@ -1597,33 +1440,23 @@ function doctorReportFacts(
   };
 }
 
-async function publishDeclaredSeatArtifacts(
+function publishDeclaredSeatTerminal(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
-  recordAttemptHistory: boolean,
-): Promise<TerminalArtifactRef[]> {
+): TerminalArtifactRef[] {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
-    ? { phase: readAdmittedPath(admitted, "phase") }
+    ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, recordAttemptHistory, {
-    report: {
-      role: admitted.role,
-      runId: admitted.runId,
-      ...phase,
-      outcome: roleOutcome,
-      ...doctorReportFacts(face, roleOutcome, entries),
-    },
-    evidence: {
-      runId: admitted.runId,
-      ...(face.evidenceRole === true ? { role: admitted.role } : {}),
-      ...evidenceLeaves(admitted, face.leaves),
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
+  // Payloads are the role's submitted words: they live in history.jsonl, not here.
+  const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
+  return publishAcceptedTerminal(admitted, {
+    role: admitted.role,
+    runId: admitted.runId,
+    ...phase,
+    outcome: verdict,
+    ...doctorReportFacts(face, roleOutcome, entries),
   });
 }
 
@@ -1818,182 +1651,16 @@ export async function attachPostAuditCountersignFact(
   return applySecretariatCountersignTerminal(admitted, authority, terminal, scope);
 }
 
-/** One failed attempt to place a durable failure artifact (path is private layout). */
-type PublicationAttempt = {
-  readonly path: string;
-  readonly diagnostic: string;
-  readonly identity?: {
-    readonly name?: string;
-    readonly code?: string | number;
-  };
-};
-
-function publicationAttemptFromError(
-  path: string,
-  error: unknown,
-): PublicationAttempt {
-  if (error instanceof Error) {
-    return {
-      path,
-      diagnostic: error.message || error.name || "write failed",
-      identity: thrownIdentity(error),
-    };
-  }
-  return { path, diagnostic: String(error) };
-}
-
 /**
- * Directories eligible for open-ended unique failure-artifact placement.
- * Always includes the ledger runs/ parent of the run directory so an
- * unwritable run tree cannot strand the original controlled failure.
+ * Replace the leg's terminal with the controlled failure. A write failure
+ * propagates: the caller notes it beside the host terminal.
  */
-function uniqueFailureFallbackDirs(
-  runDirectory: string,
-  baseDir: string,
-): string[] {
-  const dirs: string[] = [];
-  for (const dir of [baseDir, runDirectory, dirname(runDirectory)]) {
-    if (!dirs.includes(dir)) dirs.push(dir);
-  }
-  return dirs;
-}
-
-/**
- * Resolve a writable artifacts base directory. If `artifacts/` cannot be created
- * (e.g. a file occupies that name), fall back to the run directory itself.
- */
-async function resolveFailureArtifactsBase(
-  runDirectory: string,
-): Promise<{ baseDir: string; attempt?: PublicationAttempt }> {
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    await ensureRunArtifactsDir(runDirectory);
-    return { baseDir: artifactsDir };
-  } catch (error) {
-    return {
-      baseDir: runDirectory,
-      attempt: publicationAttemptFromError(artifactsDir, error),
-    };
-  }
-}
-
-/**
- * Write JSON across preferred paths, then unique open-ended fallbacks.
- * Finite fixed names must not be able to exhaust durability and strand the
- * original controlled failure outside settlement.
- */
-async function writeFailureJsonRetainingCause(
-  preferredCandidates: readonly string[],
-  uniqueFallbackDirs: readonly string[],
-  stem: string,
-  basePayload: Readonly<Record<string, unknown>>,
-  priorIssues: readonly PublicationAttempt[],
-): Promise<{ path: string; issues: PublicationAttempt[] }> {
-  const issues: PublicationAttempt[] = [...priorIssues];
-  const candidates: string[] = [
-    ...preferredCandidates,
-    // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join(dir, stem === UNIQUE_ERROR_FALLBACK_STEM ? uniqueErrorFallbackName() : `${stem}.${randomUUID()}.json`)),
-  ];
-  for (let i = 0; i < candidates.length; i += 1) {
-    const path = candidates[i]!;
-    const payload =
-      issues.length === 0
-        ? basePayload
-        : { ...basePayload, publicationIssues: issues };
-    try {
-      await writeFile(
-        path,
-        `${JSON.stringify(payload, null, 2)}\n`,
-        "utf8",
-      );
-      return { path, issues };
-    } catch (error) {
-      issues.push(publicationAttemptFromError(path, error));
-    }
-  }
-  const last = issues.at(-1);
-  const error = new Error(
-    last?.diagnostic ?? "unable to write durable failure artifact",
-  ) as Error & {
-    code?: string | number;
-    publicationAttempts?: PublicationAttempt[];
-  };
-  if (last?.identity?.name !== undefined && last.identity.name !== "") {
-    error.name = last.identity.name;
-  }
-  if (last?.identity?.code !== undefined) {
-    error.code = last.identity.code;
-  }
-  error.publicationAttempts = issues;
-  throw error;
-}
-
-export async function publishFailureArtifacts(
+export function publishFailureTerminal(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
-  authority: DurablePrincipalAuthority,
   onErrorPublished?: (path: string) => void,
-  recordAttemptHistory = false,
-): Promise<TerminalArtifactRef[]> {
-  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
-  const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
-    admitted.runDirectory,
-  );
-  const priorIssues: PublicationAttempt[] =
-    baseAttempt === undefined ? [] : [baseAttempt];
-  // #419: a dispatched failure joins history before fixed-name views change.
-  // Re-projecting an existing failure does not append. History write failure
-  // rides publicationIssues rather than stranding the controlled failure.
-  if (recordAttemptHistory) {
-    try {
-      await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
-        kind: "failure", role: admitted.role, ...failure,
-      });
-    } catch (error) {
-      priorIssues.push(publicationAttemptFromError(sessionFile, error));
-    }
-  }
-  // #953: clear the prior success face, but a failure here must not strand
-  // the original controlled cause; preserve the issue beside the fallback.
-  try {
-    await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-  } catch (error) {
-    priorIssues.push(publicationAttemptFromError(
-      roleRunArtifactsDirectory(admitted.runDirectory), error,
-    ));
-  }
-
-  // Prefer conventional names; unique fallback dirs keep colliding fixed paths
-  // from stranding the original failure outside settlement. Include the ledger
-  // runs/ parent so a locked run directory (EACCES) cannot exhaust durability.
-  const underArtifacts = baseDir === roleRunArtifactsDirectory(admitted.runDirectory);
-  const uniqueFallbackDirs = uniqueFailureFallbackDirs(
-    admitted.runDirectory,
-    baseDir,
-  );
-  const errorCandidates = underArtifacts
-    ? [
-        join(baseDir, RUN_TERMINAL_ERROR_FILE),
-        join(baseDir, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
-        join(admitted.runDirectory, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
-      ]
-    : [
-        join(baseDir, RUN_TERMINAL_ERROR_SETTLEMENT_FILE),
-        join(baseDir, RUN_TERMINAL_ERROR_FILE),
-      ];
-  const evidenceCandidates = underArtifacts
-    ? [
-        join(baseDir, RUN_TERMINAL_EVIDENCE_FILE),
-        join(baseDir, "evidence.settlement.json"),
-        join(admitted.runDirectory, "evidence.settlement.json"),
-      ]
-    : [
-        join(baseDir, "evidence.settlement.json"),
-        join(baseDir, RUN_TERMINAL_EVIDENCE_FILE),
-      ];
-
-  const errorPayloadBase: Record<string, unknown> = {
+): TerminalArtifactRef[] {
+  writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,
     runId: admitted.runId,
@@ -2004,37 +1671,10 @@ export async function publishFailureArtifacts(
     // This package's own facts, kept beside the host's report.
     ...(failure.packageFact === undefined ? {} : { packageFact: failure.packageFact }),
     ...(failure.stderr === undefined ? {} : { stderr: failure.stderr }),
-  };
-
-  const errorWrite = await writeFailureJsonRetainingCause(
-    errorCandidates,
-    uniqueFallbackDirs,
-    UNIQUE_ERROR_FALLBACK_STEM,
-    errorPayloadBase,
-    priorIssues,
-  );
-  onErrorPublished?.(errorWrite.path);
-
-  const evidencePayload: Record<string, unknown> = {
-    runId: admitted.runId,
-    sessionDirectory: sessionDirectory,
-    sessionFile: sessionFile,
-    attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    ...(failure.cause === undefined ? {} : { failureCause: failure.cause }),
-  };
-  const evidenceWrite = await writeFailureJsonRetainingCause(
-    evidenceCandidates,
-    uniqueFallbackDirs,
-    "evidence",
-    evidencePayload,
-    // Evidence records the same publication collisions observed placing the error body.
-    errorWrite.issues,
-  );
-
-  return [
-    { kind: "error", path: errorWrite.path },
-    { kind: "evidence", path: evidenceWrite.path },
-  ];
+  });
+  const path = runCurrentPath(admitted.runDirectory);
+  onErrorPublished?.(path);
+  return [{ kind: "error", path }];
 }
 
 /**
@@ -2060,13 +1700,7 @@ export async function settleFailureTerminalResult(
   let artifacts: TerminalArtifactRef[] = [];
   if (options.previewOnly !== true) {
     try {
-      artifacts = await publishFailureArtifacts(
-        admitted,
-        failure,
-        authority,
-        options.onErrorPublished,
-        options.recordAttemptHistory === true,
-      );
+      artifacts = publishFailureTerminal(admitted, failure, options.onErrorPublished);
     } catch (error) {
       await noteSettlementFault(
         admitted.runDirectory,

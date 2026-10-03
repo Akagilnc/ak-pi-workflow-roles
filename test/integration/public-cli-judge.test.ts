@@ -1,3 +1,4 @@
+import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -16,7 +17,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -402,25 +403,23 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     }
     assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
-    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
 
     // Artifacts are openable paths under the run directory.
     for (const artifact of terminal.artifacts) {
       await access(artifact.path);
     }
-    const report = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "report")!.path,
-        "utf8",
-      ),
-    ) as { role: string; runId: string; outcome: TerminalRoleOutcome };
+    const reportRef = terminal.artifacts.find((a) => a.kind === "report")!;
+    const report = terminalBodyAt(reportRef.path, "report") as { role: string; runId: string; outcome: TerminalRoleOutcome };
     assert.equal(report.role, "judge");
     assert.equal(report.runId, "run-cli-judge-001");
     assert.equal(report.outcome.kind, "accepted");
-    // #836: the persisted report carries the role's original payload, not an
-    // invented top-level status — read status off the last payload,
-    // same as the live terminal above.
-    assert.deepEqual(payloadStatusSequence(report.outcome), ["converged"]);
+    // #836: the role's original payload (not an invented top-level status) is what
+    // history.jsonl kept; the persisted report carries only the verdict.
+    assert.equal("payloads" in report.outcome, false);
+    assert.deepEqual(
+      submittedParams(dirname(reportRef.path)).map((params) => (params as { status?: string }).status),
+      ["converged"],
+    );
 
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");

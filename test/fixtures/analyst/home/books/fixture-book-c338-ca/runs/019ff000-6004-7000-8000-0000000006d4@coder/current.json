@@ -4,5 +4,20 @@
     "runId": "019ff000-6004-7000-8000-0000000006d4",
     "bookKey": "fixture-book-c338-ca",
     "projectRoot": "/analyst-fixture/c338-cohort-a"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "coder",
+      "runId": "019ff000-6004-7000-8000-0000000006d4",
+      "phase": "apply",
+      "outcome": {
+        "kind": "accepted",
+        "role": "coder",
+        "status": "completed",
+        "decisiveFacts": {}
+      }
+    }
   }
 }

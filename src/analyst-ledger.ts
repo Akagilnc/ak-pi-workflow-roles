@@ -40,8 +40,8 @@ import {
   type SessionToolInterval,
 } from "./ledger-session-read.ts";
 import {
-  readRunTerminalArtifact,
-  type RunTerminalArtifactFile,
+  readRunTerminal,
+  type RunTerminalFace,
 } from "./run-terminal-artifacts.ts";
 import type {
   AnalystFirstFrameAt,
@@ -311,7 +311,7 @@ export type AnalystRunTerminalFace =
   | { readonly status: "absent" }
   | {
       readonly status: "present";
-      readonly file: RunTerminalArtifactFile;
+      readonly face: RunTerminalFace;
       readonly body: Record<string, unknown>;
       /** Nonblank producer role — sole owner is readRunTerminalArtifact. */
       readonly role: string;
@@ -499,10 +499,14 @@ async function classifyScopedRun(input: {
   }
 
   try {
-    const artifact = await readRunTerminalArtifact(input.runDirectory);
+    const read = readRunTerminal(input.runDirectory);
+    // A no_receipt terminal is the explicit form of "no accepted receipt".
+    const artifact = read.status === "present" && read.face === "no_receipt"
+      ? { status: "absent" as const }
+      : read;
     if (artifact.status === "unreadable") {
       missingSources.push("terminal-artifact");
-      reasons.push(`${artifact.file}: ${artifact.reason}`);
+      reasons.push(`terminal: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
       if (lifecycle === "admitted" || lifecycle === "running") {
         // No terminal yet: ghost report only, or live in-flight omit.
@@ -514,10 +518,10 @@ async function classifyScopedRun(input: {
       }
       terminal = { status: "absent" };
     } else {
-      // role already required nonblank by readRunTerminalArtifact (single owner).
+      // role already required nonblank by readRunTerminal (single owner).
       terminal = {
         status: "present",
-        file: artifact.file,
+        face: artifact.face,
         body: artifact.body,
         role: artifact.body.role as string,
       };

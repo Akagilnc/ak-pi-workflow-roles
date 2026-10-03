@@ -3,7 +3,7 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
-import { readCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -28,8 +28,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
@@ -1920,22 +1918,24 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
 
     // Relocation keeps both attempts in the package ledger, not the host original.
     const relocatedSessionFile = join(ticketPlacement.runDirectory, "session", "session.jsonl");
-    const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
-    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: relocatedSessionFile });
-    const attemptHistory = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
-      type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
-    });
-    assert.equal(attemptHistory.length, 2);
-    assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
-    assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
-    assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
-    assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
-    assert.equal(attemptHistory[0]?.role, "diarist");
-    assert.equal(attemptHistory[0]?.runId, runId);
-    assert.equal(attemptHistory[1]?.outcome?.kind, "accepted");
-    assert.equal(attemptHistory[1]?.role, "diarist");
-    assert.equal(attemptHistory[1]?.runId, runId);
+    // Relocation keeps both attempts in the run's dossier, not the host original: the
+    // failed leg on the resume row, the accepted submission, and the accepted terminal
+    // that replaced the failure.
+    const rows = readHistoryRows(ticketPlacement.runDirectory);
+    assert.deepEqual(rows.map((row) => row.type), ["resume", "submission"]);
+    assert.equal(rows[0]!.cause, "auto-resume");
+    const previous = rows[0]!.previous as { face?: string; diagnostic?: unknown };
+    assert.equal(previous.face, "error");
+    assert.equal(typeof previous.diagnostic, "string");
+    assert.ok((previous.diagnostic as string).length > 0);
+    assert.equal((rows[1] as { role?: string }).role, "diarist");
+    assert.equal(submittedParams(ticketPlacement.runDirectory).length, 1);
+    const terminal = terminalBodyAt(join(ticketPlacement.runDirectory, "current.json"), "report") as {
+      role?: string; runId?: string; outcome?: { kind?: string };
+    };
+    assert.equal(terminal.role, "diarist");
+    assert.equal(terminal.runId, runId);
+    assert.equal(terminal.outcome?.kind, "accepted");
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });
@@ -2020,10 +2020,10 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     );
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
-    const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
+    const currentPath = join(ticketPlacement.runDirectory, "current.json");
     // The resumed caller must be pointed at the relocated run's error record.
-    assert.ok(stderr.join("").includes(errorPath), `resume must point at the relocated error record: ${stderr.join("")}`);
-    const error = JSON.parse(await readFile(errorPath, "utf8")) as {
+    assert.ok(stderr.join("").includes(currentPath), `resume must point at the relocated error record: ${stderr.join("")}`);
+    const error = terminalBodyAt(currentPath, "error") as {
       kind?: unknown;
       runId?: unknown;
       diagnostic?: unknown;

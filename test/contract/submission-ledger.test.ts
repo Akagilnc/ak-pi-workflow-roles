@@ -288,6 +288,8 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       params,
       disposition: "infrastructure",
       reason: "typed seam unavailable",
+      // No delivery section (this host recorded none): the tool's own parameter schema is what was sent.
+      outputSchema: { type: "object", properties: {} },
     });
     // #881: original params stay projectable even when outcome is not sealed.
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [

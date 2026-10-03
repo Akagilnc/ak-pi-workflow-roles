@@ -1,5 +1,5 @@
-import { readCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
-import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
@@ -61,7 +61,7 @@ const roleTurnHostFromLegacyPiRunner: typeof rawRoleTurnHostFromLegacyPiRunner =
  * Shared plant: seal accepted judge output, optionally block report publication.
  * #953 clears conventional faces (including directory plants) before rewrite,
  * so report.json-as-directory no longer reaches writeFile. When blocking,
- * lock artifacts/ to 0o555 — clear is a no-op on absent faces; writeFile EACCES.
+ * lock current.json to 0o444 — the terminal write gets EACCES.
  * Throw/ledger poison cases pass blockReportPublication:false. A later
  * read or write fault is a note beside the host terminal.
  */
@@ -72,24 +72,17 @@ function sealedPublicationBlockedHost(
   host: RoleTurnHost;
   dispatches: () => number;
   /** Best-effort restore so temp trees and resume rebuilds can write again. */
-  restoreArtifactsWritable: () => Promise<void>;
+  restoreWritable: () => Promise<void>;
 } {
   const blockReportPublication = options.blockReportPublication !== false;
   let dispatches = 0;
-  const lockedArtifactsDirs = new Set<string>();
-  const host = roleTurnHostFromLegacyPiRunner({
+  const lockedCurrents = new Set<string>();
+  const inner = roleTurnHostFromLegacyPiRunner({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
     piRunner: async (args) => {
       dispatches += 1;
       const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-      const runDir = join(sessionDir, "..");
-      if (blockReportPublication) {
-        const artifactsDir = join(runDir, "artifacts");
-        await mkdir(artifactsDir, { recursive: true });
-        await chmod(artifactsDir, 0o555);
-        lockedArtifactsDirs.add(artifactsDir);
-      }
       await mkdir(sessionDir, { recursive: true });
       await writeFile(
         join(sessionDir, "session.jsonl"),
@@ -119,19 +112,33 @@ function sealedPublicationBlockedHost(
       };
     },
   });
-  return {
-    host,
-    dispatches: () => dispatches,
-    restoreArtifactsWritable: async () => {
-      for (const dir of lockedArtifactsDirs) {
-        try {
-          await chmod(dir, 0o755);
-        } catch {
-          // cleanup best-effort
-        }
+  // The seal is on the record once the turn returns; the leg's terminal write is
+  // next. Locking current.json (an in-place rewrite fails on the file's own mode)
+  // refuses that write while reads and history.jsonl appends still work. The fault
+  // passes once a gate officer's turn begins, so the gates' own lawful pointer
+  // writes into the judge's dossier are not caught by it.
+  const restoreWritable = async () => {
+    for (const file of lockedCurrents) {
+      try {
+        await chmod(file, 0o644);
+      } catch {
+        // cleanup best-effort
       }
+    }
+  };
+  const host: RoleTurnHost = {
+    executeTurn: async (request) => {
+      if (request.activation.role !== "judge") await restoreWritable();
+      const out = await inner.executeTurn(request);
+      if (blockReportPublication && request.activation.role === "judge") {
+        const current = join(request.runDirectory, "current.json");
+        await chmod(current, 0o444);
+        lockedCurrents.add(current);
+      }
+      return out;
     },
   };
+  return { host, dispatches: () => dispatches, restoreWritable };
 }
 
 
@@ -236,7 +243,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io } = captureIo();
-    const { host, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
+    const { host, dispatches, restoreWritable } = sealedPublicationBlockedHost(
       "lawful despite later publication failure",
     );
 
@@ -270,28 +277,19 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
-      const { recordFile } = resolveSitianRecordPath({
-        level: "event", kind: "attempt-history",
-        sessionParent: piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
-      });
-      const historyOutcomes = async () => (await readSitianRecords(recordFile)).records.map((row) =>
-        (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
-      assert.deepEqual(await historyOutcomes(), ["accepted"],
+      const historyTypes = () => readHistoryRows(runDirectory).map((row) => row.type);
+      assert.deepEqual(historyTypes(), ["submission"],
         "the sealed attempt is recorded once; publication failure is not a second attempt");
 
-      // Publication never wrote a success report face under the locked artifacts/.
-      const reportPath = join(runDirectory, "artifacts", "report.json");
-      await assert.rejects(
-        () => stat(reportPath),
-        (error: NodeJS.ErrnoException) => error.code === "ENOENT" || error.code === "EACCES",
-      );
+      // Publication never wrote a success terminal under the locked current.json.
+      const reportPath = join(runDirectory, "current.json");
+      assert.equal("terminal" in readCurrentJson(runDirectory), false);
 
       // Unlock so bare resume can rebuild the public report from sealed facts.
-      await restoreArtifactsWritable();
+      await restoreWritable();
 
       // #833 / #672 US6: bare resume reaches host; settlement rebuilds public report.
       let resumeDispatches = 0;
@@ -330,9 +328,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         );
       }
       // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
-      const reportStat = await stat(reportPath);
-      assert.equal(reportStat.isFile(), true, "resume must rebuild report.json as a file");
-      const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
+      const reportBody = terminalBodyAt(reportPath, "report") as {
         role?: string;
         runId?: string;
         outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
@@ -341,8 +337,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(reportBody.runId, runId);
       assert.equal(reportBody.outcome?.kind, "accepted");
       assert.equal(reportBody.outcome?.role, "judge");
+      assert.equal("payloads" in (reportBody.outcome ?? {}), false);
       assert.equal(
-        (reportBody.outcome?.payloads?.at(-1) as { note?: string } | undefined)?.note,
+        (submittedParams(runDirectory).at(-1) as { note?: string } | undefined)?.note,
         "lawful despite later publication failure",
       );
       assert.ok(
@@ -353,14 +350,18 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
-      assert.deepEqual(await historyOutcomes(), ["accepted", "accepted"],
-        "the actual resume adds its own accepted attempt");
+      assert.deepEqual(historyTypes(), ["submission", "resume"],
+        "the actual resume adds its own resume row and no second submission");
+      const resumeRow = readHistoryRows(runDirectory)[1]!;
+      assert.equal(resumeRow.cause, "explicit-resume");
+      assert.equal("previous" in resumeRow, false, "no terminal stood before the resumed turn");
+      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(await historyOutcomes(), ["accepted", "accepted"],
-        "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(historyTypes(), ["submission", "resume"],
+        "re-reading the latest seal must not append another row");
     } finally {
-      await restoreArtifactsWritable();
+      await restoreWritable();
     }
   });
 
@@ -372,7 +373,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
     seedGitProject(project);
     const runId = "run-lawful-publish-throw-001";
     const captured = captureIo();
-    const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
+    const { host: inner, dispatches, restoreWritable } = sealedPublicationBlockedHost(
       "lawful then dispatch throws after seal",
       { blockReportPublication: false },
     );
@@ -419,7 +420,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "recorded accepted payload must survive a later persist failure",
       );
     } finally {
-      await restoreArtifactsWritable();
+      await restoreWritable();
     }
   });
 
@@ -431,7 +432,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
     seedGitProject(project);
     const runId = "run-lawful-publish-ledger-fail-001";
     const { io } = captureIo();
-    const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
+    const { host: inner, dispatches, restoreWritable } = sealedPublicationBlockedHost(
       "lawful then ledger authority fails",
       { blockReportPublication: false },
     );
@@ -508,7 +509,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
     } finally {
-      await restoreArtifactsWritable();
+      await restoreWritable();
     }
   });
 
@@ -1507,8 +1508,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
     // #1058: read the record the caller was pointed at, not a test-known path.
-    const pointedPath = await pointedErrorRecordPath(runDirectory, stderr.join(""));
-    const noted = JSON.parse(await readFile(pointedPath, "utf8")) as {
+    const noted = await pointedErrorRecord(runDirectory, stderr.join("")) as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
     };
@@ -1758,10 +1758,8 @@ test("public resume failures persist structured diagnostics", async () => {
       };
       // #1058: the record must be the one the caller was pointed at, not a path
       // this test already knows — persistence alone proves nothing about delivery.
-      const readError = async (pointedPath: string, expectedRunId: string) => {
-        const parsed: unknown = JSON.parse(await readFile(pointedPath, "utf8"));
-        assert.equal(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed), true);
-        const record = parsed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
+      const readError = async (pointed: Promise<Record<string, unknown>>, expectedRunId: string) => {
+        const record = await pointed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
         assert.equal(record.kind, "error");
         assert.equal(record.runId, expectedRunId);
         assert.equal(typeof record.diagnostic, "string");
@@ -1779,8 +1777,7 @@ test("public resume failures persist structured diagnostics", async () => {
         // #1058: the caller must be handed a pointer to this run's error record —
         // derive the pointed file from stderr, then read that file. Reading a
         // test-known path instead would prove only that the artifact persisted.
-        const pointedPath = await pointedErrorRecordPath(runDirectory, result.stderr);
-        const record = JSON.parse(await readFile(pointedPath, "utf8")) as {
+        const record = await pointedErrorRecord(runDirectory, result.stderr) as {
           runId?: unknown;
           diagnostic?: unknown;
           details?: unknown;
@@ -1803,16 +1800,9 @@ test("public resume failures persist structured diagnostics", async () => {
         session: true,
         projectRoot: project,
       });
-      const priorReportPath = join(corruptRunState.runDirectory, "artifacts", "report.json");
-      await mkdir(join(corruptRunState.runDirectory, "artifacts"), { recursive: true });
-      await writeFile(priorReportPath, '{"status":"prior"}\n', "utf8");
       seedCurrentSection(corruptRunState.runDirectory, "runState", {});
       await assertRecordedFailure(corruptRunState.runDirectory, "1058-corrupt-run-state");
       assert.deepEqual(readCurrentSection(corruptRunState.runDirectory, "runState"), {});
-      assert.equal(
-        (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
-        "prior",
-      );
 
       const seatSelectionFailure = await seed({
         runId: "1058-seat-selection-failure",
@@ -1863,9 +1853,6 @@ test("public resume failures persist structured diagnostics", async () => {
           "utf8",
         );
       }
-      const priorParentReport = join(parent.runDirectory, "artifacts", "report.json");
-      await mkdir(join(parent.runDirectory, "artifacts"), { recursive: true });
-      await writeFile(priorParentReport, '{"status":"prior-parent"}\n', "utf8");
       let childDispatches = 0;
       let parentDispatches = 0;
       const acceptedChildHost = roleTurnHostFromLegacyPiRunner({
@@ -1920,15 +1907,10 @@ test("public resume failures persist structured diagnostics", async () => {
         `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
       );
       assert.equal(readCurrentJson(parent.runDirectory).admitted, undefined);
-      assert.equal(
-        (JSON.parse(await readFile(priorParentReport, "utf8")) as { status?: unknown }).status,
-        "prior-parent",
-      );
-      const parentDiagnosticPath = await pointedErrorRecordPath(
+      const parentDiagnostic = await pointedErrorRecord(
         parent.runDirectory,
         parentResume.stderr.join(""),
-      );
-      const parentDiagnostic = JSON.parse(await readFile(parentDiagnosticPath, "utf8")) as {
+      ) as {
         runId?: unknown;
         diagnostic?: unknown;
         details?: unknown;
@@ -1956,7 +1938,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.ok(parentDispatches > 0);
       assert.equal(childDispatches, 2);
       await readError(
-        await pointedErrorRecordPath(dispatchedParent.runDirectory, dispatchedParentIo.stderr.join("")),
+        pointedErrorRecord(dispatchedParent.runDirectory, dispatchedParentIo.stderr.join("")),
         "1058-parent-dispatch-failure",
       );
 
@@ -1964,7 +1946,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(deletedResult.exitCode, 0);
       const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
       const deletedRecord = await readError(
-        await pointedErrorRecordPath(relocatedDirectory, deletedResult.stderr),
+        pointedErrorRecord(relocatedDirectory, deletedResult.stderr),
         "1058-no-workspace",
       );
       assert.equal(typeof deletedRecord.diagnostic, "string");
@@ -1985,7 +1967,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(unknown.exitCode, 0);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
       const unknownRecord = await readError(
-        await pointedErrorRecordPath(unknownHost.runDirectory, unknown.stderr),
+        pointedErrorRecord(unknownHost.runDirectory, unknown.stderr),
         "1058-unknown-host",
       );
       assert.equal(

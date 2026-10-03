@@ -1,4 +1,4 @@
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -12,7 +12,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -286,15 +286,14 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
       assert.equal(result.terminal!.artifacts.some((a) => a.kind === "report"), true);
-      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "evidence"), true);
       assert.equal((objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).report, "resolved");
-      const reportBody = JSON.parse(
-        await readFile(result.terminal!.artifacts.find((a) => a.kind === "report")!.path, "utf8"),
-      ) as { outcome?: { payloads?: ReadonlyArray<{ report?: string }> } };
-      assert.equal(reportBody.outcome?.payloads?.[0]?.report, "resolved");
-      const evidence = JSON.parse(
-        await readFile(result.terminal!.artifacts.find((a) => a.kind === "evidence")!.path, "utf8"),
-      ) as {
+      const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report")!;
+      const reportBody = terminalBodyAt(reportRef.path, "report") as { outcome?: { payloads?: unknown } };
+      assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
+      const submitted = submittedParams(dirname(reportRef.path)) as ReadonlyArray<{ report?: string }>;
+      assert.equal(submitted[0]?.report, "resolved");
+      // The derived merge facts are the admitted section's own record.
+      const evidence = readCurrentSection(dirname(reportRef.path), "admitted") as {
         derived: {
           targetObjectId: string;
           sourceObjectId: string;

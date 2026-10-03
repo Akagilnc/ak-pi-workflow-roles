@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -19,7 +19,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -740,23 +740,18 @@ test("explicit single-lens hard-stop refused still lands mismatched axis key", a
       ["refused"],
     );
     const bookKey = resolveBookKeyFromGit(project);
-    const refusedReport = JSON.parse(
-      await readFile(
-        join(
-          home, ".ak-roles", "books", bookKey, "unbound", "runs",
-          "run-cli-reviewer-hard-stop@reviewer", "artifacts", "report.json",
-        ),
-        "utf8",
-      ),
-    ) as {
-      outcome?: {
-        kind?: string;
-        payloads?: ReadonlyArray<Record<string, unknown>>;
-      };
+    const refusedRunDirectory = join(
+      home, ".ak-roles", "books", bookKey, "unbound", "runs",
+      "run-cli-reviewer-hard-stop@reviewer",
+    );
+    const refusedReport = terminalBodyAt(join(refusedRunDirectory, "current.json"), "report") as {
+      outcome?: { kind?: string };
     };
     assert.equal(refusedReport.outcome?.kind, "accepted");
+    // The refusing payload itself is what history.jsonl kept.
     const refusedDurable =
-      refusedReport.outcome?.payloads?.find((p) => p.status === "refused") ?? {};
+      (submittedParams(refusedRunDirectory) as ReadonlyArray<Record<string, unknown>>)
+        .find((p) => p.status === "refused") ?? {};
     assert.equal(refusedDurable.diagnostic, "hard-stop: review cannot proceed");
     assert.equal(
       (refusedDurable.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
@@ -825,21 +820,24 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.ok(dialogue.slice(dialogue.indexOf("\n")).includes(instruction));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.artifacts.some((a) => a.kind === "report"), true);
-    const evidenceRef = result.terminal?.artifacts.find((a) => a.kind === "evidence");
-    assert.ok(evidenceRef);
-    const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as {
-      callerProvenance?: string;
+    // The admitted facts are the run's own record in current.json's admitted section.
+    const reportRef = result.terminal?.artifacts.find((a) => a.kind === "report");
+    assert.ok(reportRef);
+    const admittedFacts = readCurrentSection(dirname(reportRef.path), "admitted") as {
+      instruction?: string;
       baseRevision?: string;
+      lens?: string;
       authorityRefs?: string[];
     };
-    assert.equal(evidence.callerProvenance, instruction);
-    assert.equal(evidence.baseRevision, "HEAD~1");
-    assert.deepEqual(evidence.authorityRefs, [
+    assert.equal(admittedFacts.instruction, instruction);
+    assert.equal(admittedFacts.baseRevision, "HEAD~1");
+    assert.equal(admittedFacts.lens, "correctness");
+    assert.deepEqual(admittedFacts.authorityRefs, [
       "CLAUDE.md",
       "docs/adr/0001-roles-grow-by-demand.md",
     ]);
-    assert.equal("taskPath" in evidence, false);
-    assert.equal("taskSha256" in evidence, false);
+    assert.equal("taskPath" in admittedFacts, false);
+    assert.equal("taskSha256" in admittedFacts, false);
     if (result.terminal?.roleOutcome.kind === "accepted") {
       const amendments = (result.terminal.roleOutcome.payloads?.[0] as {
         amendments?: { completeness?: string };

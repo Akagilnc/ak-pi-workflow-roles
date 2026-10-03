@@ -1,4 +1,4 @@
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -17,7 +17,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -381,13 +381,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
       ?.path;
     assert.ok(reportPath);
-    const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
+    const report = terminalBodyAt(reportPath!, "report") as {
       role: string;
       outcome?: { payloads?: unknown };
       cost: unknown;
     };
     assert.equal(report.role, "doctor");
-    assert.deepEqual(report.outcome?.payloads, [candidateDetails]);
+    assert.equal(report.outcome !== undefined && "payloads" in report.outcome, false);
+    assert.deepEqual(submittedParams(dirname(reportPath!)), [candidateDetails]);
     // #836: settlement publishes machine cost from the audit candidate entry
     // as an independent report field beside the role's original payload.
     assert.deepEqual(report.cost, candidateCost);
@@ -467,7 +468,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     );
     const refusedReportPath = refused.terminal!.artifacts.find((a) => a.kind === "report")?.path;
     assert.ok(refusedReportPath);
-    const refusedReport = JSON.parse(await readFile(refusedReportPath, "utf8")) as {
+    const refusedReport = terminalBodyAt(refusedReportPath, "report") as {
       cost?: unknown;
       auditNoReceipt?: unknown;
     };
@@ -534,7 +535,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
     assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
     const laterReport = result.terminal!.artifacts.find((a) => a.kind === "report");
     assert.ok(laterReport);
-    const laterBody = JSON.parse(await readFile(laterReport.path, "utf8")) as {
+    const laterBody = terminalBodyAt(laterReport.path, "report") as {
       cost?: unknown;
       auditNoReceipt?: unknown;
     };

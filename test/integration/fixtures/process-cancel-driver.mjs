@@ -137,7 +137,10 @@ try {
   const errorArtifact = result.terminal?.artifacts?.find((item) => item.kind === "error");
   if (errorArtifact?.path) {
     const { readFile } = await import("node:fs/promises");
-    const errorBody = JSON.parse(await readFile(errorArtifact.path, "utf8"));
+    // The artifact ref names the run's current.json; the error is its terminal section.
+    const { terminal } = JSON.parse(await readFile(errorArtifact.path, "utf8"));
+    if (terminal?.face !== "error") throw new Error(`error artifact ref does not name an error terminal: ${terminal?.face}`);
+    const errorBody = terminal.body;
     packageFact = errorBody.packageFact;
     if (details === undefined) details = errorBody.details;
     if (identity === undefined) identity = errorBody.identity;

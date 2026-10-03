@@ -15,6 +15,8 @@ import type {
   RoleEnvelopeHost,
   RoleHost,
 } from "../host-contracts.ts";
+import { runDirectoryFromHostContext } from "../host-contracts.ts";
+import { writeSectionSync } from "../run-dossier.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
@@ -175,9 +177,21 @@ export function createPiRoleHostAdapter(
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
         pi.on("before_agent_start", (value, ctx) => {
-          const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx));
-          if (result instanceof Promise) return result.then((settled) => foldBeforeAgentStartReturn(settled, value.systemPrompt));
-          return foldBeforeAgentStartReturn(result, value.systemPrompt);
+          const projected = context(ctx);
+          // The last handler's folded prompt is what Pi sends: record it as this turn's delivery.
+          const fold = (settled: unknown) => {
+            const folded = foldBeforeAgentStartReturn(settled, value.systemPrompt);
+            const runDirectory = runDirectoryFromHostContext(projected);
+            if (runDirectory !== undefined) {
+              writeSectionSync(runDirectory, "delivery", {
+                systemPrompt: (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt,
+              });
+            }
+            return folded;
+          };
+          const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, projected);
+          if (result instanceof Promise) return result.then(fold);
+          return fold(result);
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;

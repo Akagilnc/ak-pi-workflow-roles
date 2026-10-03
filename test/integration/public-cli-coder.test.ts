@@ -4,7 +4,7 @@ import {
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -20,7 +20,7 @@ import {
   readdir,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -244,13 +244,14 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
     assert.deepEqual(result.terminal!.submissions, [receipt]);
-    assert.equal(result.terminal!.artifacts.some((a) => a.kind === "evidence"), true);
     const report = result.terminal!.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
-    const reportBody = JSON.parse(await readFile(report.path, "utf8")) as {
+    const reportBody = terminalBodyAt(report.path, "report") as {
       outcome?: { payloads?: unknown };
     };
-    assert.deepEqual(reportBody.outcome?.payloads, [receipt]);
+    // The submitted words live in history.jsonl; the terminal carries only the verdict.
+    assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
+    assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
   });
 });
 

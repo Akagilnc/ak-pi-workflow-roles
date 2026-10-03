@@ -136,11 +136,21 @@ export type RoleTurnActivation =
   | { readonly role: "diarist" }
   | { readonly role: "secretariat" };
 
+/**
+ * Which code path decided this resume (history.jsonl `resume` rows). Mechanical
+ * names: auto-resume / delivery-request re-enter after a turn without a usable
+ * receipt (stuck), explicit-resume is the caller's `ak-role resume`
+ * (re-dispatch), summons-resume is a gate or same-ticket peer returning the run
+ * (bounce).
+ */
+export type ResumeCause = "auto-resume" | "delivery-request" | "explicit-resume" | "summons-resume";
+
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
   | {
       readonly kind: "resume";
       readonly prompt: string;
+      readonly cause?: ResumeCause;
       /**
        * Stored native host session/thread id for a public explicit resume.
        * Absent on in-call auto-resume and in-gate retries; those still load

@@ -1,4 +1,4 @@
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -104,15 +104,15 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     // it is not a dangling ref by reading minimal structured role/outcome.
     const artifact = result.terminal!.artifacts[0];
     assert.ok(artifact, "settled terminal must publish at least one real artifact");
-    const artifactBody = JSON.parse(
-      await readFile(artifact.path, "utf8"),
-    ) as { role?: string; outcome?: { kind?: string; payloads?: readonly unknown[] } };
+    const artifactBody = terminalBodyAt(artifact.path, "report") as
+      { role?: string; outcome?: { kind?: string; payloads?: readonly unknown[] } };
     assert.equal(artifactBody.role, "judge", "artifact must carry the judge role");
     assert.equal(artifactBody.outcome?.kind, "accepted", "artifact must carry the accepted outcome kind");
-    // #836: the published artifact carries the role's own original payload —
-    // not a runtime-invented status.
+    // #836: the role's own original payload — not a runtime-invented status — is what
+    // history.jsonl kept; the terminal carries only the verdict.
+    assert.equal(artifactBody.outcome !== undefined && "payloads" in artifactBody.outcome, false);
     assert.equal(
-      (artifactBody.outcome?.payloads?.at(-1) as { status?: string } | undefined)?.status,
+      (submittedParams(runDirectory).at(-1) as { status?: string } | undefined)?.status,
       "converged",
     );
     });
