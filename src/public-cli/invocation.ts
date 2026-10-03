@@ -59,7 +59,7 @@ import {
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
-import { readSectionSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
+import { readPageSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -573,7 +573,7 @@ export async function relocateAdmittedRunToTicket(
   const principal = authority.seal(target);
 
   if (admitted.role !== "diarist") {
-    const childRunIds = readSectionSync(oldRunDirectory, "admitted")?.childDiaristRunIds;
+    const childRunIds = readPageSync(oldRunDirectory, "admitted")?.childDiaristRunIds;
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
       const childDirectory = join(dirname(oldRunDirectory), formatRunLeaf(childRunId, "diarist"));
@@ -2178,7 +2178,7 @@ export async function loadAdmittedJudgeRequest(
   attachments: readonly FrozenAttachment[];
 } | undefined> {
   try {
-    const record = readSectionSync(runDirectory, "admitted");
+    const record = readPageSync(runDirectory, "admitted");
     if (record === undefined) return undefined;
     if (!packagedPublicInstructionSubject(record.role)) return undefined;
     if (typeof record.instruction !== "string") return undefined;

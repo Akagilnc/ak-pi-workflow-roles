@@ -36,26 +36,29 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `current.json`——当前
 
-审读席默认只读它。整文件写出，**只有一个写者**：该腿公开调用自己的接缝（`public-cli/invocation.ts` 的受理、`run-lifecycle.ts` 的状态转换、`settlement.ts` 的终局），经 `src/run-dossier.ts` 写入；角色运行时、宿主适配器、闸都不写它，它们知道的事都追加成记录。每次写出都按 `history.jsonl`、`log.jsonl` 里已有的行重算派生分区，所以一个进程的写出不会丢掉另一个进程追加的记录；无锁，写入为临时文件加 rename。
+审读席默认只读它。它是渲染，不是事实的存放处：下列各项都先成行（`history.jsonl` 或 `log.jsonl`），公开调用接缝（受理、状态转换、结算）每追加一行身份／受理／运行状态／终局，就在那一刻现读两个行文件、每类取最后一行，把整份写出；写出的内容不取自进程里先前拿到的快照，也不取自旧的 `current.json`。同一条腿上可以有两个公开调用并存（在跑的腿与手动续跑），两边都写它；无锁——写出后检查两个行文件是否又变长，变长了就再渲染一次，所以最后写完的那个已看过全部行，文件最终等于此刻从行重新渲染的结果。角色运行时、宿主适配器、闸不写它。写入为临时文件加 rename。
 
-| 分区 | 内容 | 来源 |
+| 分区 | 内容 | 来源行 |
 | --- | --- | --- |
-| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | 受理 |
-| `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针（`sourceRunPath`／`sourceRun`） | 受理 |
-| `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 状态转换 |
-| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实 | 结算 |
-| `submission` | `latest`：最新一次封存的交卷原文（`history.jsonl` 里最后一条 `sealed` 行） | 派生 |
-| `officers` | 本腿传召的官员腿指针，每官一格（`history.jsonl` 里各官最后一条 `officer-pointer` 行） | 派生 |
-| `host` | `sessions[<host>]` 宿主会话 id（`log.jsonl` 的 `host-session-id` 行；按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（最近一次宿主原件复制的落点） | 派生 |
+| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `history.jsonl` 里最后一条 `invocation` |
+| `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 | 最后一条 `admitted-request` |
+| `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
+| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实 | 最后一条 `terminal` |
+| `submission` | `latest`：最新一次封存的交卷原文 | 最后一条 `sealed` |
+| `officers` | 本腿传召的官员腿指针，每官一格 | 各官最后一条 `officer-pointer` |
+| `host` | `sessions[<host>]` 宿主会话 id（按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（最近一次宿主原件复制的落点） | `log.jsonl` 的 `host-session-id`、`host-session`（`native-session-copy`）行 |
+
+公开调用读自己的事实时读的是这些行（最后一行），不读渲染。
 
 ### `history.jsonl`——历史
 
-只追加，翻旧账时才读。行都是司天台 appender 写的原行（`kind`、`payload` 与旧账本一字不差，只是落地文件换了）：
+只追加，翻旧账时才读。行都是司天台 appender 写的行（`kind`、`payload` 与旧文件／旧账本一字不差，只是落地换了）：
 
 - 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
-- 原续跑记录：`attempt-history`（每个派发的回合一行，含催交回合）。
-- `turn-delivery`：每次起跑发出的系统提示与输出 schema（本票新增的记录）。
-- `officer-pointer`：闸传召官员腿的指针（本票新增的记录）。
+- 原续跑记录：`attempt-history`（每个派发的回合一行）。
+- 原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（payload 为 `{face, at, body}`）。
+- `turn-delivery`：每次起跑发出的系统提示与输出 schema，一行。
+- `officer-pointer`：闸传召官员腿的指针，一行。
 
 ### `log.jsonl`——司天台流水
 

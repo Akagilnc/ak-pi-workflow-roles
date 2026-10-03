@@ -1,4 +1,4 @@
-import { readCurrentJson, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -7,6 +7,7 @@ import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -149,7 +150,12 @@ test("terminal write failure is noted beside the host failure terminal and does 
       const runDirectory = join(
         home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
       );
-      assert.equal("terminal" in readCurrentJson(runDirectory), false);
+      // The terminal FACT is recorded as a history row; only its rendering into
+      // current.json was refused (the name is still the planted directory).
+      const recorded = historyPayloads<{ face?: string }>(runDirectory, "terminal");
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0]!.face, "error");
+      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
       // The refused write is a note beside the host terminal, in the run's session.
       const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
         .trim()
@@ -770,9 +776,13 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
       assert.equal(sibling.body.diagnostic, "sibling-owned");
     }
 
-    const ledgerEntry = JSON.parse(
-      (await readFile(ledgerPath, "utf8")).trim(),
-    ) as {
+    // history.jsonl also carries the facts settlement appends; the planted row is
+    // the one non-sitian line, and it must survive byte-for-byte in meaning.
+    const ledgerEntry = (await readFile(ledgerPath, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as { kind?: string })
+      .find((row) => row.kind === "submission") as {
       kind?: string;
       runId?: string;
       payload?: { judgeStatus?: string };

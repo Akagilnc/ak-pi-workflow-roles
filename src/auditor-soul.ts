@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { readSectionSync } from "./run-dossier.ts";
+import { readPageSync } from "./run-dossier.ts";
 import { basename, join } from "node:path";
 
 import { parseRunLeaf } from "./role-run-placement.ts";
@@ -123,7 +123,7 @@ export async function readAuditorResumeBinding(runDirectory: string): Promise<
   | { readonly subject: AuditorSoulRole; readonly sourceRunDirectory: string }
   | undefined
 > {
-  const record = readSectionSync(runDirectory, "admitted");
+  const record = readPageSync(runDirectory, "admitted");
   if (record === undefined) return undefined;
   if (typeof record.sourceRunPath !== "string" || record.sourceRunPath.trim() === "") return undefined;
   const subject = isAuditorSoulRole(record.auditorSubject)

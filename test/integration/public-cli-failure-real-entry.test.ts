@@ -1,8 +1,9 @@
-import { historyPayloads, readCurrentJson, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -114,9 +115,12 @@ test("public report publication failure stays beside the accepted terminal", asy
         .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
         ?.data?.diagnostic;
       assert.equal(typeof noteText, "string");
-      // The injected failure really fired: the terminal write was refused, so no
-      // terminal section reached the dossier while the host's accepted terminal stood.
-      assert.equal("terminal" in readCurrentJson(runDirectory), false);
+      // The injected failure really fired: the accepted terminal FACT is a history
+      // row, but its rendering was refused (current.json is still the planted directory).
+      const recorded = historyPayloads<{ face?: string }>(runDirectory, "terminal");
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0]!.face, "report");
+      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
     } finally {
       if (lockedCurrent !== undefined) {
         try {

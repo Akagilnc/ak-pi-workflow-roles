@@ -16,7 +16,7 @@
 import { historyPayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -1428,13 +1428,14 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // field, not stdout presentation text).
     assert.equal(resumed.exitCode, 0, "terminal write failure after accepted settlement must not fail the command");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    // The injection really fired: the refused write left the earlier no_receipt face
-    // standing in the dossier while the caller was handed accepted.
-    assert.equal(
-      (readCurrentSection(runDirectory, "terminal") as { face?: string }).face,
-      "no_receipt",
-      "the injected terminal write failure must actually have been observed",
-    );
+    // The injection really fired: the accepted terminal FACT is the last terminal
+    // row in history.jsonl (the earlier two legs left no_receipt rows), while its
+    // rendering was refused — current.json is still the planted directory.
+    const terminalFaces = historyPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
+    assert.equal(terminalFaces.at(-1), "report", "the accepted terminal is recorded as a fact");
+    assert.equal(terminalFaces.slice(0, -1).every((face) => face === "no_receipt"), true);
+    assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true,
+      "the injected terminal write failure must actually have been observed");
 
     // The dossier is the single authoritative durable channel here (the
     // session it appends to is healthy, so no run-artifacts fallback file is

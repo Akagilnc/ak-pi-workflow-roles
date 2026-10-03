@@ -1,30 +1,44 @@
 /**
- * The per-leg dossier files (docs/dossier-topology.md, #1161): `current.json`
- * (whole-file write), `history.jsonl` and `log.jsonl` (append-only, written only
- * through the sitian appender) and the one host original.
+ * The per-leg dossier files (docs/dossier-topology.md, #1161): `current.json`,
+ * `history.jsonl` and `log.jsonl` (the latter two append-only, written through the
+ * sitian appender) and the one host original.
  *
- * `current.json` has one writer: the public call's own seam (admission, the
- * lifecycle transitions, settlement) — never a role runtime, a host adapter or a
- * gate. Everything those others learn is a record they append; each write here
- * recomputes the derived sections (`submission`, `officers`, `host`) from the
- * appended records, so a write by one process can never drop what another
- * process appended. The sections only the public call knows (`invocation`,
- * `admitted`, `runState`, `terminal`) are carried over from the file as read.
+ * Facts are rows first. The four pages only the public call knows — identity
+ * (`invocation`), admission (`admitted-request`), lifecycle (`run-state`) and the
+ * terminal — are each rewritten whole by appending one `history.jsonl` row whose
+ * payload is that page. `current.json` is a rendering: the last row of each kind
+ * in `history.jsonl` and `log.jsonl`, read at the moment of writing, never a value
+ * carried from an earlier snapshot or from the previous `current.json`.
+ *
+ * Two public calls may exist on one leg (the live leg and a manual resume) and
+ * both write `current.json`; there is no lock. After writing, a writer checks that
+ * the row files are still the size it rendered from and, if rows were appended
+ * meanwhile, renders again — so whichever writer finishes last has rendered from
+ * every row, and the file ends equal to a fresh rendering.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { sessionFileOf } from "./role-run-placement.ts";
+import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE } from "./run-dossier-files.ts";
+import { appendSitianRecord } from "./sitian-appender.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
 
-export const RUN_CURRENT_FILE = "current.json" as const;
-export const RUN_HISTORY_FILE = "history.jsonl" as const;
-export const RUN_LOG_FILE = "log.jsonl" as const;
+export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE };
 
-/** Sections only the public call knows; the writer carries them. */
+/** Sections of `current.json` that are a whole page appended as one row. */
 export type CurrentSection = "invocation" | "admitted" | "runState" | "terminal";
-/** Sections projected from appended records on every write. */
+/** Sections rendered from rows other seams append. */
 export type DerivedSection = "host" | "submission" | "officers";
+
+/** The row kind of each whole-page section: the name of the file it replaced. */
+const PAGE_ROW_KIND: Readonly<Record<CurrentSection, string>> = {
+  invocation: "invocation",
+  admitted: "admitted-request",
+  runState: "run-state",
+  terminal: "terminal",
+};
 
 export function runCurrentPath(runDirectory: string): string {
   return join(runDirectory, RUN_CURRENT_FILE);
@@ -44,7 +58,7 @@ export function readCurrentSync(runDirectory: string): Record<string, unknown> |
   return parsed;
 }
 
-/** One section of `current.json`; undefined when the file or the section is absent. */
+/** One section of `current.json` (the rendering); undefined when the file or the section is absent. */
 export function readSectionSync(
   runDirectory: string,
   section: CurrentSection | DerivedSection,
@@ -57,18 +71,19 @@ export function readSectionSync(
   return value;
 }
 
+type RowFile = { readonly rows: Record<string, unknown>[]; readonly bytes: number };
+
 /**
- * The appended rows of one run file, parsed; a missing file or a malformed line
- * is skipped. `undefined` when the file cannot be read at all: the projection is
- * a view and must not stop the public call's own write (a poisoned ledger never
- * stops a resume, #833); the file's own readers still fail loudly on it.
+ * The rows of one run file as of this read, with the byte length they came
+ * from; a missing file is empty, a malformed line is skipped. `undefined` when
+ * the file cannot be read at all.
  */
-function appendedRows(path: string): Record<string, unknown>[] | undefined {
+function readRowFile(path: string): RowFile | undefined {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
-    if (isMissingPathError(error)) return [];
+    if (isMissingPathError(error)) return { rows: [], bytes: 0 };
     return undefined;
   }
   const rows: Record<string, unknown>[] = [];
@@ -81,22 +96,36 @@ function appendedRows(path: string): Record<string, unknown>[] | undefined {
       // The damaged line stays in the file for its readers.
     }
   }
-  return rows;
+  return { rows, bytes: Buffer.byteLength(raw, "utf8") };
 }
 
-/**
- * `submission`, `officers` and `host` as the appended records currently say; a
- * section whose source file is unreadable keeps what the file last said.
- */
-function deriveSections(
-  runDirectory: string,
-  previous: Record<string, unknown>,
-): Record<DerivedSection, unknown> {
-  const history = appendedRows(join(runDirectory, RUN_HISTORY_FILE));
-  const log = appendedRows(join(runDirectory, RUN_LOG_FILE));
+function fileBytes(path: string): number | undefined {
+  try {
+    return statSync(path).size;
+  } catch (error) {
+    return isMissingPathError(error) ? 0 : undefined;
+  }
+}
+
+/** The payload of the last row of `kind`, or undefined. */
+function lastPayload(rows: readonly Record<string, unknown>[], kind: string): Record<string, unknown> | undefined {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index]!;
+    if (row.kind === kind && isRecord(row.payload)) return row.payload;
+  }
+  return undefined;
+}
+
+/** `current.json` as the rows say right now. */
+function render(history: readonly Record<string, unknown>[], log: readonly Record<string, unknown>[]): Record<string, unknown> {
+  const whole: Record<string, unknown> = {};
+  for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
+    const page = lastPayload(history, PAGE_ROW_KIND[section]);
+    if (page !== undefined) whole[section] = page;
+  }
   let latest: Record<string, unknown> | undefined;
   const officers: Record<string, unknown> = {};
-  for (const row of history ?? []) {
+  for (const row of history) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
     if (row.kind === "sealed" && payload !== undefined) {
       latest = { toolCallId: payload.toolCallId, role: payload.role, accepted: payload.accepted, at: row.timestamp };
@@ -106,7 +135,7 @@ function deriveSections(
   }
   const sessions: Record<string, unknown> = {};
   let original: unknown;
-  for (const row of log ?? []) {
+  for (const row of log) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
     if (row.kind === "host-session-id" && payload !== undefined && typeof payload.host === "string") {
       sessions[payload.host] = payload.sessionId;
@@ -114,11 +143,10 @@ function deriveSections(
       original = payload.landingPath;
     }
   }
-  return {
-    host: log === undefined ? previous.host : { sessions, ...(original === undefined ? {} : { original }) },
-    submission: history === undefined ? previous.submission : latest === undefined ? {} : { latest },
-    officers: history === undefined ? previous.officers : officers,
-  };
+  whole.host = { sessions, ...(original === undefined ? {} : { original }) };
+  whole.submission = latest === undefined ? {} : { latest };
+  whole.officers = officers;
+  return whole;
 }
 
 function writeWhole(runDirectory: string, whole: Record<string, unknown>): void {
@@ -140,50 +168,80 @@ function writeWhole(runDirectory: string, whole: Record<string, unknown>): void 
   }
 }
 
-/** Write `current.json` whole: the carried sections with `change` applied, the derived ones recomputed. */
-function commitCurrent(
-  runDirectory: string,
-  change: (carried: Record<string, unknown>) => Record<string, unknown> | undefined,
-): void {
-  const previous = readCurrentSync(runDirectory) ?? {};
-  const carried: Record<string, unknown> = {};
-  for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
-    if (previous[section] !== undefined) carried[section] = previous[section];
+/** Passes before a renderer gives up chasing appends (each pass means rows really grew). */
+const MAX_RENDER_PASSES = 32;
+
+/**
+ * Write `current.json` from the rows as read now; then, if either row file grew
+ * since that read, render again. A file that cannot be read keeps the rendering
+ * from being written at all (the leg's own readers of that file fail loudly).
+ */
+export function renderCurrentSync(runDirectory: string): void {
+  const historyPath = join(runDirectory, RUN_HISTORY_FILE);
+  const logPath = join(runDirectory, RUN_LOG_FILE);
+  for (let pass = 0; pass < MAX_RENDER_PASSES; pass += 1) {
+    const history = readRowFile(historyPath);
+    const log = readRowFile(logPath);
+    if (history === undefined || log === undefined) return;
+    writeWhole(runDirectory, render(history.rows, log.rows));
+    if (fileBytes(historyPath) === history.bytes && fileBytes(logPath) === log.bytes) return;
   }
-  const next = change(carried);
-  if (next === undefined) return;
-  const derived = deriveSections(runDirectory, previous);
-  writeWhole(runDirectory, {
-    ...next,
-    ...Object.fromEntries(Object.entries(derived).filter(([, value]) => value !== undefined)),
+}
+
+function appendPageRow(runDirectory: string, section: CurrentSection, page: Record<string, unknown>): void {
+  appendSitianRecord({
+    level: "event",
+    kind: PAGE_ROW_KIND[section],
+    sessionParent: sessionFileOf(runDirectory),
+    source: "run-dossier",
+    payload: page,
   });
 }
 
-/** Replace one carried section, creating `current.json` when this is the first write. */
+/** The current whole page of one section: the payload of its last row, never `current.json`. */
+function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
+  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
+  if (history === undefined) throw new Error(`${RUN_HISTORY_FILE} is unreadable: ${runDirectory}`);
+  return lastPayload(history.rows, PAGE_ROW_KIND[section]);
+}
+
+/**
+ * The fact itself: a whole-page section as its last history row says. The public
+ * call reads its own facts here, not from the rendering, so a rendering that is
+ * stale or refused changes nothing. Where no row exists (a run directory that
+ * holds just a rendering) it falls back to `current.json`.
+ */
+export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
+  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
+  const page = history === undefined ? undefined : lastPayload(history.rows, PAGE_ROW_KIND[section]);
+  return page ?? readSectionSync(runDirectory, section);
+}
+
+/** Rewrite one section whole: append its row, then render `current.json`. */
 export function writeSectionSync(
   runDirectory: string,
   section: CurrentSection,
   value: Record<string, unknown>,
 ): void {
-  commitCurrent(runDirectory, (carried) => ({ ...carried, [section]: value }));
+  appendPageRow(runDirectory, section, value);
+  renderCurrentSync(runDirectory);
 }
 
 /**
- * Let the caller keep its field rules for one existing carried section.
- * `undefined` means no change. A missing section is an error: admission writes
- * it first.
+ * Let the caller keep its field rules for one existing section: the update
+ * receives the last row's page. `undefined` means no change. A missing section
+ * is an error: admission writes it first.
  */
 export function updateSectionSync(
   runDirectory: string,
   section: CurrentSection,
   update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
 ): void {
-  commitCurrent(runDirectory, (carried) => {
-    const current = carried[section];
-    if (!isRecord(current)) {
-      throw new Error(`${RUN_CURRENT_FILE} has no ${section} section: ${runCurrentPath(runDirectory)}`);
-    }
-    const next = update(current);
-    return next === undefined ? undefined : { ...carried, [section]: next };
-  });
+  const current = currentPage(runDirectory, section);
+  if (current === undefined) {
+    throw new Error(`${RUN_HISTORY_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
+  }
+  const next = update(current);
+  if (next === undefined) return;
+  writeSectionSync(runDirectory, section, next);
 }

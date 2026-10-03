@@ -5,9 +5,11 @@
  * production writer.
  */
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { renderCurrentSync } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 
 export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "terminal" | "officers";
@@ -30,13 +32,33 @@ export function readCurrentSection(
   return (readCurrentJson(runDirectory)[section] ?? {}) as Record<string, unknown>;
 }
 
-/** Seed (replace) one section, keeping the others. Creates the run directory. */
+/** The history row kind of each whole-page section: the name of the file it replaced. */
+const PAGE_ROW_KIND: Readonly<Record<string, string>> = {
+  invocation: "invocation",
+  admitted: "admitted-request",
+  runState: "run-state",
+  terminal: "terminal",
+};
+
+/**
+ * Seed (replace) one section, keeping the others. Creates the run directory. A
+ * whole-page section is a fact that exists as a history row first: the row is
+ * appended (raw, as the appender writes it) and `current.json` shows it.
+ */
 export function seedCurrentSection(
   runDirectory: string,
   section: CurrentSectionName,
   value: Record<string, unknown>,
 ): void {
   mkdirSync(runDirectory, { recursive: true });
+  const kind = PAGE_ROW_KIND[section];
+  if (kind !== undefined) {
+    appendFileSync(
+      join(runDirectory, "history.jsonl"),
+      `${JSON.stringify({ level: "event", kind, identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
+      "utf8",
+    );
+  }
   writeFileSync(
     join(runDirectory, "current.json"),
     `${JSON.stringify({ ...readCurrentJson(runDirectory), [section]: value }, null, 2)}\n`,
@@ -53,10 +75,19 @@ export function seedTerminal(
   seedCurrentSection(runDirectory, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
 }
 
-/** Remove one section, keeping the others (a leg that never reached it). */
+/** Remove one section, keeping the others (a leg that never reached it): its rows go too. */
 export function clearCurrentSection(runDirectory: string, section: CurrentSectionName): void {
   const { [section]: _removed, ...rest } = readCurrentJson(runDirectory);
   writeFileSync(join(runDirectory, "current.json"), `${JSON.stringify(rest, null, 2)}\n`, "utf8");
+  const kind = PAGE_ROW_KIND[section];
+  const historyPath = join(runDirectory, "history.jsonl");
+  if (kind !== undefined && existsSync(historyPath)) {
+    const kept = readFileSync(historyPath, "utf8").split("\n").filter((line) => {
+      if (line.trim() === "") return false;
+      try { return (JSON.parse(line) as { kind?: unknown }).kind !== kind; } catch { return true; }
+    });
+    writeFileSync(historyPath, kept.length === 0 ? "" : `${kept.join("\n")}\n`, "utf8");
+  }
 }
 
 /** Every line of `<run>/history.jsonl`, parsed raw (`[]` when absent). */
@@ -154,17 +185,56 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
- * Make every later write of `<run>/current.json` fail: the file is read-only and the
- * directory takes no new entries (current.json is replaced atomically through a
- * temp file, with an in-place fallback only when that is refused).
+ * Make every later rendering of `<run>/current.json` fail: the name is taken by a
+ * directory, so neither the temp-file rename nor the in-place fallback can write it
+ * (a read-only mode is not enough: the lease release restores the run directory's
+ * mode and the rename then replaces a read-only file). The rows (history.jsonl,
+ * log.jsonl) stay appendable — the facts are still recorded, only their rendering
+ * is refused.
  */
 export function lockCurrentJson(runDirectory: string): void {
-  chmodSync(join(runDirectory, "current.json"), 0o444);
-  chmodSync(runDirectory, 0o500);
+  rmSync(join(runDirectory, "current.json"), { force: true });
+  mkdirSync(join(runDirectory, "current.json"));
 }
 
-/** Undo lockCurrentJson. */
+/** Undo lockCurrentJson: the file is rendered again from the rows. */
 export function unlockCurrentJson(runDirectory: string): void {
-  chmodSync(runDirectory, 0o755);
-  chmodSync(join(runDirectory, "current.json"), 0o644);
+  rmSync(join(runDirectory, "current.json"), { recursive: true, force: true });
+  renderCurrentSync(runDirectory);
+}
+
+/**
+ * #1161: `current.json` is a rendering. After every writer has exited it must equal what a
+ * fresh rendering of the row files says, and every item in it must have its source row:
+ * each whole-page section is the payload of the last row of its kind in history.jsonl;
+ * `submission.latest` names a `sealed` row, each `officers` entry an `officer-pointer`
+ * row, each `host.sessions` entry a `host-session-id` row of log.jsonl.
+ */
+export function assertCurrentIsRenderingOfRows(runDirectory: string): void {
+  const rows = (file: string): Record<string, any>[] => existsSync(join(runDirectory, file))
+    ? readFileSync(join(runDirectory, file), "utf8").split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, any>)
+    : [];
+  const history = rows("history.jsonl");
+  const log = rows("log.jsonl");
+  const current = readCurrentJson(runDirectory);
+  const last = (kind: string): unknown => history.filter((row) => row.kind === kind).at(-1)?.payload;
+  for (const [section, kind] of [["invocation", "invocation"], ["admitted", "admitted-request"], ["runState", "run-state"], ["terminal", "terminal"]] as const) {
+    assert.deepEqual(current[section], last(kind), `${section} is the last ${kind} row`);
+  }
+  const sealed = history.filter((row) => row.kind === "sealed").at(-1)?.payload;
+  assert.deepEqual(
+    (current.submission as { latest?: unknown } | undefined)?.latest,
+    sealed === undefined ? undefined : { toolCallId: sealed.toolCallId, role: sealed.role, accepted: sealed.accepted, at: history.filter((row) => row.kind === "sealed").at(-1)?.timestamp },
+    "submission.latest is the last sealed row",
+  );
+  for (const [officer, pointer] of Object.entries((current.officers ?? {}) as Record<string, unknown>)) {
+    assert.ok(history.some((row) => row.kind === "officer-pointer" && row.payload?.officer === officer && JSON.stringify(row.payload) === JSON.stringify(pointer)), `officers.${officer} has its row`);
+  }
+  for (const [host, sessionId] of Object.entries(((current.host as { sessions?: Record<string, unknown> } | undefined)?.sessions ?? {}))) {
+    assert.ok(log.some((row) => row.kind === "host-session-id" && row.payload?.host === host && row.payload?.sessionId === sessionId), `host.sessions.${host} has its row`);
+  }
+  // Equal to a fresh rendering: re-render over a copy of the bytes and compare.
+  const before = readFileSync(join(runDirectory, "current.json"), "utf8");
+  renderCurrentSync(runDirectory);
+  assert.equal(readFileSync(join(runDirectory, "current.json"), "utf8"), before, "current.json equals a fresh rendering of the rows");
 }

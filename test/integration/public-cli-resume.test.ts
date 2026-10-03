@@ -1,4 +1,4 @@
-import { historyPayloads, readCurrentJson, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -285,9 +285,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.deepEqual(historyOutcomes(), ["accepted"],
         "the sealed attempt is recorded once; publication failure is not a second attempt");
 
-      // Publication never wrote a success terminal under the locked current.json.
+      // The accepted terminal FACT is recorded as a history row; only its rendering
+      // was refused (the cleanup note above proves the refusal fired).
       const reportPath = join(runDirectory, "current.json");
-      assert.equal("terminal" in readCurrentJson(runDirectory), false);
+      const recordedTerminals = historyPayloads<{ face?: string }>(runDirectory, "terminal");
+      assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
 
       // Unlock so bare resume can rebuild the public report from sealed facts.
       await restoreWritable();
@@ -399,10 +401,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         },
       );
 
-      // Persist notes the directory. The later mandatory audit reads that same
-      // current.json runState, so the parent is not delivered as accepted.
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.terminal, undefined);
+      // #1161: occupying current.json refuses only its rendering (noted below). The
+      // facts are rows, so the later mandatory audit reads the run's run-state from
+      // history.jsonl, passes, and the accepted parent is delivered after one dispatch.
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(dispatches(), 1);
       const runDirectory = join(
         home,
@@ -477,8 +480,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       );
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
-      // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
-      // Settlement after the turn still fails closed on the ledger authority error.
+      // #1161: history.jsonl is the fact store itself (run-state, terminal, sealed rows).
+      // With it unusable, a manual resume cannot record the run-state fact it must write
+      // before the host turn, so it fails closed there — the host is NOT reached, the
+      // command fails (never a washed no_receipt), and the true cause (the EISDIR
+      // infrastructure error) is durable as a resume-diagnostic row in log.jsonl.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -501,10 +507,12 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           },
         }),
       });
-      assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
-      assert.equal(resumeResult.exitCode, 0);
-      assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      assert.equal(resumeDispatches, 0, "run-state cannot be recorded in the damaged row store: no host turn");
+      assert.equal(resumeResult.exitCode, 1);
+      assert.equal(resumeResult.terminal, undefined);
+      const diagnostics = runLogPayloads<{ runId?: string; cause?: unknown }>(runDirectory, "resume-diagnostic");
+      assert.equal(diagnostics.length > 0, true, "the true cause is durable in the run's log");
+      assert.equal(diagnostics.every((row) => row.runId === runId), true);
 
     } finally {
       await restoreWritable();
@@ -1842,14 +1850,8 @@ test("public resume failures persist structured diagnostics", async () => {
         runId: "1058-child-before-parent-dispatch", role: "judge", session: true,
         projectRoot: project, correlationId: "1058-parent-dispatch-failure",
       });
-      {
-        const { admitted: _removed, ...withoutAdmitted } = readCurrentJson(parent.runDirectory);
-        writeFileSync(
-          join(parent.runDirectory, "current.json"),
-          `${JSON.stringify(withoutAdmitted, null, 2)}\n`,
-          "utf8",
-        );
-      }
+      // The parent leg never had an admitted page: no row, no rendered section.
+      clearCurrentSection(parent.runDirectory, "admitted");
       let childDispatches = 0;
       let parentDispatches = 0;
       const acceptedChildHost = roleTurnHostFromLegacyPiRunner({

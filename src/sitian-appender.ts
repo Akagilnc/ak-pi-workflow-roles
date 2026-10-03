@@ -8,7 +8,7 @@ import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { parseRunLeaf, sessionDirectoryOf } from "./role-run-placement.ts";
-import { RUN_HISTORY_FILE, RUN_LOG_FILE } from "./run-dossier.ts";
+import { RUN_HISTORY_FILE, RUN_HISTORY_KINDS, RUN_LOG_FILE } from "./run-dossier-files.ts";
 import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -42,16 +42,6 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string)
     );
   }
 }
-
-/**
- * Record kinds that make a leg's history (submission ledger rows, attempt
- * history, the prompt/schema each turn was started with, officer pointers):
- * they land in the run's history.jsonl; every other kind lands in log.jsonl.
- */
-const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
-  "candidate", "roundContext", "outcome", "sealed", "post-seal-anomaly",
-  "attempt-history", "turn-delivery", "officer-pointer",
-]);
 
 /** Volume directory name for a record kind: the kind itself. */
 export function resolveSitianVolumeCategory(kind: string): string {

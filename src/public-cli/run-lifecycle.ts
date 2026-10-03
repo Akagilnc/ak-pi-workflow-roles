@@ -63,7 +63,7 @@ import {
   type ReviewerLens,
 } from "./invocation.ts";
 
-import { readSectionSync, writeSectionSync } from "../run-dossier.ts";
+import { readPageSync, writeSectionSync } from "../run-dossier.ts";
 import { isRecord, errorText, isEnoent } from "../unknown-value.ts";
 
 export type RoleRunState = "admitted" | "running" | "resumable" | "terminal";
@@ -262,8 +262,8 @@ async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | unde
   // SyntaxError on a present file is genuine infrastructure/data damage and
   // must keep its own identity — callers route it through the controlled-failure
   // seam (markRunRunning/markRunTerminal/recordCurrentCourt) instead of it
-  // being relabeled "run state missing" (#836). readSectionSync throws those.
-  return readSectionSync(runDirectory, "runState");
+  // being relabeled "run state missing" (#836). readPageSync throws those.
+  return readPageSync(runDirectory, "runState");
 }
 
 function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
@@ -919,7 +919,7 @@ export function parentRunPathFromGatePointerInstruction(
 export async function readRunParentPath(
   runDirectory: string,
 ): Promise<string | undefined> {
-  const record = readSectionSync(runDirectory, "admitted");
+  const record = readPageSync(runDirectory, "admitted");
   if (record === undefined) return undefined;
   if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
     return record.sourceRunPath;
@@ -1118,7 +1118,7 @@ async function loadResumableRunRecord(
   let sourceRunPath: string | undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
   try {
-    const record = readSectionSync(run.runDirectory, "admitted");
+    const record = readPageSync(run.runDirectory, "admitted");
     if (record === undefined) throw new Error("current.json has no admitted section");
     {
       const storedRunDirectory =
@@ -1279,7 +1279,7 @@ async function loadResumableRunRecord(
   }
   let model: InvocationEffectiveModel | undefined;
   try {
-    const rec = readSectionSync(run.runDirectory, "invocation");
+    const rec = readPageSync(run.runDirectory, "invocation");
     if (rec !== undefined) {
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
         model = {
