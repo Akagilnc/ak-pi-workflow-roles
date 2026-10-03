@@ -1,3 +1,4 @@
+import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -50,11 +51,18 @@ test("public coder accepts an unreadable status before routing it back for re-su
 
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = { status: "planned", report: { unvalidated: true } };
-    const roleTurnHost = roleTurnHostFromStructuredOutputRounds({
+    const structuredHost = roleTurnHostFromStructuredOutputRounds({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       submissions: [unreadable, corrected],
     });
+    let runDirectory = "";
+    const roleTurnHost = {
+      executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
+        runDirectory = request.runDirectory;
+        return structuredHost.executeTurn(request);
+      },
+    };
 
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
@@ -70,6 +78,8 @@ test("public coder accepts an unreadable status before routing it back for re-su
     );
 
     assert.equal(result.exitCode, 0);
+    // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
+    assertRunDirectoryHoldsOnlyDossier(runDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [

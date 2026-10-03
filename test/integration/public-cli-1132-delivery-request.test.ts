@@ -10,6 +10,7 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
+import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -198,6 +199,8 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.equal(run.turns[1]?.kind, "resume");
     assert.equal(run.turns[1]?.host, "grok-build");
     assert.equal(run.exitCode, 0);
+    // The grok-build leg at rest after a催交 resume: only the dossier (#1161).
+    assertRunDirectoryHoldsOnlyDossier(run.runDirectory!);
     assert.equal(run.terminal?.roleOutcome.kind, "accepted");
     // 票面 3：不跳审核。The audit handoff happens in the caller
     // (dispatchAdmitted → auditSubmittedRole) on the returned terminal's kind, so

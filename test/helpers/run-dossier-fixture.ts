@@ -202,6 +202,22 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
+ * #1161: what a run directory may hold at rest — the dossier files, the session volume,
+ * `attachments/` when something was frozen, and the seat's frozen input files — and none of the
+ * retired names.
+ */
+export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
+  const allowed = new Set([
+    "current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session", "attachments",
+    "task.md", "fix-packet.md", "prerequisites.json", "request-manifest.json", "merger-input.json",
+  ]);
+  for (const entry of readdirSync(runDirectory)) {
+    assert.equal(allowed.has(entry), true, `unexpected run directory entry: ${entry}`);
+  }
+  assertNoRetiredDossierFiles(runDirectory);
+}
+
+/**
  * Make every later rendering of `<run>/current.json` fail: the name is taken by a
  * directory, so neither the temp-file rename nor the in-place fallback can write it
  * (a read-only mode is not enough: the lease release restores the run directory's
