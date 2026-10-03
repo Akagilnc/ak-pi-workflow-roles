@@ -66,8 +66,11 @@ def main():
         thinking = a.thinking or meta.get("thinking")
         if thinking:
             model += f":{thinking}"
+        # turn-delivery sys.txt is the full prompt pi actually sent (adapter records it);
+        # replace the default. pi-tail is only the rebuilt append piece.
+        sys_flag = "--system-prompt" if meta.get("sysKind") == "turn-delivery" else "--append-system-prompt"
         cmd = ["pi", "-p", "--no-extensions", "--no-skills", "--no-prompt-templates", "--session-dir", sess,
-               "--model", model, "--append-system-prompt", sysfile, instr or "审。"]
+               "--model", model, sys_flag, sysfile, instr or "审。"]
         out = f"{kit}/out-{tag}.txt"
     err = f"{kit}/err-{tag}.txt"
     print(f"leg {tag}: host={host} cwd={wt}\n  {' '.join(cmd[:12])} ...\n  stdout -> {out}")

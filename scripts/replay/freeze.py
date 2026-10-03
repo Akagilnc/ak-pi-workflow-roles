@@ -8,7 +8,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   sources/       the driver transcripts those records point at, truncated at the cut
   run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
   pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
-  sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
+  sys.txt        frozen system prompt (turn-delivery: full prompt as sent; else rebuilt pi-tail)
   schema.json    headless output schema when the run had one
   instr.txt      the instruction the run was admitted with
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/

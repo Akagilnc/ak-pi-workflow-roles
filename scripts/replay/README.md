@@ -15,8 +15,9 @@ scripts/replay/replay-run.sh clean  <kit>
 issue's edit history), diarist records up to the cut, the run's system prompt with the
 historical records pointer (if present) swapped to the frozen copy and a `<frozen_replay_notice>` naming the frozen records for all runs, the
 admitted instruction, the output schema, and a detached worktree at the judged HEAD.
-`run` starts one leg in its own detached worktree (`wt-<arm>-<n>`): codex with `--sandbox read-only`, pi with
-`--append-system-prompt`; `gh` resolves to `bin/gh`, which serves the frozen issue and
+`run` starts one leg in its own detached worktree (`wt-<arm>-<n>`): codex with `--sandbox read-only`;
+pi with `--system-prompt` when `sysKind` is `turn-delivery` (full recorded prompt) and
+`--append-system-prompt` only for rebuilt `pi-tail`; `gh` resolves to `bin/gh`, which serves the frozen issue and
 blocks every mutation (login shells included, via `zdot/`). `show` prints the verdicts; `clean` removes the kit and its worktrees.
 
 Limits: pi legs have no sandbox (`node_modules` is a symlink into the real checkout, and a
