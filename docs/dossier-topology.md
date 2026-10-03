@@ -36,11 +36,11 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `current.json`——当前
 
-审读席默认只读它。它是渲染，不是事实的存放处：下列各项都先成行（`history.jsonl` 或 `log.jsonl`），公开调用接缝（受理、状态转换、结算）每追加一行身份／受理／运行状态／终局，就在那一刻现读两个行文件、每类取最后一行，把整份写出；写出的内容不取自进程里先前拿到的快照，也不取自旧的 `current.json`。同一条腿上可以有两个公开调用并存（在跑的腿与手动续跑），两边都写它；无锁——写出后检查两个行文件是否又变长，变长了就再渲染一次，所以最后写完的那个已看过全部行，文件最终等于此刻从行重新渲染的结果。角色运行时、宿主适配器、闸不写它。写入为临时文件加 rename。
+审读席默认只读它。它是渲染，不是事实的存放处：下列各项都先成行（`history.jsonl` 或 `log.jsonl`；四整页在 `log.jsonl`），公开调用接缝（受理、状态转换、结算）每追加一行身份／受理／运行状态／终局，就在那一刻现读两个行文件、每类取最后一行，把整份写出；写出的内容不取自进程里先前拿到的快照，也不取自旧的 `current.json`。同一条腿上可以有两个公开调用并存（在跑的腿与手动续跑），两边都写它；无锁——写出后检查两个行文件是否又变长，变长了就再渲染一次，所以最后写完的那个已看过全部行，文件最终等于此刻从行重新渲染的结果。角色运行时、宿主适配器、闸不写它。写入为临时文件加 rename。
 
 | 分区 | 内容 | 来源行 |
 | --- | --- | --- |
-| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `history.jsonl` 里最后一条 `invocation` |
+| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `log.jsonl` 里最后一条 `invocation` |
 | `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 | 最后一条 `admitted-request` |
 | `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
 | `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实 | 最后一条 `terminal` |
@@ -56,13 +56,12 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 - 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
 - 原续跑记录：`attempt-history`（每个派发的回合一行）。
-- 原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（payload 为 `{face, at, body}`）。
-- `turn-delivery`：每次起跑发出的系统提示与输出 schema，一行。
+- - `turn-delivery`：每次起跑发出的系统提示与输出 schema，一行。
 - `officer-pointer`：闸传召官员腿的指针，一行。
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`host-session-id`、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`（上列几种）或这一本；父会话不是腿自己 session 的（navigator 嵌套等）仍落各自 `session/<kind>/records.jsonl`，不在本页射程。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：四整页——原身份、受理、运行状态、终局，每被整份改写一次追加一行，内容就是那一份（`invocation`、`admitted-request`、`run-state`、`terminal`，终局 payload 为 `{face, at, body}`）；其余 `host-session`（宿主原件指针、落点、复制 warning）、`host-session-id`、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`（上列几种）或这一本；父会话不是腿自己 session 的（navigator 嵌套等）仍落各自 `session/<kind>/records.jsonl`，不在本页射程。
 
 ### 宿主原件
 

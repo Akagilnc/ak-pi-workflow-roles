@@ -288,7 +288,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
       const reportPath = join(runDirectory, "current.json");
-      const recordedTerminals = historyPayloads<{ face?: string }>(runDirectory, "terminal");
+      const recordedTerminals = runLogPayloads<{ face?: string }>(runDirectory, "terminal");
       assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
 
       // Unlock so bare resume can rebuild the public report from sealed facts.
@@ -391,7 +391,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
               if (request.activation.role === "judge") {
-                const statePath = join(request.runDirectory, "current.json");
+                // The run's facts are rows (the lifecycle page is a log.jsonl row): poison the
+                // row file the later audit reads the run-state from, as main poisoned run-state.json.
+                const statePath = join(request.runDirectory, "log.jsonl");
                 await rm(statePath, { force: true });
                 await mkdir(statePath);
               }
@@ -401,11 +403,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         },
       );
 
-      // #1161: occupying current.json refuses only its rendering (noted below). The
-      // facts are rows, so the later mandatory audit reads the run's run-state from
-      // history.jsonl, passes, and the accepted parent is delivered after one dispatch.
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      // Persist notes the damaged row file. The later mandatory audit reads that same
+      // run-state, so the parent is not delivered as accepted.
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal, undefined);
       assert.equal(dispatches(), 1);
       const runDirectory = join(
         home,
@@ -480,11 +481,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       );
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
-      // #1161: history.jsonl is the fact store itself (run-state, terminal, sealed rows).
-      // With it unusable, a manual resume cannot record the run-state fact it must write
-      // before the host turn, so it fails closed there — the host is NOT reached, the
-      // command fails (never a washed no_receipt), and the true cause (the EISDIR
-      // infrastructure error) is durable as a resume-diagnostic row in log.jsonl.
+      // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
+      // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -507,12 +505,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           },
         }),
       });
-      assert.equal(resumeDispatches, 0, "run-state cannot be recorded in the damaged row store: no host turn");
-      assert.equal(resumeResult.exitCode, 1);
-      assert.equal(resumeResult.terminal, undefined);
-      const diagnostics = runLogPayloads<{ runId?: string; cause?: unknown }>(runDirectory, "resume-diagnostic");
-      assert.equal(diagnostics.length > 0, true, "the true cause is durable in the run's log");
-      assert.equal(diagnostics.every((row) => row.runId === runId), true);
+      assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
+      assert.equal(resumeResult.exitCode, 0);
+      assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
+      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
     } finally {
       await restoreWritable();

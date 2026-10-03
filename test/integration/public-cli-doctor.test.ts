@@ -1,4 +1,4 @@
-import { historyPayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -671,32 +671,40 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
 
 /**
  * Real run-state seam: the facade admitted the run and the coordinator already
- * marked it running; once the doctor turn has recorded its submission, occupy
- * current.json (the rendering of the runState fact) with a directory: every later
- * rendering is refused, while the rows (history.jsonl) stay readable and appendable.
- * The accepted doctor terminal stays; the refusals are package notes.
+ * marked it running; once the doctor turn has recorded its submission, damage
+ * either the file that carries the run's facts (`rows`: log.jsonl holds the run-state
+ * row, as main's run-state.json held it) or only its rendering (`rendering`:
+ * current.json). The accepted doctor terminal stays; the refusals are package notes.
  * No production hook, no direct markRunTerminal call.
  */
-function poisonCurrentJsonAfterTurn(runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
+function poisonAfterTurn(mode: "rows" | "rendering", runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
   return {
     executeTurn: async (request) => {
       const out = await inner.executeTurn(request);
       if (request.activation.role === "doctor") {
-        lockCurrentJson(runDirectory);
+        if (mode === "rendering") {
+          lockCurrentJson(runDirectory);
+        } else {
+          await rm(join(runDirectory, "log.jsonl"), { force: true });
+          await mkdir(join(runDirectory, "log.jsonl"));
+        }
       }
       return out;
     },
   };
 }
 
-test("terminal rendering failure is noted; the mandatory auditor still reads the recorded facts and the accepted doctor is delivered", async () => {
+for (const mode of ["rows", "rendering"] as const) {
+test(mode === "rows"
+  ? "terminal persistence failure is noted and the auditor read of that run is not delivered as success"
+  : "terminal rendering failure is noted; the mandatory auditor still reads the recorded facts and the accepted doctor is delivered", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     await seedDoctorIssueRuns(home, bookKey, 41);
-    const runId = "run-doctor-terminal-write-fail";
+    const runId = `run-doctor-terminal-write-fail-${mode}`;
     const runDirectory = join(
       home,
       ".ak-roles",
@@ -720,7 +728,7 @@ test("terminal rendering failure is noted; the mandatory auditor still reads the
         credentials: { "openai-codex": true, xai: false },
         createRunId: () => runId,
         io: captured.io,
-        roleTurnHost: withPassingReviewHost(poisonCurrentJsonAfterTurn(runDirectory, roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(poisonAfterTurn(mode, runDirectory, roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -759,15 +767,23 @@ test("terminal rendering failure is noted; the mandatory auditor still reads the
       },
     );
 
-    // #1161: current.json is only a rendering of the rows. Occupying it refuses the
-    // run-state and terminal renderings (each a note beside the host terminal) but
-    // the facts are rows, so the mandatory auditor reads the run's admitted fact from
-    // history.jsonl, passes, and the accepted doctor terminal is delivered.
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.roleOutcome.role, "doctor");
-    assert.deepEqual(historyPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
-    assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
+    if (mode === "rows") {
+      // The run-state fact cannot be read from its damaged row file at persist (noted); the
+      // mandatory auditor then has to read that same run. That read is part of the audit,
+      // so the command must not deliver the parent as accepted.
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal, undefined);
+    } else {
+      // current.json is only a rendering of the rows. Occupying it refuses the run-state and
+      // terminal renderings (each a note beside the host terminal) but the facts are rows, so
+      // the mandatory auditor reads the run's admitted fact from them, passes, and the
+      // accepted doctor terminal is delivered.
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.role, "doctor");
+      assert.deepEqual(runLogPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
+      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
+    }
     const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
       .trim()
       .split("\n")
@@ -779,3 +795,4 @@ test("terminal rendering failure is noted; the mandatory auditor still reads the
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
   });
 });
+}

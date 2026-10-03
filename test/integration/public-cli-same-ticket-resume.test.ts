@@ -13,7 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { historyPayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
@@ -1431,7 +1431,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // The injection really fired: the accepted terminal FACT is the last terminal
     // row in history.jsonl (the earlier two legs left no_receipt rows), while its
     // rendering was refused — current.json is still the planted directory.
-    const terminalFaces = historyPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
+    const terminalFaces = runLogPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
     assert.equal(terminalFaces.at(-1), "report", "the accepted terminal is recorded as a fact");
     assert.equal(terminalFaces.slice(0, -1).every((face) => face === "no_receipt"), true);
     assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true,

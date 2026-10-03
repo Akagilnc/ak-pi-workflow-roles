@@ -1,12 +1,12 @@
 /**
  * The per-leg dossier files (docs/dossier-topology.md, #1161): `current.json`,
- * `history.jsonl` and `log.jsonl` (the latter two append-only, written through the
- * sitian appender) and the one host original.
+ * `history.jsonl` (the submission ledger and attempt history) and `log.jsonl` (the
+ * rest), both append-only and written through the sitian appender, and the one host original.
  *
  * Facts are rows first. The four pages only the public call knows — identity
  * (`invocation`), admission (`admitted-request`), lifecycle (`run-state`) and the
- * terminal — are each rewritten whole by appending one `history.jsonl` row whose
- * payload is that page. `current.json` is a rendering: the last row of each kind
+ * terminal — are each rewritten whole by appending one `log.jsonl` row whose
+ * payload is that page (the submission ledger's file stays out of it). `current.json` is a rendering: the last row of each kind
  * in `history.jsonl` and `log.jsonl`, read at the moment of writing, never a value
  * carried from an earlier snapshot or from the previous `current.json`.
  *
@@ -120,7 +120,7 @@ function lastPayload(rows: readonly Record<string, unknown>[], kind: string): Re
 function render(history: readonly Record<string, unknown>[], log: readonly Record<string, unknown>[]): Record<string, unknown> {
   const whole: Record<string, unknown> = {};
   for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
-    const page = lastPayload(history, PAGE_ROW_KIND[section]);
+    const page = lastPayload(log, PAGE_ROW_KIND[section]);
     if (page !== undefined) whole[section] = page;
   }
   let latest: Record<string, unknown> | undefined;
@@ -200,21 +200,22 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 
 /** The current whole page of one section: the payload of its last row, never `current.json`. */
 function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
-  if (history === undefined) throw new Error(`${RUN_HISTORY_FILE} is unreadable: ${runDirectory}`);
-  return lastPayload(history.rows, PAGE_ROW_KIND[section]);
+  const log = readRowFile(join(runDirectory, RUN_LOG_FILE));
+  if (log === undefined) throw new Error(`${RUN_LOG_FILE} is unreadable: ${runDirectory}`);
+  return lastPayload(log.rows, PAGE_ROW_KIND[section]);
 }
 
 /**
- * The fact itself: a whole-page section as its last history row says. The public
- * call reads its own facts here, not from the rendering, so a rendering that is
- * stale or refused changes nothing. Where no row exists (a run directory that
- * holds just a rendering) it falls back to `current.json`.
+ * The fact itself: a whole-page section as its last row says. The public call
+ * reads its own facts here, not from the rendering, so a rendering that is stale
+ * or refused changes nothing. Where no row exists (a run directory that holds
+ * just a rendering) it falls back to `current.json`; a row file that cannot be
+ * read fails closed — it never falls back to a rendering that may be older.
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
-  const page = history === undefined ? undefined : lastPayload(history.rows, PAGE_ROW_KIND[section]);
-  return page ?? readSectionSync(runDirectory, section);
+  const log = readRowFile(join(runDirectory, RUN_LOG_FILE));
+  if (log === undefined) throw new Error(`${RUN_LOG_FILE} is unreadable: ${runDirectory}`);
+  return lastPayload(log.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
 }
 
 /** Rewrite one section whole: append its row, then render `current.json`. */
@@ -239,7 +240,7 @@ export function updateSectionSync(
 ): void {
   const current = currentPage(runDirectory, section);
   if (current === undefined) {
-    throw new Error(`${RUN_HISTORY_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
+    throw new Error(`${RUN_LOG_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
   }
   const next = update(current);
   if (next === undefined) return;

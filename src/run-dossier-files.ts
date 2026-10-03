@@ -9,12 +9,12 @@ export const RUN_LOG_FILE = "log.jsonl" as const;
 /**
  * Record kinds that make a leg's history: they land in `history.jsonl`, every
  * other kind of a run lands in `log.jsonl`. The original submission ledger and
- * attempt history, the prompt/schema each turn was started with, officer
- * pointers, and the four whole-page facts only the public call knows (each
- * rewrite appends one row whose payload is that whole page).
+ * attempt history, the prompt/schema each turn was started with, and officer
+ * pointers. (The four whole-page facts only the public call knows — invocation,
+ * admitted-request, run-state, terminal — land in `log.jsonl`, a different file
+ * than the submission ledger, as the files they replaced were a different volume.)
  */
 export const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
   "candidate", "roundContext", "outcome", "sealed", "post-seal-anomaly",
   "attempt-history", "turn-delivery", "officer-pointer",
-  "invocation", "admitted-request", "run-state", "terminal",
 ]);
