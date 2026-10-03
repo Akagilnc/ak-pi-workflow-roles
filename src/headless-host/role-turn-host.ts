@@ -497,7 +497,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         }
         startedWithSchema = deliveredSchema;
       } catch (setupError) {
-        await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
+        try {
+          await rm(inputsDirectory, { recursive: true, force: true });
+        } catch (cleanupError) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `headless turn inputs cleanup failed beside setup failure: ${describeErrorIdentity(cleanupError)}`,
+            error: cleanupError,
+          });
+        }
         throw setupError;
       }
 
@@ -734,7 +742,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         },
       });
       } finally {
-        await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
+        try {
+          await rm(inputsDirectory, { recursive: true, force: true });
+        } catch (error) {
+          await retainPackageFault({
+            runDirectory: request.runDirectory,
+            diagnostic: `headless turn inputs cleanup failed beside host terminal: ${describeErrorIdentity(error)}`,
+            error,
+          });
+        }
         try {
           if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
             host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,

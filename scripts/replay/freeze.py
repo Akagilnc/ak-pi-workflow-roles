@@ -270,13 +270,13 @@ def main():
             os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
             for leaf in os.listdir(path):
                 shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
-    for rel in ("session/session.jsonl", "log.jsonl"):
-        if os.path.exists(f"{run}/{rel}"):
-            os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
-            with open(f"{frozen_run}/{rel}", "w") as f:
-                for r in jsonl(f"{run}/{rel}"):
-                    if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
-                        f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+    # session.jsonl only here — log.jsonl was already truncated with the other row files above.
+    if os.path.exists(f"{run}/session/session.jsonl"):
+        os.makedirs(f"{frozen_run}/session", exist_ok=True)
+        with open(f"{frozen_run}/session/session.jsonl", "w") as f:
+            for r in jsonl(f"{run}/session/session.jsonl"):
+                if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
+                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
 
     pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
     pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
@@ -290,15 +290,17 @@ def main():
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
     # The prompt and schema each turn was started with are turn-delivery records of history.jsonl;
-    # take the last one at or before the cut. A pi run's delivered prompt is only the appended tail,
-    # which pi-tail.ts rebuilds from the frozen worktree, so only headless hosts take it from the
-    # record. With no record before the cut a headless run cannot be replayed (run.py refuses with
-    # a pointer to pass a full --sys).
+    # take the last one at or before the cut for every host (pi records the delivered prompt the
+    # same way). Rebuild via pi-tail only when no turn-delivery row exists before the cut.
     delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)
     delivered = (delivered_row or {}).get("payload") or None
     delivered_prompt = delivered.get("systemPrompt") if delivered else None
-    sys_kind = "headless-system-prompt" if host != "pi" and isinstance(delivered_prompt, str) else "pi-tail"
-    sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
+    if isinstance(delivered_prompt, str):
+        sys_kind = "turn-delivery"
+        sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run)
+    else:
+        sys_kind = "pi-tail"
+        sysprompt = None
 
     sh("git", "-C", repo, "worktree", "prune")
     sh("git", "-C", repo, "worktree", "add", "--detach", f"{kit}/wt", head)

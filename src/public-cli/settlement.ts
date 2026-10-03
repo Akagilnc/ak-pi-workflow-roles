@@ -1284,24 +1284,6 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-type AcceptedArtifactAttachment = {
-  readonly provenancePath: string;
-  readonly frozenPath: string;
-  readonly sha256: string;
-  readonly byteLength: number;
-};
-
-function acceptedArtifactAttachmentRefs(
-  attachments: readonly AcceptedArtifactAttachment[],
-): AcceptedArtifactAttachment[] {
-  return attachments.map((a) => ({
-    provenancePath: a.provenancePath,
-    frozenPath: a.frozenPath,
-    sha256: a.sha256,
-    byteLength: a.byteLength,
-  }));
-}
-
 /**
  * Sole success-terminal publisher (#953): replace the leg's terminal in
  * current.json. The report carries the outcome's verdict facts; the role's

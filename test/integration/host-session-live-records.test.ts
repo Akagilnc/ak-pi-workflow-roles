@@ -5,9 +5,9 @@
  * - Native CLI session copied to <run>/session/claude-<model>-<n>.jsonl after child exit.
  * - Sitian log line write failure declared to stderr without aborting the turn.
  */
-import { assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
+import { assertNoRetiredDossierFiles, readCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -15,6 +15,7 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { renderCurrentSync } from "../../src/run-dossier.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
@@ -157,6 +158,20 @@ process.stdout.write(JSON.stringify({
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
     assert.equal("ordinal" in (copyRec.payload as object), false);
     assertNoRetiredDossierFiles(ledger.runDirectory);
+    // After the leg is filed under another ticket path, the rendering points at the
+    // original where the run directory is now (#1161).
+    renderCurrentSync(ledger.runDirectory);
+    assert.equal(
+      (readCurrentJson(ledger.runDirectory).host as { original?: string } | undefined)?.original,
+      landingFile,
+    );
+    const filed = join(dirname(ledger.runDirectory), "filed-under-ticket@judge");
+    await rename(ledger.runDirectory, filed);
+    renderCurrentSync(filed);
+    assert.equal(
+      (readCurrentJson(filed).host as { original?: string } | undefined)?.original,
+      join(filed, "session", "claude.jsonl"),
+    );
   } finally {
     ledger.dispose();
   }

@@ -10,7 +10,7 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
-import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
+import { assertRunDirectoryHoldsOnlyDossier, historyPayloads } from "../helpers/run-dossier-fixture.ts";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -31,6 +31,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -185,9 +186,10 @@ async function freshProject(home: string): Promise<string> {
 // 催交取得卷后走既有审核，不跳审核、不转父席。
 test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", async () => {
   await withSeatHome(async (home) => {
+    const project = await freshProject(home);
     const run = await runExternalJudge(home, {
       runId: "1132-external-accepted",
-      project: await freshProject(home),
+      project,
       limit: 2,
       sealOnCall: 2,
     });
@@ -214,6 +216,21 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.ok(run.runDirectory !== undefined);
     const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
+    // #1161:催交同案 — history.jsonl keeps the old ledger kind/content (sealed),
+    // and the reader projects the same accepted row the old ledger presented.
+    const sealed = historyPayloads<{ type?: string; accepted?: unknown; toolCallId?: string; role?: string }>(
+      run.runDirectory!,
+      "sealed",
+    );
+    assert.deepEqual(
+      sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
+      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+    );
+    assert.deepEqual(
+      (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
+        .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
+      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+    );
   });
 });
 

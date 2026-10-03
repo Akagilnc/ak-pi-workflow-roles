@@ -471,16 +471,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           },
         },
       );
-      process.stderr.write = realWrite;
-      // The unreadable history file is named in current.json and declared once beside it.
-      assert.equal(declared.some((line) => line.includes("history.jsonl cannot be read")), true);
-      // Ledger damage is a package note. It does not invent a host failure,
-      // and a lawful no_receipt stops the loop.
-      assert.equal(dispatches(), 1);
-      assert.equal(result.exitCode, 0);
-      assert.ok(result.terminal);
-      assert.equal(result.terminal!.autoResumeCount, 0);
-      assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
       const runDirectory = join(
         home,
         ".ak-roles",
@@ -489,10 +479,21 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
+      // Structured once-declare: the marker names the fault.
+      const current = readCurrentJson(runDirectory) as { unreadable?: Record<string, string> };
+      assert.deepEqual(current.unreadable, { "history.jsonl": "EISDIR" });
+      // Ledger damage is a package note. It does not invent a host failure,
+      // and a lawful no_receipt stops the loop.
+      assert.equal(dispatches(), 1);
+      assert.equal(result.exitCode, 0);
+      assert.ok(result.terminal);
+      assert.equal(result.terminal!.autoResumeCount, 0);
+      assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
+      // Keep capturing stderr through resume: the fault must stay declared once for the leg.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -519,6 +520,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      assert.equal(
+        declared.filter((line) => line.includes("[run-dossier] history.jsonl cannot be read (EISDIR)")).length,
+        1,
+        "unreadable history is declared once across the initial run and resume",
+      );
 
     } finally {
       process.stderr.write = realWrite;

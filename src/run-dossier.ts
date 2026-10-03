@@ -196,6 +196,15 @@ function writeWhole(runDirectory: string, whole: Record<string, unknown>): void 
  */
 export function renderCurrentSync(runDirectory: string): void {
   const paths = [RUN_HISTORY_FILE, RUN_STATE_FILE, RUN_LOG_FILE].map((name) => join(runDirectory, name));
+  // Ticket #1161: declare each unreadable row file once. The rendering's own
+  // `unreadable` marker is the record of what was already declared (Node's
+  // emit-once pattern keyed by the durable marker, not a second warning store).
+  const prior = readCurrentSync(runDirectory)?.unreadable;
+  const declared: Record<string, string> = isRecord(prior)
+    ? Object.fromEntries(
+      Object.entries(prior).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    )
+    : {};
   for (;;) {
     const [history, state, log] = paths.map(readRowFile) as [RowFile, RowFile, RowFile];
     const unreadable: Record<string, string> = {};
@@ -203,7 +212,9 @@ export function renderCurrentSync(runDirectory: string): void {
       if (file.fault !== undefined) unreadable[name] = file.fault;
     }
     for (const [name, code] of Object.entries(unreadable)) {
+      if (declared[name] === code) continue;
       process.stderr.write(`[run-dossier] ${name} cannot be read (${code}); current.json is rendered without it: ${runDirectory}\n`);
+      declared[name] = code;
     }
     writeWhole(runDirectory, render(runDirectory, history.rows, state.rows, log.rows, unreadable));
     const grew = [history, state, log].some((file, index) => file.fault === undefined && fileBytes(paths[index]!) !== file.bytes);

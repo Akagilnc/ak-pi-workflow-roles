@@ -24,5 +24,8 @@ Limits: pi legs have no sandbox (`node_modules` is a symlink into the real check
 sandbox. Hosts other than codex and pi are refused at freeze time.
 
 Treatment arm: copy `sys.txt`, edit the Soul/law text inside it, pass it with `--sys`.
-Pi-host runs get their tail rebuilt from the frozen worktree (`pi-tail.ts`); coder/fixer
-runs carry extra phase/task blocks the tail does not reproduce, so hand-build `--sys` there.
+When a `turn-delivery` row exists at or before the cut, freeze takes that recorded
+system prompt for every host (including pi). Only runs with no such row fall back to
+rebuilding a pi tail from the frozen worktree (`pi-tail.ts`). Coder/fixer runs may still
+carry extra phase/task blocks a rebuilt tail does not reproduce, so hand-build `--sys`
+there when needed.

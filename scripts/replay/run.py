@@ -28,8 +28,8 @@ def main():
     sysfile = os.path.abspath(a.sys) if a.sys else f"{kit}/sys.txt"
     instr = a.instr if a.instr is not None else open(f"{kit}/instr.txt").read().strip()
     tag = f"{a.arm}-{a.n}"
-    if host == "codex" and meta["sysKind"] != "headless-system-prompt" and not a.sys:
-        sys.exit("this run was a pi-host run; its sys.txt is only the appended tail. Pass --host pi or a full --sys.")
+    if host == "codex" and meta["sysKind"] == "pi-tail" and not a.sys:
+        sys.exit("this run has no recorded turn-delivery prompt; its sys.txt is only a rebuilt pi tail. Pass --host pi or a full --sys.")
     wt = f"{kit}/wt-{tag}"
     if os.path.exists(wt):
         sys.exit(f"leg worktree exists: {wt} (pick another n, or replay-run.sh clean <kit>)")
