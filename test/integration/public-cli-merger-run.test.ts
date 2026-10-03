@@ -282,7 +282,6 @@ function hostNeutralTypedTurn(options: {
             );
             return { code: 0, stderr: "", timedOut: false };
           }
-          await handlers.get("turn_end")!({ turnIndex, calls }, context);
         }
       if (options.postSealAction === true) {
         const late = { toolCallId: "after-seal", toolName: outputTool };
@@ -502,10 +501,6 @@ test("host-neutral typed turns record every terminating submission without sole 
               },
             })}\n`, "utf8");
           }
-        await handlers.get("turn_end")?.({
-          turnIndex: 0,
-          calls: payloads.map((_, i) => ({ toolCallId: `call-${i}`, toolName: outputTool })),
-        }, context);
         return { code: 0, stderr: "", timedOut: false };
       },
     };

@@ -5,26 +5,12 @@ import { ComplianceResponseRetentionError } from "./compliance-transport.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, validateDoctorOutput, type DoctorCase } from "./doctor-contracts.ts";
 
-import { sitianReport } from "./sitian-facade.ts";
-
 import { errorText } from "./unknown-value.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
 export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/<n>/runs directory", type: "string" as const } } as const;
 export type DoctorRoleDependencies = { loadSoul(): Promise<string>; loadCase(path: string): Promise<DoctorCase> };
 function appendCandidate(ctx: HostContext, data: unknown): void {
-  try {
-    sitianReport({
-      level: "event",
-      kind: "candidate",
-      cwd: ctx.cwd,
-      sessionParent: ctx.sessionManager.getSessionFile(),
-      payload: data,
-      source: "doctor-role",
-    });
-  } catch (error) {
-    throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${errorText(error)}`, { cause: error });
-  }
   const append = ctx.sessionManager.appendCustomEntry;
   if (typeof append === "function") {
     try {

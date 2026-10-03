@@ -1017,11 +1017,9 @@ test("#953 no_receipt clears owned reader face; sibling and non-terminal retaine
     const siblingDirectory = join(runsRoot, `${siblingRunId}@judge`);
     const sessionDirectory = join(runDirectory, "session");
     const artifactsDir = join(runDirectory, "artifacts");
-    const ledgerDir = join(runDirectory, "session", "submission-ledger");
     const siblingArtifacts = join(siblingDirectory, "artifacts");
     await mkdir(sessionDirectory, { recursive: true });
     await mkdir(artifactsDir, { recursive: true });
-    await mkdir(ledgerDir, { recursive: true });
     await mkdir(siblingArtifacts, { recursive: true });
 
     const sessionFile = join(sessionDirectory, "session.jsonl");
@@ -1038,7 +1036,7 @@ test("#953 no_receipt clears owned reader face; sibling and non-terminal retaine
       "utf8",
     );
     const evidencePath = join(artifactsDir, "evidence.json");
-    const ledgerPath = join(ledgerDir, "records.jsonl");
+    const ledgerPath = join(runDirectory, "history.jsonl");
     await writeFile(
       ledgerPath,
       `${JSON.stringify({ kind: "submission", runId, payload: { judgeStatus: "continue" } })}\n`,

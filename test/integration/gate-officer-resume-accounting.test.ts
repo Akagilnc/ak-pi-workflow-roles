@@ -2,7 +2,7 @@
  * Medium #753 / #821 / #879 gate-officer resume accounting (FS / real officer entry).
  * Unit coverage: test/unit/gate-officer-resume-accounting.test.ts
  * - Multiple pointers to one officer session must not multiply rounds (#753).
- * - Direct officer pointer booking upserts a stable leaf per officer (#753).
+ * - Direct officer pointer booking upserts one current.json slot per officer (#753).
  * - Officer seat host is not parent invocation host (#821).
  * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
@@ -11,12 +11,12 @@
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
+import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
@@ -75,24 +75,19 @@ test("#753 multiple pointers to same officer session count seals once each", asy
   await withTempRoot("ak-gate-pointer-dedupe-", async (root) => {
     const officerSession = join(root, "officer", "session", "session.jsonl");
     await writeThreeBounceOfficerSession(officerSession);
-    const auditorRoles = join(root, "parent", "session", "auditor-roles");
-    await mkdir(auditorRoles, { recursive: true });
+    const parentRun = join(root, "parent");
     // Historical multi-mint shape (pre-upsert): three pointers, one session.
-    for (const name of ["notary-aaa.pointer.json", "notary-bbb.pointer.json", "notary-ccc.pointer.json"]) {
-      await writeFile(
-        join(auditorRoles, name),
-        `${JSON.stringify({
-          version: 1,
-          kind: "direct-officer-run-pointer",
-          officer: "notary",
-          sessionFile: officerSession,
-          runDirectory: join(root, "officer"),
-        })}\n`,
-        "utf8",
-      );
-    }
+    seedCurrentSection(parentRun, "officers", Object.fromEntries(
+      ["notary-aaa", "notary-bbb", "notary-ccc"].map((name) => [name, {
+        version: 1,
+        kind: "direct-officer-run-pointer",
+        officer: "notary",
+        sessionFile: officerSession,
+        runDirectory: join(root, "officer"),
+      }]),
+    ));
 
-    const rounds = await readAnalystGateCyclesFromAuditorRoles(auditorRoles);
+    const rounds = await readAnalystGateCyclesFromOfficers(parentRun);
     assert.equal(rounds.length, 3, "3 seals via 3 pointers must stay 3 rounds, not 9");
     assert.deepEqual(
       rounds.map((r) => r.status),
@@ -105,7 +100,7 @@ test("#753 multiple pointers to same officer session count seals once each", asy
   });
 });
 
-test("#753 bookDirectOfficerRunPointer upserts stable leaf per officer", async () => {
+test("#753 bookDirectOfficerRunPointer upserts one slot per officer in current.json", async () => {
   await withTempRoot("ak-gate-pointer-upsert-", async (root) => {
     const parentSession = join(root, "parent", "session", "session.jsonl");
     await mkdir(join(parentSession, ".."), { recursive: true });
@@ -126,13 +121,9 @@ test("#753 bookDirectOfficerRunPointer upserts stable leaf per officer", async (
       runDirectory: join(root, "officer-b"),
     });
 
-    const nest = join(root, "parent", "session", "auditor-roles");
-    const names = (await readdir(nest)).sort();
-    assert.deepEqual(names, ["notary.pointer.json"]);
-    const body = JSON.parse(await readFile(join(nest, "notary.pointer.json"), "utf8")) as {
-      sessionFile: string;
-      runDirectory?: string;
-    };
+    const officers = readCurrentSection(join(root, "parent"), "officers");
+    assert.deepEqual(Object.keys(officers), ["notary"]);
+    const body = officers.notary as { sessionFile: string; runDirectory?: string };
     assert.equal(body.sessionFile, secondSession);
     assert.equal(body.runDirectory, join(root, "officer-b"));
   });

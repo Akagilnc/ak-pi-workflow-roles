@@ -3,7 +3,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -667,6 +667,28 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
   });
 });
 
+/**
+ * Real run-state seam: the facade admitted the run and the coordinator already
+ * marked it running; once the doctor turn has recorded its submission, occupy
+ * current.json (the file holding the runState section) with a directory.
+ * markRunTerminal reads current run-state before it writes, so this fails that
+ * precondition read (readFile → EISDIR) inside readRoleRunStateDisk — not the
+ * later write step. The accepted doctor terminal stays; EISDIR is a package note.
+ * No production hook, no direct markRunTerminal call.
+ */
+function poisonCurrentJsonAfterTurn(runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
+  return {
+    executeTurn: async (request) => {
+      const out = await inner.executeTurn(request);
+      if (request.activation.role === "doctor") {
+        await rm(join(runDirectory, "current.json"));
+        await mkdir(join(runDirectory, "current.json"));
+      }
+      return out;
+    },
+  };
+}
+
 test("terminal persistence failure is noted and the auditor read of that run is not delivered as success", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -698,7 +720,7 @@ test("terminal persistence failure is noted and the auditor read of that run is 
         credentials: { "openai-codex": true, xai: false },
         createRunId: () => runId,
         io: captured.io,
-        roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(poisonCurrentJsonAfterTurn(runDirectory, roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -725,17 +747,6 @@ test("terminal persistence failure is noted and the auditor read of that run is 
             })}\n`,
             "utf8",
           );
-          // Real run-state seam: the facade admitted the run and the
-          // coordinator already marked it running; now occupy current.json
-          // (the file holding the runState section) with a directory.
-          // markRunTerminal reads current run-state before
-          // it writes, so this actually fails that precondition read
-          // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
-          // write step. The real EISDIR identity must propagate through, not
-          // The accepted doctor terminal stays. EISDIR is a package note.
-          // No production hook, no direct markRunTerminal call, no new fixture.
-          await rm(join(runDirectory, "current.json"));
-          await mkdir(join(runDirectory, "current.json"));
           return {
             code: 0,
             sealedAcceptance: { role: "doctor" as const, details },
@@ -744,7 +755,7 @@ test("terminal persistence failure is noted and the auditor read of that run is 
             args: [...args],
           };
         },
-          })),
+          }))),
       },
     );
 

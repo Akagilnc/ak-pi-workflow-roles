@@ -8,7 +8,7 @@
  * Across processes the writers take turns by construction — the parent CLI is
  * parked on the child leg while the child writes (diarist ticket bind).
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
@@ -23,6 +23,8 @@ export type CurrentSection =
   | "admitted"
   | "runState"
   | "host"
+  | "delivery"
+  | "submission"
   | "officers";
 
 export function runCurrentPath(runDirectory: string): string {
@@ -88,4 +90,32 @@ export function updateSectionSync(
   const next = update(current);
   if (next === undefined) return;
   writeCurrentSync(runDirectory, { ...whole, [section]: next });
+}
+
+/** Append one line to `history.jsonl`, creating the run directory when absent. */
+export function appendHistoryRowSync(runDirectory: string, row: Record<string, unknown>): void {
+  mkdirSync(runDirectory, { recursive: true });
+  appendFileSync(join(runDirectory, RUN_HISTORY_FILE), `${JSON.stringify(row)}\n`, "utf8");
+}
+
+/**
+ * Every line of `history.jsonl` in order; absent file → []. A damaged line
+ * throws (failure honesty) — it is the only copy of that round.
+ */
+export function readHistoryRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
+  let raw: string;
+  try {
+    raw = readFileSync(join(runDirectory, RUN_HISTORY_FILE), "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+    throw error;
+  }
+  const rows: Record<string, unknown>[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    const parsed: unknown = JSON.parse(line);
+    if (!isRecord(parsed)) throw new TypeError(`${RUN_HISTORY_FILE} line is not an object: ${join(runDirectory, RUN_HISTORY_FILE)}`);
+    rows.push(parsed);
+  }
+  return rows;
 }

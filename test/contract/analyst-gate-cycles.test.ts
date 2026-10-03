@@ -15,12 +15,15 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
+import { bookDirectOfficerRunPointer, DIRECT_OFFICER_RUN_POINTER_KIND } from "../../src/archivist-record-pointer.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_B2_RUN as GATE_JUDGE_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
-/** Existing judge leg — inject auditor-roles here inside temp HOME. */
+/** Existing judge leg — gate volumes are booked here inside temp HOME. */
 const GATE_JUDGE_DIR = `${GATE_JUDGE_RUN}@judge`;
 
 /**
@@ -44,8 +47,7 @@ function iso(msFromBase: number): string {
   return new Date(Date.parse("2026-08-24T04:00:00.000Z") + msFromBase).toISOString();
 }
 
-async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<void> {
-  await mkdir(auditorDir, { recursive: true });
+async function writeSevenRoundHistoricalFixture(write: GateVolumeWriter): Promise<void> {
   const rounds: Array<{
     dStart: number;
     dEnd: number;
@@ -67,109 +69,77 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
   let fileSeq = 0;
   for (const [index, round] of rounds.entries()) {
     fileSeq += 1;
-    await writeFile(
-      join(auditorDir, `d${String(fileSeq).padStart(2, "0")}_menxia.jsonl`),
-      gateToolSessionJsonl({
+    await write(`d${String(fileSeq).padStart(2, "0")}_menxia.jsonl`, gateToolSessionJsonl({
         id: `disp-${index + 1}`,
         startedAt: iso(round.dStart),
         endedAt: iso(round.dEnd),
         toolName: "ak_menxia_output",
         args: { status: "dispatch", officer: "fubaolang" },
         attemptEntryId: `attempt-${index + 1}`,
-      }),
-      "utf8",
-    );
+      }));
     fileSeq += 1;
-    await writeFile(
-      join(auditorDir, `o${String(fileSeq).padStart(2, "0")}_fubaolang.jsonl`),
-      gateToolSessionJsonl({
+    await write(`o${String(fileSeq).padStart(2, "0")}_fubaolang.jsonl`, gateToolSessionJsonl({
         id: `off-${index + 1}`,
         startedAt: iso(round.oStart),
         endedAt: iso(round.oEnd),
         toolName: "ak_fubaolang_output",
         args: { status: round.status, findings: round.findings },
         attemptEntryId: `attempt-${index + 1}`,
-      }),
-      "utf8",
-    );
+      }));
     if (index === 4) {
       // Insert soul-audit volume after pass r5
       fileSeq += 1;
-      await writeFile(
-        join(auditorDir, `s${String(fileSeq).padStart(2, "0")}_soul.jsonl`),
-        gateToolSessionJsonl({
+      await write(`s${String(fileSeq).padStart(2, "0")}_soul.jsonl`, gateToolSessionJsonl({
           id: "soul-noise",
           startedAt: iso(196_000),
           endedAt: iso(199_000),
           toolName: "ak_soul_audit_decision",
           args: { status: "pass" },
-        }),
-        "utf8",
-      );
+        }));
     }
   }
 }
 
-async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
-  await mkdir(auditorDir, { recursive: true });
-  await writeFile(
-    join(auditorDir, "o01_inspector.jsonl"),
-    gateToolSessionJsonl({
+async function writeCurrentNameSingleRound(write: GateVolumeWriter): Promise<void> {
+  await write("o01_inspector.jsonl", gateToolSessionJsonl({
       id: "off-cur",
       startedAt: iso(1_000),
       endedAt: iso(11_000),
       toolName: "ak_inspector_output",
       args: { status: "bounce", findings: ["x", "y"] },
-    }),
-    "utf8",
-  );
+    }));
 }
 
 /** One lawful accepted round + rejected / orphan terminals that must not steal later direct officers. */
-async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
-  await mkdir(auditorDir, { recursive: true });
+async function writeRejectedTerminalFixture(write: GateVolumeWriter): Promise<void> {
   // Lawful round 1 (current English faces) — shared durable attempt association.
-  await writeFile(
-    join(auditorDir, "d01_gatekeeper.jsonl"),
-    gateToolSessionJsonl({
+  await write("d01_gatekeeper.jsonl", gateToolSessionJsonl({
       id: "disp-ok",
       startedAt: iso(0),
       endedAt: iso(1_000),
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "inspector" },
       attemptEntryId: "attempt-lawful",
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o02_inspector.jsonl"),
-    gateToolSessionJsonl({
+    }));
+  await write("o02_inspector.jsonl", gateToolSessionJsonl({
       id: "off-ok",
       startedAt: iso(1_000),
       endedAt: iso(11_000),
       toolName: "ak_inspector_output",
       args: { status: "pass", findings: [] },
       attemptEntryId: "attempt-lawful",
-    }),
-    "utf8",
-  );
+    }));
   // Accepted orphan same-seat dispatch — must not consume a later direct officer.
-  await writeFile(
-    join(auditorDir, "d03_gatekeeper_orphan.jsonl"),
-    gateToolSessionJsonl({
+  await write("d03_gatekeeper_orphan.jsonl", gateToolSessionJsonl({
       id: "disp-orphan",
       startedAt: iso(15_000),
       endedAt: iso(16_000),
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "inspector" },
       attemptEntryId: "attempt-orphan",
-    }),
-    "utf8",
-  );
+    }));
   // Rejected dispatch — must not open a round even with a later officer
-  await writeFile(
-    join(auditorDir, "d04_gatekeeper_rejected.jsonl"),
-    gateToolSessionJsonl({
+  await write("d04_gatekeeper_rejected.jsonl", gateToolSessionJsonl({
       id: "disp-rej",
       startedAt: iso(20_000),
       endedAt: iso(21_000),
@@ -177,37 +147,25 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       args: { status: "dispatch", officer: "inspector" },
       receipt: "rejected",
       attemptEntryId: "attempt-rejected",
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o05_inspector_after_rej.jsonl"),
-    gateToolSessionJsonl({
+    }));
+  await write("o05_inspector_after_rej.jsonl", gateToolSessionJsonl({
       id: "off-after-rej",
       startedAt: iso(21_000),
       endedAt: iso(31_000),
       toolName: "ak_inspector_output",
       args: { status: "bounce", findings: ["z"] },
       attemptEntryId: "attempt-direct",
-    }),
-    "utf8",
-  );
+    }));
   // Accepted dispatch + officer toolCall with no toolResult — unpaired, not a round
-  await writeFile(
-    join(auditorDir, "d06_gatekeeper_orphan_notary.jsonl"),
-    gateToolSessionJsonl({
+  await write("d06_gatekeeper_orphan_notary.jsonl", gateToolSessionJsonl({
       id: "disp-orphan-notary",
       startedAt: iso(40_000),
       endedAt: iso(41_000),
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "notary" },
       attemptEntryId: "attempt-orphan-notary",
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o07_notary_no_result.jsonl"),
-    gateToolSessionJsonl({
+    }));
+  await write("o07_notary_no_result.jsonl", gateToolSessionJsonl({
       id: "off-no-result",
       startedAt: iso(41_000),
       endedAt: iso(51_000),
@@ -215,9 +173,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       args: { status: "pass", findings: [] },
       receipt: "omit",
       attemptEntryId: "attempt-orphan-notary",
-    }),
-    "utf8",
-  );
+    }));
 }
 
 function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
@@ -228,22 +184,41 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
   return bag.gateCycles;
 }
 
-function judgeAuditorDir(home: string): string {
-  return join(
-    home,
-    ".ak-roles",
-    "books",
-    BOOK,
-    "runs",
-    GATE_JUDGE_DIR,
-    "session",
-    "auditor-roles",
-  );
+function judgeRunDirectory(home: string): string {
+  return join(home, ".ak-roles", "books", BOOK, "runs", GATE_JUDGE_DIR);
+}
+
+type GateVolumeWriter = (name: string, content: string) => Promise<void>;
+
+/**
+ * Write one gate session volume and book it as a pointer in the judge run's
+ * current.json `officers` section — the only way the analyst reaches officer
+ * sessions. Every booked pointer is read as its own volume, so the historical
+ * dispatch/officer pairs use one pointer key per file.
+ */
+function gateVolumeWriter(home: string): GateVolumeWriter {
+  const runDirectory = judgeRunDirectory(home);
+  return async (name, content) => {
+    const sessionFile = join(runDirectory, "session", "gate-volumes", name);
+    await mkdir(join(runDirectory, "session", "gate-volumes"), { recursive: true });
+    await writeFile(sessionFile, content, "utf8");
+    seedCurrentSection(runDirectory, "officers", {
+      ...readCurrentSection(runDirectory, "officers"),
+      [name]: { version: 1, kind: DIRECT_OFFICER_RUN_POINTER_KIND, officer: "auditor", sessionFile },
+    });
+  };
+}
+
+/** Drop every booked gate volume and pointer from the judge run. */
+async function clearGateVolumes(home: string): Promise<void> {
+  const runDirectory = judgeRunDirectory(home);
+  await rm(join(runDirectory, "session", "gate-volumes"), { recursive: true, force: true });
+  seedCurrentSection(runDirectory, "officers", {});
 }
 
 test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblings", async () => {
   await withTempHome(async (home) => {
-    await writeSevenRoundHistoricalFixture(judgeAuditorDir(home));
+    await writeSevenRoundHistoricalFixture(gateVolumeWriter(home));
 
     const result = await runAnalyst({
       mode: "issue",
@@ -280,7 +255,7 @@ test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblin
 test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-result terminals", async () => {
   await withTempHome(async (home) => {
     // Current direct-summons accepted officer round first.
-    await writeCurrentNameSingleRound(judgeAuditorDir(home));
+    await writeCurrentNameSingleRound(gateVolumeWriter(home));
     const current = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
@@ -301,8 +276,8 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
     // Rejected/no-result historical terminals do not form rounds.
     // Clear prior volume so the rejected fixture is the sole auditor state.
-    await rm(judgeAuditorDir(home), { recursive: true, force: true });
-    await writeRejectedTerminalFixture(judgeAuditorDir(home));
+    await clearGateVolumes(home);
+    await writeRejectedTerminalFixture(gateVolumeWriter(home));
     const rejected = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
@@ -347,9 +322,9 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
 test("analyst gate-cycles via runAnalyst: shared submission pointer retains officer and new statuses", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
-    const sessionFile = join(auditorDir, "shared-session.jsonl");
+    const runDirectory = judgeRunDirectory(home);
+    const sessionFile = join(runDirectory, "session", "shared-session.jsonl");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
     await writeFile(sessionFile, gateToolSessionJsonl({
       id: "shared-inspector",
       startedAt: iso(1_000),
@@ -357,12 +332,12 @@ test("analyst gate-cycles via runAnalyst: shared submission pointer retains offi
       toolName: "ak_submission_output",
       args: { status: "continue", findings: ["finding"] },
     }), "utf8");
-    await writeFile(join(auditorDir, "inspector.pointer.json"), JSON.stringify({
-      version: 1,
-      kind: "direct-officer-run-pointer",
+    // The production pointer producer books the officer into the parent's current.json.
+    bookDirectOfficerRunPointer({
+      parentSessionFile: sessionFileOf(runDirectory),
       officer: "inspector",
       sessionFile,
-    }), "utf8");
+    });
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const leg = gateSection(result.page).legs.find((item) => item.runId === GATE_JUDGE_RUN);
     assert.ok(leg);
@@ -377,8 +352,7 @@ test("analyst gate-cycles via runAnalyst: shared submission pointer retains offi
 
 test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume keeps accepted", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
+    const write = gateVolumeWriter(home);
     // One nested volume: earlier accepted officer receipt, later rejected retry.
     // extractLastGateToolCall must prefer the accepted call — not let rejected overwrite.
     const startedAt = iso(1_000);
@@ -456,10 +430,9 @@ test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume kee
         },
       },
     ];
-    await writeFile(
-      join(auditorDir, "o01_inspector_accepted_then_rejected.jsonl"),
+    await write(
+      "o01_inspector_accepted_then_rejected.jsonl",
       rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
-      "utf8",
     );
 
     const result = await runAnalyst({
@@ -484,8 +457,7 @@ test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume kee
 
 test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps per-summons wall", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
+    const write = gateVolumeWriter(home);
     // One continuous auditor volume: summons A (1s wall) then B (2s wall).
     // Whole-volume span would report ~62s for both (judge r1 probe); interval read must not.
     const partA = gateToolSessionJsonl({
@@ -505,11 +477,7 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
       attemptEntryId: "attempt-b",
       includeHeader: false,
     });
-    await writeFile(
-      join(auditorDir, "continuous-inspector.jsonl"),
-      `${partA}${partB}`,
-      "utf8",
-    );
+    await write("continuous-inspector.jsonl", `${partA}${partB}`);
 
     const result = await runAnalyst(
       {
@@ -537,8 +505,7 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
 
 test("analyst gate-cycles via runAnalyst: rejected volume missing timestamps is omitted", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
+    const write = gateVolumeWriter(home);
     // Rejected gate call with no usable session timestamps — must omit, not throw
     // (requireAcceptedGateSpan runs only after accepted is established).
     const rows = [
@@ -577,11 +544,7 @@ test("analyst gate-cycles via runAnalyst: rejected volume missing timestamps is 
         },
       },
     ];
-    await writeFile(
-      join(auditorDir, "o01_inspector_rejected_no_span.jsonl"),
-      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
-      "utf8",
-    );
+    await write("o01_inspector_rejected_no_span.jsonl", rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
 
     const result = await runAnalyst({
       mode: "issue",
@@ -620,19 +583,14 @@ async function assertAuditorRolesUnreadable(
 
 test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper status is omitted not unreadable (#836/#622)", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
-    await writeFile(
-      join(auditorDir, "d01_gatekeeper_non_dispatch.jsonl"),
-      gateToolSessionJsonl({
+    const write = gateVolumeWriter(home);
+    await write("d01_gatekeeper_non_dispatch.jsonl", gateToolSessionJsonl({
         id: "disp-bad",
         startedAt: iso(0),
         endedAt: iso(1_000),
         toolName: "ak_gatekeeper_output",
         args: { status: "bounce", reason: "officer bounce must not kill parent" },
-      }),
-      "utf8",
-    );
+      }));
 
     const result = await runAnalyst({
       mode: "issue",
@@ -649,47 +607,44 @@ test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper statu
 
 test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable leg", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = judgeAuditorDir(home);
-    await mkdir(auditorDir, { recursive: true });
+    const write = gateVolumeWriter(home);
     // Completed-by-terminator malformed line — canonical reader must not under-count.
-    await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
+    await write("broken.jsonl", "{bad}\n");
     await assertAuditorRolesUnreadable("malformed JSONL", home);
 
-    // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
-    await rm(auditorDir, { recursive: true, force: true });
-    await writeFile(auditorDir, "not-a-directory\n", "utf8");
-    await assertAuditorRolesUnreadable("ENOTDIR topology", home);
+    // A booked pointer whose officer session is gone is damaged topology, not lawful zero.
+    await clearGateVolumes(home);
+    await write("vanished.jsonl", "{}\n");
+    await rm(join(judgeRunDirectory(home), "session", "gate-volumes", "vanished.jsonl"));
+    await assertAuditorRolesUnreadable("missing officer session", home);
+
+    // A booked officers entry that is not a typed pointer is damaged, not lawful zero.
+    await clearGateVolumes(home);
+    seedCurrentSection(judgeRunDirectory(home), "officers", { inspector: { kind: "something-else" } });
+    await assertAuditorRolesUnreadable("unknown pointer shape", home);
 
     // Accepted gate receipt with inverted span must not silently omit the volume.
-    await rm(auditorDir, { recursive: true, force: true });
-    await mkdir(auditorDir, { recursive: true });
-    await writeFile(
-      join(auditorDir, "o01_inspector_inverted_span.jsonl"),
+    await clearGateVolumes(home);
+    await write(
+      "o01_inspector_inverted_span.jsonl",
       gateToolSessionJsonl({
         id: "off-inverted",
         startedAt: iso(20_000),
         endedAt: iso(10_000),
         toolName: "ak_inspector_output",
         args: { status: "pass", findings: [] },
-      }),
-      "utf8",
-    );
+      }));
     await assertAuditorRolesUnreadable("inverted span", home);
 
     // Accepted gate receipt with blank status — shape refusal wash is forbidden.
-    await rm(auditorDir, { recursive: true, force: true });
-    await mkdir(auditorDir, { recursive: true });
-    await writeFile(
-      join(auditorDir, "o01_inspector_blank_status.jsonl"),
-      gateToolSessionJsonl({
+    await clearGateVolumes(home);
+    await write("o01_inspector_blank_status.jsonl", gateToolSessionJsonl({
         id: "off-blank-status",
         startedAt: iso(0),
         endedAt: iso(10_000),
         toolName: "ak_inspector_output",
         args: { status: "   ", findings: [] },
-      }),
-      "utf8",
-    );
+      }));
     {
       const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
       assert.equal(
@@ -700,19 +655,14 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     }
 
     // #836/#622: unknown officer on dispatch is omitted from pairing, not unreadable kill.
-    await rm(auditorDir, { recursive: true, force: true });
-    await mkdir(auditorDir, { recursive: true });
-    await writeFile(
-      join(auditorDir, "d01_gatekeeper_unknown_officer.jsonl"),
-      gateToolSessionJsonl({
+    await clearGateVolumes(home);
+    await write("d01_gatekeeper_unknown_officer.jsonl", gateToolSessionJsonl({
         id: "disp-unknown-officer",
         startedAt: iso(0),
         endedAt: iso(1_000),
         toolName: "ak_gatekeeper_output",
         args: { status: "dispatch", officer: "magistracy" },
-      }),
-      "utf8",
-    );
+      }));
     {
       const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
       assert.equal(
@@ -724,19 +674,14 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
 
     // Lawful province non-dispatch release (pass) must be readable — zero rounds,
     // never unreadable (#597). Unknown non-contract statuses stay loud above.
-    await rm(auditorDir, { recursive: true, force: true });
-    await mkdir(auditorDir, { recursive: true });
-    await writeFile(
-      join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),
-      gateToolSessionJsonl({
+    await clearGateVolumes(home);
+    await write("d01_gatekeeper_province_pass.jsonl", gateToolSessionJsonl({
         id: "disp-province-pass",
         startedAt: iso(0),
         endedAt: iso(1_000),
         toolName: "ak_gatekeeper_output",
         args: { status: "pass", reason: "no officer needed" },
-      }),
-      "utf8",
-    );
+      }));
     const provincePass = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
@@ -757,7 +702,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
 
 test("analyst gate-cycles via runAnalyst cohort: merges byOfficer from ensured pages", async () => {
   await withTempHome(async (home) => {
-    await writeSevenRoundHistoricalFixture(judgeAuditorDir(home));
+    await writeSevenRoundHistoricalFixture(gateVolumeWriter(home));
 
     // Issue mode materializes page + library index row (cohort join key).
     const issue = await runAnalyst({

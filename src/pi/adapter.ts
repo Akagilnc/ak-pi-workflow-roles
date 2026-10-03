@@ -209,15 +209,6 @@ export function createPiRoleHostAdapter(
             ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
           })),
         }, context(ctx)));
-      } else if (registration[0] === "turn_end") {
-        const [, handler] = registration;
-        pi.on("turn_end", (value, ctx) => handler({
-          turnIndex: value.turnIndex,
-          calls: value.toolResults.map((result) => ({
-            toolCallId: result.toolCallId,
-            toolName: result.toolName,
-          })),
-        }, context(ctx)));
       } else if (registration[0] === "agent_settled") {
         const [, handler] = registration;
         pi.on("agent_settled", (_value, ctx) => handler({}, context(ctx)));

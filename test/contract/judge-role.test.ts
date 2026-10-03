@@ -47,13 +47,6 @@ async function acceptThroughTypedRoundClosure(input: {
   const pending = await input.tool.execute(input.toolCallId, input.output, undefined, undefined, input.context);
   assert.deepEqual(pending.details, input.output);
   assert.equal(pending.terminate, true);
-  const turnEnd = input.handlers.get("turn_end");
-  assert.ok(turnEnd, "shared envelope must register turn_end");
-  await turnEnd({
-    turnIndex: 0,
-    calls: [{ toolCallId: input.toolCallId, toolName: input.toolName }],
-    toolResults: [{ toolCallId: input.toolCallId, toolName: input.toolName }],
-  }, input.context);
   const runDirectory = process.env.AK_ROLE_RUN_DIR;
   assert.ok(typeof runDirectory === "string" && runDirectory.length > 0, "admitted run directory required");
   const runId = runIdFromRunDirectory(runDirectory);
@@ -327,7 +320,6 @@ test("stable factory stays inert without a role", async () => {
     "before_agent_start",
     "session_start",
     "tool_result",
-    "turn_end",
     "agent_end",
     "agent_settled",
     "session_shutdown",

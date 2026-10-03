@@ -27,7 +27,6 @@ import {
   parseRunLeaf,
   sessionFileOf,
 } from "./role-run-placement.ts";
-import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import { autopsyWriterLock, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
@@ -52,7 +51,7 @@ import type {
   AnalystUnreadableRun,
 } from "./analyst-page.ts";
 import {
-  readAnalystGateCyclesFromAuditorRoles,
+  readAnalystGateCyclesFromOfficers,
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
 
@@ -565,10 +564,7 @@ async function classifyScopedRun(input: {
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
     const parentSessionFile = sessionFileOf(input.runDirectory);
-    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      sitianRunVolumeDirectory(input.runDirectory, "auditor-roles"),
-      { parentSessionFile },
-    );
+    gateCycles = await readAnalystGateCyclesFromOfficers(input.runDirectory, { parentSessionFile });
   } catch (error) {
     return {
       kind: "unreadable",

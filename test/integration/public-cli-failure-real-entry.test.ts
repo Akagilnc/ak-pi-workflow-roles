@@ -607,6 +607,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
 });
 test("a sealed receipt stays recorded when the host CLI reported a nonzero exit", async () => {
   await withTempHome(async (home) => {
+    let judgeCalls = 0;
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -633,6 +634,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
               details: { status: "converged" },
             })(args, options);
           }
+          judgeCalls += 1;
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
@@ -674,8 +676,10 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     }
     assert.deepEqual(
       (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)),
-      [`{"status":"converged"}`],
+      // One history row per host call: the failing exit is retried, and every call's seal stays recorded.
+      Array.from({ length: judgeCalls }, () => `{"status":"converged"}`),
       "the sealed receipt stays recorded on the run-scoped carrier",
     );
+    assert.ok(judgeCalls >= 1);
   });
 });

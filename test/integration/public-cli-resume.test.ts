@@ -448,8 +448,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           roleTurnHost: {
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
-              // Poison the same ledger volume settlement reads.
-              const ledgerFile = join(request.runDirectory, "session", "submission-ledger", "records.jsonl");
+              // Poison the same history file settlement reads.
+              const ledgerFile = join(request.runDirectory, "history.jsonl");
               await rm(ledgerFile, { force: true });
               await mkdir(ledgerFile, { recursive: true });
               await assert.rejects(

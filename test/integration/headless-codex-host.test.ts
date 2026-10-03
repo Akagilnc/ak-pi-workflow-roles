@@ -12,6 +12,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -88,6 +89,7 @@ test("codex headless host binds and resumes a structured turn", { timeout: 10000
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
   const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
+  const deliveredLog = join(root, "delivered.jsonl");
   const promptLog = join(root, "prompt.log");
   const fakeBin = join(root, "fake-codex");
   const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
@@ -96,6 +98,16 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+// What this CLI was handed at start-up: the system prompt file and the closed output schema.
+// The host removes both input files after the turn, so read them while running.
+const instructions = args.find((arg) => arg.startsWith("model_instructions_file="));
+const schemaAt = args.indexOf("--output-schema");
+if (instructions !== undefined && schemaAt >= 0) {
+  appendFileSync(${JSON.stringify(deliveredLog)}, JSON.stringify({
+    systemPrompt: readFileSync(JSON.parse(instructions.slice("model_instructions_file=".length)), "utf8"),
+    outputSchema: JSON.parse(readFileSync(args[schemaAt + 1], "utf8")),
+  }) + "\\n");
+}
 const resumeAt = args.indexOf("resume");
 const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
@@ -147,6 +159,7 @@ const waitForPointer = setInterval(() => {
     let bound: string | undefined;
     let receipt: unknown;
     let rejectLoad = false;
+    let ingested = 0;
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
@@ -209,7 +222,14 @@ const waitForPointer = setInterval(() => {
           additionalProperties: true,
         },
         terminatingToolName: "ak_probe_output",
-        async ingestStructuredOutput(value) { receipt = value; },
+        // The production ledger producer records the accepted submission, as the live envelope does.
+        async ingestStructuredOutput(value) {
+          receipt = value;
+          await sealAcceptedSubmission({
+            cwd: root, runId: "run", role: "inspector", details: value, runDirectory: root,
+            toolCallId: `ingest-${++ingested}`,
+          });
+        },
         async closeRound() { return { accepted: true as const }; },
       }),
     });
@@ -237,7 +257,25 @@ const waitForPointer = setInterval(() => {
     assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
     assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
     assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
-    const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
+    const delivered = (await readFile(deliveredLog, "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as { systemPrompt: string; outputSchema: unknown });
+    // The accepted structured turn left one submission row on history.jsonl carrying exactly
+    // the system prompt and closed schema the CLI was started with.
+    const history = (await readFile(join(root, "history.jsonl"), "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(history.length, 1);
+    assert.equal(history[0]!.type, "submission");
+    assert.equal(history[0]!.disposition, "accepted");
+    assert.deepEqual(history[0]!.params, { status: "completed", report: "initial" });
+    assert.equal(history[0]!.systemPrompt, delivered[0]!.systemPrompt);
+    assert.ok(delivered[0]!.systemPrompt.length > 0);
+    assert.deepEqual(history[0]!.outputSchema, delivered[0]!.outputSchema);
+    // The CLI start-up input files are not dossier.
+    assert.deepEqual(
+      (await readdir(root)).filter((entry) => entry.startsWith("headless-")),
+      [],
+    );
+    const schema = delivered[0]!.outputSchema as {
       additionalProperties: unknown;
       required: string[];
       properties: Record<string, unknown>;
@@ -325,7 +363,7 @@ const waitForPointer = setInterval(() => {
     assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     assert.deepEqual((await readdir(join(root, "session"))).filter((entry) => entry.startsWith("codex")), ["codex.jsonl"]);
     // Resume uses the same strict transport schema as the first call.
-    const resumedSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
+    const resumedSchema = (JSON.parse((await readFile(deliveredLog, "utf8")).trim().split("\n")[1]!) as { outputSchema: any }).outputSchema;
     assertStrictObjectNodes(resumedSchema, "resumedSchema");
     assert.deepEqual(
       [...resumedSchema.required].sort(),

@@ -1,7 +1,6 @@
-import { sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
+import { runDirectoryOfSessionFile, sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
 
 import {
-  resolveActivationLedgerHome,
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import {
@@ -13,8 +12,7 @@ import {
 } from "./host-contracts.ts";
 
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
-import type { SitianRecord } from "./sitian-contracts.ts";
+import { appendHistoryRowSync, readHistoryRowsSync, readSectionSync, writeSectionSync } from "./run-dossier.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
@@ -23,47 +21,35 @@ import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
 
-export type SubmissionCall = { readonly id: string; readonly name: string };
-export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
-/** Typed correctable-rejection codes — bounce/reminder paths only (#836: no sole/non-terminate reject). */
-export type CorrectableRejectionCode = "typed-bounce";
-export type SubmissionLedgerEvent =
-  | { readonly type: "roundContext"; readonly attemptId: string; readonly calls: readonly SubmissionCall[] }
-  | {
-      readonly type: "candidate";
-      readonly attemptId: string;
-      readonly toolCallId: string;
-      readonly toolName: string;
-      readonly sequence: number;
-      /** Seat identity — machine fact beside the payload (ADR 0042 / #881). */
-      readonly role?: TerminalRoleName;
-      /** LLM tool-call params at call time (#836 原话). */
-      readonly params?: unknown;
-    }
-  | {
-      readonly type: "outcome";
-      readonly attemptId: string;
-      readonly toolCallId: string;
-      readonly outcome: SubmissionOutcomeKind;
-      readonly diagnostic?: string;
-      readonly code?: CorrectableRejectionCode;
-      /** Seat identity — machine fact beside the payload (ADR 0042). */
-      readonly role?: TerminalRoleName;
-      /** Raw LLM params — bounce/infra/audit still keep the original words (#836). */
-      readonly accepted?: unknown;
-      /** Audit-owned escalation verdict, separate from the original role submission. */
-      readonly auditReceipt?: unknown;
-      readonly auditOfficer?: unknown;
-    }
-  | {
-      readonly type: "sealed";
-      readonly attemptId: string;
-      readonly toolCallId: string;
-      /** Seat identity — machine fact beside the payload (ADR 0042). */
-      readonly role: TerminalRoleName;
-      /** Role payload as submitted — never rewritten (#836). */
-      readonly accepted: unknown;
-    };
+/**
+ * The gate's disposition of one submission, as written on its history row.
+ * `continuing`: the gate kept the turn open and did not accept it.
+ */
+export type SubmissionDisposition = "accepted" | "rejected" | "infrastructure" | "continuing";
+
+/**
+ * One `history.jsonl` submission line: the role's original params plus the
+ * gate's disposition, written once when the gate has decided (#1161). The
+ * system prompt and output schema are those the host delivered for this turn
+ * (current.json `delivery` section), present only when the host recorded them.
+ */
+type SubmissionHistoryRow = {
+  readonly type: "submission";
+  /** 1-based count of submission rows in this run. */
+  readonly attempt: number;
+  readonly at: string;
+  /** Court-turn recording tag (#637). */
+  readonly attemptId: string;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly role?: TerminalRoleName;
+  /** Role params as submitted — never rewritten (#836). */
+  readonly params: unknown;
+  readonly disposition: SubmissionDisposition;
+  readonly reason?: string;
+  readonly systemPrompt?: unknown;
+  readonly outputSchema?: unknown;
+};
 
 /**
  * Admitted run identity for the ledger subject.
@@ -121,59 +107,6 @@ export type ClosedSubmission = {
 
 export type ClosedSubmissionProjection = ClosedSubmission;
 
-/**
- * Resolve the submission-ledger record file for a run.
- * Unknown run (no sessionParent and no discoverable directory) → undefined so
- * read APIs return their empty set at the read boundary. Write paths always
- * supply sessionParent and keep the ownership gate.
- */
-async function submissionRecordFile(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<string | undefined> {
-  const ledgerHome = resolveActivationLedgerHome(scope.home);
-  let sessionParent = scope.sessionParent;
-  if (sessionParent === undefined) {
-    const discoveredRun = await findRunDirectoryById(scope.home, runId);
-    if (discoveredRun === undefined) return undefined;
-    sessionParent = sessionFileOf(discoveredRun);
-  }
-  return resolveSitianRecordPathInLedger({
-    level: "event",
-    kind: "candidate",
-    subject: { runId },
-    cwd,
-    sessionParent,
-  }, ledgerHome).recordFile;
-}
-
-/**
- * Discriminated owned-row view:
- * - unknown run → file absent + empty owned (read APIs only)
- * - located ledger → file is string; write consumers may build RecordPointer
- */
-type OwnedSubmissionRecords =
-  | { readonly file: undefined; readonly owned: readonly [] }
-  | { readonly file: string; readonly owned: readonly SitianRecord[] };
-
-async function readOwnedSubmissionRecords(
-  cwd: string,
-  runId: string,
-  scope: SubmissionLedgerReadScope = {},
-): Promise<OwnedSubmissionRecords> {
-  const file = await submissionRecordFile(cwd, runId, scope);
-  if (file === undefined) {
-    return { file: undefined, owned: [] };
-  }
-  const { records } = await readSitianRecords(file);
-  return {
-    file,
-    owned: records.filter(
-      (record) =>
-        typeof record.subject === "object"
-        && record.subject !== null
-        && (record.subject as { runId?: string }).runId === runId,
-    ),
-  };
-}
-
 /** Optional court-turn scope for settlement reads (#637). */
 export type SubmissionLedgerReadScope = {
   readonly home?: string;
@@ -194,166 +127,52 @@ function resolveReadScope(
   return homeOrScope;
 }
 
-/** Recording tag a row was written under — subject first, historical payload fallback. */
-function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
-  if (typeof record.subject === "object" && record.subject !== null) {
-    const fromSubject = (record.subject as { attemptId?: unknown }).attemptId;
-    if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
-  }
-  if (typeof record.payload === "object" && record.payload !== null) {
-    const fromPayload = (record.payload as { attemptId?: unknown }).attemptId;
-    if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
-  }
-  return undefined;
+/**
+ * The run's submission history rows. Unknown run (no sessionParent and no
+ * discoverable directory) → [] at the read boundary.
+ */
+async function readSubmissionRows(
+  runId: string,
+  scope: SubmissionLedgerReadScope,
+): Promise<readonly Record<string, unknown>[]> {
+  const runDirectory = scope.sessionParent !== undefined
+    ? runDirectoryOfSessionFile(scope.sessionParent)
+    : scope.home === undefined ? undefined : await findRunDirectoryById(scope.home, runId);
+  if (runDirectory === undefined) return [];
+  return readHistoryRowsSync(runDirectory).filter((row) => row.type === "submission");
 }
 
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
   return typeof value === "string" && value.length > 0;
 }
 
-function recordedRole(payload: { role?: unknown; projection?: { role?: unknown } }): TerminalRoleName | undefined {
-  if (isTerminalRoleName(payload.role)) return payload.role;
-  // Historical rows stored role only inside the deleted projection envelope.
-  if (isTerminalRoleName(payload.projection?.role)) return payload.projection.role;
-  return undefined;
-}
-
-/** Prefer a more complete row for the same tool call without inventing a sole winner across calls. */
-function rowRank(kind: RecordedSubmissionRow["kind"]): number {
-  switch (kind) {
-    case "accepted":
-      return 4;
-    case "audit-escalation":
-      return 3;
-    case "correctable-rejection":
-    case "infrastructure":
-      return 2;
-    case "candidate":
-      return 1;
-  }
-}
+const ROW_KIND_BY_DISPOSITION: Readonly<Record<SubmissionDisposition, RecordedSubmissionRow["kind"]>> = {
+  accepted: "accepted",
+  rejected: "correctable-rejection",
+  infrastructure: "infrastructure",
+  continuing: "candidate",
+};
 
 /**
- * Same-call identity for reader pairing only (#881 / #836).
- * attemptId is already on the record (subject/payload); bare toolCallId alone
- * collapses distinct court attempts that reused a host call id.
- */
-function submissionCallKey(attemptId: string | undefined, toolCallId: string): string {
-  return `${attemptId ?? ""}\0${toolCallId}`;
-}
-
-function rowFromPayload(
-  kind: RecordedSubmissionRow["kind"],
-  payload: {
-    role?: unknown;
-    projection?: { role?: unknown };
-    accepted?: unknown;
-    params?: unknown;
-    toolCallId?: unknown;
-    auditReceipt?: unknown;
-    auditOfficer?: unknown;
-  },
-  accepted: unknown,
-  roleFallback?: TerminalRoleName,
-): RecordedSubmissionRow {
-  const role = recordedRole(payload) ?? roleFallback;
-  return {
-    ...(role === undefined ? {} : { role }),
-    kind,
-    accepted,
-    ...(Object.hasOwn(payload, "auditReceipt") ? { auditReceipt: payload.auditReceipt } : {}),
-    ...(Object.hasOwn(payload, "auditOfficer") ? { auditOfficer: payload.auditOfficer } : {}),
-    ...(typeof payload.toolCallId === "string" && payload.toolCallId.length > 0
-      ? { toolCallId: payload.toolCallId }
-      : {}),
-  };
-}
-
-/**
- * All recorded role submissions in ledger order (#836 multi-submit / #881).
- * Projects every original payload — sealed, audit-escalation, correctable-rejection,
- * infrastructure, and bare candidate — without outcome-class filtering.
- * Same call (candidate + outcome both carrying params) appears once — keyed by
- * recorded attemptId + toolCallId so distinct court attempts stay distinct (#881).
+ * All recorded role submissions in history order (#836 multi-submit / #881):
+ * every original payload — accepted, rejected, infrastructure, and a
+ * continuing candidate — one row per submission call.
  * `accepted` is the original payload; never rebuilt from a status/facts envelope.
  */
-function mapOwnedToSubmissionRows(
-  owned: readonly { kind?: unknown; subject?: unknown; payload?: unknown }[],
-): readonly RecordedSubmissionRow[] {
-  const scoped = owned;
+function mapSubmissionRows(rows: readonly Record<string, unknown>[]): readonly RecordedSubmissionRow[] {
   const out: RecordedSubmissionRow[] = [];
-  const indexByCall = new Map<string, number>();
-  // Recover seat identity for historical non-sealed rows that omitted role (#881).
-  const roleByCall = new Map<string, TerminalRoleName>();
-  for (const record of scoped) {
-    const payload = record.payload as {
-      toolCallId?: unknown;
-      role?: unknown;
-      projection?: { role?: unknown };
-    } | undefined;
-    if (typeof payload?.toolCallId !== "string" || payload.toolCallId.length === 0) continue;
-    const role = recordedRole(payload);
-    if (role !== undefined) {
-      roleByCall.set(submissionCallKey(recordAttemptId(record), payload.toolCallId), role);
-    }
-  }
-
-  const take = (row: RecordedSubmissionRow, callKey: string | undefined): void => {
-    const toolCallId = row.toolCallId;
-    if (toolCallId !== undefined && callKey !== undefined) {
-      const existingIndex = indexByCall.get(callKey);
-      if (existingIndex !== undefined) {
-        const existing = out[existingIndex]!;
-        if (rowRank(row.kind) >= rowRank(existing.kind)) {
-          out[existingIndex] = {
-            ...row,
-            toolCallId,
-            // Keep a previously recovered role when the upgraded row still omits it.
-            ...(row.role === undefined && existing.role !== undefined ? { role: existing.role } : {}),
-          };
-        } else if (existing.role === undefined && row.role !== undefined) {
-          out[existingIndex] = { ...existing, role: row.role };
-        }
-        return;
-      }
-      indexByCall.set(callKey, out.length);
-    }
-    out.push(row);
-  };
-
-  for (const record of scoped) {
-    const payload = record.payload as {
-      type?: unknown;
-      role?: unknown;
-      projection?: { role?: unknown };
-      toolCallId?: unknown;
-      params?: unknown;
-      accepted?: unknown;
-      outcome?: unknown;
-      auditReceipt?: unknown;
-      auditOfficer?: unknown;
-    } | undefined;
-    let kind: RecordedSubmissionRow["kind"] | undefined;
-    let original: unknown;
-    if (record.kind === "candidate" && payload?.type === "candidate") {
-      kind = "candidate";
-      original = payload.params;
-    } else if (record.kind === "sealed" && payload?.type === "sealed") {
-      kind = "accepted";
-      original = payload.accepted;
-    } else if (record.kind === "outcome" && payload?.type === "outcome") {
-      kind = payload.outcome === "audit-escalation" ? "audit-escalation"
-        : payload.outcome === "correctable-rejection" ? "correctable-rejection"
-        : payload.outcome === "infrastructure" ? "infrastructure"
-        : undefined;
-      original = payload.accepted;
-    }
-    if (kind === undefined || original === undefined || payload === undefined) continue;
-    const callKey = typeof payload.toolCallId === "string"
-      ? submissionCallKey(recordAttemptId(record), payload.toolCallId)
-      : undefined;
-    const fallback = callKey === undefined ? undefined : roleByCall.get(callKey);
-    take(rowFromPayload(kind, payload, original, fallback), callKey);
+  for (const row of rows) {
+    const disposition = row.disposition as SubmissionDisposition;
+    const kind = ROW_KIND_BY_DISPOSITION[disposition];
+    if (kind === undefined || row.params === undefined) continue;
+    out.push({
+      ...(isTerminalRoleName(row.role) ? { role: row.role } : {}),
+      kind,
+      accepted: row.params,
+      ...(typeof row.toolCallId === "string" && row.toolCallId.length > 0
+        ? { toolCallId: row.toolCallId }
+        : {}),
+    });
   }
   return out;
 }
@@ -365,13 +184,11 @@ function mapOwnedToSubmissionRows(
  * not a visibility gate (#836).
  */
 export async function readRecordedSubmissionRows(
-  cwd: string,
+  _cwd: string,
   runId: string,
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<readonly RecordedSubmissionRow[]> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
-  return mapOwnedToSubmissionRows(owned);
+  return mapSubmissionRows(await readSubmissionRows(runId, resolveReadScope(homeOrScope)));
 }
 
 /**
@@ -380,18 +197,14 @@ export async function readRecordedSubmissionRows(
  * run-scoped presentation API above (#836 visibility gate stays pass-through).
  */
 export async function readAttemptScopedSubmissionRows(
-  cwd: string,
+  _cwd: string,
   runId: string,
   attemptId: string,
   home?: string,
 ): Promise<readonly RecordedSubmissionRow[]> {
   if (attemptId.length === 0) return [];
-  const { owned } = await readOwnedSubmissionRecords(
-    cwd,
-    runId,
-    home === undefined ? {} : { home },
-  );
-  return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
+  const rows = await readSubmissionRows(runId, home === undefined ? {} : { home });
+  return mapSubmissionRows(rows.filter((row) => row.attemptId === attemptId));
 }
 
 /**
@@ -408,24 +221,14 @@ export async function readRecordedSubmissions(
 
 type LedgerState = { sequence: number };
 
-async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<LedgerState> {
-  const located = await readOwnedSubmissionRecords(cwd, runId, scope);
-  if (located.file === undefined) {
-    if (located.owned.length !== 0) {
-      throw new Error(
-        `submission ledger invariant: owned rows present without recordFile for run ${runId}`,
-      );
-    }
-    return { sequence: 0 };
-  }
-  const { owned } = located;
+function restoreState(runDirectory: string): LedgerState {
   return {
-    sequence: owned.reduce((maximum, record) => {
-      const payload = record.payload as Partial<SubmissionLedgerEvent> | undefined;
-      return payload?.type === "candidate" && typeof payload.sequence === "number"
-        ? Math.max(maximum, payload.sequence)
-        : maximum;
-    }, 0),
+    sequence: readHistoryRowsSync(runDirectory).reduce(
+      (maximum, row) => row.type === "submission" && typeof row.attempt === "number"
+        ? Math.max(maximum, row.attempt)
+        : maximum,
+      0,
+    ),
   };
 }
 
@@ -442,15 +245,42 @@ function sessionParentFromHostContext(context: HostContext): string | undefined 
   return undefined;
 }
 
-function homeFromHostContext(context: HostContext, home?: string): string | undefined {
-  if (home !== undefined) return home;
+/** The run directory this host context records into. */
+function runDirectoryOfContext(context: HostContext): string {
+  const direct = runDirectoryFromHostContext(context);
+  if (direct !== undefined) return direct;
   const sessionParent = sessionParentFromHostContext(context);
-  return sessionParent !== undefined ? tryHomeFromAkRolesPath(sessionParent) : undefined;
+  if (sessionParent !== undefined) return runDirectoryOfSessionFile(sessionParent);
+  throw new Error("提交账需要已受理的 run 目录");
+}
+
+/**
+ * Write one submission history row and refresh the latest-submission view in
+ * current.json. `state.sequence` numbers the rows; the delivered system prompt
+ * and schema ride on the row when the host recorded them.
+ */
+function recordSubmission(
+  runDirectory: string,
+  state: LedgerState,
+  row: Omit<SubmissionHistoryRow, "type" | "attempt" | "at" | "systemPrompt" | "outputSchema">,
+): void {
+  const delivery = readSectionSync(runDirectory, "delivery");
+  const full: SubmissionHistoryRow = {
+    type: "submission",
+    attempt: ++state.sequence,
+    at: new Date().toISOString(),
+    ...row,
+    ...(delivery?.systemPrompt === undefined ? {} : { systemPrompt: delivery.systemPrompt }),
+    ...(delivery?.outputSchema === undefined ? {} : { outputSchema: delivery.outputSchema }),
+  };
+  appendHistoryRowSync(runDirectory, { ...full });
+  const { systemPrompt: _prompt, outputSchema: _schema, ...latest } = full;
+  writeSectionSync(runDirectory, "submission", { ...readSectionSync(runDirectory, "submission"), latest });
 }
 
 /**
  * #959: seal one accepted submission without a model tool call.
- * Same ledger row shape as the terminating-tool wrap.
+ * Same history row shape as the terminating-tool wrap.
  * Used when a prose-exit seat (navigator) harvests the final assistant text.
  */
 export async function sealAcceptedSubmission(options: {
@@ -462,80 +292,40 @@ export async function sealAcceptedSubmission(options: {
 }): Promise<void> {
   const runId = runIdentity(options.context);
   const attemptId = attemptIdentity(options.context, runId);
-  const sessionParent = sessionParentFromHostContext(options.context);
-  const home = homeFromHostContext(options.context, options.home);
-  sitianReport({
-    level: "event",
-    kind: "sealed",
-    subject: { runId, attemptId },
-    payload: {
-      type: "sealed",
-      attemptId,
-      toolCallId: options.toolCallId,
-      role: options.role,
-      accepted: options.accepted,
-    },
-    source: "role-runtime",
-    cwd: options.context.cwd,
-    ...(home !== undefined ? { home } : {}),
-    ...(sessionParent === undefined ? {} : { sessionParent }),
+  const runDirectory = runDirectoryOfContext(options.context);
+  recordSubmission(runDirectory, restoreState(runDirectory), {
+    attemptId,
+    toolCallId: options.toolCallId,
+    toolName: "prose-exit",
+    role: options.role,
+    params: options.accepted,
+    disposition: "accepted",
   });
 }
 
 /**
  * Submission ledger host — record only (#836).
- * Each terminating submission is appended with the role's original payload.
+ * Each submission is written once to history.jsonl with the role's original
+ * payload and the gate's disposition.
  * No sole-final, no seal barrier, no context.abort(), no details rewrite.
- * Host end (turn close / exit code) is the final; ledger contents are presented as-is.
+ * Host end (turn close / exit code) is the final; history is presented as-is.
  */
 export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName | readonly TerminalRoleName[]>,
   failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
   projectClosure: (closed: ClosedSubmission, context: HostContext) => void | Promise<void> = () => undefined,
-  options?: { home?: string },
+  _options?: { home?: string },
 ): RoleHost {
-  const states = new Map<string, Promise<LedgerState>>();
-  const resolveHomeFromContext = (context: HostContext): string | undefined =>
-    homeFromHostContext(context, options?.home);
-  const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
-    const home = resolveHomeFromContext(context);
-    const sessionParent = sessionParentFromHostContext(context);
-    const pending = restoreState(context.cwd, runId, {
-      ...(home === undefined ? {} : { home }),
-      ...(sessionParent === undefined ? {} : { sessionParent }),
-    });
-    states.set(runId, pending);
-    return pending;
-  })();
-  const appendFor = (context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
-    const home = resolveHomeFromContext(context);
-    const sessionParent = sessionParentFromHostContext(context);
-    return sitianReport({
-      level: "event",
-      kind: event.type,
-      subject: { runId, attemptId },
-      payload: event,
-      source: "role-runtime",
-      cwd: context.cwd,
-      ...(home !== undefined ? { home } : {}),
-      ...(sessionParent === undefined ? {} : { sessionParent }),
-    });
-  };
-
-  host.on("turn_end", async (event, context) => {
-    try {
-      const runId = runIdentity(context);
-      const attemptId = attemptIdentity(context, runId);
-      const calls = event.calls.map(({ toolCallId: id, toolName: name }) => ({ id, name }));
-      if (calls.length > 0) {
-        await stateFor(context, runId);
-        appendFor(context, runId, attemptId, { type: "roundContext", attemptId, calls });
-      }
-    } catch (error) {
-      failInfrastructure(error, context);
+  const states = new Map<string, LedgerState>();
+  const stateFor = (runDirectory: string): LedgerState => {
+    let state = states.get(runDirectory);
+    if (state === undefined) {
+      state = restoreState(runDirectory);
+      states.set(runDirectory, state);
     }
-  });
+    return state;
+  };
 
   return {
     ...host,
@@ -556,22 +346,23 @@ export function createSubmissionLedgerHost(
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
           const runId = runIdentity(context);
           const attemptId = attemptIdentity(context, runId);
-          const state = await stateFor(context, runId);
-          const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
-          // #541 / #575: shared infra-declaration fail lives on the ledger seam.
-          // #641 chain②: seats may bounce a misdeclared infrastructure failure
-          // as correctable (2.1/2.2/2.3 keep paths).
-          append({
-            type: "candidate",
-            attemptId,
-            toolCallId,
-            toolName: tool.name,
-            sequence: ++state.sequence,
-            role,
-            params,
-          });
+          const runDirectory = runDirectoryOfContext(context);
+          const state = stateFor(runDirectory);
+          const record = (disposition: SubmissionDisposition, reason?: string): void =>
+            recordSubmission(runDirectory, state, {
+              attemptId,
+              toolCallId,
+              toolName: tool.name,
+              role,
+              params,
+              disposition,
+              ...(reason === undefined ? {} : { reason }),
+            });
           let result: HostToolResult<unknown>;
           try {
+            // #541 / #575: shared infra-declaration fail lives on the ledger seam.
+            // #641 chain②: seats may bounce a misdeclared infrastructure failure
+            // as correctable (2.1/2.2/2.3 keep paths).
             // A review escalate that carries the failure declaration is the
             // seat's own submission. Every other declaration stays on the
             // host-failure seam. Tool identity comes from the registry map.
@@ -594,47 +385,22 @@ export function createSubmissionLedgerHost(
             }
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isCorrectableExecuteError(error)) {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "correctable-rejection",
-                code: "typed-bounce",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
-              throw error;
-            } else {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "infrastructure",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
-              throw error;
-            }
+            record(isCorrectableExecuteError(error) ? "rejected" : "infrastructure", errorText(error));
+            throw error;
           }
           // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
-          // A continuing gate leaves the candidate recorded but has not accepted it.
-          if (result.terminate === false) return result;
+          // A continuing gate leaves the submission recorded but not accepted.
+          if (result.terminate === false) {
+            record("continuing");
+            return result;
+          }
+          record("accepted");
           const closed: ClosedSubmission = {
             role,
             kind: "accepted",
             accepted: params,
           };
-          append({
-            type: "sealed",
-            attemptId,
-            toolCallId,
-            role,
-            accepted: params,
-          });
           await projectClosure(closed, context);
           return result;
         },

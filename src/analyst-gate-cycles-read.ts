@@ -1,5 +1,5 @@
 /**
- * Sole nested-volume reader for gate-cycle facts under session/auditor-roles/.
+ * Sole reader for gate-cycle facts of the officers pointed at from current.json `officers`.
  *
  * Consumer: Analyst sole ledger scan (classifyScopedRun). Metric families must
  * not open a second disk scan — they consume retained facts.
@@ -8,9 +8,8 @@
  * the current gatekeeper/inspector/notary English face. Projection always uses
  * the current English officer identity (inspector | notary).
  *
- * Missing auditor-roles directory (ENOENT only) → empty rounds (lawful zero).
- * Path present but not a directory (ENOTDIR) and discovered nested JSONL that
- * fails canonical read/parse must fail loudly (never silently under-count).
+ * Absent `officers` section → empty rounds (lawful zero). A pointer whose
+ * officer session fails canonical read/parse must fail loudly (never silently under-count).
  * An accepted gate terminating receipt (isError:false pair on dispatch/officer
  * tool) whose required typed facts are unusable — status, dispatch officer, or
  * first/last span missing/unknown/unparseable/inverted — also fails loudly via
@@ -23,9 +22,6 @@
  * `ak_auditor_parent_attempt_binding.parent.attemptEntryId` — never seat/time guessing.
  * An orphan accepted dispatch must not consume a later same-seat direct officer.
  */
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-
 import {
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
 } from "./compliance-transport.ts";
@@ -39,7 +35,7 @@ import {
 import { isRecord, isEnoent } from "./unknown-value.ts";
 import { retainedRunPathsMatch } from "./role-run-relocation.ts";
 import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
-import { resolveOfficerSessionFromPointerFile } from "./archivist-record-pointer.ts";
+import { readOfficerPointers } from "./archivist-record-pointer.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -418,68 +414,38 @@ function pairGateRounds(
 }
 
 /**
- * Read and pair gate-cycle rounds from one or more auditor-roles directories.
- * Accepts historical nested JSONL volumes and #675 direct-officer-run-pointer
- * files that name the independent officer session 正本.
- * ENOENT (directory truly absent) → []. ENOTDIR and other errors propagate
- * (failure honesty — damaged topology must not wash to zero rounds).
+ * Read and pair gate-cycle rounds from the officer pointers booked in one
+ * run's current.json `officers` section; each pointer names the independent
+ * officer session 正本. Absent section → [] (lawful zero). A damaged pointer or
+ * officer session propagates — damaged topology must not wash to zero rounds.
  *
  * Pass `parentSessionFile` to keep only rounds whose attempt binding names that parent.
  */
-export async function readAnalystGateCyclesFromAuditorRoles(
-  auditorRolesDirectory: string | readonly string[],
+export async function readAnalystGateCyclesFromOfficers(
+  parentRunDirectory: string,
   options: {
     readonly parentSessionFile?: string;
   } = {},
 ): Promise<readonly AnalystGateCycleRound[]> {
-  const directories = typeof auditorRolesDirectory === "string"
-    ? [auditorRolesDirectory]
-    : auditorRolesDirectory;
   const volumes: ClassifiedVolume[] = [];
-  // Same officer session pointed at N times (historical multi-mint pointers, or
-  // one parent booking many leaves) must classify once — else each accepted
-  // seal is counted ×N in gate-cycle statistics (#753 acceptance A).
+  // Same officer session pointed at N times must classify once — else each
+  // accepted seal is counted ×N in gate-cycle statistics (#753 acceptance A).
   const classifiedOfficerSessions = new Set<string>();
-  for (const directory of directories) {
-    let names: string[];
-    try {
-      const entries = await readdir(directory, { withFileTypes: true });
-      names = entries
-        .filter(
-          (e) =>
-            e.isFile()
-            && (e.name.endsWith(".jsonl") || e.name.endsWith(".pointer.json")),
-        )
-        .map((e) => e.name)
-        .sort();
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
-    for (const name of names) {
-      const path = join(directory, name);
-      const fromPointer = name.endsWith(".pointer.json");
-      const pointer = fromPointer
-        ? await resolveOfficerSessionFromPointerFile(path)
-        : undefined;
-      const sessionPath = pointer?.sessionFile ?? path;
-      if (fromPointer) {
-        if (classifiedOfficerSessions.has(sessionPath)) continue;
-        classifiedOfficerSessions.add(sessionPath);
+  for (const pointer of await readOfficerPointers(parentRunDirectory)) {
+    if (classifiedOfficerSessions.has(pointer.sessionFile)) continue;
+    classifiedOfficerSessions.add(pointer.sessionFile);
+    const officer = pointer.officer === "inspector" || pointer.officer === "notary"
+      ? pointer.officer : undefined;
+    const classified = await classifyAuditorVolume(pointer.sessionFile, officer);
+    for (const volume of classified) {
+      if (
+        options.parentSessionFile !== undefined &&
+        volume.parentSessionFile !== undefined &&
+        !await retainedRunPathsMatch(volume.parentSessionFile, options.parentSessionFile, runDirectoryOfSessionFile(options.parentSessionFile))
+      ) {
+        continue;
       }
-      const officer = pointer?.officer === "inspector" || pointer?.officer === "notary"
-        ? pointer.officer : undefined;
-      const classified = await classifyAuditorVolume(sessionPath, officer);
-      for (const volume of classified) {
-        if (
-          options.parentSessionFile !== undefined &&
-          volume.parentSessionFile !== undefined &&
-          !await retainedRunPathsMatch(volume.parentSessionFile, options.parentSessionFile, runDirectoryOfSessionFile(options.parentSessionFile))
-        ) {
-          continue;
-        }
-        volumes.push(volume);
-      }
+      volumes.push(volume);
     }
   }
   return pairGateRounds(volumes);

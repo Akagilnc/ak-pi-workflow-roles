@@ -4,9 +4,11 @@
  * Pure projection cases remain in test/unit/gate-officer-resume-accounting.test.ts.
  */
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import test from "node:test";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
@@ -117,7 +119,8 @@ test("#1028 secretariat_verdict reads the shared review status",
 );
 
 test("#969 secretariat_verdict returns escalation for direct officer resume",
-  async () => {
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    await mkdir(`${root}/parent/session`, { recursive: true });
     const nonPass: unknown[] = [];
     const receipt = {
       status: "escalate",
@@ -126,7 +129,7 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
     const outcome = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
-        sessionManager: { getSessionFile: () => "/tmp/unused" },
+        sessionManager: { getSessionFile: () => `${root}/parent/session/session.jsonl` },
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t1",
@@ -161,17 +164,18 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
       runId: "01a0cs969-esc-7000-8000-000000000099",
       runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
     });
-  },
+  }),
 );
 
 
 test("#969 requireSubmissionGate pass returns receipt + nested runId",
-  async () => {
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    await mkdir(`${root}/parent/session`, { recursive: true });
     const receipt = { status: "converged", note: "署" };
     const outcome = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
-        sessionManager: { getSessionFile: () => "/tmp/unused" },
+        sessionManager: { getSessionFile: () => `${root}/parent/session/session.jsonl` },
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t-pass",
@@ -202,5 +206,5 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
     assert.equal(outcome!.officer, "countersign");
     assert.deepEqual(outcome!.receipt, receipt);
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
-  },
+  }),
 );

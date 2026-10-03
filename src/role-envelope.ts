@@ -616,12 +616,8 @@ export async function prepareRoleEnvelope(options: {
     await invokeAkTool(terminatingToolName, params ?? {});
   };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
-    // Typed round boundary: hand the complete call list to the shared ledger once.
-    if (calls.length > 0) {
-      const roundCalls = [...calls];
-      calls.length = 0;
-      await emit("turn_end", { turnIndex: 0, calls: roundCalls });
-    }
+    // Round boundary: this round's calls no longer count as "already invoked".
+    calls.length = 0;
     // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
       durableFailureHandedToCloseRound = true;

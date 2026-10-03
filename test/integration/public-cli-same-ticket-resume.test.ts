@@ -1352,11 +1352,11 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
             seal: false,
           })(extraArgs, options);
         }
-        // Bare resume of the still-open court seals it for the first time:
-        // make the current.json runState write that clearCurrentCourt performs fail (its
-        // read still succeeds). Arm the stderr-restore hook only for this turn.
+        // Bare resume of the still-open court seals it for the first time. The seal
+        // writes history.jsonl and current.json in the run directory, so the lock that
+        // makes clearCurrentCourt's runState write fail is applied by the host wrapper
+        // below, after the seal landed. Arm the stderr-restore hook only for this turn.
         sealingTurnArmed = true;
-        await chmod(runDirectoryLocked, 0o500);
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -1364,7 +1364,16 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         })(extraArgs, options);
       },
     });
-    const host = observingSealHost(inner, seen);
+    const observed = observingSealHost(inner, seen);
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        const out = await observed.executeTurn(request);
+        // The seal is on the record; now make the same-directory temp+rename rewrite of
+        // current.json (clearCurrentCourt's runState write) fail while reads still work.
+        if (sealingTurnArmed && !cleanupDiagnosticObserved) await chmod(runDirectoryLocked, 0o500);
+        return out;
+      },
+    };
 
     const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {

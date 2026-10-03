@@ -33,7 +33,6 @@ test("shared envelope configures every public seat on a non-Pi host", () => {
 
   assert.ok(flags.has("ak-role"));
   assert.ok(handlers.some(([event]) => event === "session_start"));
-  assert.ok(handlers.some(([event]) => event === "turn_end"));
 });
 
 /**

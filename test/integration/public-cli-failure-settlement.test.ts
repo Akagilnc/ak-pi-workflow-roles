@@ -541,6 +541,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     const { io, stdout, stderr } = captureIo();
     const bounceParams = { status: "converged", report: "bounce-verdict" };
     const infraParams = { status: "converged", report: "infra-verdict" };
+    let hostCalls = 0;
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "host aborts after non-sealed submissions"],
       {
@@ -553,6 +554,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args, spawnOptions) => {
+            hostCalls += 1;
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -599,7 +601,13 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
         || terminal.roleOutcome.payloads.length === 0,
       true,
     );
-    assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
+    // One history row per submission call (no candidate+outcome doubling); the aborted
+    // host turn is retried, and each call contributes its own two rows.
+    assert.ok(hostCalls >= 1);
+    assert.deepEqual(
+      terminal.submissions,
+      Array.from({ length: hostCalls }, () => [bounceParams, infraParams]).flat(),
+    );
     assert.equal(result.exitCode, 1);
   });
 });

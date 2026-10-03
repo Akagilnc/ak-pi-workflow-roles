@@ -31,11 +31,13 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
 import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
 import { sha256Hex } from "./sha256.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
+
+/** Kinds the retired #852-era submission-ledger volume held (migration of stored runs only). */
+const LEGACY_SUBMISSION_LEDGER_KINDS = new Set(["candidate", "roundContext", "outcome", "sealed", "post-seal-anomaly"]);
 
 const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
@@ -210,7 +212,7 @@ function runIdFromPayload(payload: unknown): string | undefined {
 function recordClassOfKind(kind: unknown): RecordClass | undefined {
   if (kind === TICKET_PROVENANCE) return TICKET_PROVENANCE;
   if (kind === ATTEMPT_HISTORY) return ATTEMPT_HISTORY;
-  if (typeof kind === "string" && S4_SUBMISSION_LEDGER_KINDS.has(kind)) return SUBMISSION_LEDGER;
+  if (typeof kind === "string" && LEGACY_SUBMISSION_LEDGER_KINDS.has(kind)) return SUBMISSION_LEDGER;
   return undefined;
 }
 

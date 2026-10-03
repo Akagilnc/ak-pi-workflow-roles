@@ -1,19 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { readSitianRecords } from "../../src/sitian-reader.ts";
-import type { SitianRecord } from "../../src/sitian-contracts.ts";
 import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
+import { readCurrentJson, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import {
   createSubmissionLedgerHost,
@@ -40,14 +39,11 @@ function registerTool(
   role: TerminalRoleName = "judge",
 ) {
   let registered: HostToolDefinition | undefined;
-  const handlers = new Map<string, (...args: any[]) => unknown>();
   const deliveredRejections: unknown[] = [];
   const closedSubmissions: unknown[] = [];
-  let terminalRoundCalls: Array<{ toolCallId: string; toolName: string }> = [];
   const host = {
     deliverSubmissionRejection(rejection: unknown) { deliveredRejections.push(rejection); },
     registerTool(tool: HostToolDefinition) { registered = tool; },
-    on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
   } as RoleHost;
   const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]), undefined, async (projection) => {
     closedSubmissions.push(projection);
@@ -84,14 +80,8 @@ function registerTool(
     deliveredRejections,
     closedSubmissions,
     tool: () => registered!,
-    start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => {
-      terminalRoundCalls.push({ toolCallId: id, toolName: name });
-    },
-    close: async () => {
-      const calls = terminalRoundCalls;
-      terminalRoundCalls = [];
-      await handlers.get("turn_end")!({ turnIndex: 0, calls }, context);
-    },
+    // Calls are recorded on execute; there is no turn-end bookkeeping to prime.
+    start: async (_id: string, _name = JUDGE_OUTPUT_TOOL_NAME) => {},
   };
 }
 
@@ -104,13 +94,12 @@ async function fixture() {
   return { root, ...registerTool(root) };
 }
 
-async function ledgerRecords(root: string): Promise<SitianRecord[]> {
-  const files = await readdir(`${root}/.ak-roles/books`, { recursive: true });
-  const records: SitianRecord[] = [];
-  for (const relative of files.filter((file) => file.endsWith(".jsonl"))) {
-    records.push(...(await readSitianRecords(`${root}/.ak-roles/books/${relative}`)).records.filter((record) => ["roundContext", "candidate", "outcome", "sealed"].includes(record.kind)));
-  }
-  return records.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+const JUDGE_RUN_LEAF = "run-ledger@judge";
+
+/** The run's history.jsonl read raw, the way an outside reader sees it. */
+async function historyRows(runDirectory: string): Promise<Record<string, unknown>[]> {
+  const raw = await readFile(`${runDirectory}/history.jsonl`, "utf8");
+  return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>>) => Promise<void>) {
@@ -216,14 +205,14 @@ test("mixed tools in one turn still record every terminating submission (#836 no
   await withLedgerFixture(async (f) => {
     await f.start("a");
     await f.tool().execute("a", { status: "converged" }, undefined, undefined, f.context);
+    // A non-terminating read tool in the same turn leaves no submission row.
     await f.start("b", "read");
-    await f.close();
     assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 1);
     assert.equal(f.deliveredRejections.length, 0, "no non-sole rejection");
-    const kinds = (await ledgerRecords(f.root)).map((r) => r.kind);
-    assert.ok(kinds.includes("sealed"));
-    assert.ok(kinds.includes("roundContext"));
-    assert.ok(!kinds.includes("outcome") || (await ledgerRecords(f.root)).every((r) => r.kind !== "outcome" || (r.payload as { code?: string }).code !== "non-sole-round"));
+    const rows = await historyRows(fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF));
+    assert.deepEqual(rows.map((row) => ({ type: row.type, toolCallId: row.toolCallId, disposition: row.disposition })), [
+      { type: "submission", toolCallId: "a", disposition: "accepted" },
+    ]);
   });
 });
 
@@ -272,11 +261,11 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
       },
     );
     assert.equal(ran, 0);
-    const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
-    assert.equal(outcomes.length, 1);
-    assert.equal((outcomes[0]?.payload as { outcome?: string }).outcome, "infrastructure");
-    assert.equal((outcomes[0]?.payload as { role?: string }).role, "coder");
-    assert.deepEqual((outcomes[0]?.payload as { accepted?: unknown }).accepted, params);
+    const submissions = await historyRows(fixtureUnboundRunDirectory(f.root, "run-ledger@coder"));
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0]?.disposition, "infrastructure");
+    assert.equal(submissions[0]?.role, "coder");
+    assert.deepEqual(submissions[0]?.params, params);
   });
 });
 
@@ -285,16 +274,20 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
     const params = { status: "converged", report: "infra-params" };
     const failing = registerTool(f.root, async () => { throw new Error("typed seam unavailable"); });
     await assert.rejects(failing.tool().execute("failure", params, undefined, undefined, failing.context));
-    const outcome = (await ledgerRecords(f.root)).at(-1);
-    assert.equal(outcome?.kind, "outcome");
-    assert.deepEqual(outcome?.payload, {
-      type: "outcome",
+    const [row, ...rest] = await historyRows(fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF));
+    assert.equal(rest.length, 0, "one history line per submission call");
+    const { at, ...stable } = row!;
+    assert.equal(typeof at, "string");
+    assert.deepEqual(stable, {
+      type: "submission",
+      attempt: 1,
       attemptId: "run-ledger:attempt",
       toolCallId: "failure",
-      outcome: "infrastructure",
-      diagnostic: "typed seam unavailable",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
       role: "judge",
-      accepted: params,
+      params,
+      disposition: "infrastructure",
+      reason: "typed seam unavailable",
     });
     // #881: original params stay projectable even when outcome is not sealed.
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
@@ -315,11 +308,12 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
       await assert.rejects(
         failing.tool().execute(anchor.label, params, undefined, undefined, failing.context),
       );
-      const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
-      assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
-      assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", anchor.label);
-      assert.equal((outcome?.payload as { role?: string }).role, "judge", anchor.label);
-      // #881: correctable-rejection original params project once (candidate+outcome deduped).
+      const last = (await historyRows(fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF))).at(-1);
+      assert.equal(last?.disposition, "rejected", anchor.label);
+      assert.equal(last?.toolCallId, anchor.label);
+      assert.equal(last?.role, "judge", anchor.label);
+      assert.deepEqual(last?.params, params, anchor.label);
+      // #881: correctable-rejection original params project once per call.
       const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
       const projected = rows.find(
         (row) => row.kind === "correctable-rejection" && row.toolCallId === anchor.label,
@@ -356,12 +350,13 @@ test("#881 reader projects non-sealed original params once per tool call (correc
         { kind: "infrastructure", toolCallId: "call-infra", accepted: infraParams },
       ],
     );
-    // candidate + outcome both carry params → one projected row per call.
+    // One history line per call: no separate candidate/outcome pair.
     assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 2);
-    const kinds = (await ledgerRecords(f.root)).map((record) => record.kind);
-    assert.equal(kinds.filter((kind) => kind === "candidate").length, 2);
-    assert.equal(kinds.filter((kind) => kind === "outcome").length, 2);
-    assert.equal(kinds.includes("sealed"), false);
+    const lines = await historyRows(fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF));
+    assert.deepEqual(lines.map((line) => [line.attempt, line.toolCallId, line.disposition]), [
+      [1, "call-bounce", "rejected"],
+      [2, "call-infra", "infrastructure"],
+    ]);
   });
 });
 
@@ -429,32 +424,29 @@ test("every packaged role records original payload through the production ledger
 
 test("a recorded append failure never returns accepted", async () => {
   await withLedgerFixture(async (f) => {
-    let recordFile: string | undefined;
+    const runDirectory = fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF);
+    const historyFile = `${runDirectory}/history.jsonl`;
     const failing = registerTool(f.root, async () => {
-      // Force first candidate write, then lock the file before sealed append.
       return { content: [], details: { status: "converged" }, terminate: true };
     });
     await withPrimaryAwareCleanup(
       async () => {
-        // Pre-create by writing a candidate through a throw path, then lock.
+        // Create history.jsonl through a throw path, then lock it before the accepted append.
         const primer = registerTool(f.root, async () => {
           throw new Error("prime");
         });
         await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
-        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("submission-ledger/records.jsonl"));
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
+        await chmod(historyFile, 0o400);
         await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context));
         // Unlock to read.
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
-        // Primer infrastructure params remain; the locked seal must not add an accepted row.
+        await chmod(historyFile, 0o600);
+        // Primer infrastructure params remain; the locked append must not add an accepted row.
         const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
         assert.equal(rows.some((row) => row.kind === "accepted"), false);
         assert.ok(rows.some((row) => row.kind === "infrastructure"));
       },
       async () => {
-        if (recordFile !== undefined) {
-          try { await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600); } catch { /* already unlocked */ }
-        }
+        try { await chmod(historyFile, 0o600); } catch { /* already unlocked */ }
       },
     );
   });
@@ -505,48 +497,29 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
   });
 });
 
-test("legacy records with priorEventId are readable and new records omit priorEventId", async () => {
+test("history row carries the delivered prompt and schema; current.json latest omits them", async () => {
   await withLedgerFixture(async (f) => {
+    const runDirectory = fixtureUnboundRunDirectory(f.root, JUDGE_RUN_LEAF);
+    // The host records what it delivered in current.json `delivery` before the turn runs.
+    const delivery = { systemPrompt: "soul text", outputSchema: { type: "object", additionalProperties: false } };
+    seedCurrentSection(runDirectory, "delivery", delivery);
     await f.start("call-1");
     await f.tool().execute("call-1", { status: "first-accepted" }, undefined, undefined, f.context);
+    await f.tool().execute("call-2", { status: "second-accepted" }, undefined, undefined, f.context);
 
-    // Locate the exact ledger jsonl file
-    const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
-    const ledgerRel = files.find((file) => file.endsWith(".jsonl") && !file.includes("session.jsonl"));
-    assert.ok(ledgerRel);
-    const ledgerFile = `${f.root}/.ak-roles/books/${ledgerRel}`;
-
-    // Append a raw line simulating a legacy record that carried priorEventId
-    const legacyRecord = {
-      level: "event",
-      kind: "candidate",
-      identity: "legacy-evt-2",
-      subject: { runId: "run-ledger", attemptId: "run-ledger:attempt" },
-      priorEventId: "call-1",
-      timestamp: new Date().toISOString(),
-      host: "pi",
-      payload: {
-        type: "candidate",
-        role: "judge",
-        toolCallId: "call-legacy",
-        params: { status: "legacy-accepted" },
-      },
-    };
-    await appendFile(ledgerFile, `${JSON.stringify(legacyRecord)}\n`);
-
-    // Verify readRecordedSubmissions reads both without error
-    const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.deepEqual(recorded, [
-      { status: "first-accepted" },
-      { status: "legacy-accepted" },
-    ]);
-
-    // Verify newly written records do not carry priorEventId
-    const rawContent = await readFile(ledgerFile, "utf8");
-    const lines = rawContent.trim().split("\n").map((line) => JSON.parse(line));
-    const firstCandidate = lines.find((l: Record<string, unknown>) => (l.payload as { toolCallId?: string })?.toolCallId === "call-1");
-    assert.ok(firstCandidate);
-    assert.equal(firstCandidate.priorEventId, undefined);
-    assert.equal("priorEventId" in firstCandidate, false);
+    const rows = await historyRows(runDirectory);
+    assert.deepEqual(rows.map((row) => row.attempt), [1, 2]);
+    for (const row of rows) {
+      assert.equal(row.systemPrompt, delivery.systemPrompt);
+      assert.deepEqual(row.outputSchema, delivery.outputSchema);
+      assert.equal("priorEventId" in row, false);
+    }
+    const current = readCurrentJson(runDirectory);
+    const latest = (current.submission as { latest: Record<string, unknown> }).latest;
+    assert.equal(latest.attempt, 2);
+    assert.equal(latest.toolCallId, "call-2");
+    assert.equal(latest.disposition, "accepted");
+    assert.equal("systemPrompt" in latest, false);
+    assert.equal("outputSchema" in latest, false);
   });
 });

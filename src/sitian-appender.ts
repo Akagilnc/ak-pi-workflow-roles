@@ -42,20 +42,8 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string)
   }
 }
 
-/** Authorized S4 submission ledger kinds that share a common run submission volume. */
-export const S4_SUBMISSION_LEDGER_KINDS = new Set([
-  "candidate",
-  "roundContext",
-  "outcome",
-  "sealed",
-  "post-seal-anomaly"
-]);
-
-/** Compute the volume partition key for directory placement. */
+/** Volume directory name for a record kind: the kind itself. */
 export function resolveSitianVolumeCategory(kind: string): string {
-  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
-    return "submission-ledger";
-  }
   return kind;
 }
 

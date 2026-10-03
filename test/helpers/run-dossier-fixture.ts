@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "officers";
+export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "officers";
 
 /** Parsed `<run>/current.json`; `{}` when absent. */
 export function readCurrentJson(runDirectory: string): Record<string, unknown> {

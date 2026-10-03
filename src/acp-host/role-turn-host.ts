@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { writeSectionSync } from "../run-dossier.ts";
 import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
@@ -255,6 +256,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
+    // What this turn delivered, recorded once for the submission history rows.
+    writeSectionSync(request.runDirectory, "delivery", {
+      systemPrompt: systemPromptOverride,
+      outputSchema: prepared.jsonSchema,
+    });
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let sessionOpened = false;
