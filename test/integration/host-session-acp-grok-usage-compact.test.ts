@@ -6,6 +6,7 @@
  * - Hermes host is untouched (no native pointer, no dossier copy).
  * - Copy failure retries once and records native-session-warning without altering turn outcome.
  */
+import { assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -145,6 +146,7 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingDir);
     assert.equal("ordinal" in (copyRec.payload as object), false);
+    assertNoRetiredDossierFiles(ledger.runDirectory);
 
     // 3. A second exit overwrites the same single original with the new source bytes.
     const chatContent2 = '{"role":"assistant","content":"second exit"}\n';

@@ -11,7 +11,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { assertNoRetiredDossierFiles, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
@@ -262,11 +262,8 @@ const waitForPointer = setInterval(() => {
     assert.equal(history[0]!.systemPrompt, delivered[0]!.systemPrompt);
     assert.ok(delivered[0]!.systemPrompt.length > 0);
     assert.deepEqual(history[0]!.outputSchema, delivered[0]!.outputSchema);
-    // The CLI start-up input files are not dossier.
-    assert.deepEqual(
-      (await readdir(root)).filter((entry) => entry.startsWith("headless-")),
-      [],
-    );
+    // The CLI start-up input files are not dossier; nothing retired survives at rest.
+    assertNoRetiredDossierFiles(root);
     const schema = delivered[0]!.outputSchema as {
       additionalProperties: unknown;
       required: string[];

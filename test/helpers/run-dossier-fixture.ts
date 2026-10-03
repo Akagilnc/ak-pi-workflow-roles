@@ -5,7 +5,7 @@
  * production writer.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "terminal" | "officers";
@@ -110,4 +110,28 @@ export function terminalBodyAt(
   assert.equal(terminal?.face, face);
   assert.equal(typeof terminal?.at, "string");
   return terminal!.body!;
+}
+
+/**
+ * #1161: a run at rest carries none of the retired dossier files — no
+ * artifacts/, stderr.log, start-up input files, per-page json, `.run-starts`
+ * — and its session/ holds no numbered host copies, staging leftovers,
+ * failed-copy markers, session-binding files or sitian volume for host-session.
+ */
+export function assertNoRetiredDossierFiles(runDirectory: string): void {
+  for (const name of [
+    "artifacts", "stderr.log", "headless-system-prompt.txt", "headless-output-schema.json",
+    "headless-mcp-config.json", "run-state.json", "invocation.json", "admitted-request.json", ".run-starts",
+  ]) {
+    assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`);
+  }
+  const sessionDirectory = join(runDirectory, "session");
+  if (!existsSync(sessionDirectory)) return;
+  for (const entry of readdirSync(sessionDirectory)) {
+    assert.equal(
+      /-\d+(\.jsonl|\.failed)?$|\.copying$|-(headless|acp)-session\.json$|^host-session$|^submission-ledger$|^attempt-history$|^auditor-roles$/.test(entry),
+      false,
+      `retired session entry present: ${entry}`,
+    );
+  }
 }

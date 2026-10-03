@@ -5,6 +5,7 @@
  * - Native CLI session copied to <run>/session/claude-<model>-<n>.jsonl after child exit.
  * - Sitian log line write failure declared to stderr without aborting the turn.
  */
+import { assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -155,6 +156,7 @@ process.stdout.write(JSON.stringify({
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
     assert.equal("ordinal" in (copyRec.payload as object), false);
+    assertNoRetiredDossierFiles(ledger.runDirectory);
   } finally {
     ledger.dispose();
   }
