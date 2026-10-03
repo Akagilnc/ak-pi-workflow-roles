@@ -18,6 +18,7 @@ import {
   readBoardTicketNumber,
   readMigrationDerivedTicketNumber,
 } from "./run-ticket-number.ts";
+import { readPageSync } from "./run-dossier.ts";
 
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
@@ -83,11 +84,23 @@ export function ticketNumberFromWorktreeBasename(
 
 /**
  * projectRoot from a retained run's durable pages.
- * ENOENT → try next page / undefined; bad JSON and non-ENOENT IO propagate.
+ * New落点 (state rows) first, then pre-#1161 page files at the migration boundary.
+ * ENOENT → try next / undefined; bad JSON and non-ENOENT IO propagate.
  */
 async function readProjectRootFromRun(
   runDirectory: string,
 ): Promise<{ readonly projectRoot: string; readonly sourcePage: string } | undefined> {
+  for (const section of ["admitted", "invocation", "runState"] as const) {
+    try {
+      const page = readPageSync(runDirectory, section);
+      const projectRoot = page?.projectRoot;
+      if (typeof projectRoot === "string" && projectRoot.length > 0) {
+        return { projectRoot, sourcePage: `state.jsonl:${section}` };
+      }
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+    }
+  }
   for (const page of ["admitted-request.json", "invocation.json", "run-state.json"] as const) {
     const path = join(runDirectory, page);
     try {

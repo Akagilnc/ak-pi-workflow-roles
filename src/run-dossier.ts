@@ -23,6 +23,7 @@ import { basename, join } from "node:path";
 import { sessionFileOf } from "./role-run-placement.ts";
 import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
+import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
 
 export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
@@ -73,35 +74,35 @@ export function readSectionSync(
 
 type RowFile = {
   readonly rows: Record<string, unknown>[];
+  /** Physical on-disk byte length of this read — never a re-encoded string length. */
   readonly bytes: number;
   /** The error code of a read that failed for a reason other than the file being absent. */
   readonly fault?: string;
+  /** Canonical malformed-line diagnostics from the sole Sitian decoder. */
+  readonly diagnostics?: readonly { readonly line: number; readonly error: string }[];
 };
 
 /**
- * The rows of one run file as of this read, with the byte length they came from; a missing
- * file is empty, a malformed line is skipped. A file that cannot be read for any other reason
- * has no rows and carries its fault.
+ * The rows of one run file as of this read, with the physical byte length they came from.
+ * Missing file → empty. IO fault → no rows + fault code. Damaged lines keep the sole
+ * Sitian decoder's diagnostics and do not invent a second skip parser.
  */
 function readRowFile(path: string): RowFile {
-  let raw: string;
+  let buffer: Buffer;
   try {
-    raw = readFileSync(path, "utf8");
+    buffer = readFileSync(path);
   } catch (error) {
     if (isMissingPathError(error)) return { rows: [], bytes: 0 };
     return { rows: [], bytes: 0, fault: String((error as NodeJS.ErrnoException).code ?? (error as Error).name) };
   }
-  const rows: Record<string, unknown>[] = [];
-  for (const line of raw.split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (isRecord(parsed)) rows.push(parsed);
-    } catch {
-      // The damaged line stays in the file for its readers.
-    }
-  }
-  return { rows, bytes: Buffer.byteLength(raw, "utf8") };
+  const { records, diagnostics } = parseSitianRecordText(buffer.toString("utf8"));
+  return {
+    rows: [...records] as Record<string, unknown>[],
+    bytes: buffer.length,
+    ...(diagnostics.length > 0
+      ? { diagnostics: diagnostics.map((d) => ({ line: d.line, error: d.error })) }
+      : {}),
+  };
 }
 
 function fileBytes(path: string): number | undefined {
@@ -209,14 +210,19 @@ export function renderCurrentSync(runDirectory: string): void {
     const unreadable: Record<string, string> = {};
     for (const [name, file] of [[RUN_HISTORY_FILE, history], [RUN_STATE_FILE, state], [RUN_LOG_FILE, log]] as const) {
       if (file.fault !== undefined) unreadable[name] = file.fault;
+      else if (file.diagnostics !== undefined && file.diagnostics.length > 0) unreadable[name] = "malformed";
     }
     for (const [name, code] of Object.entries(unreadable)) {
       const key = `${runDirectory}\0${name}`;
       if (declaredUnreadable.get(key) === code) continue;
-      process.stderr.write(`[run-dossier] ${name} cannot be read (${code}); current.json is rendered without it: ${runDirectory}\n`);
+      const detail = code === "malformed"
+        ? `${name} has malformed row(s); current.json keeps reachable rows and retains the diagnostic`
+        : `${name} cannot be read (${code}); current.json is rendered without it`;
+      process.stderr.write(`[run-dossier] ${detail}: ${runDirectory}\n`);
       declaredUnreadable.set(key, code);
     }
     writeWhole(runDirectory, render(runDirectory, history.rows, state.rows, log.rows, unreadable));
+    // Growth uses physical bytes; a malformed diagnostic must not skip the check.
     const grew = [history, state, log].some((file, index) => file.fault === undefined && fileBytes(paths[index]!) !== file.bytes);
     if (!grew) return;
   }
@@ -242,14 +248,13 @@ function currentPage(runDirectory: string, section: CurrentSection): Record<stri
 /**
  * The fact itself: a whole-page section as its last row says. The public call
  * reads its own facts here, not from the rendering, so a rendering that is stale
- * or refused changes nothing. Where no row exists (a run directory that holds
- * just a rendering) it falls back to `current.json`; a row file that cannot be
- * read fails closed — it never falls back to a rendering that may be older.
+ * or refused changes nothing. Absence of a row is absence — never a `current.json`
+ * fallback. A row file that cannot be read fails closed.
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  return lastPayload(state.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
+  return lastPayload(state.rows, PAGE_ROW_KIND[section]);
 }
 
 /** Every row of history.jsonl, in order; a file that cannot be read throws. */

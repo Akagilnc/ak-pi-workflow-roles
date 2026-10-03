@@ -13,7 +13,7 @@
  * An accepted gate terminating receipt (isError:false pair on dispatch/officer
  * tool) whose required typed facts are unusable — status, dispatch officer, or
  * first/last span missing/unknown/unparseable/inverted — also fails loudly via
- * the same throw→ledger `officers` unreadable seam. Unknown/non-contract
+ * the same throw→ledger `auditor-roles` unreadable seam. Unknown/non-contract
  * dispatch status stays loud (#475 abolished Gatekeeper incomplete special-case).
  * Lawful province non-dispatch release (`pass` on a dispatch tool) opens no
  * round and must not throw (#597 / ADR 0074: 角色调动无强制，交卷闸派发不断).

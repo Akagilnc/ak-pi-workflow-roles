@@ -30,8 +30,9 @@ export type AnalystMissingSource =
   /**
    * A booked officer pointer or its session failed canonical read/parse (#446).
    * No officers booked is lawful zero rounds, not this face.
+   * Public label stays `auditor-roles` (终局来源标签以外不得改名).
    */
-  | "officers";
+  | "auditor-roles";
 
 /**
  * First usable session timestamp retained for an unreadable run when the

@@ -16,7 +16,7 @@ import { findRoleRunDirectory, roleRunPlacement } from "./role-run-placement.ts"
 
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
-import { readSectionSync, updateSectionSync } from "./run-dossier.ts";
+import { readPageSync, updateSectionSync } from "./run-dossier.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
@@ -459,9 +459,9 @@ export async function rewriteRoleRunDurablePages(input: {
       }
     },
   };
-  // A page is rewritten only when it changed.
+  // A page is rewritten only when its fact row exists — never gate on the rendering.
   for (const [section, rewrite] of Object.entries(pageRewriters) as [keyof typeof pageRewriters, (page: Record<string, unknown>) => void][]) {
-    if (readSectionSync(pagesDirectory, section) === undefined) continue;
+    if (readPageSync(pagesDirectory, section) === undefined) continue;
     updateSectionSync(pagesDirectory, section, (current) => {
       const page = structuredClone(current);
       rewrite(page);

@@ -256,11 +256,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
-    // What this turn was started with: one history record per start.
-    await recordTurnDelivery(request.runDirectory, {
-      systemPrompt: systemPromptOverride,
-      outputSchema: prepared.jsonSchema,
-    }, "acp-host");
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let sessionOpened = false;
@@ -378,6 +373,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           roundLimitName: "AcpRoundLimit",
           currentSessionId: () => sessionId,
           async runRound({ prompt, abortSignal }) {
+            // One history row per actual session/prompt start (催交回合各算一次).
+            await recordTurnDelivery(request.runDirectory, {
+              systemPrompt: systemPromptOverride,
+              outputSchema: prepared.jsonSchema,
+            }, "acp-host");
             let result: Readonly<Record<string, unknown>>;
             // Open the prose gate only for this prompt round; clear any stale chunks first.
             agentProseChunks.length = 0;

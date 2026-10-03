@@ -338,7 +338,7 @@ export type AnalystReadableRunFacts = {
   /**
    * Paired gate-cycle rounds of the officers booked in current.json (#446).
    * No officers booked → empty (lawful zero rounds).
-   * A damaged officer pointer or session → leg unreadable (`officers` source).
+   * A damaged officer pointer or session → leg unreadable (`auditor-roles` source).
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
@@ -575,7 +575,7 @@ async function classifyScopedRun(input: {
       entry: {
         runId: input.runId,
         book: input.book,
-        missingSources: ["officers"],
+        missingSources: ["auditor-roles"],
         reason: errorText(error),
         firstFrameAt: { status: "present", at: frameSpan.startedAt },
         lastFrameAt: { status: "present", at: frameSpan.endedAt },

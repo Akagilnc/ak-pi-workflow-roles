@@ -1,9 +1,10 @@
 /**
  * Typed ticketNumber reader for a retained run's durable pages.
- * Board sections first (admitted, then invocation); migration derivation
- * page last so worktree-derived placement stays readable without forging a
- * board assertion. Missing page (ENOENT) → try next / undefined; damage and
- * non-ENOENT IO failures propagate.
+ * Board sections first (admitted, then invocation) from the new row files;
+ * pre-#1161 page files remain readable at the migration boundary only.
+ * Migration derivation page last so worktree-derived placement stays readable
+ * without forging a board assertion. Missing page (ENOENT) → try next / undefined;
+ * damage and non-ENOENT IO failures propagate.
  */
 import { readPageSync } from "./run-dossier.ts";
 import { readFile } from "node:fs/promises";
@@ -112,11 +113,19 @@ async function readJsonObject(
   }
 }
 
+/** Pre-#1161 separate board pages — migration input only, not a runtime fact path. */
+const LEGACY_BOARD_PAGE: Readonly<Record<"admitted" | "invocation", string>> = {
+  admitted: "admitted-request.json",
+  invocation: "invocation.json",
+};
+
 async function readBoardPageTicketNumber(
   runDirectory: string,
   section: "admitted" | "invocation",
 ): Promise<number | undefined> {
-  const record = readPageSync(runDirectory, section);
+  const fromRows = readPageSync(runDirectory, section);
+  if (fromRows !== undefined) return ticketFromRecord(fromRows);
+  const record = await readJsonObject(join(runDirectory, LEGACY_BOARD_PAGE[section]));
   if (record === undefined) return undefined;
   return ticketFromRecord(record);
 }

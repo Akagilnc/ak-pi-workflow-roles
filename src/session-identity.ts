@@ -31,7 +31,12 @@ export function createSessionIdentityAuthority(
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      const { records } = await readSitianRecords(join(runDirectoryOf(principal), RUN_STATE_FILE));
+      const { records, diagnostics } = await readSitianRecords(join(runDirectoryOf(principal), RUN_STATE_FILE));
+      if (diagnostics.length > 0) {
+        process.stderr.write(
+          `[session-identity] ${RUN_STATE_FILE} has ${diagnostics.length} malformed row(s); reachable bindings kept: ${runDirectoryOf(principal)}\n`,
+        );
+      }
       let bound: string | undefined;
       for (const record of records) {
         if (record.kind !== HOST_SESSION_ID_RECORD_KIND || !isRecord(record.payload)) continue;

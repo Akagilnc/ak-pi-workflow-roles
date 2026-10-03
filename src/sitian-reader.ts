@@ -6,7 +6,7 @@
  * - Zero whitewashing, zero deduplication.
  * - Canonical rows after malformed lines are always reachable.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -17,15 +17,12 @@ import type {
 
 import { isRecord, errorText } from "./unknown-value.ts";
 
-/** Read a Sitian record volume with full traversal and non-destructive diagnostics. */
-export async function readSitianRecords(recordFile: string): Promise<SitianReadResult> {
-  if (!existsSync(recordFile)) {
-    return { records: [], diagnostics: [] };
-  }
-
-  const text = await readFile(recordFile, "utf8");
+/**
+ * Sole decoder for one Sitian JSONL volume's text. Sync so the run-dossier
+ * renderer and the async file reader share one implementation.
+ */
+export function parseSitianRecordText(text: string): SitianReadResult {
   const lines = text.split("\n");
-
   const records: SitianRecord[] = [];
   const diagnostics: SitianMalformedDiagnostic[] = [];
 
@@ -57,4 +54,20 @@ export async function readSitianRecords(recordFile: string): Promise<SitianReadR
   }
 
   return { records, diagnostics };
+}
+
+/** Read a Sitian record volume with full traversal and non-destructive diagnostics. */
+export async function readSitianRecords(recordFile: string): Promise<SitianReadResult> {
+  if (!existsSync(recordFile)) {
+    return { records: [], diagnostics: [] };
+  }
+  return parseSitianRecordText(await readFile(recordFile, "utf8"));
+}
+
+/** Sync file face of the same decoder; missing file → empty. */
+export function readSitianRecordsSync(recordFile: string): SitianReadResult {
+  if (!existsSync(recordFile)) {
+    return { records: [], diagnostics: [] };
+  }
+  return parseSitianRecordText(readFileSync(recordFile, "utf8"));
 }
