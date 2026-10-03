@@ -466,7 +466,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
       // CLI start-up inputs (system prompt / schema / MCP config files) are not
       // dossier: they live in a throwaway directory, and what was delivered is
-      // recorded once in current.json `delivery` for the submission rows.
+      // recorded once per actual start as a history.jsonl `turn-delivery` row.
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
       const inputsDirectory = await mkdtemp(join(tmpdir(), "ak-role-headless-"));
       const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
