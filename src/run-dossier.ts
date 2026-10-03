@@ -202,6 +202,9 @@ export function renderCurrentSync(runDirectory: string): void {
     for (const [name, file] of [[RUN_HISTORY_FILE, history], [RUN_STATE_FILE, state], [RUN_LOG_FILE, log]] as const) {
       if (file.fault !== undefined) unreadable[name] = file.fault;
     }
+    for (const [name, code] of Object.entries(unreadable)) {
+      process.stderr.write(`[run-dossier] ${name} cannot be read (${code}); current.json is rendered without it: ${runDirectory}\n`);
+    }
     writeWhole(runDirectory, render(runDirectory, history.rows, state.rows, log.rows, unreadable));
     const grew = [history, state, log].some((file, index) => file.fault === undefined && fileBytes(paths[index]!) !== file.bytes);
     if (!grew) return;

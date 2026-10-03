@@ -19,14 +19,14 @@ import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepa
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { runDirectoryFromHostContext } from "../host-contracts.ts";
-import { reportRunRecord } from "../sitian-facade.ts";
+import { sitianReportSafe } from "../host-session-record.ts";
+import { sessionFileOf } from "../role-run-placement.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
 import {
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../submission-errors.ts";
-import { errorText } from "../unknown-value.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
@@ -190,12 +190,14 @@ export function createPiRoleHostAdapter(
             const runDirectory = runDirectoryFromHostContext(projected);
             if (runDirectory !== undefined && position === beforeAgentStartHandlers - 1) {
               const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
-              // History write failures do not stop a run (#833): declare it and let Pi start.
-              try {
-                reportRunRecord(runDirectory, "turn-delivery", { systemPrompt: delivered }, "pi-adapter");
-              } catch (error) {
-                process.stderr.write(`[pi-adapter] turn-delivery record failed beside host start: ${errorText(error)}\n`);
-              }
+              // History write failures do not stop a run (#833): declared, and Pi starts.
+              sitianReportSafe({
+                level: "event",
+                kind: "turn-delivery",
+                sessionParent: sessionFileOf(runDirectory),
+                source: "pi-adapter",
+                payload: { systemPrompt: delivered },
+              });
             }
             return folded;
           };
