@@ -9,10 +9,11 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { renderCurrentSync } from "../../src/run-dossier.ts";
+import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 
-export type CurrentSectionName = "invocation" | "admitted" | "runState" | "host" | "delivery" | "submission" | "terminal" | "officers";
+/** Same sections as production `current.json` rendering (`src/run-dossier.ts`). */
+export type CurrentSectionName = CurrentSection | DerivedSection;
 
 /** Parsed `<run>/current.json`; `{}` when absent. */
 export function readCurrentJson(runDirectory: string): Record<string, unknown> {
