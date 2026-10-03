@@ -269,7 +269,10 @@ def main():
     # The prompt and schema the host delivered ride on the history submission rows (the last
     # row before the cut). A pi run's delivered prompt is only the appended tail, which pi-tail.ts
     # rebuilds from the frozen worktree, so only headless hosts take it from the row.
-    delivered = next((r for r in reversed(kept_subs) if r.get("systemPrompt") is not None), None) or cur.get("delivery")
+    # Only rows at or before the cut: the live `delivery` section is rewritten by every later turn,
+    # so it can name a post-cut prompt. With no such row a headless run cannot be replayed (run.py
+    # refuses with a pointer to pass a full --sys).
+    delivered = next((r for r in reversed(kept_subs) if r.get("systemPrompt") is not None), None)
     delivered_prompt = delivered.get("systemPrompt") if delivered else None
     sys_kind = "headless-system-prompt" if host != "pi" and isinstance(delivered_prompt, str) else "pi-tail"
     sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
