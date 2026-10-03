@@ -487,7 +487,7 @@ export type ControlledFailure = RoleTurnKnownFailure & {
    */
   readonly packageFact?: PackageSideFact;
   /**
-   * Host stderr that is not already this failure's diagnostic. A stderr.log
+   * Host stderr that is not already this failure's diagnostic. A stderr log
    * or artifact write can fail; the original bytes stay on this object.
    */
   readonly stderr?: string;
@@ -516,7 +516,7 @@ export type PackageSideFact = {
   readonly cancelName?: string;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
-  /** A durable stderr.log write that failed while handling this call. */
+  /** A durable stderr log-line write that failed while handling this call. */
   readonly stderrLogWriteFailure?: unknown;
 };
 
@@ -1612,7 +1612,7 @@ async function applySecretariatCountersignTerminal(
 /**
  * After the audit gate returns, attach the secretariat officer fact onto the
  * terminal this turn already settled. Does not publish again — a second publish
- * would append another attempt-history row for the same attempt.
+ * would settle the same attempt twice.
  */
 export async function attachPostAuditCountersignFact(
   admitted: AdmittedRoleInvocation,

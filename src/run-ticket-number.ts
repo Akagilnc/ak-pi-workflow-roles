@@ -1,6 +1,6 @@
 /**
  * Typed ticketNumber reader for a retained run's durable pages.
- * Board pages first (admitted-request, then invocation); migration derivation
+ * Board sections first (admitted, then invocation); migration derivation
  * page last so worktree-derived placement stays readable without forging a
  * board assertion. Missing page (ENOENT) → try next / undefined; damage and
  * non-ENOENT IO failures propagate.

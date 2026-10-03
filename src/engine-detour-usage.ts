@@ -251,14 +251,14 @@ export async function readEngineDetourToolUsage(input: {
   return { callCount: calls.length, calls };
 }
 
-/** One shared invocation.json reader (ENOENT → undefined; other errors propagate). */
+/** One shared current.json invocation-section reader (ENOENT → undefined; other errors propagate). */
 function readInvocationRecord(
   runDirectory: string,
 ): Record<string, unknown> | undefined {
   return readSectionSync(runDirectory, "invocation");
 }
 
-/** True when invocation.json carries a non-empty engine axis. */
+/** True when the invocation section carries a non-empty engine axis. */
 export async function readInvocationEngineMounted(
   runDirectory: string,
 ): Promise<boolean> {

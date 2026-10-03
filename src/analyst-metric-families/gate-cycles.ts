@@ -26,7 +26,7 @@ export type AnalystGateCyclesLeg = {
   readonly runId: string;
   readonly book: string;
   readonly role: string;
-  /** Paired dispatch↔officer volume count (0 when no auditor-roles). */
+  /** Paired dispatch↔officer volume count (0 when no officers booked). */
   readonly roundCount: number;
   readonly rounds: readonly AnalystGateCyclesRoundRow[];
 };

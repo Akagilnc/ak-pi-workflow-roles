@@ -374,7 +374,7 @@ async function rewriteSessionTranscriptBindings(
 /**
  * Package-owned nested seams under session/ only:
  * sitian records.jsonl,
- * session transcript typed parent bindings. Never walks attachments/ or artifacts/.
+ * session transcript typed parent bindings. Never walks attachments/.
  */
 async function rewriteNestedMachinePathPages(
   pagesDirectory: string,

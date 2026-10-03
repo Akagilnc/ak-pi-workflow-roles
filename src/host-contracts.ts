@@ -201,7 +201,7 @@ export type RoleTurnRequest = {
   readonly invocationScopeId?: string;
   /**
    * Selected host axis for this turn (#537 / ADR 0082). Projected from the
-   * public-entry seat resolution — never re-read from invocation.json by tools.
+   * public-entry seat resolution — never re-read from current.json by tools.
    */
   readonly host?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */

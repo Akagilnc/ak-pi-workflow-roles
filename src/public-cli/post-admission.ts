@@ -379,7 +379,7 @@ export type ControlledFailureInput = {
   knownDetails?: Readonly<Record<string, unknown>>;
   /**
    * A real failure this package hit while handling the call (e.g. the
-   * stderr.log durable write). Recorded beside the host's report; never a
+   * stderr log-line write). Recorded beside the host's report; never a
    * cause, and never written into the host's open `details`.
    */
   packageFact?: PackageSideFact;
@@ -777,7 +777,7 @@ async function settleCompletedHostTurn<
   // Host facts are resolved before trySettle. A host failure skips trySettle
   // so a later read cannot replace that report. A clean host whose settlement
   // read throws is noted above and is not turned into a failure terminal.
-  // stderr.log and run-state writes are notes beside the host terminal.
+  // the stderr log line and run-state writes are notes beside the host terminal.
   let settled: T | undefined;
   let settledOutcome:
     | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
@@ -1156,7 +1156,7 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
     // Selected host axis rides the shared Host envelope for in-turn tools
-    // (detour usage ledger) — never a pre-spawn invocation.json reread.
+    // (detour usage ledger) — never a pre-spawn current.json reread.
     if (typeof env.host === "string" && env.host.trim() !== "") {
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }

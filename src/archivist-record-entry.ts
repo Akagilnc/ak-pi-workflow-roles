@@ -293,7 +293,7 @@ export type RecordSessionParent = {
 export type CreateRecordSessionOptions = {
   /** Role working directory passed to the record session; not a placement input. */
   readonly cwd: string;
-  /** What kind of record this is (e.g. "auditor-roles"). Single path segment; not a destination path. */
+  /** What kind of record this is (e.g. "attendance"). Single path segment; not a destination path. */
   readonly kind: string;
   /** Parent session — nesting authority for ordinary kinds; optional parentSession link for navigator. */
   readonly parent?: RecordSessionParent;
@@ -373,7 +373,7 @@ export type RecordSessionOpen = {
  * symlink). New principals mint under the already-validated sessionDir.
  * Navigator work-subject nests use their AK ledger; worker-submission-gate asks the
  * host to continue its recent native session without selecting a stored file path.
- * Other ordinary no-subject children (auditor-roles, …) always mint fresh.
+ * Other ordinary no-subject children (attendance, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  *

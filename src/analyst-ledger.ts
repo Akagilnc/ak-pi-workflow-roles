@@ -63,7 +63,7 @@ export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);
 
 /**
- * Read lifecycle state from the existing run-state.json face.
+ * Read lifecycle state from the current.json runState section.
  * Used only to distinguish live in-flight runs from terminal no-receipt.
  */
 async function readExistingRunLifecycleState(
@@ -134,7 +134,7 @@ async function classifyGhostCandidate(input: {
  * Invocation scope faces used for issue 圈定 (C4 / #399).
  * projectRoot is retained for narrow path match and conflict facts;
  * ticketNumber is the #176 typed face when present (integer ≥ 1).
- * Single read of invocation.json — no second parse kernel.
+ * Single read of the current.json invocation section — no second parse kernel.
  */
 type InvocationScopeFields = {
   readonly projectRoot: string;

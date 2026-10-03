@@ -35,7 +35,6 @@ const judge: AdmittedJudgeInvocation = {
   runDirectory: "/runs/r",
   sessionDirectory: "/runs/r/session",
   sessionFile: "/runs/r/session/session.jsonl",
-  admittedRequestPath: "/runs/r/admitted-request.json",
 };
 
 /** packageRoot unused for judge default-path; pin absolute frozen value. */
