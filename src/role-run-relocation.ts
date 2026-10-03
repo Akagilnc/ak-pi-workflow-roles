@@ -21,6 +21,7 @@ import { isRecord, isEnoent } from "./unknown-value.ts";
 
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",
+  "admittedRequestPath", // pre-#1161 pages only
   "sessionDirectory",
   "sessionFile",
   "taskPath",
@@ -39,6 +40,7 @@ const INVOCATION_PAGE_FIELDS = [
 
 const RUN_STATE_PAGE_FIELDS = [
   "runDirectory",
+  "admittedRequestPath", // pre-#1161 pages only
   "sessionDirectory",
   "sessionFile",
 ] as const;
@@ -244,6 +246,18 @@ export function rewriteAdmittedRoleRunPage(
   }
 }
 
+/** Pre-#1161 `session/auditor-roles/<officer>.pointer.json` (migrator input only). */
+async function rewriteLegacyOfficerPointerFile(
+  path: string,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): Promise<void> {
+  const page = JSON.parse(await readFile(path, "utf8")) as unknown;
+  if (!isRecord(page) || page.kind !== "direct-officer-run-pointer") return;
+  const before = JSON.stringify(page);
+  rewriteRunDirectoryPathFieldsAgainstRewrites(page, OFFICER_POINTER_FIELDS, rewrites);
+  if (JSON.stringify(page) !== before) await writeFile(path, `${JSON.stringify(page)}\n`, "utf8");
+}
+
 async function rewriteSitianRecordsJsonl(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
@@ -396,7 +410,9 @@ async function rewriteNestedMachinePathPages(
         continue;
       }
       if (!entry.isFile()) continue;
-      if (entry.name === "records.jsonl") {
+      if (entry.name.endsWith(".pointer.json")) {
+        await rewriteLegacyOfficerPointerFile(path, rewrites);
+      } else if (entry.name === "records.jsonl") {
         await rewriteSitianRecordsJsonl(path, rewrites);
       } else if (entry.name.endsWith(".jsonl")) {
         await rewriteSessionTranscriptBindings(path, rewrites);
@@ -423,43 +439,59 @@ export async function rewriteRoleRunDurablePages(input: {
   const { pagesDirectory } = input;
   const rewrites = collectRewrites(input);
 
-  // Each section keeps its own field list; a section is rewritten only when it changed.
-  const rewriteSection = (
-    section: "admitted" | "invocation" | "runState" | "officers",
-    rewrite: (page: Record<string, unknown>) => void,
-  ): void => {
-    if (readSectionSync(pagesDirectory, section) === undefined) return;
+  // One rewriter per page kind; each keeps its own field list.
+  const pageRewriters: Readonly<Record<"admitted" | "invocation" | "runState" | "officers", (page: Record<string, unknown>) => void>> = {
+    admitted: (page) => rewriteAdmittedRoleRunPage(page, rewrites),
+    invocation: (page) =>
+      rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites),
+    // Booked officer pointers: only the typed direct-officer shape.
+    officers: (page) => {
+      for (const pointer of Object.values(page)) {
+        if (isRecord(pointer) && pointer.kind === "direct-officer-run-pointer") {
+          rewriteRunDirectoryPathFieldsAgainstRewrites(pointer, OFFICER_POINTER_FIELDS, rewrites);
+        }
+      }
+    },
+    runState: (page) => {
+      rewriteRunDirectoryPathFieldsAgainstRewrites(page, RUN_STATE_PAGE_FIELDS, rewrites);
+      if (isRecord(page.principal)) {
+        rewriteRunDirectoryPathFieldsAgainstRewrites(
+          page.principal,
+          ["sessionDirectory", "sessionFile"],
+          rewrites,
+        );
+      }
+      // Open court summons: source-run locators + frozen attachment path pointers.
+      if (isRecord(page.currentCourt)) {
+        rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
+      }
+    },
+  };
+  // A page is rewritten only when it changed.
+  for (const [section, rewrite] of Object.entries(pageRewriters) as [keyof typeof pageRewriters, (page: Record<string, unknown>) => void][]) {
+    if (readSectionSync(pagesDirectory, section) === undefined) continue;
     updateSectionSync(pagesDirectory, section, (current) => {
       const page = structuredClone(current);
       rewrite(page);
       return JSON.stringify(page) === JSON.stringify(current) ? undefined : page;
     });
-  };
-  rewriteSection("admitted", (page) => rewriteAdmittedRoleRunPage(page, rewrites));
-  rewriteSection("invocation", (page) =>
-    rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites));
-  // Booked officer pointers: only the typed direct-officer shape.
-  rewriteSection("officers", (page) => {
-    for (const pointer of Object.values(page)) {
-      if (isRecord(pointer) && pointer.kind === "direct-officer-run-pointer") {
-        rewriteRunDirectoryPathFieldsAgainstRewrites(pointer, OFFICER_POINTER_FIELDS, rewrites);
-      }
+  }
+  // Runs from before #1161 (the one-shot book-topology migrator's input) keep these
+  // as separate page files; the same rewriters apply. Nothing live writes them.
+  for (const [file, rewrite] of [
+    ["admitted-request.json", pageRewriters.admitted],
+    ["invocation.json", pageRewriters.invocation],
+    ["run-state.json", pageRewriters.runState],
+  ] as const) {
+    const path = join(pagesDirectory, file);
+    if (!existsSync(path)) continue;
+    const page = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const before = JSON.stringify(page);
+    rewrite(page);
+    if (JSON.stringify(page) !== before) {
+      await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
     }
-  });
-  rewriteSection("runState", (page) => {
-    rewriteRunDirectoryPathFieldsAgainstRewrites(page, RUN_STATE_PAGE_FIELDS, rewrites);
-    if (isRecord(page.principal)) {
-      rewriteRunDirectoryPathFieldsAgainstRewrites(
-        page.principal,
-        ["sessionDirectory", "sessionFile"],
-        rewrites,
-      );
-    }
-    // Open court summons: source-run locators + frozen attachment path pointers.
-    if (isRecord(page.currentCourt)) {
-      rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
-    }
-  });
+  }
 
   await rewriteNestedMachinePathPages(pagesDirectory, rewrites);
 }

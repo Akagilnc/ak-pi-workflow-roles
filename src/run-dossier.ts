@@ -5,10 +5,10 @@
  * of `current.json`; no caller addresses the file path or serializes it itself.
  *
  * Read-modify-write is synchronous: within one process it cannot interleave.
- * Across processes the writers take turns by construction — one writer lease
- * per run, and the parent CLI is parked on the child leg while the child
- * writes (diarist ticket bind); there is no interprocess lock. Whole-file
- * replacement is atomic for readers.
+ * Across processes the writers mostly take turns — the parent CLI is parked on the child leg while the child
+ * writes (diarist ticket bind), yet manual resume and gate officers can write
+ * one run from another process, so every read-modify-write holds a short
+ * interprocess lock. Whole-file replacement is atomic for readers.
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -49,6 +49,51 @@ export function readCurrentSync(runDirectory: string): Record<string, unknown> |
   return parsed;
 }
 
+/**
+ * Interprocess exclusion for one read-modify-write of current.json. Several
+ * processes legitimately write one run (a live leg, a manual resume, a gate
+ * officer's pointer booking), each a different section; without this the later
+ * whole-file write would drop the earlier one's section. A `mkdir` lock with a
+ * pid file: a holder whose pid is dead is stale and is broken. A directory that
+ * refuses new entries (settlement after a chmod) skips the lock — the same
+ * degradation as the in-place write fallback below.
+ */
+function withCurrentLock<T>(runDirectory: string, action: () => T): T {
+  const lock = join(runDirectory, `.${RUN_CURRENT_FILE}.lock`);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM" || code === "EROFS" || code === "ENOENT") return action();
+      if (code !== "EEXIST") throw error;
+      let holder: number | undefined;
+      try { holder = Number.parseInt(readFileSync(join(lock, "pid"), "utf8"), 10); } catch { /* holder is mid-creation */ }
+      if (holder !== undefined && Number.isInteger(holder) && holder > 0) {
+        try { process.kill(holder, 0); } catch (killError) {
+          if ((killError as NodeJS.ErrnoException).code === "ESRCH") {
+            rmSync(lock, { recursive: true, force: true });
+            continue;
+          }
+        }
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`${RUN_CURRENT_FILE} write lock stayed held by pid ${holder ?? "unknown"}: ${lock}`);
+      }
+      Atomics.wait(pause, 0, 0, 5);
+    }
+  }
+  try {
+    writeFileSync(join(lock, "pid"), String(process.pid), "utf8");
+    return action();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 function writeCurrentSync(runDirectory: string, current: Record<string, unknown>): void {
   const destination = runCurrentPath(runDirectory);
   const body = `${JSON.stringify(current, null, 2)}\n`;
@@ -87,7 +132,9 @@ export function writeSectionSync(
   section: CurrentSection,
   value: Record<string, unknown>,
 ): void {
-  writeCurrentSync(runDirectory, { ...(readCurrentSync(runDirectory) ?? {}), [section]: value });
+  withCurrentLock(runDirectory, () => {
+    writeCurrentSync(runDirectory, { ...(readCurrentSync(runDirectory) ?? {}), [section]: value });
+  });
 }
 
 /**
@@ -99,14 +146,16 @@ export function updateSectionSync(
   section: CurrentSection,
   update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
 ): void {
-  const whole = readCurrentSync(runDirectory);
-  const current = whole?.[section];
-  if (whole === undefined || !isRecord(current)) {
-    throw new Error(`${RUN_CURRENT_FILE} has no ${section} section: ${runCurrentPath(runDirectory)}`);
-  }
-  const next = update(current);
-  if (next === undefined) return;
-  writeCurrentSync(runDirectory, { ...whole, [section]: next });
+  withCurrentLock(runDirectory, () => {
+    const whole = readCurrentSync(runDirectory);
+    const current = whole?.[section];
+    if (whole === undefined || !isRecord(current)) {
+      throw new Error(`${RUN_CURRENT_FILE} has no ${section} section: ${runCurrentPath(runDirectory)}`);
+    }
+    const next = update(current);
+    if (next === undefined) return;
+    writeCurrentSync(runDirectory, { ...whole, [section]: next });
+  });
 }
 
 /** Append one line to `history.jsonl`, creating the run directory when absent. */

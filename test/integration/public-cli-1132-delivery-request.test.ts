@@ -10,7 +10,7 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, readHistoryRows, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -211,6 +211,9 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.ok(run.runDirectory !== undefined);
     const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
+    // The 催交 turn is a resumed turn: history records it, with the code path that decided it.
+    const resumes = readHistoryRows(run.runDirectory!).filter((row) => row.type === "resume");
+    assert.deepEqual(resumes.map((row) => row.cause), ["delivery-request"]);
   });
 });
 

@@ -900,6 +900,28 @@ async function settleCompletedHostTurn<
   return { kind: "still-missing" };
 }
 
+/**
+ * The resume line in history.jsonl, written right before a resumed turn is
+ * dispatched (every dispatch site: the normal turn and the receipt-delivery
+ * request). It is history, not ledger authority (#833): a history that cannot
+ * be written is retained as a fault and the resume proceeds.
+ */
+async function recordResumeBeforeDispatch(
+  runDirectory: string,
+  continuation: RoleTurnRequest["continuation"],
+): Promise<void> {
+  if (continuation.kind !== "resume") return;
+  try {
+    appendResumeRowSync(runDirectory, continuation.cause);
+  } catch (historyError) {
+    await retainPackageFault({
+      runDirectory,
+      diagnostic: `resume history row write failed before dispatch: ${describeErrorIdentity(historyError)}`,
+      error: historyError,
+    });
+  }
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -1183,19 +1205,7 @@ export async function dispatchPostAdmissionTurn<
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
-      if (turnRequest.continuation.kind === "resume") {
-        // The resume line is history, not ledger authority (#833): a history
-        // that cannot be written is retained as a fault and the resume proceeds.
-        try {
-          appendResumeRowSync(admitted.runDirectory, turnRequest.continuation.cause);
-        } catch (historyError) {
-          await retainPackageFault({
-            runDirectory: admitted.runDirectory,
-            diagnostic: `resume history row write failed before dispatch: ${describeErrorIdentity(historyError)}`,
-            error: historyError,
-          });
-        }
-      }
+      await recordResumeBeforeDispatch(admitted.runDirectory, turnRequest.continuation);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
@@ -1273,6 +1283,7 @@ export async function dispatchPostAdmissionTurn<
           ...(env.signal === undefined ? {} : { signal: env.signal }),
         };
         receiptDelivery.recordDeliveryRequest();
+        await recordResumeBeforeDispatch(admitted.runDirectory, deliveryTurnRequest.continuation);
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with

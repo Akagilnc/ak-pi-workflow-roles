@@ -3,6 +3,7 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
+import { rewriteRoleRunDurablePages } from "../../src/role-run-relocation.ts";
 import { readCurrentJson, readCurrentSection, readHistoryRows, seedCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -2031,5 +2032,24 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     assert.equal(error.kind, "error");
     assert.equal(error.runId, runId);
     assert.equal(typeof error.diagnostic, "string");
+  });
+});
+
+test("rewriteRoleRunDurablePages still rewrites pre-#1161 page files (one-shot migrator input)", async () => {
+  await withTempRoot("ak-legacy-pages-", async (root) => {
+    const oldRun = join(root, "unbound", "runs", "r1@judge");
+    const newRun = join(root, "863", "runs", "r1@judge");
+    await mkdir(join(newRun, "session"), { recursive: true });
+    await writeFile(join(newRun, "admitted-request.json"), JSON.stringify({ runDirectory: oldRun, sessionFile: join(oldRun, "session", "session.jsonl") }), "utf8");
+    await writeFile(join(newRun, "invocation.json"), JSON.stringify({ runDirectory: oldRun }), "utf8");
+    await writeFile(join(newRun, "run-state.json"), JSON.stringify({ runDirectory: oldRun, admittedRequestPath: join(oldRun, "admitted-request.json") }), "utf8");
+    await rewriteRoleRunDurablePages({ pagesDirectory: newRun, oldRunDirectory: oldRun, newRunDirectory: newRun });
+    const admitted = JSON.parse(await readFile(join(newRun, "admitted-request.json"), "utf8")) as Record<string, unknown>;
+    assert.equal(admitted.runDirectory, newRun);
+    assert.equal(admitted.sessionFile, join(newRun, "session", "session.jsonl"));
+    assert.equal((JSON.parse(await readFile(join(newRun, "invocation.json"), "utf8")) as Record<string, unknown>).runDirectory, newRun);
+    const state = JSON.parse(await readFile(join(newRun, "run-state.json"), "utf8")) as Record<string, unknown>;
+    assert.equal(state.runDirectory, newRun);
+    assert.equal(state.admittedRequestPath, join(newRun, "admitted-request.json"));
   });
 });

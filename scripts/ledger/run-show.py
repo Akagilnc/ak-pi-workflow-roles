@@ -64,7 +64,7 @@ def main():
 
     # 3. host session id
     ids = []
-    sid = (cur.get("host") or {}).get("sessionId")
+    sid = ((cur.get("host") or {}).get("sessions") or {}).get(inv.get("host"))
     if isinstance(sid, str) and sid.strip():
         ids.append(("current.json host", sid))
     sess_rows = jsonl(f"{run}/session/session.jsonl")

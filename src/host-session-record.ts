@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
+import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
 import { errorText } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
@@ -232,8 +233,9 @@ export function copyAndRecordHostDossier(options: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       rmSync(staging, { recursive: true, force: true });
-      // A kill between the two renames below leaves the old original parked: put it back.
-      if (!existsSync(landingPath) && existsSync(`${landingPath}.previous`)) {
+      // grok's directory cannot be renamed over: a kill between the two renames
+      // below leaves the old original parked, so put it back first.
+      if (options.host === "grok-build" && !existsSync(landingPath) && existsSync(`${landingPath}.previous`)) {
         renameSync(`${landingPath}.previous`, landingPath);
       }
       if (options.host === "grok-build") {
@@ -245,19 +247,23 @@ export function copyAndRecordHostDossier(options: {
         mkdirSync(dirname(landingPath), { recursive: true });
         copyFileCloneOrFallback(nativePath, staging);
       }
-      // Swap in without ever leaving the run with no original: park the previous
-      // one aside, move the new one in, and put the old one back if that move fails.
-      const previous = `${landingPath}.previous`;
-      rmSync(previous, { recursive: true, force: true });
-      const hadPrevious = existsSync(landingPath);
-      if (hadPrevious) renameSync(landingPath, previous);
-      try {
-        renameSync(staging, landingPath);
-      } catch (swapError) {
-        if (hadPrevious) renameSync(previous, landingPath);
-        throw swapError;
+      if (options.host === "grok-build") {
+        // A directory cannot be renamed over: park the previous original aside,
+        // move the new one in, and put the old one back if that move fails.
+        const previous = `${landingPath}.previous`;
+        rmSync(previous, { recursive: true, force: true });
+        const hadPrevious = existsSync(landingPath);
+        if (hadPrevious) renameSync(landingPath, previous);
+        try {
+          renameSync(staging, landingPath);
+        } catch (swapError) {
+          if (hadPrevious) renameSync(previous, landingPath);
+          throw swapError;
+        }
+        rmSync(previous, { recursive: true, force: true });
+      } else {
+        renameSync(staging, landingPath); // atomically replaces the previous file
       }
-      rmSync(previous, { recursive: true, force: true });
       copySuccess = true;
       break;
     } catch (error) {
@@ -267,6 +273,13 @@ export function copyAndRecordHostDossier(options: {
 
   if (copySuccess) {
     report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
+    // current.json names the original (path beside the session id), so a reader needs no guess.
+    try {
+      const runDirectory = dirname(options.sessionDirectory);
+      writeSectionSync(runDirectory, "host", { ...readSectionSync(runDirectory, "host"), original: landingPath });
+    } catch (error) {
+      report({ type: "native-session-warning", landingPath, sessionId: options.sessionId, error: errorText(error) });
+    }
   } else {
     // A partial attempt must not masquerade as a complete native original.
     try { rmSync(staging, { recursive: true, force: true }); }
