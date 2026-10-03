@@ -1,4 +1,4 @@
-import { historyPayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
@@ -117,7 +117,7 @@ test("public report publication failure stays beside the accepted terminal", asy
       assert.equal(typeof noteText, "string");
       // The injected failure really fired: the accepted terminal FACT is a history
       // row, but its rendering was refused (current.json is still the planted directory).
-      const recorded = runLogPayloads<{ face?: string }>(runDirectory, "terminal");
+      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.equal(recorded.length, 1);
       assert.equal(recorded[0]!.face, "report");
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);

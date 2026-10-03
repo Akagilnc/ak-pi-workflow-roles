@@ -1,13 +1,13 @@
 /**
  * The per-leg dossier files (docs/dossier-topology.md, #1161): `current.json`,
- * `history.jsonl` (the submission ledger and attempt history) and `log.jsonl` (the
- * rest), both append-only and written through the sitian appender, and the one host original.
+ * `history.jsonl` (the submission ledger and attempt history), `state.jsonl` (the four
+ * whole pages) and `log.jsonl` (the rest), all append-only and written through the sitian appender, and the one host original.
  *
  * Facts are rows first. The four pages only the public call knows — identity
  * (`invocation`), admission (`admitted-request`), lifecycle (`run-state`) and the
- * terminal — are each rewritten whole by appending one `log.jsonl` row whose
- * payload is that page (the submission ledger's file stays out of it). `current.json` is a rendering: the last row of each kind
- * in `history.jsonl` and `log.jsonl`, read at the moment of writing, never a value
+ * terminal — are each rewritten whole by appending one `state.jsonl` row whose
+ * payload is that page. `current.json` is a rendering: the last row of each kind
+ * in the three row files, read at the moment of writing, never a value
  * carried from an earlier snapshot or from the previous `current.json`.
  *
  * Two public calls may exist on one leg (the live leg and a manual resume) and
@@ -21,11 +21,11 @@ import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:
 import { join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
-import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE } from "./run-dossier-files.ts";
+import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
 
-export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE };
+export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
 
 /** Sections of `current.json` that are a whole page appended as one row. */
 export type CurrentSection = "invocation" | "admitted" | "runState" | "terminal";
@@ -117,10 +117,14 @@ function lastPayload(rows: readonly Record<string, unknown>[], kind: string): Re
 }
 
 /** `current.json` as the rows say right now. */
-function render(history: readonly Record<string, unknown>[], log: readonly Record<string, unknown>[]): Record<string, unknown> {
+function render(
+  history: readonly Record<string, unknown>[],
+  state: readonly Record<string, unknown>[],
+  log: readonly Record<string, unknown>[],
+): Record<string, unknown> {
   const whole: Record<string, unknown> = {};
   for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
-    const page = lastPayload(log, PAGE_ROW_KIND[section]);
+    const page = lastPayload(state, PAGE_ROW_KIND[section]);
     if (page !== undefined) whole[section] = page;
   }
   let latest: Record<string, unknown> | undefined;
@@ -178,13 +182,19 @@ const MAX_RENDER_PASSES = 32;
  */
 export function renderCurrentSync(runDirectory: string): void {
   const historyPath = join(runDirectory, RUN_HISTORY_FILE);
+  const statePath = join(runDirectory, RUN_STATE_FILE);
   const logPath = join(runDirectory, RUN_LOG_FILE);
   for (let pass = 0; pass < MAX_RENDER_PASSES; pass += 1) {
     const history = readRowFile(historyPath);
+    const state = readRowFile(statePath);
     const log = readRowFile(logPath);
-    if (history === undefined || log === undefined) return;
-    writeWhole(runDirectory, render(history.rows, log.rows));
-    if (fileBytes(historyPath) === history.bytes && fileBytes(logPath) === log.bytes) return;
+    if (history === undefined || state === undefined || log === undefined) return;
+    writeWhole(runDirectory, render(history.rows, state.rows, log.rows));
+    if (
+      fileBytes(historyPath) === history.bytes
+      && fileBytes(statePath) === state.bytes
+      && fileBytes(logPath) === log.bytes
+    ) return;
   }
 }
 
@@ -200,9 +210,9 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 
 /** The current whole page of one section: the payload of its last row, never `current.json`. */
 function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  const log = readRowFile(join(runDirectory, RUN_LOG_FILE));
-  if (log === undefined) throw new Error(`${RUN_LOG_FILE} is unreadable: ${runDirectory}`);
-  return lastPayload(log.rows, PAGE_ROW_KIND[section]);
+  const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
+  if (state === undefined) throw new Error(`${RUN_STATE_FILE} is unreadable: ${runDirectory}`);
+  return lastPayload(state.rows, PAGE_ROW_KIND[section]);
 }
 
 /**
@@ -213,9 +223,9 @@ function currentPage(runDirectory: string, section: CurrentSection): Record<stri
  * read fails closed — it never falls back to a rendering that may be older.
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  const log = readRowFile(join(runDirectory, RUN_LOG_FILE));
-  if (log === undefined) throw new Error(`${RUN_LOG_FILE} is unreadable: ${runDirectory}`);
-  return lastPayload(log.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
+  const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
+  if (state === undefined) throw new Error(`${RUN_STATE_FILE} is unreadable: ${runDirectory}`);
+  return lastPayload(state.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
 }
 
 /** Rewrite one section whole: append its row, then render `current.json`. */
@@ -240,7 +250,7 @@ export function updateSectionSync(
 ): void {
   const current = currentPage(runDirectory, section);
   if (current === undefined) {
-    throw new Error(`${RUN_LOG_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
+    throw new Error(`${RUN_STATE_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
   }
   const next = update(current);
   if (next === undefined) return;

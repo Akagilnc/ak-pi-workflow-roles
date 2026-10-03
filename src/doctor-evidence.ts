@@ -7,7 +7,7 @@ import { AcceptedDetailsContractError, acceptedFacts, isTerminatingToolName, val
 
 import { isRecord, isMissingPathError } from "./unknown-value.ts";
 
-async function discoverCaseFiles(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) { await walk(path, depth + 1); } else if (item.isFile() && ((item.name.endsWith(".jsonl") && item.name !== "history.jsonl" && !(item.name === "log.jsonl" && depth === 1)) || (item.name === "log.jsonl" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
+async function discoverCaseFiles(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) { await walk(path, depth + 1); } else if (item.isFile() && ((item.name.endsWith(".jsonl") && item.name !== "history.jsonl" && item.name !== "state.jsonl" && !(item.name === "log.jsonl" && depth === 1)) || (item.name === "log.jsonl" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
 function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
 function accumulate(metric: DoctorCount, value: number, source: string) { metric.count += value; if (value) metric.sources.push(source); }
 function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }

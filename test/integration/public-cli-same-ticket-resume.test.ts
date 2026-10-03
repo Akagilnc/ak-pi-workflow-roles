@@ -13,7 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { historyPayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
@@ -1200,7 +1200,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(officerRequests.length, 2);
     assert.equal(coderTurns, 2);
     // At rest after bounce -> resume -> accepted, the run holds only its dossier
-    // (#1161): current.json, history.jsonl, log.jsonl, the session volume and the
+    // (#1161): current.json, history.jsonl, log.jsonl, state.jsonl, the session volume and the
     // coder's frozen task.md. No artifacts/, stderr.log, headless-*, run-state /
     // invocation / admitted-request json or .run-starts; no attachments/ because
     // nothing was frozen into it. The session volume holds the host session
@@ -1208,7 +1208,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     const coderRunDirectory = seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "session", "task.md"],
+      ["current.json", "history.jsonl", "log.jsonl", "session", "state.jsonl", "task.md"],
     );
     assert.deepEqual(
       (await readdir(join(coderRunDirectory, "session"))).sort(),
@@ -1431,7 +1431,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // The injection really fired: the accepted terminal FACT is the last terminal
     // row in history.jsonl (the earlier two legs left no_receipt rows), while its
     // rendering was refused — current.json is still the planted directory.
-    const terminalFaces = runLogPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
+    const terminalFaces = statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
     assert.equal(terminalFaces.at(-1), "report", "the accepted terminal is recorded as a fact");
     assert.equal(terminalFaces.slice(0, -1).every((face) => face === "no_receipt"), true);
     assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true,

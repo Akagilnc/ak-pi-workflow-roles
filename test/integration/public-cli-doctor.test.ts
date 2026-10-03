@@ -1,4 +1,4 @@
-import { historyPayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -672,7 +672,7 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
 /**
  * Real run-state seam: the facade admitted the run and the coordinator already
  * marked it running; once the doctor turn has recorded its submission, damage
- * either the file that carries the run's facts (`rows`: log.jsonl holds the run-state
+ * either the file that carries the run's facts (`rows`: state.jsonl holds the run-state
  * row, as main's run-state.json held it) or only its rendering (`rendering`:
  * current.json). The accepted doctor terminal stays; the refusals are package notes.
  * No production hook, no direct markRunTerminal call.
@@ -685,8 +685,8 @@ function poisonAfterTurn(mode: "rows" | "rendering", runDirectory: string, inner
         if (mode === "rendering") {
           lockCurrentJson(runDirectory);
         } else {
-          await rm(join(runDirectory, "log.jsonl"), { force: true });
-          await mkdir(join(runDirectory, "log.jsonl"));
+          await rm(join(runDirectory, "state.jsonl"), { force: true });
+          await mkdir(join(runDirectory, "state.jsonl"));
         }
       }
       return out;
@@ -781,7 +781,7 @@ test(mode === "rows"
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.roleOutcome.role, "doctor");
-      assert.deepEqual(runLogPayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
+      assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
     }
     const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))

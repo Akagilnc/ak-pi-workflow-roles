@@ -1,4 +1,4 @@
-import { historyPayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -288,7 +288,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
       const reportPath = join(runDirectory, "current.json");
-      const recordedTerminals = runLogPayloads<{ face?: string }>(runDirectory, "terminal");
+      const recordedTerminals = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
 
       // Unlock so bare resume can rebuild the public report from sealed facts.
@@ -391,9 +391,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
               if (request.activation.role === "judge") {
-                // The run's facts are rows (the lifecycle page is a log.jsonl row): poison the
+                // The run's facts are rows (the lifecycle page is a state.jsonl row): poison the
                 // row file the later audit reads the run-state from, as main poisoned run-state.json.
-                const statePath = join(request.runDirectory, "log.jsonl");
+                const statePath = join(request.runDirectory, "state.jsonl");
                 await rm(statePath, { force: true });
                 await mkdir(statePath);
               }

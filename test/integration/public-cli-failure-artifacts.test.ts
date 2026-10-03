@@ -1,4 +1,4 @@
-import { historyPayloads, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -152,7 +152,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
       );
       // The terminal FACT is recorded as a history row; only its rendering into
       // current.json was refused (the name is still the planted directory).
-      const recorded = runLogPayloads<{ face?: string }>(runDirectory, "terminal");
+      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.equal(recorded.length, 1);
       assert.equal(recorded[0]!.face, "error");
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);

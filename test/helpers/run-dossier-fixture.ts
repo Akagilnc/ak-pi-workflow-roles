@@ -54,7 +54,7 @@ export function seedCurrentSection(
   const kind = PAGE_ROW_KIND[section];
   if (kind !== undefined) {
     appendFileSync(
-      join(runDirectory, "log.jsonl"),
+      join(runDirectory, "state.jsonl"),
       `${JSON.stringify({ level: "event", kind, identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
       "utf8",
     );
@@ -80,7 +80,7 @@ export function clearCurrentSection(runDirectory: string, section: CurrentSectio
   const { [section]: _removed, ...rest } = readCurrentJson(runDirectory);
   writeFileSync(join(runDirectory, "current.json"), `${JSON.stringify(rest, null, 2)}\n`, "utf8");
   const kind = PAGE_ROW_KIND[section];
-  const historyPath = join(runDirectory, "log.jsonl");
+  const historyPath = join(runDirectory, "state.jsonl");
   if (kind !== undefined && existsSync(historyPath)) {
     const kept = readFileSync(historyPath, "utf8").split("\n").filter((line) => {
       if (line.trim() === "") return false;
@@ -105,6 +105,23 @@ export function readHistoryRows(runDirectory: string): Record<string, unknown>[]
 /** The `payload` of every history.jsonl row of one kind, in append order. */
 export function historyPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
   return readHistoryRows(runDirectory).filter((row) => row.kind === kind).map((row) => row.payload as T);
+}
+
+/** Every line of `<run>/state.jsonl` (the four whole-page fact rows), parsed raw (`[]` when absent). */
+export function readStateRows(runDirectory: string): Record<string, unknown>[] {
+  let raw: string;
+  try {
+    raw = readFileSync(join(runDirectory, "state.jsonl"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** The `payload` of every state.jsonl row of one kind, in append order. */
+export function statePayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
+  return readStateRows(runDirectory).filter((row) => row.kind === kind).map((row) => row.payload as T);
 }
 
 /**
@@ -206,7 +223,7 @@ export function unlockCurrentJson(runDirectory: string): void {
 /**
  * #1161: `current.json` is a rendering. After every writer has exited it must equal what a
  * fresh rendering of the row files says, and every item in it must have its source row:
- * each whole-page section is the payload of the last row of its kind in log.jsonl;
+ * each whole-page section is the payload of the last row of its kind in state.jsonl;
  * `submission.latest` names a `sealed` row, each `officers` entry an `officer-pointer`
  * row, each `host.sessions` entry a `host-session-id` row of log.jsonl.
  */
@@ -216,8 +233,9 @@ export function assertCurrentIsRenderingOfRows(runDirectory: string): void {
     : [];
   const history = rows("history.jsonl");
   const log = rows("log.jsonl");
+  const state = rows("state.jsonl");
   const current = readCurrentJson(runDirectory);
-  const last = (kind: string): unknown => log.filter((row) => row.kind === kind).at(-1)?.payload;
+  const last = (kind: string): unknown => state.filter((row) => row.kind === kind).at(-1)?.payload;
   for (const [section, kind] of [["invocation", "invocation"], ["admitted", "admitted-request"], ["runState", "run-state"], ["terminal", "terminal"]] as const) {
     assert.deepEqual(current[section], last(kind), `${section} is the last ${kind} row`);
   }
