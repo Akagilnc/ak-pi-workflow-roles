@@ -241,6 +241,13 @@ export function readPageSync(runDirectory: string, section: CurrentSection): Rec
   return lastPayload(state.rows, PAGE_ROW_KIND[section]) ?? readSectionSync(runDirectory, section);
 }
 
+/** Every row of history.jsonl, in order; a file that cannot be read throws. */
+export function readHistoryRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
+  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
+  if (history.fault !== undefined) throw new Error(`${RUN_HISTORY_FILE} is unreadable (${history.fault}): ${runDirectory}`);
+  return history.rows;
+}
+
 /** Rewrite one section whole: append its row, then render `current.json`. */
 export function writeSectionSync(
   runDirectory: string,

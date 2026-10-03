@@ -13,6 +13,7 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
+import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
@@ -1221,6 +1222,13 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     // gate booked, and counts its rounds from that officer's own session.
     const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
     assert.deepEqual(rounds.map(({ officer, status }) => ({ officer, status })), [{ officer: "inspector", status: "converged" }]);
+    // The terminal as the analyst reads it carries the submitted payloads, taken from history.
+    const read = readRunTerminal(coderRunDirectory);
+    assert.equal(read.status, "present");
+    assert.deepEqual(
+      ((read as unknown as { body: { outcome: { payloads: unknown } } }).body.outcome.payloads),
+      [{ status: "completed", report: "work submitted" }],
+    );
     // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
     assert.deepEqual(
       { runId: (await loadNotarySourceRunLocator(coderRunDirectory)).runId, role: (await loadNotarySourceRunLocator(coderRunDirectory)).role },
