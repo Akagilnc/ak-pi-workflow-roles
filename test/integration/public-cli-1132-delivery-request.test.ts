@@ -216,8 +216,9 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.ok(run.runDirectory !== undefined);
     const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
-    // #1161:催交同案 — history.jsonl keeps the old ledger kind/content (sealed),
-    // and the reader projects the same accepted row the old ledger presented.
+    // Structured ledger surface for this public催交 case (kinds/contents).
+    // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
+    // sealed↔reader mirror that would not prove the old ledger path.
     const sealed = historyPayloads<{ type?: string; accepted?: unknown; toolCallId?: string; role?: string }>(
       run.runDirectory!,
       "sealed",

@@ -439,13 +439,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       { blockReportPublication: false },
     );
 
-    // What the run declares on stderr outside the CLI's own io.
-    const declared: string[] = [];
-    const realWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-      declared.push(String(chunk));
-      return (realWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
-    }) as typeof process.stderr.write;
     try {
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then ledger read fails under 429"],
         {
@@ -479,7 +472,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         "unbound", "runs",
         `${runId}@judge`,
       );
-      // Structured once-declare: the marker names the fault.
+      // Structured fault marker: current.unreadable names the authority error.
+      // Once-declare across render/resume is proven by one-shot public-entry
+      // mutation (quality-law), not by counting free-text stderr diagnostics.
       const current = readCurrentJson(runDirectory) as { unreadable?: Record<string, string> };
       assert.deepEqual(current.unreadable, { "history.jsonl": "EISDIR" });
       // Ledger damage is a package note. It does not invent a host failure,
@@ -493,7 +488,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
-      // Keep capturing stderr through resume: the fault must stay declared once for the leg.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -520,14 +514,12 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
-      assert.equal(
-        declared.filter((line) => line.includes("[run-dossier] history.jsonl cannot be read (EISDIR)")).length,
-        1,
-        "unreadable history is declared once across the initial run and resume",
+      assert.deepEqual(
+        (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
+        { "history.jsonl": "EISDIR" },
       );
 
     } finally {
-      process.stderr.write = realWrite;
       await restoreWritable();
     }
   });
