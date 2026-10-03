@@ -6,7 +6,7 @@
  * - Zero whitewashing, zero deduplication.
  * - Canonical rows after malformed lines are always reachable.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -62,12 +62,4 @@ export async function readSitianRecords(recordFile: string): Promise<SitianReadR
     return { records: [], diagnostics: [] };
   }
   return parseSitianRecordText(await readFile(recordFile, "utf8"));
-}
-
-/** Sync file face of the same decoder; missing file → empty. */
-export function readSitianRecordsSync(recordFile: string): SitianReadResult {
-  if (!existsSync(recordFile)) {
-    return { records: [], diagnostics: [] };
-  }
-  return parseSitianRecordText(readFileSync(recordFile, "utf8"));
 }

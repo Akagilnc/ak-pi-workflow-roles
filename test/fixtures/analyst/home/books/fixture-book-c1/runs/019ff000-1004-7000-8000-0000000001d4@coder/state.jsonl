@@ -1,0 +1,2 @@
+{"level":"event","kind":"invocation","identity":"4a20267e-f7fc-441c-8c91-97d57cc3b905","timestamp":"2026-08-01T00:00:00.000Z","host":"pi","source":"test-fixture-sync","payload":{"role":"coder","runId":"019ff000-1004-7000-8000-0000000001d4","bookKey":"fixture-book-c1","projectRoot":"/analyst-fixture/c1-issue-gamma"}}
+{"level":"event","kind":"terminal","identity":"ed07bf36-e3f1-4e59-a847-a0e4567fd2b7","timestamp":"2026-08-01T00:00:00.000Z","host":"pi","source":"test-fixture-sync","payload":{"face":"report","at":"2026-08-01T00:00:00.000Z","body":null}}

@@ -1071,9 +1071,9 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     clearCurrentSection(runDirectory, "terminal");
-    // The runState section is damaged (not an object); the other sections stay readable.
-    const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as Record<string, unknown>;
-    await writeFile(join(runDirectory, "current.json"), JSON.stringify({ ...current, runState: "{broken" }), "utf8");
+    // Fact path is state.jsonl (#1161); damage the live run-state row, not the derived render.
+    // Payload is present but not a valid identity object — must stay unreadable, not no-receipt.
+    seedCurrentSection(runDirectory, "runState", { broken: "{broken" });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

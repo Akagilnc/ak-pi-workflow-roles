@@ -1,0 +1,1 @@
+{"level":"event","kind":"invocation","identity":"2da36837-29dd-449c-a75f-ba2536f354b6","timestamp":"2026-08-01T00:00:00.000Z","host":"pi","source":"test-fixture-sync","payload":{"role":"coder","runId":"019ff000-3005-7000-8000-0000000003d5","bookKey":"fixture-book-c3","projectRoot":"/analyst-fixture/c3-models"}}
