@@ -132,7 +132,9 @@ export function appendResumeRowSync(runDirectory: string, cause: string | undefi
   const outcome = isRecord(body?.outcome) ? body.outcome : undefined;
   const previous = terminal === undefined ? undefined : {
     face: terminal.face,
-    ...(outcome?.kind === undefined ? {} : { kind: outcome.kind }),
+    ...(outcome?.kind !== undefined
+      ? { kind: outcome.kind }
+      : terminal.face === "error" ? { kind: "failure" } : {}),
     ...(outcome?.status === undefined ? {} : { status: outcome.status }),
     ...(body?.cause === undefined ? {} : { cause: body.cause }),
     ...(body?.diagnostic === undefined ? {} : { diagnostic: body.diagnostic }),

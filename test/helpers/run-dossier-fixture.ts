@@ -69,6 +69,28 @@ export function readHistoryRows(runDirectory: string): Record<string, unknown>[]
   return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+/**
+ * Every line of `<run>/log.jsonl`, parsed raw (`[]` when absent), optionally
+ * only rows of one `kind` (host stderr, dispatch-error, post-admission-diagnostic,
+ * resume-diagnostic, host-session, ...). Each row's content is its `payload`.
+ */
+export function readRunLogRows(runDirectory: string, kind?: string): Record<string, unknown>[] {
+  let raw: string;
+  try {
+    raw = readFileSync(join(runDirectory, "log.jsonl"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const rows = raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+  return kind === undefined ? rows : rows.filter((row) => row.kind === kind);
+}
+
+/** The `payload` of every log row of one kind, in append order. */
+export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
+  return readRunLogRows(runDirectory, kind).map((row) => row.payload as T);
+}
+
 /** What the role submitted, in order: the `params` of every submission row in history.jsonl. */
 export function submittedParams(runDirectory: string): unknown[] {
   return readHistoryRows(runDirectory).filter((row) => row.type === "submission").map((row) => row.params);

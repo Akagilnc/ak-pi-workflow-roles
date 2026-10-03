@@ -1,10 +1,9 @@
 import { join, resolve } from "node:path";
 
-import { runCurrentPath } from "./run-dossier.ts";
+import { RUN_HISTORY_FILE, RUN_LOG_FILE, runCurrentPath } from "./run-dossier.ts";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 import {
-  roleRunArtifactsDirectory,
   runDirectoryOfSessionFile,
   sessionFileOf,
 } from "./role-run-placement.ts";
@@ -17,7 +16,8 @@ export type AuditorDossierLocation = {
   readonly current: string;
   readonly parentSessionCandidate: string;
   readonly attachments: string;
-  readonly artifacts: string;
+  readonly log: string;
+  readonly history: string;
 };
 
 /** Resolve the exact run binding already carried by the parent record session. */
@@ -51,7 +51,8 @@ export function createAuditorDossierTool(
         current: runCurrentPath(runDirectory),
         parentSessionCandidate: sessionFileOf(runDirectory),
         attachments: join(runDirectory, "attachments"),
-        artifacts: roleRunArtifactsDirectory(runDirectory),
+        log: join(runDirectory, RUN_LOG_FILE),
+        history: join(runDirectory, RUN_HISTORY_FILE),
       };
       return {
         content: [{ type: "text", text: JSON.stringify(details) }],

@@ -4,7 +4,6 @@
  * Seams: createAcpRoleTurnHost / createHeadlessRoleTurnHost executeTurn(resume).
  */
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,12 +13,10 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
-async function packageNotes(runDirectory: string): Promise<Array<{ diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }>> {
-  const dir = roleRunArtifactsDirectory(runDirectory);
-  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
-  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8")) as { diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }));
+function packageNotes(runDirectory: string): Array<{ diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }> {
+  return runLogPayloads(runDirectory, "post-admission-diagnostic");
 }
 
 function baseRequest(runDirectory: string): RoleTurnRequest {
@@ -85,7 +82,7 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   assert.equal(result.knownFailure?.identity?.name, "AcpSessionFailure");
   assert.equal(result.knownFailure?.details?.cleanupError, undefined);
   assert.equal(result.code, null);
-  const notes = await packageNotes(runDirectory);
+  const notes = packageNotes(runDirectory);
   assert.equal(notes.length, 1);
   assert.equal(typeof notes[0]?.diagnostic, "string");
   assert.equal(methods.includes("session/new"), false);
@@ -134,7 +131,7 @@ test("ACP successful turn preserves host facts and carries required disposal fai
   assert.equal(result.knownFailure?.cause, undefined);
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "HOST STDERR\n");
-  const notes = await packageNotes(runDirectory);
+  const notes = packageNotes(runDirectory);
   assert.deepEqual(notes.map((note) => note.failure?.identity?.code).sort(),
     ["ECANCEL", "ECLOSE", "ECONNECTION", "ELEDGER"]);
 });
@@ -179,7 +176,7 @@ test("#1091 headless resume without bound session id reports missing; never bind
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "HeadlessSessionFailure");
   assert.equal(result.knownFailure?.details?.cleanupError, undefined);
-  const notes = await packageNotes(runDirectory);
+  const notes = packageNotes(runDirectory);
   assert.equal(notes.length, 1);
   assert.equal(typeof notes[0]?.diagnostic, "string");
   assert.equal(bindCalls, 0);

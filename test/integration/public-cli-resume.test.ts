@@ -1482,7 +1482,6 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.runId, runId);
 
-    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
     const { io, stderr } = captureIo();
     let dispatches = 0;
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {

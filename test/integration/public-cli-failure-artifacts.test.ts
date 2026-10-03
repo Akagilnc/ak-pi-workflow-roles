@@ -1,4 +1,4 @@
-import { readCurrentJson, readHistoryRows, seedTerminal, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentJson, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -7,7 +7,7 @@ import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
@@ -71,13 +71,8 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     const runDirectory = join(
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
-    const names = await readdir(join(runDirectory, "artifacts"));
-    let artifactNote = false;
-    for (const name of names) {
-      if (!name.startsWith("post-admission-diagnostic-")) continue;
-      const body = JSON.parse(await readFile(join(runDirectory, "artifacts", name), "utf8")) as { diagnostic?: unknown };
-      if (typeof body.diagnostic === "string") artifactNote = true;
-    }
+    const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
+      .some((body) => typeof body.diagnostic === "string");
     const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
     const sessionNote = sessionText.split("\n").some((line) => {
       if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
@@ -175,7 +170,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
     }
   });
 });
-test("post-admission stderr.log EISDIR keeps the host terminal and notes the mirror write", async () => {
+test("post-admission log.jsonl unwritable keeps the host terminal and notes the stderr log write", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -194,9 +189,9 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
-          // stderr.log as a directory makes the post-admission writeFile raise EISDIR.
-          // Mirror IO is best-effort — must not wash the already-observed child cause.
-          await mkdir(join(runDir, "stderr.log"), { recursive: true });
+          // log.jsonl as a directory makes the post-admission stderr log line append raise EISDIR.
+          // The log line is best-effort — must not wash the already-observed child cause.
+          await mkdir(join(runDir, "log.jsonl"), { recursive: true });
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
@@ -218,7 +213,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       // A bare nonzero exit names no cause; the child's diagnostic is primary
-      // and the auxiliary stderr.log errno must not become the identity.
+      // and the auxiliary log-write errno must not become the identity.
       assert.equal(terminal.roleOutcome.cause, undefined);
       assert.equal(terminal.roleOutcome.diagnostic, "Error: child failed after admission\n");
       assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
@@ -234,7 +229,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     assert.equal(result.terminal !== undefined, true);
   });
 
-  // A sealed acceptance stays accepted. The stderr.log mirror failure is a
+  // A sealed acceptance stays accepted. The stderr log-line failure is a
   // note beside that terminal, and the sealed payload remains on submissions.
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -244,7 +239,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
     const acceptedDetails = { status: "converged", note: "ok" };
     await configurePassingReviewSeats(home);
     let sealedSessionFile = "";
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then stderr.log blocked"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then log.jsonl blocked"],
       {
         packageRoot,
         home,
@@ -258,9 +253,9 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const runDir = join(sessionDir, "..");
             sealedSessionFile = join(sessionDir, "session.jsonl");
-            // stderr.log as a directory makes the post-admission writeFile
-            // raise EISDIR — even though the child accepted a lawful verdict.
-            await mkdir(join(runDir, "stderr.log"), { recursive: true });
+            // log.jsonl as a directory makes the post-admission stderr log line
+            // append raise EISDIR — even though the child accepted a lawful verdict.
+            await mkdir(join(runDir, "log.jsonl"), { recursive: true });
             await mkdir(sessionDir, { recursive: true });
             await writeFile(
               join(sessionDir, "session.jsonl"),
@@ -286,7 +281,7 @@ test("post-admission stderr.log EISDIR keeps the host terminal and notes the mir
         })),
       },
     );
-    // The host accepted. stderr.log is a mirror; its write failure is a note.
+    // The host accepted. The stderr log line is secondary; its write failure is a note.
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.ok(

@@ -31,6 +31,7 @@ import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { appendResumeRowSync } from "../run-dossier.ts";
+import { reportRunLog } from "../sitian-facade.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
@@ -112,7 +113,6 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import {
-  ensureRealArtifactsDirectory,
   persistReturnedRunState,
   presentTerminal,
   runWithAutoResumeLoop,
@@ -760,20 +760,16 @@ async function settleCompletedHostTurn<
   // machinery once the retry budget is exhausted.
   let stderrLogWriteFailure: unknown;
   try {
-    await writeFile(
-      join(admitted.runDirectory, "stderr.log"),
-      result.stderr,
-      "utf8",
-    );
+    reportRunLog(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
   } catch (error) {
     stderrLogWriteFailure = error;
-    // Best-effort: stderr.log is secondary to the host terminal. A write
+    // Best-effort: the stderr log line is secondary to the host terminal. A write
     // failure leaves a durable note and, on a host failure, rides in
     // packageFact. It does not become the cause.
     await recordBestEffortPostDispatchDiagnostic(
       admitted,
       env,
-      `stderr.log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
+      `stderr log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
       io,
     );
   }
@@ -1886,7 +1882,7 @@ export async function runPostAdmissionSeatResume<
     await presentResumeFailurePointer(
       input.io,
       error,
-      (failure) => writeResumeDiagnosticFile(
+      (failure) => writeResumeDiagnostic(
         loaded.admitted.runDirectory,
         loaded.admitted.runId,
         failure,
@@ -1918,13 +1914,13 @@ async function pointExistingRunFailure(
     record = await readRoleRunState(runDirectory, authority);
   } catch {
     await presentResumeFailurePointer(io, thrown, (failure) =>
-      writeResumeDiagnosticFile(runDirectory, runId, failure),
+      writeResumeDiagnostic(runDirectory, runId, failure),
     );
     return true;
   }
   if (record === undefined) return false;
   await presentResumeFailurePointer(io, thrown, (failure) =>
-    writeResumeDiagnosticFile(runDirectory, runId, failure, record.role),
+    writeResumeDiagnostic(runDirectory, runId, failure, record.role),
   );
   return true;
 }
@@ -1980,27 +1976,20 @@ async function presentResumeFailurePointer(
   }
 }
 
-async function writeResumeDiagnosticFile(
+async function writeResumeDiagnostic(
   runDirectory: string,
   runId: string,
   failure: ControlledFailure,
   role?: AdmittedRoleInvocation["role"],
 ): Promise<string> {
-  const dir = await ensureRealArtifactsDirectory(runDirectory);
-  const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
-  await writeFile(
-    path,
-    `${JSON.stringify({
-      runId,
-      ...(role === undefined ? {} : { role }),
-      diagnostic: failure.diagnostic,
-      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-      ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-      ...(failure.details === undefined ? {} : { details: failure.details }),
-    }, null, 2)}\n`,
-    { encoding: "utf8", flag: "wx" },
-  );
-  return path;
+  return reportRunLog(runDirectory, "resume-diagnostic", {
+    runId,
+    ...(role === undefined ? {} : { role }),
+    diagnostic: failure.diagnostic,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+    ...(failure.details === undefined ? {} : { details: failure.details }),
+  }, "post-admission").recordFile;
 }
 
 /**

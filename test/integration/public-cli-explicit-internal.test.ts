@@ -2,7 +2,7 @@
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -16,7 +16,8 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
@@ -307,7 +308,9 @@ setInterval(() => {}, 1000);
 });
 
 test("Pi stdin delivery error stays independent of the child exit", async () => {
-  await withTempHome(async (home) => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-pi-stdin-epipe-", runName: "run@judge" });
+  try {
+    const home = ledger.home;
     const stub = join(home, "stdin-close-child.mjs");
     await writeExecutableStub(
       stub,
@@ -320,17 +323,16 @@ process.exit(0);
     const runner = createDefaultPiSpawnRunner({});
     const result = await runner([], {
       cwd: home,
-      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: home },
+      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
       stdin: "x".repeat(8 * 1024 * 1024),
     });
     assert.equal(result.code, 0);
     assert.equal(result.knownFailure, undefined);
-    const artifacts = join(home, "artifacts");
-    const notes = await Promise.all((await readdir(artifacts))
-      .filter((name) => name.startsWith("post-admission-diagnostic-"))
-      .map(async (name) => JSON.parse(await readFile(join(artifacts, name), "utf8"))));
+    const notes = runLogPayloads<{ failure?: { identity?: { code?: unknown } } }>(ledger.runDirectory, "post-admission-diagnostic");
     assert.ok(notes.some((note) => note.failure?.identity?.code === "EPIPE"));
-  });
+  } finally {
+    ledger.dispose();
+  }
 });
 
 test("a parent abort terminates the nested activation with SIGTERM", async () => {

@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -30,7 +31,6 @@ import {
   formatRunLeaf,
   isUnboundRunDirectory,
   listBookRunDirectories,
-  roleRunArtifactsDirectory,
   roleRunPlacement,
   type RoleRunSubject,
 } from "../role-run-placement.ts";
@@ -318,7 +318,6 @@ export type AdmissionPlacement = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
-  readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly bookKey: string;
@@ -1281,6 +1280,7 @@ async function freezeAttachments(
   attachmentsDirectory: string,
 ): Promise<readonly FrozenAttachment[]> {
   const attachments: FrozenAttachment[] = [];
+  if (attachmentPaths.length > 0) await mkdir(attachmentsDirectory, { recursive: true });
   for (let i = 0; i < attachmentPaths.length; i += 1) {
     const frozen = await freezeRegularFileAttachment(
       attachmentPaths[i]!,
@@ -2188,14 +2188,6 @@ export async function loadAdmittedJudgeRequest(
   } catch {
     return undefined;
   }
-}
-
-export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  const directory = roleRunArtifactsDirectory(runDirectory);
-  return ensureRoleRunDirectory(
-    resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
-    directory,
-  );
 }
 
 export type AdmitFixerInvocationOptions = {

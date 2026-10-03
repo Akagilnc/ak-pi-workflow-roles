@@ -132,8 +132,10 @@ process.stdout.write(JSON.stringify({
     assert.equal(content, JSON.stringify({ native: "claude-session-data" }) + "\n");
 
     // 2. Verify Sitian records
-    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    const read = await readSitianRecords(recordFile);
+    const read = {
+      records: (await readSitianRecords(join(ledger.runDirectory, "log.jsonl"))).records
+        .filter((record) => record.kind === HOST_SESSION_RECORD_KIND),
+    };
     assert.equal(read.records.length, 2);
 
     const pointerRec = read.records[0]!;
@@ -182,9 +184,8 @@ process.stdout.write(JSON.stringify({
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // A regular file at the Sitian directory path prevents creation for every user.
-    const recordDir = join(sessionDir, "host-session");
-    await writeFile(recordDir, "blocked");
+    // A directory where the run's log.jsonl belongs makes every Sitian append fail.
+    await mkdir(join(ledger.runDirectory, "log.jsonl"));
 
     const stderrChunks: string[] = [];
     const origStderrWrite = process.stderr.write;
@@ -222,12 +223,9 @@ process.stdout.write(JSON.stringify({
       // Allocated and host-reported IDs each produce a pointer; warning declares once.
       assert.equal(stderrChunks.length, 3);
 
-      await rm(recordDir);
       const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });
       await writeFile(native, "native session", "utf8");
-      await mkdir(recordDir);
-      await mkdir(join(recordDir, "records.jsonl"));
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
       const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude"));

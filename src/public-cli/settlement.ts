@@ -9,7 +9,6 @@ import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import { sessionFileOf } from "../role-run-placement.ts";
 
-import { writeHardenedArtifactFile } from "./auto-resume.ts";
 import { sitianReport } from "../sitian-facade.ts";
 
 import {
@@ -38,7 +37,6 @@ import {
 import type { DoctorCaseCost } from "../doctor-contracts.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
-  ensureRunArtifactsDir,
   homeFromRunDirectory,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -69,8 +67,8 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
-import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import { runCurrentPath } from "../run-dossier.ts";
+import { reportRunLog } from "../sitian-facade.ts";
 import { writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
@@ -96,32 +94,6 @@ export type SettlementCourtScope = {
 };
 
 /**
- * Hardened artifacts directory. A planted symlink at the run directory or the
- * artifacts path must not receive a durable run artifact.
- */
-export async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
-  const runStat = await lstat(runDirectory);
-  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw new Error("run artifact retention: run directory is not a real directory");
-  }
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    const existing = await lstat(artifactsDir);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error("run artifact retention: artifacts path is not a real directory");
-    }
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-    await mkdir(artifactsDir, { recursive: true });
-    const created = await lstat(artifactsDir);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw new Error("run artifact retention: artifacts directory is not a real directory");
-    }
-  }
-  return artifactsDir;
-}
-
-/**
  * One retention path for a package fault beside an already chosen terminal.
  * Session append is first when the caller has that channel. The artifact file
  * is only the fallback after that append throws. Either failure is reported;
@@ -144,13 +116,14 @@ export async function retainPackageFault(input: {
     ...(Object.hasOwn(input, "error") ? { failure: projectThrownFailureLeaf(input.error) } : {}),
   };
   let retentionFailure: string | undefined;
-  const writeArtifact = async (appendFailure?: ControlledFailure): Promise<void> => {
-    const artifactsDir = await ensureRealArtifactsDirectory(input.runDirectory);
-    await writeHardenedArtifactFile(artifactsDir, "post-admission-diagnostic", {
+  // The run's log is the fallback after the session append throws, and the only
+  // channel when the caller has none.
+  const writeLog = (appendFailure?: ControlledFailure): void => {
+    reportRunLog(input.runDirectory, "post-admission-diagnostic", {
       version: 1,
       ...payload,
       ...(appendFailure === undefined ? {} : { retentionFailure: appendFailure }),
-    });
+    }, "settlement");
   };
   if (input.appendSession !== undefined) {
     try {
@@ -159,18 +132,18 @@ export async function retainPackageFault(input: {
       retentionFailure =
         `post-dispatch diagnostic session append failed (best-effort continue): dossier=${describeErrorIdentity(appendError)}`;
       try {
-        await writeArtifact(projectThrownFailureLeaf(appendError));
-      } catch (artifactError) {
+        writeLog(projectThrownFailureLeaf(appendError));
+      } catch (logError) {
         retentionFailure =
-          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
+          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; log=${describeErrorIdentity(logError)}`;
       }
     }
   } else {
     try {
-      await writeArtifact();
-    } catch (artifactError) {
+      writeLog();
+    } catch (logError) {
       retentionFailure =
-        `post-dispatch diagnostic durable retention failed (best-effort continue): artifact=${describeErrorIdentity(artifactError)}`;
+        `post-dispatch diagnostic durable retention failed (best-effort continue): log=${describeErrorIdentity(logError)}`;
     }
   }
   const stderr = input.stderr ?? ((text: string) => {

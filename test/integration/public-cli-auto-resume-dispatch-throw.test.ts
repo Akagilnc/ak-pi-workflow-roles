@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
 
@@ -22,6 +22,7 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { readRunLogRows } from "../helpers/run-dossier-fixture.ts";
 import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 
@@ -49,7 +50,7 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[],
     );
 }
 
-type PointerEntry={data?:{file?:unknown};};
+type PointerEntry={data?:{file?:unknown;attempt?:unknown};};
 
 const sealedParams={status:"converged",report:"sealed-before-throw"};
 const bounceParams={status:"converged",report:"bounce-before-throw"};
@@ -119,42 +120,37 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(terminal.roleOutcome.kind,"failure");
     assert.equal(terminal.autoResumeCount,2);
 
-    // (b) one retained error file per attempt; unique names — no overwrite.
-    const artifactsDir=join(runDir,"artifacts");
-    const files=(await readdir(artifactsDir)).filter((f)=>f.startsWith("dispatch-error-attempt-")).sort();
-    assert.equal(files.length,3);
-    assert.equal(new Set(files).size,3);
-    for(const f of files){
-      const s=await stat(join(artifactsDir,f));
-      assert.ok(s.isFile());
-    }
+    // (b) one retained error row per attempt in the run's log.jsonl, appended in order — no overwrite.
+    const logPath=join(runDir,"log.jsonl");
+    const retained=readRunLogRows(runDir,"dispatch-exception")
+      .map((row)=>row.payload as {version?:number;attempt?:number;recordedAt?:string;error?:string});
+    assert.equal(retained.length,3);
+    assert.deepEqual(retained.map((r)=>r.attempt),[0,1,2]);
+    assert.ok(retained.every((r)=>r.version===1&&typeof r.recordedAt==="string"));
+    for(const [i,cause] of causes.entries()) assert.ok(retained[i]!.error?.includes(cause));
 
-    // (c) dossier pointers address exactly these files.
+    // (c) dossier pointers (one per attempt) address the log that holds those rows.
     const lines=(await readFile(sessionFile,"utf8")).trim().split("\n").filter(Boolean);
     const pointers=lines.map((l)=>JSON.parse(l) as PointerEntry)
       .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType===DISPATCH_ERROR_RETENTION_ENTRY_TYPE);
     assert.equal(pointers.length,3);
-    const pointered=new Set<string>();
+    assert.deepEqual(pointers.map((p)=>p.data?.attempt),[0,1,2]);
     for(const p of pointers){
-      const file=p.data?.file as unknown;
-      assert.equal(typeof file,"string");
-      pointered.add(file as string);
-      await stat(file as string); // pointer target exists
+      assert.equal(p.data?.file,logPath);
+      await stat(p.data?.file as string); // pointer target exists
     }
-    assert.equal(pointered.size,3);
 
-    // (d) loud failure carries the LAST true error + artifact pointers; no fabricated class (#881).
+    // (d) loud failure carries the LAST true error + log pointer; no fabricated class (#881).
     if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
     assert.equal(terminal.roleOutcome.cause, undefined);
     // The terminal must carry the actual final injected cause, not a prior attempt
     // or an empty diagnostic; no generated diagnostic template is frozen.
     assert.ok(terminal.roleOutcome.diagnostic.includes(causes.at(-1)!));
     const filesFromFacts=terminal.roleOutcome.decisiveFacts.dispatchErrorFiles as readonly string[];
-    assert.equal(filesFromFacts.length,3);
-    assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());
+    assert.deepEqual([...filesFromFacts],[logPath,logPath,logPath]);
     const lastFile=terminal.roleOutcome.decisiveFacts.lastDispatchErrorFile;
-    assert.equal(lastFile,filesFromFacts.at(-1));
-    const lastRecord=JSON.parse(await readFile(lastFile as string,"utf8")) as {attempt?:number;error?:string};
+    assert.equal(lastFile,logPath);
+    const lastRecord=retained.at(-1)!;
     assert.equal(lastRecord.attempt,callsRef.n-1);
     assert.ok(lastRecord.error?.includes(causes.at(-1)!));
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
@@ -205,8 +201,9 @@ test("Pi custom-entry append surfaces Sitian persistence failure after the sessi
     await mkdir(project, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // Make the Sitian destination impossible while leaving the Pi session writable.
-    await writeFile(join(sessionDir, "dispatch-error"), "not a directory", "utf8");
+    // Make the Sitian destination impossible while leaving the Pi session writable:
+    // a directory where the run's log.jsonl belongs.
+    await mkdir(join(runDir, "log.jsonl"));
 
     await assert.rejects(
       appendPiSessionCustomEntry(

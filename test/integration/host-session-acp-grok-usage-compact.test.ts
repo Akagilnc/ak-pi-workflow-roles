@@ -42,8 +42,10 @@ function request(runDirectory: string, home: string, model?: { provider?: string
   };
 }
 
-function hostSessionRecordFile(runDirectory: string): string {
-  return join(runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
+/** The host-session rows the run's single log.jsonl carries. */
+async function hostSessionRecords(runDirectory: string) {
+  const { records } = await readSitianRecords(join(runDirectory, "log.jsonl"));
+  return { records: records.filter((record) => record.kind === HOST_SESSION_RECORD_KIND) };
 }
 
 function createHost(input: {
@@ -128,7 +130,7 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     assert.equal(copiedUsage, usageContent);
 
     // 2. Verify Sitian records
-    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    const { records } = await hostSessionRecords(ledger.runDirectory);
     assert.equal(records.length, 2);
 
     const pointerRec = records[0]!;
@@ -169,7 +171,7 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
       (await readdir(join(ledger.runDirectory, "session"))).filter((name) => name.startsWith("grok-build")),
       ["grok-build"],
     );
-    const afterThird = (await readSitianRecords(hostSessionRecordFile(ledger.runDirectory))).records;
+    const afterThird = (await hostSessionRecords(ledger.runDirectory)).records;
     assert.equal((afterThird.at(-1)?.payload as { type?: string })?.type, "native-session-warning");
   } finally {
     ledger.dispose();
@@ -187,7 +189,7 @@ test("hermes ACP host is untouched (no pointer, no copy) (ADR 0086)", async () =
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
 
-    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    const { records } = await hostSessionRecords(ledger.runDirectory);
     assert.equal(records.length, 0, "Hermes must not write host-session records");
   } finally {
     ledger.dispose();
@@ -202,7 +204,7 @@ test("grok-build dossier copy failure appends warning without altering turn (ADR
     );
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
-    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    const { records } = await hostSessionRecords(ledger.runDirectory);
     assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
     assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
     assert.ok((records[1]?.payload as { error?: string })?.error);
@@ -247,7 +249,7 @@ fi
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
 
-    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    const { records } = await hostSessionRecords(ledger.runDirectory);
     assert.equal(records.length, 2);
 
     const pointerRec = records[0]!;

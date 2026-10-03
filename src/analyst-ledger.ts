@@ -336,9 +336,9 @@ export type AnalystReadableRunFacts = {
    */
   readonly models: readonly string[];
   /**
-   * Paired gate-cycle rounds from session/auditor-roles/ (#446).
-   * Missing directory → empty (lawful zero rounds).
-   * Damaged discovered nested JSONL → leg unreadable (`auditor-roles` source).
+   * Paired gate-cycle rounds of the officers booked in current.json (#446).
+   * No officers booked → empty (lawful zero rounds).
+   * A damaged officer pointer or session → leg unreadable (`officers` source).
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
@@ -562,7 +562,7 @@ async function classifyScopedRun(input: {
     );
   }
 
-  // Nested auditor-roles gate pairs stay inside the sole scan (families must
+  // Officer gate pairs stay inside the sole scan (families must
   // not readdir this tree again). Missing directory → []. Damaged discovered
   // nested JSONL is page-local unreadable — never silently under-count rounds.
   let gateCycles: readonly AnalystGateCycleRound[];
@@ -575,7 +575,7 @@ async function classifyScopedRun(input: {
       entry: {
         runId: input.runId,
         book: input.book,
-        missingSources: ["auditor-roles"],
+        missingSources: ["officers"],
         reason: errorText(error),
         firstFrameAt: { status: "present", at: frameSpan.startedAt },
         lastFrameAt: { status: "present", at: frameSpan.endedAt },

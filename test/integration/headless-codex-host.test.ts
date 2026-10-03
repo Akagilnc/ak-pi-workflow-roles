@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -7,11 +7,11 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
-import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
@@ -71,17 +71,9 @@ function assertStrictObjectNodes(node: unknown, path: string): void {
   }
 }
 
-/** Existing placement API + ENOENT-only absence; other fs errors stay loud. */
-async function packageFaultNotes(runDirectory: string): Promise<unknown[]> {
-  const dir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    await access(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
-  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8"))));
+/** The independent package-fault notes the run's log.jsonl carries. */
+function packageFaultNotes(runDirectory: string): unknown[] {
+  return runLogPayloads(runDirectory, "post-admission-diagnostic");
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
@@ -123,7 +115,7 @@ const events = [
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
 process.stdout.write(JSON.stringify(events[0]) + "\\n");
-const pointerFile = ${JSON.stringify(join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl"))};
+const pointerFile = ${JSON.stringify(join(root, "log.jsonl"))};
 const hasPointer = () => existsSync(pointerFile) && readFileSync(pointerFile, "utf8")
   .split("\\n").filter(Boolean).some(line => {
     try { return JSON.parse(line).payload?.type === "native-session-pointer"; }
@@ -250,8 +242,8 @@ const waitForPointer = setInterval(() => {
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
     assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
-    const sitianFile = join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    const firstRecords = (await readSitianRecords(sitianFile)).records;
+    const firstRecords = (await readSitianRecords(join(root, "log.jsonl"))).records
+      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND);
     assert.equal((firstRecords[0]?.payload as { type?: string })?.type, "native-session-pointer");
     assert.equal((firstRecords[0]?.payload as { nativePath?: string })?.nativePath, join(root, ".codex", "sessions"));
     assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
@@ -350,7 +342,7 @@ const waitForPointer = setInterval(() => {
       additionalProperties: { $ref: "#/$defs/codexJsonValue" },
     });
     // Normal call: structured absence of package-fault notes (not free-text diagnostic matching).
-    assert.deepEqual(await packageFaultNotes(root), []);
+    assert.deepEqual(packageFaultNotes(root), []);
 
     receipt = undefined;
     const resumed = await host.executeTurn({
@@ -582,10 +574,7 @@ process.exit(1);
     );
     assert.deepEqual(bindFailed.knownFailure, persisted.knownFailure);
     assert.equal(bindFailed.code, 1);
-    const bindNotes = (await readdir(join(ledger.runDirectory, "artifacts")))
-      .filter((name) => name.startsWith("post-admission-diagnostic-"));
-    const bindBodies = await Promise.all(bindNotes.map(async (name) =>
-      JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8")) as { failure?: { identity?: { code?: unknown } } }));
+    const bindBodies = packageFaultNotes(ledger.runDirectory) as Array<{ failure?: { identity?: { code?: unknown } } }>;
     assert.equal(bindBodies.some((note) => note.failure?.identity?.code === "EBIND"), true);
     rejectBind = false;
     sessionParent = "/dev/null/session.jsonl";
@@ -648,9 +637,7 @@ process.exit(0);
     });
     assert.equal(result.code, 0);
     assert.equal(result.knownFailure, undefined);
-    const notes = await readdir(join(ledger.runDirectory, "artifacts"));
-    const bodies = await Promise.all(notes.filter((name) => name.startsWith("post-admission-diagnostic-"))
-      .map(async (name) => JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8"))));
+    const bodies = packageFaultNotes(ledger.runDirectory) as Array<{ failure?: { identity?: { code?: unknown } } }>;
     assert.ok(bodies.some((note) => note.failure?.identity?.code === "EPIPE"));
     assert.equal(await readFile(join(ledger.runDirectory, "session", "codex.jsonl"), "utf8"), "native after close\n");
   } finally {

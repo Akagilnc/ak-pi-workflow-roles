@@ -86,6 +86,18 @@ test("Sitian facade: Layout supports three levels, usage, raw pointer, and no de
     const eventRec0 = readEvent.records[0]!;
     assert.equal(eventRec0.raw?.entryId, "entry-42");
     assert.equal(eventRec0.source, "worker-submission-gates");
+
+    // 4. A role run's own session (<run>/session/session.jsonl, run = <runId>@<role>):
+    // every kind shares the run's one log.jsonl, rows keep their own kind.
+    const runDirectory = join(home, ".ak-roles", "books", "proj", "runs", "run-own@judge");
+    const ownSession = join(runDirectory, "session", "session.jsonl");
+    const attendancePtr = sitianReport({ level: "event", kind: "attendance", cwd: project, home, sessionParent: ownSession, payload: { n: 1 } });
+    const gatePtr = sitianReport({ level: "event", kind: "gate", cwd: project, home, sessionParent: ownSession, payload: { n: 2 } });
+    assert.equal(attendancePtr.recordFile, join(runDirectory, "log.jsonl"));
+    assert.equal(gatePtr.recordFile, attendancePtr.recordFile);
+    const runLog = await readSitianRecords(attendancePtr.recordFile);
+    assert.deepEqual(runLog.records.map((row) => row.kind), ["attendance", "gate"]);
+    assert.deepEqual((await readdir(runDirectory)).sort(), ["log.jsonl"]);
   });
 });
 

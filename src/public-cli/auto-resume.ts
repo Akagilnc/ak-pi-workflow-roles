@@ -11,10 +11,6 @@
  * path continues: same budget, same call-local count semantics. No failure-type
  * classification — every thrown value is treated identically.
  */
-import { constants as fsConstants } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { open } from "node:fs/promises";
-import { join } from "node:path";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -33,14 +29,13 @@ import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
-  ensureRealArtifactsDirectory,
   presentFailureTerminal,
   retainPackageFault,
 } from "./settlement.ts";
 
-export { ensureRealArtifactsDirectory };
 import type { CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
+import { reportRunLog } from "../sitian-facade.ts";
 
 import { errorText } from "../unknown-value.ts";
 
@@ -155,41 +150,11 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
 }
 
 /**
- * Retain one throwing dispatch attempt's complete exception as an independent
- * per-attempt file under the run's artifacts directory, then leave an
- * addressable pointer in the session principal (custom entry). Exclusive-create
- * open (O_EXCL) with a per-attempt unique name enforces 史必追加 (#419): a later
- * attempt can never overwrite an earlier attempt's file.
+ * Retain one throwing dispatch attempt's complete exception as a line in the
+ * run's log.jsonl, then leave an addressable pointer in the session principal
+ * (custom entry). The log only appends (史必追加, #419): a later attempt can
+ * never overwrite an earlier attempt's record.
  */
-/**
- * Hardened create-once JSON write shared by every durable artifact this loop
- * retains directly (dispatch-error dumps, lawful-persist-failure error/
- * evidence records): O_EXCL (fail loud on a colliding name, never overwrite)
- * + O_NOFOLLOW where the platform provides it (a planted symlink is never
- * followed) — mirrors settlement.ts's own hardened artifact writers.
- */
-export async function writeHardenedArtifactFile(
-  artifactsDir: string,
-  namePrefix: string,
-  payload: Record<string, unknown>,
-): Promise<string> {
-  const filePath = join(artifactsDir, `${namePrefix}-${randomUUID()}.json`);
-  const body = `${JSON.stringify(payload, jsonSafeReplacer(), 2)}\n`;
-  const noFollowFlag =
-    typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
-  const handle = await open(
-    filePath,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag,
-    0o600,
-  );
-  try {
-    await handle.writeFile(body, "utf8");
-  } finally {
-    await handle.close();
-  }
-  return filePath;
-}
-
 async function retainDispatchError(
   admitted: { runDirectory: string; principal: DurablePrincipal },
   principalAuthority: DurablePrincipalAuthority,
@@ -197,14 +162,13 @@ async function retainDispatchError(
   attempt: number,
   error: unknown,
 ): Promise<{ file: string; pointerError?: unknown }> {
-  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   // Whole-object dump: everything the thrown value carries, nothing picked.
-  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
+  const filePath = reportRunLog(admitted.runDirectory, "dispatch-exception", JSON.parse(JSON.stringify({
     version: 1,
     attempt,
     recordedAt: new Date().toISOString(),
     error: serializeThrownValue(error),
-  });
+  }, jsonSafeReplacer())) as Record<string, unknown>, "auto-resume").recordFile;
   // Addressable pointer in the dossier (卷宗): Pi session custom-entry codec
   // (appendPiSessionCustomEntry). Lease still owned here with run-writer.
   let pointerLease: RunWriterLease;

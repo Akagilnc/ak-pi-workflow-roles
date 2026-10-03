@@ -5,9 +5,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
-import { sessionDirectoryOf } from "./role-run-placement.ts";
+import { parseRunLeaf, sessionDirectoryOf } from "./role-run-placement.ts";
+import { RUN_LOG_FILE } from "./run-dossier.ts";
 import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -113,8 +114,16 @@ export function resolveSitianRecordPathInLedger(
     ) {
       throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
-    sessionDir = sitianVolumeDirectory(dirname(input.sessionParent), category);
-    recordFile = sitianVolumeRecordsFile(sessionDir);
+    const sessionParentDir = dirname(input.sessionParent);
+    const runDirectory = dirname(sessionParentDir);
+    if (basename(sessionParentDir) === "session" && parseRunLeaf(basename(runDirectory)) !== undefined) {
+      // A role run's own session: every record kind shares the run's one log (#1161).
+      sessionDir = runDirectory;
+      recordFile = join(runDirectory, RUN_LOG_FILE);
+    } else {
+      sessionDir = sitianVolumeDirectory(sessionParentDir, category);
+      recordFile = sitianVolumeRecordsFile(sessionDir);
+    }
   }
   if (!physicallyContainedIn(ledgerHome, sessionDir)) {
     throw new Error("Sitian record ownership requires a directory inside the ledger home");
