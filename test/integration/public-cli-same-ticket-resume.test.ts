@@ -1205,16 +1205,17 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(officerRequests.length, 2);
     assert.equal(coderTurns, 2);
     // At rest after bounce -> resume -> accepted, the run holds only its dossier
-    // (#1161): current.json, history.jsonl, log.jsonl, the session volume and the
-    // coder's frozen task.md. No artifacts/, stderr.log, headless-*, run-state /
-    // invocation / admitted-request json or .run-starts; no attachments/ because
-    // nothing was frozen into it. The session volume holds the host session
-    // (and the gate officer's own session volume), nothing else.
+    // (#1161): current.json, history.jsonl, log.jsonl, the session volume and
+    // attachments/ (holding only the coder's frozen task.md). No artifacts/,
+    // stderr.log, headless-*, run-state / invocation / admitted-request json or
+    // .run-starts. The session volume holds the host session (and the gate
+    // officer's own session volume), nothing else.
     const coderRunDirectory = seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "session", "task.md"],
+      ["attachments", "current.json", "history.jsonl", "log.jsonl", "session"],
     );
+    assert.deepEqual(await readdir(join(coderRunDirectory, "attachments")), ["task.md"]);
     assert.deepEqual(
       (await readdir(join(coderRunDirectory, "session"))).sort(),
       ["session.jsonl", "worker-submission-gate"],

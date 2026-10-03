@@ -562,7 +562,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
-        assert.equal(args[args.indexOf("--ak-coder-task") + 1], join(runDirectory, "task.md"));
+        assert.equal(args[args.indexOf("--ak-coder-task") + 1], join(runDirectory, "attachments", "task.md"));
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
