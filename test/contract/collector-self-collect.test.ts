@@ -116,10 +116,6 @@ function activationCtx(home: string): ExtensionContext {
 test("#1088 collector seat stays evidence-only (not construction worker)", () => {
   const meta = packagedRoleMetadata("collector");
   assert.ok(meta);
-  assert.equal(
-    "artifactFace" in meta && meta.artifactFace?.evidenceRole === true,
-    true,
-  );
   assert.equal("worker" in meta && meta.worker === true, false);
   assert.equal(
     "phases" in meta && Array.isArray(meta.phases) && meta.phases.includes("apply"),

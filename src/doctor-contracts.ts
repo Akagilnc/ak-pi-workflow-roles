@@ -49,7 +49,7 @@ export type DoctorSubmission =
 // #836: runtime cost is a fact beside the role payload, never merged into it —
 // DoctorOutput is the accepted payload itself, identical to DoctorSubmission.
 export type DoctorOutput = DoctorSubmission;
-export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
+export type DoctorEvidenceEntry = { id: string; kind: "session" | "log"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
 // status 的合法词写在 description。交卷原样入账（validateDoctorSubmissionShape），

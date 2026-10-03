@@ -47,13 +47,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "sealed",
     artifactFace: {
       reportPhase: true,
-      evidenceRole: true,
-      leaves: [
-        { key: "phase" },
-        { key: "packetPath" },
-        { key: "prerequisitesPath", omitUndefined: true },
-        { key: "prerequisites" },
-      ],
     },
     boardPlacement: "marshal",
     activationFlags: [
@@ -78,11 +71,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "sealed",
     artifactFace: {
       reportPhase: true,
-      evidenceRole: true,
-      leaves: [
-        { key: "phase" },
-        { key: "taskPath" },
-      ],
     },
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -108,13 +96,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "sealed",
     sealedAcceptedOnly: true,
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "baseRevision" },
-        { key: "lens" },
-        { key: "authorityRefs", copyArray: true },
-        { key: "callerProvenance", callerProvenance: true },
-      ],
     },
     transportPrompt: "skill-args",
     boardPlacement: "marshal",
@@ -138,12 +119,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_collector_output",
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "prNumber", omitUndefined: true },
-        { key: "repository", from: "repository.canonical" },
-        { key: "manifestDigest" },
-      ],
     },
     boardPlacement: "collector",
     analystTerminal: "groups",
@@ -167,12 +142,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     auditTool: "ak_doctor_audit_decision",
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "issueNumber" },
-        { key: "caseRunsPath" },
-        { key: "caseIdentity" },
-      ],
       doctorReportFacts: true,
     },
     navigatorSubject: "case",
@@ -195,11 +164,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_merger_output",
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "mergerInputPath" },
-        { key: "derived" },
-      ],
     },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

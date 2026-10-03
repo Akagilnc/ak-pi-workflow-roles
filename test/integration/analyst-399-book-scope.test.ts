@@ -29,6 +29,7 @@ import {
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
+import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -110,7 +111,6 @@ async function writeReadableRun(input: {
     ? join(input.bookDir, "runs", `${input.runId}@${input.role}`)
     : join(input.bookDir, input.subject, "runs", `${input.runId}@${input.role}`);
   await mkdir(join(runDir, "session"), { recursive: true });
-  await mkdir(join(runDir, "artifacts"), { recursive: true });
   const invocation: Record<string, unknown> = {
     role: input.role,
     runId: input.runId,
@@ -120,22 +120,19 @@ async function writeReadableRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  await writeFile(join(runDir, "invocation.json"), `${JSON.stringify(invocation, null, 2)}\n`);
+  seedCurrentSection(runDir, "invocation", invocation);
   await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
-  await writeFile(
-    join(runDir, "artifacts", "report.json"),
-    `${JSON.stringify({
+  seedTerminal(runDir, "report", {
+    role: input.role,
+    runId: input.runId,
+    phase: "apply",
+    outcome: {
+      kind: "accepted",
       role: input.role,
-      runId: input.runId,
-      phase: "apply",
-      outcome: {
-        kind: "accepted",
-        role: input.role,
-        status: "completed",
-        decisiveFacts: {},
-      },
-    }, null, 2)}\n`,
-  );
+      status: "completed",
+      decisiveFacts: {},
+    },
+  });
 }
 
 async function writeDamagedRun(input: {
@@ -156,7 +153,7 @@ async function writeDamagedRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  await writeFile(join(runDir, "invocation.json"), `${JSON.stringify(invocation, null, 2)}\n`);
+  seedCurrentSection(runDir, "invocation", invocation);
   // Broken session JSONL — unreadable exclusion, not silent drop.
   await writeFile(join(runDir, "session", "session.jsonl"), "{not-json\n");
 }

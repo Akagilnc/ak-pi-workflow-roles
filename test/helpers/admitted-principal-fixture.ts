@@ -23,8 +23,8 @@ function sessionCoords(runDirectory: string, sessionDirectory?: string, sessionF
 }
 
 export function fixtureJudgeAdmitted(
-  input: Omit<AdmittedJudgeInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath"> &
-    Partial<Pick<AdmittedJudgeInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "principal">> & {
+  input: Omit<AdmittedJudgeInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty"> &
+    Partial<Pick<AdmittedJudgeInvocation, "attachments" | "instruction" | "instructionEmpty" | "principal">> & {
       sessionDirectory?: string;
       sessionFile?: string;
     },
@@ -36,15 +36,14 @@ export function fixtureJudgeAdmitted(
     instruction: "x",
     instructionEmpty: false,
     attachments: [],
-    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
     ...rest,
     principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedJudgeInvocation;
 }
 
 export function fixtureDoctorAdmitted(
-  input: Omit<AdmittedDoctorInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath"> &
-    Partial<Pick<AdmittedDoctorInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "principal">> & {
+  input: Omit<AdmittedDoctorInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty"> &
+    Partial<Pick<AdmittedDoctorInvocation, "attachments" | "instruction" | "instructionEmpty" | "principal">> & {
       sessionDirectory?: string;
       sessionFile?: string;
     },
@@ -56,7 +55,6 @@ export function fixtureDoctorAdmitted(
     instruction: "inspect",
     instructionEmpty: false,
     attachments: [],
-    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
     ...rest,
     principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedDoctorInvocation;

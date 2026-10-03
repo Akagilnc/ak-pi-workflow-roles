@@ -47,6 +47,7 @@ import {
   visibleTicketLabel,
   BoardSortElement,
 } from "../helpers/factory-board-shared.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 /** Page sort modes advertised by the embedded production control (not a board export). */
 
@@ -322,11 +323,7 @@ test("named closed tickets enter the board and remain drillable", async () => {
       })}\n`,
       "utf8",
     );
-    await writeFile(
-      join(books[0]!.ledgerDir, "issues", "99", "runs", "coder-x@demo", "invocation.json"),
-      JSON.stringify({ role: "coder" }),
-      "utf8",
-    );
+    seedCurrentSection(join(books[0]!.ledgerDir, "issues", "99", "runs", "coder-x@demo"), "invocation", { role: "coder" });
 
     const snapshot = sampleSnapshot();
     const roles = snapshot.books[0]!;
@@ -781,11 +778,7 @@ async function writeRunSession(
   const sessionPath = join(sessionDir, "session.jsonl");
   await writeFile(sessionPath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
   if (options?.invocationRole) {
-    await writeFile(
-      join(ledgerDir, "issues", String(issueNumber), "runs", runId, "invocation.json"),
-      JSON.stringify({ role: options.invocationRole }),
-      "utf8",
-    );
+    seedCurrentSection(join(ledgerDir, "issues", String(issueNumber), "runs", runId), "invocation", { role: options.invocationRole });
   }
   if (options?.axisLegs) {
     const legsDir = join(sessionDir, "reviewer-legs");

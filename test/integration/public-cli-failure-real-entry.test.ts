@@ -1,10 +1,14 @@
+import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { emptyCollectorManifest } from "../../src/collector-config.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
@@ -19,7 +23,6 @@ import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/p
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -32,61 +35,64 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 
 test("public report publication failure stays beside the accepted terminal", async () => {
-  // Lock artifacts/ so the report write fails. The host already accepted;
-  // that terminal stays, and the write failure is a cleanup diagnostic.
+  // Lock current.json after the turn so the terminal write fails. The host already
+  // accepted; that terminal stays, and the write failure is a cleanup diagnostic.
+  // Collector: a seat with no gate officers, so the terminal write is the only
+  // dossier write between the turn and the leg's own lawful persist.
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    let lockedArtifactsDir: string | undefined;
+    let lockedCurrent: string | undefined;
     const runId = "run-audit-artifact-errno-001";
-    await configurePassingReviewSeats(home);
+    const details = {
+      host: "github.com",
+      repository: "acme/widgets",
+      prNumber: 1168,
+      prState: "OPEN",
+      manifestDigest: emptyCollectorManifest().digest,
+      groups: [],
+      unfinishedReasons: [],
+    };
     try {
-      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
+      const inner = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sessionFile,
+            `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`,
+            "utf8",
+          );
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "collector" as const, details },
+          };
+        },
+      });
+      const result = await runAkRole(
+        ["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project],
         {
           packageRoot,
           home,
           cwd: project,
+          credentials: { "openai-codex": true, xai: false },
           createRunId: () => runId,
           io,
-          roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = join(sessionDir, "..");
-            const artifactsDir = join(runDir, "artifacts");
-            await mkdir(artifactsDir, { recursive: true });
-            await chmod(artifactsDir, 0o555);
-            lockedArtifactsDir = artifactsDir;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(
-              join(sessionDir, "session.jsonl"),
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolName: JUDGE_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: { status: "converged" },
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              stdout: "",
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: {
-                role: "judge" as const,
-                details: { status: "converged" },
-              },
-            };
+          roleTurnHost: {
+            executeTurn: async (request) => {
+              const out = await inner.executeTurn(request);
+              // The seal is on the record; the leg's terminal write is next.
+              lockedCurrent = join(request.runDirectory, "current.json");
+              lockCurrentJson(dirname(lockedCurrent));
+              return out;
+            },
           },
-          })),
         },
       );
       assert.equal(result.exitCode, 0);
@@ -99,7 +105,7 @@ test("public report publication failure stays beside the accepted terminal", asy
         resolveBookKeyFromGit(project),
         "unbound",
         "runs",
-        `${runId}@judge`,
+        `${runId}@collector`,
       );
       const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
         .trim()
@@ -109,10 +115,16 @@ test("public report publication failure stays beside the accepted terminal", asy
         .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
         ?.data?.diagnostic;
       assert.equal(typeof noteText, "string");
+      // The injected failure really fired: the accepted terminal FACT is a history
+      // row, but its rendering was refused (current.json is still the planted directory).
+      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
+      assert.equal(recorded.length, 1);
+      assert.equal(recorded[0]!.face, "report");
+      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
     } finally {
-      if (lockedArtifactsDir !== undefined) {
+      if (lockedCurrent !== undefined) {
         try {
-          await chmod(lockedArtifactsDir, 0o755);
+          unlockCurrentJson(dirname(lockedCurrent));
         } catch {
           // cleanup best-effort
         }
@@ -203,6 +215,19 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
       assert.equal(result.exitCode, 0, row.label);
       assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", row.label);
       assert.equal(stderr.length, 0, row.label);
+      // The leg's terminal section says the same, with the no_receipt face.
+      const role = row.argv(project)[0]!;
+      const runDirectory = join(
+        home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${row.runId}@${role}`,
+      );
+      const noReceipt = terminalBodyAt(join(runDirectory, "current.json"), "no_receipt") as {
+        role?: string;
+        runId?: string;
+        outcome?: { kind?: string };
+      };
+      assert.equal(noReceipt.role, role, row.label);
+      assert.equal(noReceipt.runId, row.runId, row.label);
+      assert.equal(noReceipt.outcome?.kind, "no_receipt", row.label);
     });
   }
 });
@@ -274,7 +299,7 @@ test("production knownFailure channel reaches settlement as provider with typed 
     assert.equal(stderr.length, 1);
     assert.equal(stderr[0]?.includes(hostStderr), true);
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
-    const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       diagnostic?: string;
       stderr?: string;
       packageFact?: { exitCode?: number; timedOut?: boolean; signal?: string };
@@ -284,23 +309,9 @@ test("production knownFailure channel reaches settlement as provider with typed 
     assert.equal(errorBody.packageFact?.exitCode, 17);
     assert.equal(errorBody.packageFact?.timedOut, true);
     assert.equal(errorBody.packageFact?.signal, "SIGTERM");
-    const { recordFile } = resolveSitianRecordPath({
-      level: "event",
-      kind: "attempt-history",
-      sessionParent: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "unbound",
-        "runs",
-        "run-provider-channel-001@judge",
-        "session",
-        "session.jsonl",
-      ),
-    });
-    const history = (await readSitianRecords(recordFile)).records.map((row) =>
-      (row.payload as { outcome?: { stderr?: string; diagnostic?: string; packageFact?: { exitCode?: number } } }).outcome);
+    const history = historyPayloads<{
+      outcome?: { stderr?: string; diagnostic?: string; packageFact?: { exitCode?: number } };
+    }>(dirname(errorRef!.path), "attempt-history").map((row) => row.outcome);
     assert.equal(history.at(-1)?.diagnostic, hostDiagnostic);
     assert.equal(history.at(-1)?.stderr, hostStderr);
     assert.equal(history.at(-1)?.packageFact?.exitCode, 17);
@@ -401,7 +412,7 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       cause: string;
       identity?: { name?: string; code?: string | number };
       diagnostic: string;
@@ -492,7 +503,7 @@ test("public entry keeps host details beside package facts and a timeout beside 
         identityName: "ProviderUnavailableError",
         identityCode: "PROVIDER_UNAVAILABLE",
       });
-      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      const errorBody = terminalBodyAt(errorRef!.path, "error") as {
         details?: { code?: unknown; timedOut?: unknown; exitCode?: unknown; provider?: unknown };
         packageFact?: { exitCode?: number | null; timedOut?: boolean };
       };
@@ -526,7 +537,7 @@ test("public entry keeps host details beside package facts and a timeout beside 
         identityName: "ProviderStopError",
         identityCode: "openai-codex",
       });
-      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      const errorBody = terminalBodyAt(errorRef!.path, "error") as {
         details?: unknown;
         packageFact?: { exitCode?: number | null; timedOut?: boolean };
       };
@@ -595,7 +606,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       cause: string;
       identity?: { name?: string; code?: string | number };
     };

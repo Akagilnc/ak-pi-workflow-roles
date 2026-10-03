@@ -1,0 +1,23 @@
+{
+  "invocation": {
+    "role": "coder",
+    "runId": "019ff000-1002-7000-8000-0000000001b2",
+    "bookKey": "fixture-book-c1",
+    "projectRoot": "/analyst-fixture/c1-issue-beta"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "coder",
+      "runId": "019ff000-1002-7000-8000-0000000001b2",
+      "phase": "apply",
+      "outcome": {
+        "kind": "accepted",
+        "role": "coder",
+        "status": "completed",
+        "decisiveFacts": {}
+      }
+    }
+  }
+}

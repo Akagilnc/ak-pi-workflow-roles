@@ -441,7 +441,7 @@ test("a recorded append failure never returns accepted", async () => {
           throw new Error("prime");
         });
         await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
-        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("submission-ledger/records.jsonl"));
+        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("history.jsonl"));
         if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
         await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context));
         // Unlock to read.

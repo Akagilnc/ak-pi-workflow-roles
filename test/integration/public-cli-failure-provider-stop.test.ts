@@ -1,3 +1,4 @@
+import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop binding. The host's own report is the terminal.
@@ -313,7 +314,7 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
       assert.equal(terminal.roleOutcome.cause, "provider");
       assert.equal(terminal.roleOutcome.diagnostic, secondaryDiagnostic);
     }
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       cause: string;
       diagnostic: string;
     };

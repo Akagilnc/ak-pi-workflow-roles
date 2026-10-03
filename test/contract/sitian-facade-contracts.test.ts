@@ -86,6 +86,18 @@ test("Sitian facade: Layout supports three levels, usage, raw pointer, and no de
     const eventRec0 = readEvent.records[0]!;
     assert.equal(eventRec0.raw?.entryId, "entry-42");
     assert.equal(eventRec0.source, "worker-submission-gates");
+
+    // 4. A role run's own session (<run>/session/session.jsonl, run = <runId>@<role>):
+    // every kind shares the run's one log.jsonl, rows keep their own kind.
+    const runDirectory = join(home, ".ak-roles", "books", "proj", "runs", "run-own@judge");
+    const ownSession = join(runDirectory, "session", "session.jsonl");
+    const attendancePtr = sitianReport({ level: "event", kind: "attendance", cwd: project, home, sessionParent: ownSession, payload: { n: 1 } });
+    const gatePtr = sitianReport({ level: "event", kind: "gate", cwd: project, home, sessionParent: ownSession, payload: { n: 2 } });
+    assert.equal(attendancePtr.recordFile, join(runDirectory, "log.jsonl"));
+    assert.equal(gatePtr.recordFile, attendancePtr.recordFile);
+    const runLog = await readSitianRecords(attendancePtr.recordFile);
+    assert.deepEqual(runLog.records.map((row) => row.kind), ["attendance", "gate"]);
+    assert.deepEqual((await readdir(runDirectory)).sort(), ["log.jsonl"]);
   });
 });
 
@@ -178,62 +190,34 @@ test("Sitian reader: Malformed line exposes typed diagnostic and traversal conti
   });
 });
 
-test("Sitian facade: S4 submission ledger channel with 5 kinds and cross-attempt appending", async () => {
-  await withHermeticHome({ prefix: "ak-sitian-s4-" }, async ({ home }) => {
+test("Sitian facade: each kind owns its volume and cross-attempt writes of one kind share it", async () => {
+  await withHermeticHome({ prefix: "ak-sitian-volumes-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
 
-    const s4Kinds = [
-      "candidate",
-      "roundContext",
-      "outcome",
-      "sealed",
-      "post-seal-anomaly",
-    ] as const;
+    const sessionParent = join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl");
+    const write = (kind: string, attemptId: string, identity: string) => sitianReport({
+      level: "event",
+      kind,
+      cwd: project,
+      home,
+      sessionParent,
+      subject: { runId: "s4-run-01", attemptId },
+      identity,
+      payload: { identity },
+    });
 
-    let recordFile = "";
+    const first = write("candidate", "att-1", "evt-1");
+    const other = write("outcome", "att-1", "evt-2");
+    const second = write("candidate", "att-2", "evt-3");
 
-    // Attempt 1: write candidate, roundContext, outcome
-    for (let i = 0; i < 3; i++) {
-      const kind = s4Kinds[i]!;
-      const eventId = `s4-evt-${i + 1}`;
-      const ptr = sitianReport({
-        level: "event",
-        kind,
-        cwd: project,
-        home,
-        sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-        subject: { runId: "s4-run-01", attemptId: "att-1" },
-        identity: eventId,
-        payload: { index: i, desc: `S4 event ${kind}` },
-      });
-      recordFile = ptr.recordFile;
-    }
-
-    // Attempt 2: cross-attempt appending (sealed, post-seal-anomaly) onto the same subject run ledger
-    for (let i = 3; i < 5; i++) {
-      const kind = s4Kinds[i]!;
-      const eventId = `s4-evt-${i + 1}`;
-      const ptr = sitianReport({
-        level: "event",
-        kind,
-        cwd: project,
-        home,
-        sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-        subject: { runId: "s4-run-01", attemptId: "att-2" },
-        identity: eventId,
-        payload: { index: i, desc: `S4 event ${kind}` },
-      });
-      assert.equal(ptr.recordFile, recordFile, "Cross-attempt writes share the run ledger volume");
-    }
-
-    // Read full S4 ledger chain via Reader
-    const read = await readSitianRecords(recordFile);
-    assert.equal(read.records.length, 5);
-    for (let i = 0; i < 5; i++) {
-      assert.equal(read.records[i]!.kind, s4Kinds[i]);
-      assert.equal(read.records[i]!.identity, `s4-evt-${i + 1}`);
-    }
+    assert.notEqual(other.recordFile, first.recordFile, "a different kind has its own volume");
+    assert.equal(second.recordFile, first.recordFile, "Cross-attempt writes of one kind share the volume");
+    const read = await readSitianRecords(first.recordFile);
+    assert.deepEqual(read.records.map((record) => [record.kind, record.identity]), [
+      ["candidate", "evt-1"],
+      ["candidate", "evt-3"],
+    ]);
   });
 });

@@ -3,6 +3,9 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
+import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
+import { rewriteRoleRunDurablePages } from "../../src/role-run-relocation.ts";
+import { historyPayloads, readCurrentJson, readCurrentSection, seedCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -26,9 +29,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
+import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
@@ -158,9 +159,12 @@ function diaristEnvelopeRunner(
     if (!sessionAlreadyPresent) {
       await writeFile(sessionFile, "");
     }
-    const runtime = createDiaristRoleRuntime(host, {
-      loadSoul: async () => "起居郎职分（测试装载）",
-    });
+    // The production composition: the submission ledger wraps the output tool, so an
+    // accepted call leaves its sealed row even if the host turn then fails.
+    const runtime = createDiaristRoleRuntime(
+      createSubmissionLedgerHost(host, new Map([[DIARIST_OUTPUT_TOOL_NAME, "diarist" as const]])),
+      { loadSoul: async () => "起居郎职分（测试装载）" },
+    );
     await runtime.activate();
     assert.ok(registered, "diarist envelope registered no output tool");
 
@@ -1345,16 +1349,8 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       page: Record<string, unknown>,
     ): Promise<void> {
       await mkdir(join(runDir, "session"), { recursive: true });
-      await writeFile(
-        join(runDir, "admitted-request.json"),
-        `${JSON.stringify(page, null, 2)}\n`,
-        "utf8",
-      );
-      await writeFile(
-        join(runDir, "invocation.json"),
-        `${JSON.stringify({ runDirectory: runDir }, null, 2)}\n`,
-        "utf8",
-      );
+      seedCurrentSection(runDir, "admitted", page);
+      seedCurrentSection(runDir, "invocation", { runDirectory: runDir });
     }
 
     await seedRun(boundSource, {
@@ -1399,15 +1395,11 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
     );
     assert.equal(existsSync(peerSource), true);
 
-    const boundAdmitted = JSON.parse(
-      await readFile(join(boundTarget, "admitted-request.json"), "utf8"),
-    ) as { runDirectory?: string; ticketNumber?: number };
+    const boundAdmitted = readCurrentSection(boundTarget, "admitted") as { runDirectory?: string; ticketNumber?: number };
     assert.equal(boundAdmitted.ticketNumber, 863);
     assert.equal(boundAdmitted.runDirectory, boundTarget);
 
-    const peerAdmitted = JSON.parse(
-      await readFile(join(peerSource, "admitted-request.json"), "utf8"),
-    ) as { sourceRun?: { runDirectory?: string } };
+    const peerAdmitted = readCurrentSection(peerSource, "admitted") as { sourceRun?: { runDirectory?: string } };
     assert.equal(
       peerAdmitted.sourceRun?.runDirectory,
       boundTarget,
@@ -1820,14 +1812,14 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((submissions.at(-1)?.accepted as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
-      const admitted = JSON.parse(await readFile(join(runDir, "admitted-request.json"), "utf8"));
+      const admitted = readCurrentSection(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);
     });
   }
 });
 
 /**
- * Host turn already started + board ticket already written by the accept hook,
+ * Host turn already started + the receipt naming the ticket already sealed,
  * then the turn fails: the run relocates under the ticket before auto-resume,
  * whose next host request must use that current durable location.
  */
@@ -1919,24 +1911,23 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
-      existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
+      readCurrentJson(ticketPlacement.runDirectory).runState !== undefined,
       true,
       `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
     );
     assert.equal(
-      existsSync(join(unboundPlacement.runDirectory, "run-state.json")),
+      readCurrentJson(unboundPlacement.runDirectory).runState !== undefined,
       false,
-      "unbound must not keep the durable run-state after relocate",
+      "unbound must not keep the durable runState section after relocate",
     );
 
     // Relocation keeps both attempts in the package ledger, not the host original.
     const relocatedSessionFile = join(ticketPlacement.runDirectory, "session", "session.jsonl");
     const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
     assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const { recordFile } = resolveSitianRecordPath({ level: "event", kind: "attempt-history", sessionParent: relocatedSessionFile });
-    const attemptHistory = (await readSitianRecords(recordFile)).records.map((row) => row.payload as {
+    const attemptHistory = historyPayloads<{
       type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
-    });
+    }>(ticketPlacement.runDirectory, "attempt-history");
     assert.equal(attemptHistory.length, 2);
     assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
     assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
@@ -2031,10 +2022,10 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     );
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
-    const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
+    const currentPath = join(ticketPlacement.runDirectory, "current.json");
     // The resumed caller must be pointed at the relocated run's error record.
-    assert.ok(stderr.join("").includes(errorPath), `resume must point at the relocated error record: ${stderr.join("")}`);
-    const error = JSON.parse(await readFile(errorPath, "utf8")) as {
+    assert.ok(stderr.join("").includes(currentPath), `resume must point at the relocated error record: ${stderr.join("")}`);
+    const error = terminalBodyAt(currentPath, "error") as {
       kind?: unknown;
       runId?: unknown;
       diagnostic?: unknown;
@@ -2042,5 +2033,24 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
     assert.equal(error.kind, "error");
     assert.equal(error.runId, runId);
     assert.equal(typeof error.diagnostic, "string");
+  });
+});
+
+test("rewriteRoleRunDurablePages still rewrites pre-#1161 page files (one-shot migrator input)", async () => {
+  await withTempRoot("ak-legacy-pages-", async (root) => {
+    const oldRun = join(root, "unbound", "runs", "r1@judge");
+    const newRun = join(root, "863", "runs", "r1@judge");
+    await mkdir(join(newRun, "session"), { recursive: true });
+    await writeFile(join(newRun, "admitted-request.json"), JSON.stringify({ runDirectory: oldRun, sessionFile: join(oldRun, "session", "session.jsonl") }), "utf8");
+    await writeFile(join(newRun, "invocation.json"), JSON.stringify({ runDirectory: oldRun }), "utf8");
+    await writeFile(join(newRun, "run-state.json"), JSON.stringify({ runDirectory: oldRun, admittedRequestPath: join(oldRun, "admitted-request.json") }), "utf8");
+    await rewriteRoleRunDurablePages({ pagesDirectory: newRun, oldRunDirectory: oldRun, newRunDirectory: newRun });
+    const admitted = JSON.parse(await readFile(join(newRun, "admitted-request.json"), "utf8")) as Record<string, unknown>;
+    assert.equal(admitted.runDirectory, newRun);
+    assert.equal(admitted.sessionFile, join(newRun, "session", "session.jsonl"));
+    assert.equal((JSON.parse(await readFile(join(newRun, "invocation.json"), "utf8")) as Record<string, unknown>).runDirectory, newRun);
+    const state = JSON.parse(await readFile(join(newRun, "run-state.json"), "utf8")) as Record<string, unknown>;
+    assert.equal(state.runDirectory, newRun);
+    assert.equal(state.admittedRequestPath, join(newRun, "admitted-request.json"));
   });
 });

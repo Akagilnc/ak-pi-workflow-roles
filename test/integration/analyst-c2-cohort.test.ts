@@ -219,7 +219,7 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
 
     assert.deepEqual(before.reworkRatio, present(0.25));
     assert.deepEqual(before.medianWallMs, present(25_000));
-    // C2 fixtures carry no auditor-roles — gate-cycle fold stays empty (not absent-as-0).
+    // C2 fixtures book no officers — gate-cycle fold stays empty (not absent-as-0).
     assert.deepEqual(before.gateCyclesByOfficer, []);
 
     // ---- after group hand values (204 vacant, does not contribute) ----

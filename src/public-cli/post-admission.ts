@@ -26,10 +26,11 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
-import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
+import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
+import { reportRunRecord } from "../sitian-facade.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
@@ -86,7 +87,6 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
-import { recordRunStart } from "../host-session-record.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -112,7 +112,6 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import {
-  ensureRealArtifactsDirectory,
   persistReturnedRunState,
   presentTerminal,
   runWithAutoResumeLoop,
@@ -379,7 +378,7 @@ export type ControlledFailureInput = {
   knownDetails?: Readonly<Record<string, unknown>>;
   /**
    * A real failure this package hit while handling the call (e.g. the
-   * stderr.log durable write). Recorded beside the host's report; never a
+   * stderr log-line write). Recorded beside the host's report; never a
    * cause, and never written into the host's open `details`.
    */
   packageFact?: PackageSideFact;
@@ -760,20 +759,16 @@ async function settleCompletedHostTurn<
   // machinery once the retry budget is exhausted.
   let stderrLogWriteFailure: unknown;
   try {
-    await writeFile(
-      join(admitted.runDirectory, "stderr.log"),
-      result.stderr,
-      "utf8",
-    );
+    reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
   } catch (error) {
     stderrLogWriteFailure = error;
-    // Best-effort: stderr.log is secondary to the host terminal. A write
+    // Best-effort: the stderr log line is secondary to the host terminal. A write
     // failure leaves a durable note and, on a host failure, rides in
     // packageFact. It does not become the cause.
     await recordBestEffortPostDispatchDiagnostic(
       admitted,
       env,
-      `stderr.log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
+      `stderr log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
       io,
     );
   }
@@ -781,7 +776,7 @@ async function settleCompletedHostTurn<
   // Host facts are resolved before trySettle. A host failure skips trySettle
   // so a later read cannot replace that report. A clean host whose settlement
   // read throws is noted above and is not turned into a failure terminal.
-  // stderr.log and run-state writes are notes beside the host terminal.
+  // the stderr log line and run-state writes are notes beside the host terminal.
   let settled: T | undefined;
   let settledOutcome:
     | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
@@ -902,6 +897,64 @@ async function settleCompletedHostTurn<
   }
 
   return { kind: "still-missing" };
+}
+
+/**
+ * #858 / #1071: the first identifiable ticketNumber field declaration among the
+ * run's sealed rows files an unbound run (integer, digit string, or leading #N
+ * token). Terminal rows match settlement (#881): accepted and audit-escalation —
+ * an escalated submission still carries the original role params. Later
+ * receipts remain untouched; prose note/report is never consulted; this seam
+ * does not adjudicate a ticket change. Runs in the public call's own process
+ * (no role leg writes the run's current.json).
+ */
+export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+  if (admitted.ticketNumber !== undefined) return;
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted),
+  );
+  let ticketNumber: number | undefined;
+  for (const row of rows) {
+    if (
+      row.role !== admitted.role
+      || (row.kind !== "accepted" && row.kind !== "audit-escalation")
+    ) {
+      continue;
+    }
+    const payload = row.accepted;
+    if (!isRecord(payload)) continue;
+    ticketNumber = readDeclaredTicketNumber(
+      (payload as { ticketNumber?: unknown }).ticketNumber,
+    );
+    if (ticketNumber !== undefined) break;
+  }
+  if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
+}
+
+/**
+ * The ticket a diarist asserted on a completed submission, whether or not the
+ * rest of that submission was later accepted (a bounds reask does not unsay the
+ * ticket). Before this ran in the leg's accept hook; the leg now only appends its
+ * ledger rows and the public call's own process binds the ticket from them.
+ */
+export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+  if (admitted.ticketNumber !== undefined) return;
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted),
+  );
+  for (const row of rows) {
+    if (row.role !== admitted.role || !isRecord(row.accepted)) continue;
+    if (row.accepted.status !== "completed" || !("ticketNumber" in row.accepted)) continue;
+    const ticketNumber = parseTicketNumber(row.accepted.ticketNumber);
+    if (ticketNumber !== undefined) {
+      await bindAdmittedTicketNumber(admitted, ticketNumber);
+      return;
+    }
+  }
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -1042,29 +1095,7 @@ export async function dispatchPostAdmissionTurn<
       // an escalated submission still carries the original role params.
       // Later receipts remain untouched; prose note/report is never consulted;
       // this seam does not adjudicate a ticket change.
-      if (admitted.ticketNumber === undefined) {
-        const rows = await readRecordedSubmissionRows(
-          admitted.projectRoot,
-          admitted.runId,
-          ledgerReadScope(admitted),
-        );
-        let ticketNumber: number | undefined;
-        for (const row of rows) {
-          if (
-            row.role !== admitted.role
-            || (row.kind !== "accepted" && row.kind !== "audit-escalation")
-          ) {
-            continue;
-          }
-          const payload = row.accepted;
-          if (!isRecord(payload)) continue;
-          ticketNumber = readDeclaredTicketNumber(
-            (payload as { ticketNumber?: unknown }).ticketNumber,
-          );
-          if (ticketNumber !== undefined) break;
-        }
-        if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
-      }
+      await bindSealedTicketNumber(admitted);
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
@@ -1160,7 +1191,7 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
     // Selected host axis rides the shared Host envelope for in-turn tools
-    // (detour usage ledger) — never a pre-spawn invocation.json reread.
+    // (detour usage ledger) — never a pre-spawn current.json reread.
     if (typeof env.host === "string" && env.host.trim() !== "") {
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }
@@ -1186,7 +1217,6 @@ export async function dispatchPostAdmissionTurn<
       // host CLI's native resume. Nothing here may gate, redirect or reshape
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
-      recordRunStart(admitted.runDirectory);
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
@@ -1872,7 +1902,7 @@ export async function runPostAdmissionSeatResume<
     await presentResumeFailurePointer(
       input.io,
       error,
-      (failure) => writeResumeDiagnosticFile(
+      (failure) => writeResumeDiagnostic(
         loaded.admitted.runDirectory,
         loaded.admitted.runId,
         failure,
@@ -1904,13 +1934,13 @@ async function pointExistingRunFailure(
     record = await readRoleRunState(runDirectory, authority);
   } catch {
     await presentResumeFailurePointer(io, thrown, (failure) =>
-      writeResumeDiagnosticFile(runDirectory, runId, failure),
+      writeResumeDiagnostic(runDirectory, runId, failure),
     );
     return true;
   }
   if (record === undefined) return false;
   await presentResumeFailurePointer(io, thrown, (failure) =>
-    writeResumeDiagnosticFile(runDirectory, runId, failure, record.role),
+    writeResumeDiagnostic(runDirectory, runId, failure, record.role),
   );
   return true;
 }
@@ -1966,27 +1996,20 @@ async function presentResumeFailurePointer(
   }
 }
 
-async function writeResumeDiagnosticFile(
+async function writeResumeDiagnostic(
   runDirectory: string,
   runId: string,
   failure: ControlledFailure,
   role?: AdmittedRoleInvocation["role"],
 ): Promise<string> {
-  const dir = await ensureRealArtifactsDirectory(runDirectory);
-  const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
-  await writeFile(
-    path,
-    `${JSON.stringify({
-      runId,
-      ...(role === undefined ? {} : { role }),
-      diagnostic: failure.diagnostic,
-      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-      ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-      ...(failure.details === undefined ? {} : { details: failure.details }),
-    }, null, 2)}\n`,
-    { encoding: "utf8", flag: "wx" },
-  );
-  return path;
+  return reportRunRecord(runDirectory, "resume-diagnostic", {
+    runId,
+    ...(role === undefined ? {} : { role }),
+    diagnostic: failure.diagnostic,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+    ...(failure.details === undefined ? {} : { details: failure.details }),
+  }, "post-admission").recordFile;
 }
 
 /**

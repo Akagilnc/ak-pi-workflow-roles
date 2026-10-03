@@ -30,6 +30,7 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { snapshotAnalystDir, withBusinessRepo, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { seedCurrentSection, seedTerminal, readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -88,32 +89,25 @@ async function seedBookTicketRun(input: {
     `${input.runId}@coder`,
   );
   await mkdir(join(runDir, "session"), { recursive: true });
-  await mkdir(join(runDir, "artifacts"), { recursive: true });
-  await writeFile(
-    join(runDir, "invocation.json"),
-    `${JSON.stringify({
-      role: "coder",
-      runId: input.runId,
-      bookKey,
-      projectRoot: input.repo,
-      ticketNumber: input.ticketNumber,
-    }, null, 2)}\n`,
-  );
+  seedCurrentSection(runDir, "invocation", {
+    role: "coder",
+    runId: input.runId,
+    bookKey,
+    projectRoot: input.repo,
+    ticketNumber: input.ticketNumber,
+  });
   await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
-  await writeFile(
-    join(runDir, "artifacts", "report.json"),
-    `${JSON.stringify({
+  seedTerminal(runDir, "report", {
+    role: "coder",
+    runId: input.runId,
+    phase: "apply",
+    outcome: {
+      kind: "accepted",
       role: "coder",
-      runId: input.runId,
-      phase: "apply",
-      outcome: {
-        kind: "accepted",
-        role: "coder",
-        status: "completed",
-        decisiveFacts: {},
-      },
-    }, null, 2)}\n`,
-  );
+      status: "completed",
+      decisiveFacts: {},
+    },
+  });
   return bookKey;
 }
 
@@ -391,58 +385,44 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           `${input.runId}@${input.role}`,
         );
         await mkdir(join(runDir, "session"), { recursive: true });
-        await writeFile(
-          join(runDir, "run-state.json"),
-          `${JSON.stringify({
-            runId: input.runId,
-            role: input.role,
-            state: input.state,
-            bookKey,
-            projectRoot: repo,
-            runDirectory: runDir,
-            admittedRequestPath: join(runDir, "admitted-request.json"),
-            sessionDirectory: join(runDir, "session"),
-            sessionFile: join(runDir, "session", "session.jsonl"),
-          }, null, 2)}\n`,
-        );
-        await writeFile(
-          join(runDir, "invocation.json"),
-          `${JSON.stringify({
-            role: input.role,
-            runId: input.runId,
-            bookKey,
-            projectRoot: repo,
-            ticketNumber: ticket,
-          }, null, 2)}\n`,
-        );
+        seedCurrentSection(runDir, "runState", {
+          runId: input.runId,
+          role: input.role,
+          state: input.state,
+          bookKey,
+          projectRoot: repo,
+          runDirectory: runDir,
+          sessionDirectory: join(runDir, "session"),
+          sessionFile: join(runDir, "session", "session.jsonl"),
+        });
+        seedCurrentSection(runDir, "invocation", {
+          role: input.role,
+          runId: input.runId,
+          bookKey,
+          projectRoot: repo,
+          ticketNumber: ticket,
+        });
         if (input.lock !== undefined && input.lock !== null) {
           await writeFile(join(runDir, "writer.lock"), input.lock, "utf8");
         }
         if (input.terminal !== undefined) {
-          await mkdir(join(runDir, "artifacts"), { recursive: true });
           // Session face so present-terminal can still emit readable metrics.
           await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
           if (input.terminal === "present") {
-            await writeFile(
-              join(runDir, "artifacts", "report.json"),
-              `${JSON.stringify({
+            seedTerminal(runDir, "report", {
+              role: input.role,
+              runId: input.runId,
+              phase: "apply",
+              outcome: {
+                kind: "accepted",
                 role: input.role,
-                runId: input.runId,
-                phase: "apply",
-                outcome: {
-                  kind: "accepted",
-                  role: input.role,
-                  status: "completed",
-                  decisiveFacts: {},
-                },
-              }, null, 2)}\n`,
-            );
+                status: "completed",
+                decisiveFacts: {},
+              },
+            });
           } else {
-            await writeFile(
-              join(runDir, "artifacts", "report.json"),
-              "not-json{",
-              "utf8",
-            );
+            // A terminal section whose body is not a typed object is unreadable.
+            seedTerminal(runDir, "report", "not-json{");
           }
         }
         return runDir;
@@ -548,7 +528,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
 
         // Package does not settle or delete for the caller.
         assert.equal(
-          JSON.parse(await readFile(join(deadDir, "run-state.json"), "utf8")).state,
+          readCurrentSection(deadDir, "runState").state,
           "running",
         );
       });

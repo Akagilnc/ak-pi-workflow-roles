@@ -18,7 +18,7 @@ export function encodeTerminalField(value: string): string {
 }
 
 export type TerminalArtifactRef = {
-  kind: "report" | "evidence" | "error";
+  kind: "report" | "error";
   /** Openable local reference (path). Layout is private; the ref value is the contract. */
   path: string;
 };

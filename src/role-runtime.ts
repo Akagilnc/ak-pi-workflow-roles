@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readPageSync, runCurrentPath } from "./run-dossier.ts";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -89,7 +90,6 @@ import {
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
 import { TicketProvenanceInputError } from "./ticket-provenance.ts";
-import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
   type GatekeeperRuntimeDependencies,
@@ -773,10 +773,9 @@ function readRoleRunCoordinates(ctx: HostContext, label: string): {
 } {
   const runDirectory = runDirectoryFromHostContext(ctx);
   if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
-  const admittedPath = join(runDirectory, "admitted-request.json");
-  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
-  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
-    throw new Error(`${label} admitted-request missing projectRoot (${admittedPath})`);
+  const admitted = readPageSync(runDirectory, "admitted");
+  if (typeof admitted?.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`${label} current.json admitted section missing projectRoot (${runCurrentPath(runDirectory)})`);
   }
   return {
     runDirectory,
@@ -838,11 +837,8 @@ export function createDiaristRoleRuntime(
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        if (ticketNumber !== undefined) {
-          if (coords.boundTicketNumber === undefined) {
-            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
-          }
-        }
+        // The ticket binds in the public call's own process after the turn, from the sealed
+        // ticketNumber (settlement seam); this leg never writes the run's current.json.
         // Strict-schema hosts emit ticketSessions: null for a single ticket.
         const multiTicket = submitted?.ticketSessions != null;
         const singleSessions = submitted && !multiTicket

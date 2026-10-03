@@ -1,275 +1,81 @@
 /**
- * Canonical layout and reader for run-directory typed terminal artifacts.
- * Settlement publish*Artifacts uses these names (report.json / error.json /
- * audit-incomplete.json under artifacts/, plus durable failure fallbacks).
- * The reader only checks presence and structural
+ * The leg's terminal: the `terminal` section of current.json (#1161), written
+ * whole by settlement, last write wins. `report` = an accepted / escalated
+ * receipt, `error` = a controlled failure, `no_receipt` = the leg ended with no
+ * accepted receipt (#836). The reader only checks presence and structural
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
-import { randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename } from "node:path";
 
-import { parseRunLeaf, roleRunArtifactsDirectory } from "./role-run-placement.ts";
+import { parseRunLeaf } from "./role-run-placement.ts";
+import { readHistoryRowsSync, readSectionSync, writeSectionSync } from "./run-dossier.ts";
 
-import { isRecord, errorText, isMissingPathError } from "./unknown-value.ts";
+import { isRecord } from "./unknown-value.ts";
 
-export const RUN_TERMINAL_REPORT_FILE = "report.json" as const;
-export const RUN_TERMINAL_ERROR_FILE = "error.json" as const;
-export const RUN_TERMINAL_EVIDENCE_FILE = "evidence.json" as const;
-export const RUN_TERMINAL_ERROR_SETTLEMENT_FILE = "error.settlement.json" as const;
-export const RUN_TERMINAL_ARTIFACT_FILES = [
-  RUN_TERMINAL_REPORT_FILE,
-  RUN_TERMINAL_ERROR_FILE,
-  "audit-incomplete.json",
-] as const;
+export type RunTerminalFace = "report" | "error" | "no_receipt";
 
-export type RunTerminalArtifactFile = (typeof RUN_TERMINAL_ARTIFACT_FILES)[number];
-
-/**
- * Fixed durable failure paths publishFailureArtifacts may settle when the
- * conventional artifacts/error.json name cannot be written. Shared face so the
- * reader follows the publisher — not a parallel search algorithm.
- * Relative to the run directory.
- */
-export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
-  `artifacts/${RUN_TERMINAL_ERROR_SETTLEMENT_FILE}`,
-  RUN_TERMINAL_ERROR_SETTLEMENT_FILE,
-] as const;
-
-/** Publisher and reader share the open-ended error face stem. */
-export const UNIQUE_ERROR_FALLBACK_STEM = "error";
-export function uniqueErrorFallbackName(): string {
-  return `${UNIQUE_ERROR_FALLBACK_STEM}.${randomUUID()}.json`;
-}
-const UNIQUE_ERROR_FALLBACK_NAME = new RegExp(
-  `^${UNIQUE_ERROR_FALLBACK_STEM}\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$`, "i",
-);
-
-export type RunTerminalArtifactRead =
+export type RunTerminalRead =
   | { readonly status: "absent" }
   | {
       readonly status: "present";
-      readonly file: RunTerminalArtifactFile;
-      readonly path: string;
+      readonly face: RunTerminalFace;
       readonly body: Record<string, unknown>;
     }
-  | {
-      readonly status: "unreadable";
-      readonly file: RunTerminalArtifactFile;
-      readonly path: string;
-      readonly reason: string;
-    };
+  | { readonly status: "unreadable"; readonly reason: string };
+
+/** Replace the leg's terminal. */
+export function writeRunTerminal(
+  runDirectory: string,
+  face: RunTerminalFace,
+  body: Record<string, unknown>,
+): void {
+  writeSectionSync(runDirectory, "terminal", { face, at: new Date().toISOString(), body });
+}
 
 /**
- * Minimum producer-owned face shared by settlement terminal artifacts
- * (report / error / audit-incomplete). Consumer-driven: enough to identify a
- * usable typed terminal artifact; null, arrays, primitives, and role-less
- * objects are unreadable (ADR 0043).
+ * Read the leg's terminal. Minimum producer-owned face: a typed object body
+ * with a nonblank `role` (ADR 0043); anything else is unreadable. Absence is a
+ * valid no-receipt state. A damaged current.json throws.
  */
-function readUsableTerminalArtifactBody(
-  body: unknown,
-): { readonly ok: true; readonly body: Record<string, unknown> } | { readonly ok: false; readonly reason: string } {
-  if (body === null) {
-    return { ok: false, reason: "terminal artifact JSON value is null" };
+export function readRunTerminal(runDirectory: string): RunTerminalRead {
+  const terminal = readSectionSync(runDirectory, "terminal");
+  if (terminal === undefined) return { status: "absent" };
+  const { face, body } = terminal;
+  if (face !== "report" && face !== "error" && face !== "no_receipt") {
+    return { status: "unreadable", reason: "terminal section has no known face" };
   }
   if (!isRecord(body)) {
-    return {
-      ok: false,
-      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`,
-    };
+    return { status: "unreadable", reason: "terminal body is not a typed object" };
   }
   if (typeof body.role !== "string" || body.role.trim() === "") {
-    return {
-      ok: false,
-      reason: "terminal artifact missing nonblank producer-owned role field",
-    };
+    return { status: "unreadable", reason: "terminal body missing nonblank producer-owned role field" };
   }
-  return { ok: true, body };
-}
-
-async function readTerminalArtifactAtPath(
-  path: string,
-  file: RunTerminalArtifactFile,
-): Promise<RunTerminalArtifactRead | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: errorText(error),
-    };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason:
-        error instanceof Error
-          ? error.message
-          : `terminal artifact JSON parse failed: ${String(error)}`,
-    };
-  }
-  const usable = readUsableTerminalArtifactBody(parsed);
-  if (!usable.ok) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: usable.reason,
-    };
-  }
-  return { status: "present", file, path, body: usable.body };
-}
-
-async function listUniqueErrorFallbackPaths(
-  directories: readonly string[],
-): Promise<string[]> {
-  const found: string[] = [];
-  for (const dir of directories) {
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch (error) {
-      if (isMissingPathError(error)) continue;
-      throw error;
-    }
-    for (const name of names.sort((a, b) => a.localeCompare(b))) {
-      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join(dir, name));
-    }
-  }
-  return found;
+  return { status: "present", face, body: face === "report" ? withSubmittedPayloads(runDirectory, body) : body };
 }
 
 /**
- * Publisher run-directory face is `<runId>@<role>`. Parent-directory unique
- * fallbacks are shared across sibling runs, so binding uses this runId only.
+ * The report's outcome carries the verdict facts only; the role's submitted payloads are not
+ * stored a second time. A reader that wants them takes them from the attempt-history row the
+ * same settlement appended: the last row of this role, whose outcome holds the payloads.
+ */
+function withSubmittedPayloads(runDirectory: string, body: Record<string, unknown>): Record<string, unknown> {
+  const outcome = body.outcome;
+  if (!isRecord(outcome) || outcome.payloads !== undefined) return body;
+  for (const row of [...readHistoryRowsSync(runDirectory)].reverse()) {
+    if (row.kind !== "attempt-history" || !isRecord(row.payload)) continue;
+    const attempt = row.payload.outcome;
+    if (isRecord(attempt) && attempt.role === outcome.role && Array.isArray(attempt.payloads)) {
+      return { ...body, outcome: { ...outcome, payloads: attempt.payloads } };
+    }
+  }
+  return body;
+}
+
+/**
+ * Run-directory face is `<runId>@<role>`.
  * Sole authority for runDirectory → runId (last `@` split).
  */
 export function runIdFromRunDirectory(runDirectory: string): string | undefined {
   return parseRunLeaf(basename(runDirectory))?.runId;
-}
-
-/**
- * Shared parent-directory unique fallback may be adopted only when the
- * publisher-owned body.runId equals this run directory's runId. Same-run
- * artifactsDir / runDirectory candidates keep path ownership and skip this.
- * expectedRunId undefined (unparseable run dir) → never bound.
- */
-function presentUniqueFallbackBoundToRun(
-  body: Record<string, unknown>,
-  expectedRunId: string | undefined,
-): boolean {
-  if (expectedRunId === undefined) return false;
-  return typeof body.runId === "string" && body.runId === expectedRunId;
-}
-
-/**
- * Sole authority for seam-owned unique error.<uuid>.json candidates.
- * Used by both clearOpposite (settlement) and readRunTerminalArtifact — do not
- * re-enumerate the same-run / parent unique set elsewhere.
- * Ownership:
- * - same-run dirs (artifacts/, runDir): path ownership — all unique names
- * - parent runs/: only body.runId-bound faces; unparseable runId or unreadable body → none
- */
-export async function listSeamOwnedUniqueErrorFacePaths(
-  runDirectory: string,
-): Promise<readonly string[]> {
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  const owned: string[] = await listUniqueErrorFallbackPaths([
-    artifactsDir,
-    runDirectory,
-  ]);
-  const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read === undefined || read.status !== "present") continue;
-    if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
-    owned.push(path);
-  }
-  return owned;
-}
-
-type PresentOrUnreadable = Exclude<RunTerminalArtifactRead, { status: "absent" }>;
-
-/**
- * Publish contract (#953): only failure publish continues after clearOpposite
- * failure, so a multi-class residue (residual report/audit beside a new error
- * face) means the current settlement is failure. Prefer failure-class faces
- * over success/audit — never filesystem mtime (copy/restore/utimes can lie).
- */
-function failureClassRank(file: RunTerminalArtifactFile): number {
-  return file === "error.json" ? 1 : 0;
-}
-
-/**
- * Read the current typed terminal artifact for a run directory.
- *
- * Candidate set (publisher-owned faces only):
- * 1) conventional artifacts/{report,error,audit-incomplete}.json
- * 2) publisher fixed failure fallbacks (error.settlement.json faces)
- * 3) seam-owned unique error.<uuid>.json via listSeamOwnedUniqueErrorFacePaths
- *    (same-run path ownership + parent body.runId binding — shared with clear)
- *
- * Invariant: when more than one present face remains (e.g. clearOpposite failed
- * during failure publish and a fallback was settled beside a residual report),
- * adopt failure-class over success/audit by the publish contract — not mtime.
- * Same-class ties keep candidate enumeration order (conventional before
- * fallbacks before unique).
- *
- * Unreadable faces never outrank a present face. Parent unique unreadable
- * files never enter the shared enumerator (cannot prove run identity).
- * Absence of every known durable face is a valid no-receipt state.
- */
-export async function readRunTerminalArtifact(
-  runDirectory: string,
-): Promise<RunTerminalArtifactRead> {
-  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  const present: Array<Extract<PresentOrUnreadable, { status: "present" }>> = [];
-  const unreadable: Array<Extract<PresentOrUnreadable, { status: "unreadable" }>> =
-    [];
-
-  const consider = (read: RunTerminalArtifactRead | undefined): void => {
-    if (read === undefined || read.status === "absent") return;
-    if (read.status === "present") {
-      present.push(read);
-      return;
-    }
-    unreadable.push(read);
-  };
-
-  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    consider(await readTerminalArtifactAtPath(join(artifactsDir, file), file));
-  }
-
-  for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    consider(
-      await readTerminalArtifactAtPath(join(runDirectory, relative), "error.json"),
-    );
-  }
-
-  // Unique same-run + parent-bound faces: one enumerator shared with clear.
-  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
-    consider(await readTerminalArtifactAtPath(path, "error.json"));
-  }
-
-  if (present.length > 0) {
-    present.sort(
-      (a, b) => failureClassRank(b.file) - failureClassRank(a.file),
-    );
-    return present[0]!;
-  }
-  if (unreadable.length > 0) {
-    return unreadable[0]!;
-  }
-  return { status: "absent" };
 }

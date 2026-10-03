@@ -1,0 +1,25 @@
+{
+  "invocation": {
+    "role": "judge",
+    "runId": "019ff000-2006-7000-8000-0000000002c6",
+    "bookKey": "fixture-book-c2-c",
+    "projectRoot": "/analyst-fixture/c2-issue-203",
+    "ticketNumber": 203
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "judge",
+      "runId": "019ff000-2006-7000-8000-0000000002c6",
+      "outcome": {
+        "kind": "accepted",
+        "role": "judge",
+        "status": "converged",
+        "decisiveFacts": {
+          "classCount": 1
+        }
+      }
+    }
+  }
+}

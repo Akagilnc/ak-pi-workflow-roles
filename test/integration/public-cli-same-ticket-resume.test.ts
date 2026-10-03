@@ -13,9 +13,14 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
+import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
+import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
+import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -28,7 +33,6 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
-import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -828,11 +832,8 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     // Re-projecting a settled child is a read, not a second host attempt.
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
     await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
-    const { recordFile: firstHistoryFile } = resolveSitianRecordPath({
-      level: "event", kind: "attempt-history",
-      sessionParent: piDurablePrincipalAuthority.decode(settledChild.admitted.principal).sessionFile,
-    });
-    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 1);
+    const firstHistory = () => historyPayloads(seen[0]!.runDirectory, "attempt-history");
+    assert.equal(firstHistory().length, 1);
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -900,8 +901,13 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
     });
     assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-    assert.equal((await readSitianRecords(firstHistoryFile)).records.length, 2,
+    assert.equal(firstHistory().length, 2,
       "the second real host turn adds exactly one no-receipt attempt");
+    assert.equal(
+      (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
+      "no_receipt",
+      "the leg's terminal is now this court's no_receipt (last write wins)",
+    );
     assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume", "same-parent auditor re-summons must resume");
@@ -1197,6 +1203,44 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.equal(officerRequests.length, 2);
     assert.equal(coderTurns, 2);
+    // At rest after bounce -> resume -> accepted, the run holds only its dossier
+    // (#1161): current.json, history.jsonl, log.jsonl, state.jsonl, the session volume and the
+    // coder's frozen task.md. No artifacts/, stderr.log, headless-*, run-state /
+    // invocation / admitted-request json or .run-starts; no attachments/ because
+    // nothing was frozen into it. The session volume holds the host session
+    // (and the gate officer's own session volume), nothing else.
+    const coderRunDirectory = seen.find((turn) => turn.kind === "initial")!.runDirectory;
+    assert.deepEqual(
+      (await readdir(coderRunDirectory)).sort(),
+      ["current.json", "history.jsonl", "log.jsonl", "session", "state.jsonl", "task.md"],
+    );
+    assert.deepEqual(
+      (await readdir(join(coderRunDirectory, "session"))).sort(),
+      ["session.jsonl", "worker-submission-gate"],
+    );
+    // The analyst's reader finds the summoned inspector through the officer pointer the
+    // gate booked, and counts its rounds from that officer's own session.
+    const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
+    assert.deepEqual(rounds.map(({ officer, status }) => ({ officer, status })), [{ officer: "inspector", status: "converged" }]);
+    // The terminal as the analyst reads it carries the submitted payloads, taken from history.
+    const read = readRunTerminal(coderRunDirectory);
+    assert.equal(read.status, "present");
+    assert.deepEqual(
+      ((read as unknown as { body: { outcome: { payloads: unknown } } }).body.outcome.payloads),
+      [{ status: "completed", report: "work submitted" }],
+    );
+    // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
+    assert.deepEqual(
+      { runId: (await loadNotarySourceRunLocator(coderRunDirectory)).runId, role: (await loadNotarySourceRunLocator(coderRunDirectory)).role },
+      { runId: "run-worker-gate-resume-993", role: "coder" },
+    );
+    assert.deepEqual(
+      (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(({ kind, accepted }) => ({ kind, accepted })),
+      [
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
+      ],
+    );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true });
@@ -1277,7 +1321,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
   }
 });
 
-test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
+test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
   // Real public entry (not an internal dispatchPostAdmissionTurn call): a
   // bare `ak-role resume` that seals an open court is the one production path
   // where courtAttemptId is set and clearCurrentCourt actually runs.
@@ -1295,36 +1339,18 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
   // clearCurrentCourt genuinely runs and can be fault-injected (not
   // resurrecting a prior attempt to paper over the contradiction).
   const scratch = await openNotaryScratch("home-cleanup-durable-");
+  let currentJsonLocked = "";
   try {
-    const { home, project, io: baseIo, credentials } = scratch;
+    const { home, project, io, credentials } = scratch;
     const seen: SeenTurn[] = [];
     let turn = 0;
-    let runStateFile = "";
-    // Manual resume dispatches with the real io given to runAkRole (no
-    // dummyIo — that only wraps the auto-resume loop's own attempts). This
-    // callback restores write access to run-state.json the instant the
-    // sealing turn reports *any* diagnostic — a structural "a best-effort
-    // diagnostic fired" signal (armed only for this turn), never inspecting
-    // what the diagnostic text says (#840 bounce class 2: the earlier version
-    // of this test matched the diagnostic's exact English wording to decide
-    // when to restore, and separately locked that wording as pass/fail —
-    // both are free-text mechanical dependencies the quality law forbids).
-    // The restore must land before the caller's own later lawful persist
-    // (markRunTerminal) also touches run-state.json, or this test's fault
-    // injection would collide with it too; io.stderr is the only synchronous,
-    // real (non-dummy) seam available at that exact point in the manual-
-    // resume dispatch chain.
+    // The seal lands through the real ledger; the turn wrapper below then makes
+    // current.json read-only (an in-place rewrite of an existing file fails on its
+    // own mode, a read-only directory would not stop it), so the leg's terminal
+    // write is refused while reads and history.jsonl appends still work. The proof
+    // that the injection fired is structural, never the diagnostic's wording
+    // (#840 bounce class 2): the stale terminal face and the one dossier entry.
     let sealingTurnArmed = false;
-    let cleanupDiagnosticObserved = false;
-    const io = {
-      stdout: baseIo.stdout,
-      stderr: (_text: string) => {
-        if (sealingTurnArmed && !cleanupDiagnosticObserved) {
-          cleanupDiagnosticObserved = true;
-          chmodSync(runStateFile, 0o644);
-        }
-      },
-    };
     const inner = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1350,11 +1376,11 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
             seal: false,
           })(extraArgs, options);
         }
-        // Bare resume of the still-open court seals it for the first time:
-        // make the run-state write that clearCurrentCourt performs fail (its
-        // read still succeeds). Arm the stderr-restore hook only for this turn.
+        // Bare resume of the still-open court seals it for the first time. The seal
+        // writes history.jsonl and current.json in the run directory, so the lock that
+        // makes the terminal write fail is applied by the host wrapper below, after
+        // the seal landed. Armed only for this turn.
         sealingTurnArmed = true;
-        await chmod(runStateFile, 0o400);
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -1362,7 +1388,15 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         })(extraArgs, options);
       },
     });
-    const host = observingSealHost(inner, seen);
+    const observed = observingSealHost(inner, seen);
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        const out = await observed.executeTurn(request);
+        // The seal is on the record; now make the terminal write of current.json fail.
+        if (sealingTurnArmed) lockCurrentJson(dirname(currentJsonLocked));
+        return out;
+      },
+    };
 
     const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
@@ -1379,7 +1413,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
-    runStateFile = join(runDirectory, "run-state.json");
+    currentJsonLocked = join(runDirectory, "current.json");
 
     const opened = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
@@ -1419,9 +1453,16 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     // The dispatch fact must survive the cleanup failure: the real public
     // entry still delivers accepted, not redone or lost (structured terminal
     // field, not stdout presentation text).
-    assert.equal(resumed.exitCode, 0, "cleanup failure after accepted settlement must not fail the command");
+    assert.equal(resumed.exitCode, 0, "terminal write failure after accepted settlement must not fail the command");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.ok(cleanupDiagnosticObserved, "the injected cleanup failure must actually have been observed");
+    // The injection really fired: the accepted terminal FACT is the last terminal
+    // row in history.jsonl (the earlier two legs left no_receipt rows), while its
+    // rendering was refused — current.json is still the planted directory.
+    const terminalFaces = statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
+    assert.equal(terminalFaces.at(-1), "report", "the accepted terminal is recorded as a fact");
+    assert.equal(terminalFaces.slice(0, -1).every((face) => face === "no_receipt"), true);
+    assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true,
+      "the injected terminal write failure must actually have been observed");
 
     // The dossier is the single authoritative durable channel here (the
     // session it appends to is healthy, so no run-artifacts fallback file is
@@ -1434,10 +1475,20 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     const dossierEntries = sessionLines
       .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
       .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-    assert.equal(dossierEntries.length, 1, "the dossier channel must carry exactly one cleanup diagnostic entry");
-    const cleanupText = dossierEntries[0]?.data?.diagnostic;
-    assert.equal(typeof cleanupText, "string");
+    // One entry per refused dossier write (the run-state persist and the terminal
+    // publish), none duplicated.
+    assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
+    for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    assert.equal(
+      new Set(dossierEntries.map((entry) => entry.data?.diagnostic)).size,
+      dossierEntries.length,
+      "the two entries are distinct refused writes, not a standing duplicate",
+    );
   } finally {
+    // The injected lock makes the run directory read-only; undo it so the scratch can go.
+    if (currentJsonLocked !== "") {
+      try { unlockCurrentJson(dirname(currentJsonLocked)); } catch { /* lock never took hold */ }
+    }
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }

@@ -1,0 +1,27 @@
+{
+  "invocation": {
+    "role": "coder",
+    "runId": "019ff000-0006-7000-8000-0000000000f6",
+    "bookKey": "fixture-book",
+    "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "coder",
+      "runId": "019ff000-0006-7000-8000-0000000000f6",
+      "phase": "plan",
+      "outcome": {
+        "kind": "accepted",
+        "role": "coder",
+        "status": "planned",
+        "decisiveFacts": {}
+      },
+      "receipt": {
+        "status": "planned",
+        "report": "fixture planned"
+      }
+    }
+  }
+}

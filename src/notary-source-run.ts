@@ -74,7 +74,7 @@ async function requireRunDirectory(candidate: string, display: string): Promise<
  * - absolute/relative path that realpath's to that same book runs slot
  *
  * Rejects project-tree projections and any path outside the project's ledger book runs.
- * Retained `run-state.json` must match basename identity and book binding.
+ * Retained current.json runState must match basename identity and book binding.
  */
 export async function resolveNotarySourceRunLocator(options: {
   readonly projectRoot: string;

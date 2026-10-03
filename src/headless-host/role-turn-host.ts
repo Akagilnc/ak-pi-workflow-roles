@@ -6,7 +6,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
@@ -18,6 +19,7 @@ import {
   externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
+  recordTurnDelivery,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
@@ -462,31 +464,43 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
       // config.env owns package-root/child env; do not re-spread process.env over it.
       const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
-      const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
-      await writeFile(systemPromptPath, systemPrompt, "utf8");
+      // CLI start-up inputs (system prompt / schema / MCP config files) are not
+      // dossier: they live in a throwaway directory, and what was delivered is
+      // recorded once in current.json `delivery` for the submission rows.
+      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+      const inputsDirectory = await mkdtemp(join(tmpdir(), "ak-role-headless-"));
+      const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
-      if (codex) {
-        // #1148: Codex --output-schema requires a native strict transport schema.
-        // Project from the unique open declaration; do not alter package receipt rules.
-        if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
-          outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
+      let startedWithSchema: unknown;
+      // A setup failure after mkdtemp must not leave the prompt material behind.
+      try {
+        await writeFile(systemPromptPath, systemPrompt, "utf8");
+        let deliveredSchema: unknown;
+        if (codex) {
+          // #1148: Codex --output-schema requires a native strict transport schema.
+          // Project from the unique open declaration; do not alter package receipt rules.
+          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
+            outputSchemaPath = join(inputsDirectory, "output-schema.json");
+            deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
+            await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+          }
+        } else {
+          mcpConfigPath = join(inputsDirectory, "mcp-config.json");
           await writeFile(
-            outputSchemaPath,
-            `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
+            mcpConfigPath,
+            `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
+          // #959: navigator prose exit — no closed JSON schema on claude either.
+          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
         }
-      } else {
-        mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
-        await writeFile(
-          mcpConfigPath,
-          `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-          "utf8",
-        );
+        startedWithSchema = deliveredSchema;
+      } catch (setupError) {
+        await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
+        throw setupError;
       }
 
-      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
       let exitedSessionId: string | undefined;
       try {
       outcome = await driveExternalRoleTurnRounds(prepared, request, {
@@ -535,6 +549,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }) !== undefined;
           }
 
+          // What this CLI start was given: one history record per start.
+          await recordTurnDelivery(request.runDirectory, {
+            systemPrompt,
+            ...(startedWithSchema === undefined ? {} : { outputSchema: startedWithSchema }),
+          }, "headless-host");
           let spawned: HeadlessSpawnResult;
           try {
             spawned = await spawnHeadlessTurn({
@@ -715,12 +734,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         },
       });
       } finally {
+        await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
         try {
           if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
             host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
             sessionDirectory: sessionDirectoryOf(request.runDirectory), sessionParent,
-            continuation: request.continuation,
-            ...(request.model !== undefined ? { model: request.model } : {}),
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
         } catch (error) {

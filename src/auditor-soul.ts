@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readPageSync } from "./run-dossier.ts";
 import { basename, join } from "node:path";
 
 import { parseRunLeaf } from "./role-run-placement.ts";
@@ -122,15 +123,8 @@ export async function readAuditorResumeBinding(runDirectory: string): Promise<
   | { readonly subject: AuditorSoulRole; readonly sourceRunDirectory: string }
   | undefined
 > {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as unknown;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  if (!isRecord(raw)) return undefined;
-  const record = raw as { sourceRunPath?: unknown; auditorSubject?: unknown };
+  const record = readPageSync(runDirectory, "admitted");
+  if (record === undefined) return undefined;
   if (typeof record.sourceRunPath !== "string" || record.sourceRunPath.trim() === "") return undefined;
   const subject = isAuditorSoulRole(record.auditorSubject)
     ? record.auditorSubject

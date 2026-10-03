@@ -7,9 +7,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
+
+/** A parent run inside a ledger home: the appender only books records for a real run leaf. */
+function parentRunDirectory(root: string): string {
+  return `${root}/.ak-roles/books/gate-envelope/runs/01a0cs969-parent-7000-8000-000000000001@judge`;
+}
 
 test("#1028 secretariat_verdict reads the shared review status",
   async () => {
@@ -117,7 +125,8 @@ test("#1028 secretariat_verdict reads the shared review status",
 );
 
 test("#969 secretariat_verdict returns escalation for direct officer resume",
-  async () => {
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    const parentRun = parentRunDirectory(root);
     const nonPass: unknown[] = [];
     const receipt = {
       status: "escalate",
@@ -126,7 +135,7 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
     const outcome = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
-        sessionManager: { getSessionFile: () => "/tmp/unused" },
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t1",
@@ -154,6 +163,9 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
       }),
     });
     assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
+    const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
+    assert.equal(booked.length, 1, "the officer run is booked once in the parent history");
+    assert.equal((booked[0]!.payload as { officer?: string }).officer, "countersign");
     assert.deepEqual(outcome, {
       status: "escalate",
       officer: "countersign",
@@ -161,17 +173,18 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
       runId: "01a0cs969-esc-7000-8000-000000000099",
       runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
     });
-  },
+  }),
 );
 
 
 test("#969 requireSubmissionGate pass returns receipt + nested runId",
-  async () => {
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    const parentRun = parentRunDirectory(root);
     const receipt = { status: "converged", note: "署" };
     const outcome = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
-        sessionManager: { getSessionFile: () => "/tmp/unused" },
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t-pass",
@@ -202,5 +215,5 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
     assert.equal(outcome!.officer, "countersign");
     assert.deepEqual(outcome!.receipt, receipt);
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
-  },
+  }),
 );

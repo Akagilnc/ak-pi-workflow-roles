@@ -44,6 +44,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 test("shared accepted submission binds settled attendance before public extraction; prior activation cannot deliver late", async () => {
   await withTempRoot("navigator-bound-closure-", async (home) => {
@@ -513,7 +514,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
     });
 });
 
-test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
+test("public admitted section projects typed subject/authority; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
     return withPrimaryAwareCleanup(
@@ -524,16 +525,12 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     const sessionDir = join(runDir, "session");
     await mkdir(sessionDir, { recursive: true });
     const prose = "Canonical nonblank prose Judge request for navigation.";
-    await writeFile(
-      join(runDir, "admitted-request.json"),
-      JSON.stringify({
-        role: "judge",
-        runId: "run-public-1",
-        instruction: prose,
-        instructionEmpty: false,
-        attachments: [] }),
-      "utf8",
-    );
+    seedCurrentSection(runDir, "admitted", {
+      role: "judge",
+      runId: "run-public-1",
+      instruction: prose,
+      instructionEmpty: false,
+      attachments: [] });
 
     const judgePi = { getFlag: () => undefined };
     const judgeCtx = (runDirectory: string) => ({
@@ -561,7 +558,8 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     // Malformed admitted request JSON → same context classification.
     const badRun = join(root, "bad-run");
     await mkdir(badRun, { recursive: true });
-    await writeFile(join(badRun, "admitted-request.json"), "{not-json", "utf8");
+    // Whole-file corruption: current.json is the single carrier of the admitted section.
+    await writeFile(join(badRun, "current.json"), "{not-json", "utf8");
     await assert.rejects(
       () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(badRun), role: "judge" }),
       (error: unknown) =>
@@ -571,15 +569,11 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     // Structurally invalid admitted request (wrong role) → context unavailable.
     const wrongRoleRun = join(root, "wrong-role-run");
     await mkdir(wrongRoleRun, { recursive: true });
-    await writeFile(
-      join(wrongRoleRun, "admitted-request.json"),
-      JSON.stringify({
-        role: "fixer",
-        instruction: prose,
-        instructionEmpty: false,
-        attachments: [] }),
-      "utf8",
-    );
+    seedCurrentSection(wrongRoleRun, "admitted", {
+      role: "fixer",
+      instruction: prose,
+      instructionEmpty: false,
+      attachments: [] });
     await assert.rejects(
       () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(wrongRoleRun), role: "judge" }),
       (error: unknown) =>
@@ -589,15 +583,11 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     // Empty public request keeps placeholder work context (no invented task prose).
     const emptyRun = join(root, "empty-run");
     await mkdir(emptyRun, { recursive: true });
-    await writeFile(
-      join(emptyRun, "admitted-request.json"),
-      JSON.stringify({
-        role: "judge",
-        instruction: "",
-        instructionEmpty: true,
-        attachments: [] }),
-      "utf8",
-    );
+    seedCurrentSection(emptyRun, "admitted", {
+      role: "judge",
+      instruction: "",
+      instructionEmpty: true,
+      attachments: [] });
     const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(emptyRun), role: "judge" });
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");

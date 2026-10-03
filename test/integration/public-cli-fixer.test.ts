@@ -11,7 +11,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -34,6 +34,7 @@ import {
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
+import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -139,9 +140,9 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-fixer-plan-001@fixer"),
     );
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as { phase: string; role: string; prerequisites: unknown[] };
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+      phase: string; role: string; prerequisites: unknown[];
+    };
     assert.equal(persisted.role, "fixer");
     assert.equal(persisted.phase, "plan");
     assert.equal(persisted.prerequisites.length, 1);
@@ -262,13 +263,14 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
         : [],
       ["planned"],
     );
-      assert.equal(result.terminal?.artifacts.some((a) => a.kind === "evidence"), true);
       const report = result.terminal?.artifacts.find((a) => a.kind === "report");
       assert.ok(report);
-      const reportBody = JSON.parse(await readFile(report.path, "utf8")) as {
+      const reportBody = terminalBodyAt(report.path, "report") as {
         outcome?: { payloads?: unknown };
       };
-      assert.deepEqual(reportBody.outcome?.payloads, [receipt]);
+      // The submitted words live in history.jsonl; the terminal carries only the verdict.
+      assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
+      assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
       await access(
         join(
           home,
@@ -277,7 +279,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           resolveBookKeyFromGit(project),
           "unbound", "runs",
           "run-cli-fixer-plan@fixer",
-          "admitted-request.json",
+          "current.json",
         ),
       );
     }
@@ -363,9 +365,9 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       `${runId}@fixer`,
     );
     const sessionDirectory = join(runDirectory, "session");
-    const admitted = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as { phase: string; role: string; packetPath: string; ticketNumber?: number };
+    const admitted = readCurrentSection(runDirectory, "admitted") as {
+      phase: string; role: string; packetPath: string; ticketNumber?: number;
+    };
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, undefined);

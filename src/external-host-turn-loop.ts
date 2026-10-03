@@ -13,7 +13,32 @@ import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
 import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
+
+/**
+ * What one host start was given: one `turn-delivery` row of history.jsonl per start. History is
+ * the volume whose write failure does not stop a run (#833), so a row that cannot be
+ * written is noted and the host still starts.
+ */
+export async function recordTurnDelivery(
+  runDirectory: string,
+  delivered: { readonly systemPrompt: string; readonly outputSchema?: unknown },
+  source: string,
+): Promise<void> {
+  try {
+    reportRunRecord(runDirectory, "turn-delivery", {
+      systemPrompt: delivered.systemPrompt,
+      ...(delivered.outputSchema === undefined ? {} : { outputSchema: delivered.outputSchema }),
+    }, source);
+  } catch (error) {
+    await retainPackageFault({
+      runDirectory,
+      diagnostic: `turn delivery record failed beside host start: ${describeErrorIdentity(error)}`,
+      error,
+    });
+  }
+}
 
 export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
 

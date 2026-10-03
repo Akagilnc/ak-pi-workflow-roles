@@ -25,6 +25,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 /** Stage one pending attendance so session_shutdown will book a package entry. */
 function withStagedShutdownAttendance(
@@ -209,7 +210,7 @@ process.exit(0);
     await chmod(binary, 0o755);
     const description = lookupHeadlessHostDescription("claude");
     assert.ok(description);
-    const identity = createSessionIdentityAuthority(piDurablePrincipalAuthority, description.sessionBindingFile);
+    const identity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
     let actualRunDirectory = "";
     const host = createHeadlessRoleTurnHost({
       description, hostName: "claude", binary, sessionIdentity: identity,
@@ -245,6 +246,6 @@ process.exit(0);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.roleOutcome.decisiveFacts?.errorCode, "durable-session-write-failed");
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.packageFact, { exitCode: 0 });
-    assert.equal(await readFile(join(actualRunDirectory, "stderr.log"), "utf8"), "HOST STDERR\n");
+    assert.deepEqual(runLogPayloads(actualRunDirectory, "stderr"), [{ text: "HOST STDERR\n" }]);
   });
 });

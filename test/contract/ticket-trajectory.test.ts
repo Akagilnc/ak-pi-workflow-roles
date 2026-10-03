@@ -102,7 +102,7 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
 
   // Four-layer station chain on authentic coordinates.
   // Layer 1 — terminating tool (above: plan-court / coder / fixer / review-005s).
-  // Layer 2 — invocation.json role, no terminating tool (authentic review-026).
+  // Layer 2 — invocation section role, no terminating tool (authentic review-026).
   const invOnly = runById(html, "review-026@ak-roles-127");
   assert.equal(invOnly["data-station"], "reviewer");
   assert.equal(invOnly["data-station-source"], "invocation");
@@ -535,15 +535,15 @@ test("post-start regeneration failure faults the lifecycle with the original cau
     });
 });
 
-test("malformed invocation.json and unexpected path resolution retain their causes", async () => {
+test("malformed current.json invocation carrier and unexpected path resolution retain their causes", async () => {
   await withTempRoot("ticket-trajectory-evidence-", async (workspace) => {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
 
-    // Malformed existing invocation.json must fail with parse cause — not fall back to name/unknown.
+    // Malformed existing current.json must fail with parse cause — not fall back to name/unknown.
     const invPath = join(
       ledgerCopy,
-      "issues/127/runs/review-026@ak-roles-127/invocation.json",
+      "issues/127/runs/review-026@ak-roles-127/current.json",
     );
     await writeFile(invPath, "{not-json", "utf8");
     await assert.rejects(

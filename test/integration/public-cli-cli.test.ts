@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -445,9 +446,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
         "runs",
         `${scenario.runId}@${scenario.role}`,
       );
-      const ledger = JSON.parse(
-        await readFile(join(runDirectory, "invocation.json"), "utf8"),
-      ) as Record<string, unknown>;
+      const ledger = readCurrentSection(runDirectory, "invocation");
       assert.equal(ledger.role, scenario.role);
       assert.equal(ledger.runId, scenario.runId);
       assert.equal(ledger.bookKey, bookKey);

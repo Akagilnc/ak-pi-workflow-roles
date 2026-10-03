@@ -1,0 +1,23 @@
+{
+  "invocation": {
+    "role": "coder",
+    "runId": "019ff000-4005-7000-8000-0000000004a5",
+    "bookKey": "fixture-book-c4",
+    "projectRoot": "/analyst-fixture/c4-issue-alien"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "coder",
+      "runId": "019ff000-4005-7000-8000-0000000004a5",
+      "phase": "apply",
+      "outcome": {
+        "kind": "accepted",
+        "role": "coder",
+        "status": "completed",
+        "decisiveFacts": {}
+      }
+    }
+  }
+}

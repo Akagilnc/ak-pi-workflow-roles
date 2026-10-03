@@ -9,6 +9,7 @@ import {
   disposeExternalRoleTurn,
   externalHostFailure as failure,
   raceAgainstHostAbort,
+  recordTurnDelivery,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
@@ -255,6 +256,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
+    // What this turn was started with: one history record per start.
+    await recordTurnDelivery(request.runDirectory, {
+      systemPrompt: systemPromptOverride,
+      outputSchema: prepared.jsonSchema,
+    }, "acp-host");
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let sessionOpened = false;
@@ -498,8 +504,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             cwd: request.cwd,
             sessionDirectory: sessionDirectoryOf(request.runDirectory),
             sessionParent,
-            continuation: request.continuation,
-            ...(request.model !== undefined ? { model: request.model } : {}),
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
         } catch (error) {

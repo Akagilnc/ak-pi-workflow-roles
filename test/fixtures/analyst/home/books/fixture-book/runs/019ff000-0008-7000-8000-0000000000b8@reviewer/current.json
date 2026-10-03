@@ -1,0 +1,25 @@
+{
+  "invocation": {
+    "role": "reviewer",
+    "runId": "019ff000-0008-7000-8000-0000000000b8",
+    "bookKey": "fixture-book",
+    "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "reviewer",
+      "runId": "019ff000-0008-7000-8000-0000000000b8",
+      "outcome": {
+        "kind": "accepted",
+        "role": "reviewer",
+        "status": "completed",
+        "decisiveFacts": {}
+      },
+      "receipt": {
+        "status": "completed"
+      }
+    }
+  }
+}

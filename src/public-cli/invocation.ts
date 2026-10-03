@@ -30,7 +30,6 @@ import {
   formatRunLeaf,
   isUnboundRunDirectory,
   listBookRunDirectories,
-  roleRunArtifactsDirectory,
   roleRunPlacement,
   type RoleRunSubject,
 } from "../role-run-placement.ts";
@@ -60,6 +59,7 @@ import {
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
+import { readPageSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -137,7 +137,6 @@ export type AdmittedRoleInvocationBase = {
   readonly runDirectory: string;
   /** Host-issued opaque durable principal (coordinates only via authority.decode). */
   readonly principal: DurablePrincipal;
-  readonly admittedRequestPath: string;
   /**
    * Optional opaque invocation correlation restored from a prior admitted page
    * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
@@ -318,7 +317,6 @@ export type AdmissionPlacement = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
-  readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly bookKey: string;
@@ -356,25 +354,20 @@ export function issueAdmissionPlacement(
 }
 
 /**
- * Unique admitted-request.json persistence projection: top-level sessionDirectory/sessionFile
+ * Unique `admitted` section projection of current.json: top-level sessionDirectory/sessionFile
  * (base wire shape). Memory Admitted keeps only the opaque principal — never dual-carry.
  */
-async function writeAdmittedRequestPersistence(
-  admittedRequestPath: string,
+function writeAdmittedRequestPersistence(
+  runDirectory: string,
   body: Record<string, unknown>,
   coordinates: { readonly sessionDirectory: string; readonly sessionFile: string },
-): Promise<void> {
+): void {
   const { principal: _omitPrincipal, ...rest } = body;
-  const projection = {
+  writeSectionSync(runDirectory, "admitted", {
     ...rest,
     sessionDirectory: coordinates.sessionDirectory,
     sessionFile: coordinates.sessionFile,
-  };
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(projection, null, 2)}\n`,
-    "utf8",
-  );
+  });
 }
 
 /**
@@ -403,7 +396,7 @@ function effectiveModelLedgerFields(
 export { homeFromRunDirectory };
 
 /**
- * Persist one `invocation.json` identity page for the public run.
+ * Persist the `invocation` identity section of current.json for the public run.
  * Admission is the sole source for every field; this is the only identity
  * projection and callers never provide an independent ledger shape.
  * When an effective model is known at admission, provider/model (and thinking
@@ -426,11 +419,7 @@ async function writeRoleInvocationLedger(
     ...(source.ticketNumber === undefined ? {} : { ticketNumber: source.ticketNumber }),
     ...effectiveModelLedgerFields(effectiveModel),
   };
-  await writeFile(
-    join(source.runDirectory, "invocation.json"),
-    `${JSON.stringify(identity, null, 2)}\n`,
-    "utf8",
-  );
+  writeSectionSync(source.runDirectory, "invocation", identity);
 }
 
 /**
@@ -450,7 +439,7 @@ export async function recordEffectiveInvocationModel(
   host?: string,
   engineModel?: string | null,
 ): Promise<void> {
-  await updateDurableJsonPage(join(runDirectory, "invocation.json"), (current) => {
+  updateSectionSync(runDirectory, "invocation", (current) => {
     const next: Record<string, unknown> = { ...current };
     if (model !== undefined) {
       next.provider = model.provider;
@@ -478,33 +467,19 @@ export async function recordEffectiveInvocationModel(
   });
 }
 
-/**
- * Read one durable JSON object, let the caller keep its field rules, and write
- * the page back. `undefined` means the caller decided not to change the page.
- */
-async function updateDurableJsonPage(
-  path: string,
-  update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
-): Promise<void> {
-  const current = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-  const next = update(current);
-  if (next === undefined) return;
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-}
-
-/** Merge observed launch-time fields into the single existing invocation.json identity page. */
+/** Merge observed launch-time fields into the single existing invocation section of current.json. */
 async function mergeInvocationIdentityPage(
   runDirectory: string,
   fields: Record<string, unknown>,
 ): Promise<void> {
-  await updateDurableJsonPage(join(runDirectory, "invocation.json"), (current) => ({
+  updateSectionSync(runDirectory, "invocation", (current) => ({
     ...current,
     ...fields,
   }));
 }
 
 /**
- * Persist parent --source-run path onto admitted-request for officer resume lookup (#747).
+ * Persist parent --source-run path onto the admitted section for officer resume lookup (#747).
  * Reuses the existing notary sourceRunPath key; does not invent a new field name.
  */
 export async function persistAdmittedSourceRunPath(
@@ -515,7 +490,7 @@ export async function persistAdmittedSourceRunPath(
   if (sourceRunPath.trim() === "") {
     throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
   }
-  await updateDurableJsonPage(admitted.admittedRequestPath, (current) => {
+  updateSectionSync(admitted.runDirectory, "admitted", (current) => {
     if (typeof current.sourceRunPath === "string" && current.sourceRunPath !== sourceRunPath) {
       throw new Error(
         `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
@@ -533,7 +508,7 @@ export async function persistAdmittedSourceRunPath(
 
 /**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
- * object and both durable pages (invocation.json + admitted-request.json).
+ * object and both durable sections (invocation + admitted).
  * A later typed role receipt replaces an earlier assertion (#1025).
  */
 export async function bindAdmittedTicketNumber(
@@ -551,7 +526,7 @@ export async function recordAdmittedCorrelation(
   correlationId: string,
 ): Promise<void> {
   let correlationIds: string[] = [];
-  await updateDurableJsonPage(admitted.admittedRequestPath, (current) => {
+  updateSectionSync(admitted.runDirectory, "admitted", (current) => {
     const prior = [
       ...(Array.isArray(current.correlationIds)
         ? current.correlationIds.filter((value): value is string =>
@@ -598,8 +573,7 @@ export async function relocateAdmittedRunToTicket(
   const principal = authority.seal(target);
 
   if (admitted.role !== "diarist") {
-    const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
-    const childRunIds = parentPage.childDiaristRunIds;
+    const childRunIds = readPageSync(oldRunDirectory, "admitted")?.childDiaristRunIds;
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
       const childDirectory = join(dirname(oldRunDirectory), formatRunLeaf(childRunId, "diarist"));
@@ -638,7 +612,6 @@ export async function relocateAdmittedRunToTicket(
     admittedRecord,
     [
       "runDirectory",
-      "admittedRequestPath",
       "taskPath",
       "packetPath",
       "prerequisitesPath",
@@ -665,7 +638,7 @@ export async function recordChildDiaristRun(
   parent: AdmittedRoleInvocation,
   childRunId: string,
 ): Promise<void> {
-  await updateDurableJsonPage(parent.admittedRequestPath, (page) => {
+  updateSectionSync(parent.runDirectory, "admitted", (page) => {
     const existing = Array.isArray(page.childDiaristRunIds)
       ? page.childDiaristRunIds.filter((runId): runId is string => typeof runId === "string")
       : [];
@@ -687,9 +660,8 @@ export async function bindTicketNumberOnRunDirectory(
     ticketNumber,
     "bindTicketNumberOnRunDirectory",
   );
-  const admittedPath = join(runDirectory, "admitted-request.json");
   let unchanged = false;
-  await updateDurableJsonPage(admittedPath, (admitted) => {
+  updateSectionSync(runDirectory, "admitted", (admitted) => {
     if (admitted.ticketNumber === ticketNumber) {
       unchanged = true;
       return undefined;
@@ -712,7 +684,7 @@ export async function recordLaunchedPiIdentity(
 }
 
 /**
- * Observed role-package launch provenance written onto the same invocation.json page.
+ * Observed role-package launch provenance written onto the same current.json invocation section.
  * Values are field observations from the public CLI activation seam — never fixed schema markers.
  */
 export type LaunchedRolePackageIdentity = {
@@ -1303,10 +1275,16 @@ async function freezeRegularFileAttachment(
 
 /** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
 async function freezeAttachments(
+  ledgerHome: string,
   attachmentPaths: readonly string[],
   attachmentsDirectory: string,
 ): Promise<readonly FrozenAttachment[]> {
   const attachments: FrozenAttachment[] = [];
+  // attachments/ appears only when something is frozen; created through the
+  // ledger's symlink-rejecting tree walk, never a plain mkdir.
+  if (attachmentPaths.length > 0) {
+    ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  }
   for (let i = 0; i < attachmentPaths.length; i += 1) {
     const frozen = await freezeRegularFileAttachment(
       attachmentPaths[i]!,
@@ -1332,7 +1310,7 @@ export async function freezeAttachmentsIntoRun(
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
   const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  return freezeAttachments(attachmentPaths, attachmentsDirectory);
+  return freezeAttachments(ledgerHome, attachmentPaths, attachmentsDirectory);
 }
 
 /** Freeze prepared bytes and metadata through one path for birth or retained runs. */
@@ -1673,7 +1651,7 @@ export async function admitPublicRole(
               { cause: error },
             );
           }
-          frozenAttachments = await freezeAttachments(attachmentPaths, placed.attachmentsDirectory);
+          frozenAttachments = await freezeAttachments(placed.ledgerHome, attachmentPaths, placed.attachmentsDirectory);
           return {
             issueNumber,
             caseRunsPath,
@@ -1832,7 +1810,7 @@ export type AdmitJudgeInvocationOptions = {
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
-  /** Effective model for this invocation — written onto invocation.json. */
+  /** Effective model for this invocation — written onto the current.json invocation section. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons (起居录 / parent board). Never parsed from prose. */
   assertedTicketNumber?: number;
@@ -1904,7 +1882,7 @@ async function placeRoleAdmission(options: {
   });
   const attachments = options.freezeAttachments === false
     ? []
-    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+    : await freezeAttachments(ledgerHome, options.attachmentPaths, attachmentsDirectory);
   return {
     runId,
     bookKey,
@@ -1954,9 +1932,8 @@ async function persistPlacedAdmission(
   },
   placed: PlacedRoleAdmission,
   model: InvocationEffectiveModel | undefined,
-): Promise<string> {
-  const admittedRequestPath = join(placed.runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+): Promise<void> {
+  writeAdmittedRequestPersistence(placed.runDirectory, admitted, {
     sessionDirectory: placed.sessionDirectory,
     sessionFile: placed.sessionFile,
   });
@@ -1969,12 +1946,11 @@ async function persistPlacedAdmission(
     admitted.role,
     model,
   );
-  return admittedRequestPath;
 }
 
 /**
  * Shared admission: project check, placement, attachment freeze,
- * admitted-request and invocation ledger write.
+ * admitted and invocation section write.
  * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
@@ -1988,7 +1964,7 @@ async function admitStandardMaterialInvocation<
 >(
   role: R,
   options: AdmitInspectorInvocationOptions & {
-    /** Reserve coordinates; skip freeze, placement disk, and admitted-request write. */
+    /** Reserve coordinates; skip freeze, placement disk, and admitted section write. */
     readonly deferPersistence?: boolean;
     /** Skip attachment freeze. Gleaner-left admits no caller attachments. */
     readonly freezeAttachments?: boolean;
@@ -2039,9 +2015,7 @@ async function admitStandardMaterialInvocation<
     attachments: persistedAttachmentRefs(placed.attachments),
     ...placed.ticketFields,
   };
-  const admittedRequestPath = defer
-    ? join(placed.runDirectory, "admitted-request.json")
-    : await persistPlacedAdmission(admitted, placed, options.model);
+  if (!defer) await persistPlacedAdmission(admitted, placed, options.model);
   return {
     role,
     runId: placed.runId,
@@ -2052,7 +2026,6 @@ async function admitStandardMaterialInvocation<
     attachments: placed.attachments,
     runDirectory: placed.runDirectory,
     principal: placed.principal,
-    admittedRequestPath,
     ...correlationFields,
     ...placed.ticketFields,
     ...admittedFields,
@@ -2145,7 +2118,7 @@ export type AdmitCountersignInvocationOptions = {
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
-  /** Effective model for this invocation — written onto invocation.json. */
+  /** Effective model for this invocation — written onto the current.json invocation section. */
   model?: InvocationEffectiveModel;
   correlationId?: string;
   /** Same-ticket lookup may select an existing run before a new run is persisted. */
@@ -2175,10 +2148,6 @@ export async function materializeCountersignInvocation(
   });
   const placement = placed;
   (admitted as { runDirectory: string }).runDirectory = placement.runDirectory;
-  (admitted as { admittedRequestPath: string }).admittedRequestPath = join(
-    placement.runDirectory,
-    "admitted-request.json",
-  );
   (admitted as { principal: DurablePrincipal }).principal = placement.principal;
   const ticketFields = ticketAdmissionFields(options.ticketNumber);
   if (ticketFields.ticketNumber !== undefined) {
@@ -2189,7 +2158,7 @@ export async function materializeCountersignInvocation(
     admitted.runDirectory,
   );
   (admitted as { attachments: readonly FrozenAttachment[] }).attachments = attachments;
-  await writeAdmittedRequestPersistence(admitted.admittedRequestPath, admitted, {
+  writeAdmittedRequestPersistence(admitted.runDirectory, admitted, {
     sessionDirectory: placement.sessionDirectory,
     sessionFile: placement.sessionFile,
   });
@@ -2200,7 +2169,7 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Load admitted-request.json written at admission (Navigator work-context seam). */
+/** Load the admitted section written at admission (Navigator work-context seam). */
 export async function loadAdmittedJudgeRequest(
   runDirectory: string,
 ): Promise<{
@@ -2209,11 +2178,8 @@ export async function loadAdmittedJudgeRequest(
   attachments: readonly FrozenAttachment[];
 } | undefined> {
   try {
-    const raw = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as unknown;
-    if (!isRecord(raw)) return undefined;
-    const record = raw;
+    const record = readPageSync(runDirectory, "admitted");
+    if (record === undefined) return undefined;
     if (!packagedPublicInstructionSubject(record.role)) return undefined;
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;
@@ -2228,14 +2194,6 @@ export async function loadAdmittedJudgeRequest(
   }
 }
 
-export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  const directory = roleRunArtifactsDirectory(runDirectory);
-  return ensureRoleRunDirectory(
-    resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
-    directory,
-  );
-}
-
 export type AdmitFixerInvocationOptions = {
   home: string;
   principalAuthority: DurablePrincipalAuthority;
@@ -2247,7 +2205,7 @@ export type AdmitFixerInvocationOptions = {
   prerequisitesPath?: string;
   project?: string;
   createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
+  /** Effective model for this invocation — written onto the current.json invocation section. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
@@ -2402,7 +2360,7 @@ export type AdmitReviewerInvocationOptions = {
   project?: string;
   createRunId?: () => string;
   correlationId?: string;
-  /** Effective model for this invocation — written onto invocation.json. */
+  /** Effective model for this invocation — written onto the current.json invocation section. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
@@ -2455,7 +2413,7 @@ export type AdmitMergerInvocationOptions = {
   attachmentPaths: readonly string[];
   project?: string;
   createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
+  /** Effective model for this invocation — written onto the current.json invocation section. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;

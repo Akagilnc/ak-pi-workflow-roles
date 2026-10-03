@@ -28,11 +28,10 @@ export type AnalystMissingSource =
   /** Model-groups mode: leg has no usable session model identity. */
   | "session-model"
   /**
-   * Nested session/auditor-roles volume was discovered but failed canonical
-   * read/parse (#446). Missing auditor-roles directory is lawful zero rounds,
-   * not this face.
+   * A booked officer pointer or its session failed canonical read/parse (#446).
+   * No officers booked is lawful zero rounds, not this face.
    */
-  | "auditor-roles";
+  | "officers";
 
 /**
  * First usable session timestamp retained for an unreadable run when the

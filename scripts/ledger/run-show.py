@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Caller-side read-only view of one ledger run: run-show.py <run-dir> [--payload-chars N]
 
-Prints the last verdict payload, sealed rows, host session id, compaction count and token
-usage that this run's own files (and the host's native session store) carry. Missing
+Prints the last verdict payload, accepted submissions, host session id, compaction count and
+token usage that this run's own files (current.json, history.jsonl, log.jsonl, the host
+original) carry. Missing
 material prints as unavailable. Never writes. Not part of the public CLI.
 """
 import glob, json, os, sys
@@ -32,51 +33,40 @@ def main():
         sys.exit(__doc__)
     args = argv
     run = os.path.abspath(args[0].rstrip("/"))
-    if not os.path.isfile(f"{run}/invocation.json"):
-        sys.exit(f"not a run directory (no invocation.json): {run}")
-    inv = json.load(open(f"{run}/invocation.json"))
+    cur_path = f"{run}/current.json"
+    if not os.path.isfile(cur_path):
+        sys.exit(f"not a run directory (no current.json): {run}")
+    cur = json.load(open(cur_path))
+    inv = cur.get("invocation") or {}
     print(f"run: {run}\nrole: {inv.get('role')}  host: {inv.get('host')}  model: {inv.get('provider')}/{inv.get('model')}:{inv.get('thinking')}  ticket: {inv.get('ticketNumber')}")
+    history = jsonl(f"{run}/history.jsonl")
 
-    # 1. last verdict payload
-    rep = f"{run}/artifacts/report.json"
-    if os.path.exists(rep):
-        payloads = json.load(open(rep)).get("outcome", {}).get("payloads") or []
-        print(f"payloads: {len(payloads)}")
-        if payloads:
-            print("last payload:", json.dumps(payloads[-1], ensure_ascii=False)[:limit])
+    # 1. last verdict payload (the role's submitted words are on the sealed rows)
+    sealed = [r for r in history if r.get("kind") == "sealed"]
+    attempts = [r for r in history if r.get("kind") == "attempt-history"]
+    print(f"sealed rows: {len(sealed)}  attempts: {len(attempts)}")
+    if sealed:
+        accepted = (sealed[-1].get("payload") or {}).get("accepted")
+        print("last payload:", json.dumps(accepted, ensure_ascii=False)[:limit])
     else:
-        print("last payload: unavailable (no artifacts/report.json)")
+        print("last payload: unavailable (no sealed rows in history.jsonl)")
+    terminal = cur.get("terminal")
+    if terminal:
+        print(f"terminal: {terminal.get('face')} at {terminal.get('at')}")
 
     # 2. sealed rows
-    ledger = jsonl(f"{run}/session/submission-ledger/records.jsonl")
-    own = lambda r: (r.get("subject") or {}).get("runId") in (None, inv.get("runId"))
-    sealed = [r for r in ledger if r.get("kind") == "sealed" and own(r)]
-    damaged = [r for r in ledger if "_damaged" in r]
-    print(f"sealed rows: {len(sealed)}" + (f"  (damaged lines: {len(damaged)})" if damaged else ""))
+    damaged = [r for r in history if "_damaged" in r]
+    print("status of each sealed row:" + (f"  (damaged lines: {len(damaged)})" if damaged else ""))
     for r in sealed:
-        acc = (r.get("payload") or {}).get("accepted") or r.get("accepted") or {}
+        acc = (r.get("payload") or {}).get("accepted") or {}
         status = acc.get("status") or acc.get("countersignStatus") or acc.get("secretariatStatus") if isinstance(acc, dict) else None
         print(f"  {r.get('timestamp')}  {status}")
 
-    # 3. host session ids
+    # 3. host session id
     ids = []
-    for f in ("codex-headless-session.json", "claude-headless-session.json", "grok-acp-session.json", "hermes-acp-session.json"):
-        p = f"{run}/session/{f}"
-        if os.path.exists(p):
-            try:
-                sid = json.load(open(p)).get("sessionId")
-            except json.JSONDecodeError:
-                sid = None
-            if isinstance(sid, str) and sid.strip():
-                ids.append((f, sid))
-            else:
-                print(f"host session id: binding {f} is damaged or empty")
-    host_rows = jsonl(f"{run}/session/host-session/records.jsonl")
-    for r in host_rows:
-        p = r.get("payload") or {}
-        if p.get("type") == "thread.started" and isinstance(p.get("thread_id"), str) and p["thread_id"].strip():
-            ids.append(("host-session thread.started", p["thread_id"]))
-            break
+    sid = ((cur.get("host") or {}).get("sessions") or {}).get(inv.get("host"))
+    if isinstance(sid, str) and sid.strip():
+        ids.append(("current.json host", sid))
     sess_rows = jsonl(f"{run}/session/session.jsonl")
     if not ids and sess_rows and sess_rows[0].get("type") == "session":
         ids.append(("pi session header", sess_rows[0].get("id")))
@@ -84,13 +74,14 @@ def main():
 
     # 4 + 5. compaction count and token usage, by host family
     host = inv.get("host")
-    codex_ids = [v for k, v in ids if k.startswith(("codex", "host-session"))]
+    codex_ids = [v for k, v in ids if k == "current.json host"] if host == "codex" else []
     if host not in ("codex", "claude", "pi"):
         print(f"compaction count: unavailable (host {host!r} not parsed by this script)")
         print(f"token usage: unavailable (host {host!r} not parsed by this script)")
     elif codex_ids:
         home = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "sessions")
-        cands = [p for p in glob.glob(f"{home}/**/*.jsonl", recursive=True) if any(i in os.path.basename(p) for i in codex_ids)]
+        own = f"{run}/session/codex.jsonl"  # the run's one host original (copied at exit)
+        cands = [own] if os.path.exists(own) else [p for p in glob.glob(f"{home}/**/*.jsonl", recursive=True) if any(i in os.path.basename(p) for i in codex_ids)]
         if cands:
             rollout = max(cands, key=os.path.getmtime)
             rows = jsonl(rollout)
@@ -109,11 +100,11 @@ def main():
         else:
             print(f"compaction count: unavailable (no rollout for {codex_ids} under {home})")
             print("token usage: unavailable (no rollout)")
-    elif host == "claude" and host_rows:
-        comp = sum(1 for r in host_rows if (r.get("payload") or {}).get("subtype") == "compact_boundary")
-        usages = [(r.get("payload") or {}).get("usage") for r in host_rows if (r.get("payload") or {}).get("type") == "result" and (r.get("payload") or {}).get("usage")]
-        print(f"compaction count: {comp} (host-session records)")
-        print("token usage:", json.dumps(usages[-1], ensure_ascii=False) if usages else "unavailable (no result usage in host-session records)")
+    elif host == "claude":
+        original = f"{run}/session/claude.jsonl"
+        where = original if os.path.exists(original) else "no host original in the run"
+        print(f"compaction count: unavailable (claude original not parsed by this script; {where})")
+        print(f"token usage: unavailable (claude original not parsed by this script; {where})")
     elif sess_rows:
         comp = sum(1 for r in sess_rows if r.get("type") == "compaction")
         tot = {}
