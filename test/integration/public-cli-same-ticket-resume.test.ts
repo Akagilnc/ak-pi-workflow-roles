@@ -13,6 +13,8 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
+import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
@@ -1219,6 +1221,18 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     // gate booked, and counts its rounds from that officer's own session.
     const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
     assert.deepEqual(rounds.map(({ officer, status }) => ({ officer, status })), [{ officer: "inspector", status: "converged" }]);
+    // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
+    assert.deepEqual(
+      { runId: (await loadNotarySourceRunLocator(coderRunDirectory)).runId, role: (await loadNotarySourceRunLocator(coderRunDirectory)).role },
+      { runId: "run-worker-gate-resume-993", role: "coder" },
+    );
+    assert.deepEqual(
+      (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(({ kind, accepted }) => ({ kind, accepted })),
+      [
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
+      ],
+    );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true });
