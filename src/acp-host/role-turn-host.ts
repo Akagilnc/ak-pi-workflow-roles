@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { reportRunRecord } from "../sitian-facade.ts";
 import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
@@ -10,6 +9,7 @@ import {
   disposeExternalRoleTurn,
   externalHostFailure as failure,
   raceAgainstHostAbort,
+  recordTurnDelivery,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
@@ -257,7 +257,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     const prepared = await config.prepare(request);
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
     // What this turn was started with: one history record per start.
-    reportRunRecord(request.runDirectory, "turn-delivery", {
+    await recordTurnDelivery(request.runDirectory, {
       systemPrompt: systemPromptOverride,
       outputSchema: prepared.jsonSchema,
     }, "acp-host");

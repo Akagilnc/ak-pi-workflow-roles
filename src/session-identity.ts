@@ -6,7 +6,7 @@ import {
   lookupHeadlessHostDescription,
   lookupHostDescription,
 } from "./host-descriptions.ts";
-import { RUN_LOG_FILE } from "./run-dossier.ts";
+import { RUN_STATE_FILE } from "./run-dossier.ts";
 import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
 import { isRecord } from "./unknown-value.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
@@ -31,7 +31,7 @@ export function createSessionIdentityAuthority(
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      const { records } = await readSitianRecords(join(runDirectoryOf(principal), RUN_LOG_FILE));
+      const { records } = await readSitianRecords(join(runDirectoryOf(principal), RUN_STATE_FILE));
       let bound: string | undefined;
       for (const record of records) {
         if (record.kind !== HOST_SESSION_ID_RECORD_KIND || !isRecord(record.payload)) continue;

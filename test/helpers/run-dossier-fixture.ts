@@ -143,7 +143,7 @@ export function readRunLogRows(runDirectory: string, kind?: string): Record<stri
 
 /**
  * Bind a host's native session id the way a host does: one `host-session-id`
- * row appended to the run's log.jsonl through the real appender. `current.json`
+ * row appended to the run's state.jsonl through the real appender. `current.json`
  * `host` is derived from these rows on the next write, so it cannot be seeded.
  */
 export function seedHostSessionId(runDirectory: string, host: string, sessionId: unknown): void {
@@ -225,7 +225,7 @@ export function unlockCurrentJson(runDirectory: string): void {
  * fresh rendering of the row files says, and every item in it must have its source row:
  * each whole-page section is the payload of the last row of its kind in state.jsonl;
  * `submission.latest` names a `sealed` row, each `officers` entry an `officer-pointer`
- * row, each `host.sessions` entry a `host-session-id` row of log.jsonl.
+ * row, each `host.sessions` entry a `host-session-id` row of state.jsonl.
  */
 export function assertCurrentIsRenderingOfRows(runDirectory: string): void {
   const rows = (file: string): Record<string, any>[] => existsSync(join(runDirectory, file))
@@ -249,7 +249,7 @@ export function assertCurrentIsRenderingOfRows(runDirectory: string): void {
     assert.ok(history.some((row) => row.kind === "officer-pointer" && row.payload?.officer === officer && JSON.stringify(row.payload) === JSON.stringify(pointer)), `officers.${officer} has its row`);
   }
   for (const [host, sessionId] of Object.entries(((current.host as { sessions?: Record<string, unknown> } | undefined)?.sessions ?? {}))) {
-    assert.ok(log.some((row) => row.kind === "host-session-id" && row.payload?.host === host && row.payload?.sessionId === sessionId), `host.sessions.${host} has its row`);
+    assert.ok(state.some((row) => row.kind === "host-session-id" && row.payload?.host === host && row.payload?.sessionId === sessionId), `host.sessions.${host} has its row`);
   }
   // Equal to a fresh rendering: re-render over a copy of the bytes and compare.
   const before = readFileSync(join(runDirectory, "current.json"), "utf8");

@@ -7,6 +7,8 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -630,3 +632,92 @@ process.exit(0);
     ledger.dispose();
   }
 });
+
+/**
+ * Each run-owned file keeps the failure behaviour of the file it replaced, through the production
+ * host with the production session-identity authority (no stub): a log.jsonl that cannot be
+ * written changes neither the bound thread nor the delivered receipt; a history.jsonl that cannot
+ * be written does not stop the CLI from starting (it is noted); every CLI start leaves its own
+ * turn-delivery row, a re-asked round included.
+ */
+for (const scenario of ["log-unwritable", "history-unwritable", "re-asked-round"] as const) {
+  test(`headless host, production session identity: ${scenario}`, { timeout: 20000 }, async () => {
+    const ledger = createTempPackageHomeLedger({ prefix: "ak-run-files-", runName: "run@codex" });
+    const root = ledger.runDirectory;
+    const startsFile = join(root, "starts.log");
+    const fakeBin = join(root, "fake-codex");
+    await writeFile(fakeBin, `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(startsFile)}, "start\\n");
+readFileSync(0, "utf8");
+const events = [
+  { type: "thread.started", thread_id: "thread-1" },
+  { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: "r" }) } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");
+`, "utf8");
+    await chmod(fakeBin, 0o755);
+    const readOnly = scenario === "log-unwritable" ? "log.jsonl" : scenario === "history-unwritable" ? "history.jsonl" : undefined;
+    try {
+      if (readOnly !== undefined) {
+        await writeFile(join(root, readOnly), "", { flag: "a" });
+        await chmod(join(root, readOnly), 0o400);
+      }
+      const principal = fixturePrincipal(join(root, "session"));
+      const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "codex");
+      let ingested = 0;
+      let closes = 0;
+      const description = lookupHeadlessHostDescription("codex");
+      assert.ok(description);
+      const host = createHeadlessRoleTurnHost({
+        description,
+        hostName: "codex",
+        binary: fakeBin,
+        env: { CODEX_HOME: join(root, ".codex") },
+        sessionIdentity,
+        prepare: async (request) => ({
+          mcpServers: [],
+          systemPrompt: { body: "system", materials: [] },
+          prompt: request.continuation.prompt,
+          jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"], additionalProperties: true },
+          terminatingToolName: "ak_probe_output",
+          async ingestStructuredOutput() { ingested += 1; },
+          async closeRound() {
+            closes += 1;
+            return scenario === "re-asked-round" && closes === 1
+              ? { accepted: false as const, retry: { code: "again", toolCallIds: [], message: "again" } }
+              : { accepted: true as const };
+          },
+        }),
+      });
+      const result = await host.executeTurn({
+        principal,
+        activation: { role: "inspector" },
+        methods: [],
+        continuation: { kind: "initial", prompt: "work" },
+        model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+        cwd: root,
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory: root,
+      });
+      const starts = (await readFile(startsFile, "utf8")).split("\n").filter(Boolean).length;
+      assert.equal(result.knownFailure, undefined);
+      assert.equal(result.code, 0);
+      assert.equal(await sessionIdentity.load(principal), "thread-1");
+      assert.equal(ingested, scenario === "re-asked-round" ? 2 : 1);
+      const delivered = readHistoryRows(root).filter((row) => row.kind === "turn-delivery").length;
+      if (scenario === "history-unwritable") {
+        assert.equal(starts, 1);
+        assert.equal(delivered, 0);
+        assert.equal(packageFaultNotes(root).length > 0, true, "the lost turn-delivery row is noted");
+      } else {
+        assert.equal(delivered, starts, "one turn-delivery row per CLI start");
+        assert.equal(starts, scenario === "re-asked-round" ? 2 : 1);
+      }
+    } finally {
+      ledger.dispose();
+    }
+  });
+}

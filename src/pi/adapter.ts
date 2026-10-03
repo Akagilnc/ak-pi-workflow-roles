@@ -26,6 +26,7 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../submission-errors.ts";
+import { errorText } from "../unknown-value.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
@@ -150,7 +151,10 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
-  let lastDeliveredPrompt: string | undefined;
+  // Pi chains the before_agent_start handlers, each seeing the prompt the one before left; the
+  // prompt Pi sends is the one the last registered handler leaves. Only that handler's result is
+  // what a start was given, so only it records.
+  let beforeAgentStartHandlers = 0;
   // Decode transport exactly once before Pi's native handler chain. Pi retains
   // its own transform/image propagation and per-handler error isolation.
   pi.on("input", (value) => {
@@ -177,17 +181,21 @@ export function createPiRoleHostAdapter(
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
+        const position = beforeAgentStartHandlers;
+        beforeAgentStartHandlers += 1;
         pi.on("before_agent_start", (value, ctx) => {
           const projected = context(ctx);
-          // The prompt a handler leaves behind is what Pi sends if it is the last one: record
-          // each distinct prompt as a turn-delivery record, so the last record is the delivered one.
           const fold = (settled: unknown) => {
             const folded = foldBeforeAgentStartReturn(settled, value.systemPrompt);
             const runDirectory = runDirectoryFromHostContext(projected);
-            const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
-            if (runDirectory !== undefined && delivered !== lastDeliveredPrompt) {
-              lastDeliveredPrompt = delivered;
-              reportRunRecord(runDirectory, "turn-delivery", { systemPrompt: delivered }, "pi-adapter");
+            if (runDirectory !== undefined && position === beforeAgentStartHandlers - 1) {
+              const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
+              // History write failures do not stop a run (#833): declare it and let Pi start.
+              try {
+                reportRunRecord(runDirectory, "turn-delivery", { systemPrompt: delivered }, "pi-adapter");
+              } catch (error) {
+                process.stderr.write(`[pi-adapter] turn-delivery record failed beside host start: ${errorText(error)}\n`);
+              }
             }
             return folded;
           };

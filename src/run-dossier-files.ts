@@ -18,12 +18,13 @@ export const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The four whole-page facts only the public call knows land in `state.jsonl`: a
+ * The facts a run cannot go on without land in `state.jsonl`: the four whole pages only the
+ * public call knows, and the native session id a host binds (a resume needs it). A
  * different volume than the submission ledger and than the auxiliary stream, as the
  * files they replaced were (a page write failure throws; a ledger volume that cannot
  * be written does not stop a resume; a stream line that cannot be written is noted).
  * Every other kind lands in `log.jsonl`.
  */
 export const RUN_STATE_KINDS: ReadonlySet<string> = new Set([
-  "invocation", "admitted-request", "run-state", "terminal",
+  "invocation", "admitted-request", "run-state", "terminal", "host-session-id",
 ]);

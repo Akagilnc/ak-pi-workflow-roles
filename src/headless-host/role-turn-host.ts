@@ -12,7 +12,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { sessionDirectoryOf } from "../role-run-placement.ts";
-import { reportRunRecord } from "../sitian-facade.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -20,6 +19,7 @@ import {
   externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
+  recordTurnDelivery,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
@@ -472,6 +472,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
+      let startedWithSchema: unknown;
       // A setup failure after mkdtemp must not leave the prompt material behind.
       try {
         await writeFile(systemPromptPath, systemPrompt, "utf8");
@@ -494,11 +495,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           // #959: navigator prose exit — no closed JSON schema on claude either.
           if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
         }
-        // What this turn was started with: one history record per start.
-        reportRunRecord(request.runDirectory, "turn-delivery", {
-          systemPrompt,
-          ...(deliveredSchema === undefined ? {} : { outputSchema: deliveredSchema }),
-        }, "headless-host");
+        startedWithSchema = deliveredSchema;
       } catch (setupError) {
         await rm(inputsDirectory, { recursive: true, force: true }).catch(() => undefined);
         throw setupError;
@@ -552,6 +549,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }) !== undefined;
           }
 
+          // What this CLI start was given: one history record per start.
+          await recordTurnDelivery(request.runDirectory, {
+            systemPrompt,
+            ...(startedWithSchema === undefined ? {} : { outputSchema: startedWithSchema }),
+          }, "headless-host");
           let spawned: HeadlessSpawnResult;
           try {
             spawned = await spawnHeadlessTurn({
