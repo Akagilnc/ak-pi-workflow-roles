@@ -146,6 +146,9 @@ function lastPagePayload(
  * A booked officer-pointer row with a non-object payload or non-string officer is
  * damaged topology — never silently omitted into lawful zero rounds (#1161 O1).
  * Absence of any officer-pointer row remains lawful empty.
+ * Control readers (`readBookedOfficerPointers`) let this throw into the existing
+ * auditor-roles unreadable seam; `render` catches the same error and marks
+ * `history.jsonl` unreadable so other reachable facts stay in current.json.
  */
 export function latestOfficerPointersFromRecords(
   records: readonly { readonly kind?: unknown; readonly payload?: unknown }[],
@@ -181,7 +184,18 @@ function render(
       latest = { toolCallId: payload.toolCallId, role: payload.role, accepted: payload.accepted, at: row.timestamp };
     }
   }
-  const officers = latestOfficerPointersFromRecords(history);
+  // Control readers still fail closed via latestOfficerPointersFromRecords.
+  // Render must keep other reachable facts and surface damage on the existing
+  // file unreadable seam — never abort the whole current.json (#1161 O1).
+  let officers: Readonly<Record<string, unknown>> = {};
+  try {
+    officers = latestOfficerPointersFromRecords(history);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "officer-pointer payload is damaged") {
+      throw error;
+    }
+    if (unreadable[RUN_HISTORY_FILE] === undefined) unreadable[RUN_HISTORY_FILE] = "malformed";
+  }
   const sessions: Record<string, unknown> = {};
   for (const row of state) {
     const payload = isRecord(row.payload) ? row.payload : undefined;

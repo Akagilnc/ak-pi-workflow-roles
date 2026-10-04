@@ -46,12 +46,15 @@ export function createSessionIdentityAuthority(
       let bound: string | undefined;
       for (const record of records) {
         if (record.kind !== HOST_SESSION_ID_RECORD_KIND) continue;
-        // Scope to this host first — other hosts' damaged bindings are not this
-        // host's fault domain (BASE read only the chosen host's binding file).
-        // Rows that cannot name this host (null / non-object / other host) skip.
-        if (!isRecord(record.payload) || record.payload.host !== hostName) continue;
-        // This host's null / non-string sessionId: refuse — same class as BASE
-        // binding JSON reject. Do not skip and reuse a prior host binding (#1161 C3).
+        // Non-object / cannot name a host: unattributable damage — refuse
+        // (settled C3-payload). Never treat as a skippable "other host" row.
+        if (!isRecord(record.payload) || typeof record.payload.host !== "string") {
+          throw new Error("durable session binding is invalid");
+        }
+        // Explicit other host only: that host's bad id must not block this one.
+        if (record.payload.host !== hostName) continue;
+        // This host's null / non-string sessionId: refuse — do not reuse a prior
+        // binding for the same host (#1161 C3).
         if (typeof record.payload.sessionId !== "string") {
           throw new Error("durable session binding is invalid");
         }
