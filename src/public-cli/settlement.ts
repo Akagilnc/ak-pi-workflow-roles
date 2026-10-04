@@ -1367,10 +1367,12 @@ function terminalBelongingFields(
  * Belonging attempt-history identity for a non-recording re-projection (#1161 甲 / R2).
  * Court-tagged settle recovers from that court's own prior terminal row in
  * state.jsonl. Untagged normal rewrite (bare resume after a sealed face, no open
- * court) keeps the face being rewritten's already-persisted identity — not a
- * guess across courts, not invent-append (N1), not subject.attemptId on
- * attempt-history. Court-tagged lookup that finds no row (e.g. history appended
- * but that court's terminal never wrote) still returns undefined — the approved gap.
+ * court) keeps only the face being rewritten — the last terminal row's own
+ * identity. If that face has none (approved gap), return undefined: never walk
+ * older terminals for a non-empty pointer, never invent-append (N1), never
+ * subject.attemptId on attempt-history. Bare resume therefore cannot restore
+ * court B's pointer while the current face is A (or A's gap). Court-tagged
+ * lookup that finds no row still returns undefined — the approved gap.
  */
 async function belongingAttemptHistoryIdentity(
   runDirectory: string,
@@ -1390,8 +1392,8 @@ async function belongingAttemptHistoryIdentity(
     );
     return undefined;
   }
-  let found: string | undefined;
   if (courtAttemptId !== undefined && courtAttemptId.length > 0) {
+    let found: string | undefined;
     for (const row of rows) {
       if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
       const body = row.payload.body;
@@ -1401,15 +1403,16 @@ async function belongingAttemptHistoryIdentity(
     }
     return found;
   }
-  // Untagged rewrite owns the current face only: preserve its persisted pointer.
-  for (const row of rows) {
+  // Untagged: only the current face (last terminal). Gap face stays a gap.
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index]!;
     if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
     const body = row.payload.body;
-    if (!isRecord(body)) continue;
+    if (!isRecord(body)) return undefined;
     const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
-    if (typeof identity === "string" && identity.length > 0) found = identity;
+    return typeof identity === "string" && identity.length > 0 ? identity : undefined;
   }
-  return found;
+  return undefined;
 }
 
 type LawfulSessionRead =

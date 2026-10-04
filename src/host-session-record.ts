@@ -265,12 +265,16 @@ export function copyAndRecordHostDossier(options: {
         // A directory cannot be renamed over: park the previous original aside,
         // move the new one in, and put the old one back only if the landing is
         // still absent. This attempt owns its `.previous.<token>` through
-        // success or failure — restore-if-absent, then always clear the token
-        // if it remains (a peer may have published the landing meanwhile).
-        // No orphan scan, no cross-call recovery, no queue (#1161 C2).
+        // success or failure — restore-if-absent, then clear the token when it
+        // is no longer the unique original (peer may have published landing).
+        // Never delete previous when restore failed and landing is still absent.
+        // Cleanup failure must not wash into native-session-copy success
+        // (#1161 C2 / 失败诚实). No orphan scan, no cross-call recovery, no queue.
         const previous = `${landingPath}.previous.${attemptToken}`;
         const hadPrevious = existsSync(landingPath);
         let parked = false;
+        let keepUniquePrevious = false;
+        let cleanupError: unknown;
         try {
           if (hadPrevious) {
             renameSync(landingPath, previous);
@@ -280,15 +284,32 @@ export function copyAndRecordHostDossier(options: {
             renameSync(staging, landingPath);
           } catch (swapError) {
             if (parked && existsSync(previous) && !existsSync(landingPath)) {
-              renameSync(previous, landingPath);
+              try {
+                renameSync(previous, landingPath);
+              } catch {
+                // Restore failed; previous may still be the only old original.
+                if (existsSync(previous) && !existsSync(landingPath)) {
+                  keepUniquePrevious = true;
+                }
+              }
             }
             throw swapError;
           }
         } finally {
-          if (parked && existsSync(previous)) {
-            try { rmSync(previous, { recursive: true, force: true }); }
-            catch { /* warning below reports the original copy failure */ }
+          if (parked && existsSync(previous) && !keepUniquePrevious) {
+            try {
+              rmSync(previous, { recursive: true, force: true });
+            } catch (error) {
+              cleanupError = error;
+            }
           }
+        }
+        if (cleanupError !== undefined) {
+          // Swap landed but cleanup ownership is incomplete — leave the true
+          // cause; do not retry (would re-park the good landing) or claim copy.
+          lastError = cleanupError;
+          stagingForCleanup = undefined;
+          break;
         }
       } else {
         renameSync(staging, landingPath); // atomically replaces the previous file

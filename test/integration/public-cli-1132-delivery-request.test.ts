@@ -897,14 +897,14 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
-    assert.ok(kinds.includes("initial"));
-    assert.equal(
-      resumedWith.includes("old-native"),
-      false,
-      "malformed state must not dispatch resume with the prior binding",
-    );
+    // Damage is appended after the initial turn starts. Control-path load must
+    // refuse before any resume dispatch reuses the prior binding — so executeTurn
+    // stays initial-only. autoResumeCount still records the one failed assembly.
+    assert.deepEqual(kinds, ["initial"]);
+    assert.deepEqual(resumedWith, []);
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.terminal?.autoResumeCount, 1);
     if (result.terminal?.roleOutcome.kind === "failure") {
       // state.jsonl syntax damage fails closed on the control plane. Dedicated
       // binding-file JSON.parse used to surface SyntaxError (BASE); the shared
@@ -912,5 +912,10 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
       assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "Error");
     }
     assert.ok(runDirectory !== undefined);
+    // Syntax damage fails closed for every control-plane page read, so
+    // markRunTerminal cannot flip runState (best-effort note beside the failure
+    // terminal — same persistence disposition as main). Do not pretend terminal.
+    const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
+    assert.equal(runState.state, "running");
   });
 });
