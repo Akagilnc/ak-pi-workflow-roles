@@ -275,6 +275,7 @@ export function copyAndRecordHostDossier(options: {
         let parked = false;
         let keepUniquePrevious = false;
         let cleanupError: unknown;
+        let swapFailure: unknown;
         try {
           if (hadPrevious) {
             renameSync(landingPath, previous);
@@ -283,17 +284,28 @@ export function copyAndRecordHostDossier(options: {
           try {
             renameSync(staging, landingPath);
           } catch (swapError) {
+            let restoreError: unknown;
             if (parked && existsSync(previous) && !existsSync(landingPath)) {
               try {
                 renameSync(previous, landingPath);
-              } catch {
+              } catch (error) {
+                restoreError = error;
                 // Restore failed; previous may still be the only old original.
                 if (existsSync(previous) && !existsSync(landingPath)) {
                   keepUniquePrevious = true;
                 }
               }
             }
-            throw swapError;
+            // native-session-warning uses errorText (= Error.message). Keep every
+            // residual-previous cause in message and AggregateError.errors — no catch{}.
+            swapFailure =
+              restoreError === undefined
+                ? swapError
+                : new AggregateError(
+                    [swapError, restoreError],
+                    `${errorText(swapError)}; restore failed: ${errorText(restoreError)}`,
+                    { cause: swapError },
+                  );
           }
         } finally {
           if (parked && existsSync(previous) && !keepUniquePrevious) {
@@ -303,6 +315,19 @@ export function copyAndRecordHostDossier(options: {
               cleanupError = error;
             }
           }
+        }
+        if (swapFailure !== undefined) {
+          // Combine swap(/restore) with cleanup when both ran; do not retry —
+          // retry would re-park and wash the residual-previous causes (#1161 C2).
+          lastError =
+            cleanupError === undefined
+              ? swapFailure
+              : new AggregateError(
+                  [swapFailure, cleanupError],
+                  `${errorText(swapFailure)}; cleanup failed: ${errorText(cleanupError)}`,
+                  { cause: swapFailure },
+                );
+          break;
         }
         if (cleanupError !== undefined) {
           // Swap landed but cleanup ownership is incomplete — leave the true
