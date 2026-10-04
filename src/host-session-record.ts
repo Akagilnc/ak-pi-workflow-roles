@@ -263,17 +263,33 @@ export function copyAndRecordHostDossier(options: {
       }
       if (options.host === "grok-build") {
         // A directory cannot be renamed over: park the previous original aside,
-        // move the new one in, and put the old one back if that move fails.
+        // move the new one in, and put the old one back only if the landing is
+        // still absent. This attempt owns its `.previous.<token>` through
+        // success or failure — restore-if-absent, then always clear the token
+        // if it remains (a peer may have published the landing meanwhile).
+        // No orphan scan, no cross-call recovery, no queue (#1161 C2).
         const previous = `${landingPath}.previous.${attemptToken}`;
         const hadPrevious = existsSync(landingPath);
-        if (hadPrevious) renameSync(landingPath, previous);
+        let parked = false;
         try {
-          renameSync(staging, landingPath);
-        } catch (swapError) {
-          if (hadPrevious && existsSync(previous)) renameSync(previous, landingPath);
-          throw swapError;
+          if (hadPrevious) {
+            renameSync(landingPath, previous);
+            parked = true;
+          }
+          try {
+            renameSync(staging, landingPath);
+          } catch (swapError) {
+            if (parked && existsSync(previous) && !existsSync(landingPath)) {
+              renameSync(previous, landingPath);
+            }
+            throw swapError;
+          }
+        } finally {
+          if (parked && existsSync(previous)) {
+            try { rmSync(previous, { recursive: true, force: true }); }
+            catch { /* warning below reports the original copy failure */ }
+          }
         }
-        if (hadPrevious) rmSync(previous, { recursive: true, force: true });
       } else {
         renameSync(staging, landingPath); // atomically replaces the previous file
       }

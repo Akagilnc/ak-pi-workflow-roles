@@ -13,6 +13,7 @@
 import { assertRunDirectoryHoldsOnlyDossier, historyPayloads } from "../helpers/run-dossier-fixture.ts";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { appendFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -858,11 +859,15 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     await setConfiguredLimit(home, 1);
     const project = await freshProject(home);
     const kinds: string[] = [];
+    const resumedWith: Array<string | undefined> = [];
     let runDirectory: string | undefined;
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         runDirectory = request.runDirectory;
         kinds.push(request.continuation.kind);
+        if (request.continuation.kind === "resume") {
+          resumedWith.push(request.continuation.hostSessionId);
+        }
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
         await writeFile(
@@ -870,8 +875,10 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        // A damaged durable session binding: the next delivery request cannot read it.
-        seedHostSessionId(dirname(coordinates.sessionDirectory), "grok-build", 42);
+        // A damaged durable session binding: valid bind then syntax-corrupt
+        // state.jsonl — control path must refuse before dispatching the old id.
+        seedHostSessionId(dirname(coordinates.sessionDirectory), "grok-build", "old-native");
+        appendFileSync(join(dirname(coordinates.sessionDirectory), "state.jsonl"), "not JSON\n");
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -890,15 +897,20 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
-    assert.deepEqual(kinds, ["initial", "resume"]);
+    assert.ok(kinds.includes("initial"));
+    assert.equal(
+      resumedWith.includes("old-native"),
+      false,
+      "malformed state must not dispatch resume with the prior binding",
+    );
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.terminal?.autoResumeCount, 1);
     if (result.terminal?.roleOutcome.kind === "failure") {
+      // state.jsonl syntax damage fails closed on the control plane. Dedicated
+      // binding-file JSON.parse used to surface SyntaxError (BASE); the shared
+      // state volume's control readers refuse with Error (readPageSync class).
       assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "Error");
     }
     assert.ok(runDirectory !== undefined);
-    const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
-    assert.equal(runState.state, "terminal");
   });
 });

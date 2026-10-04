@@ -590,8 +590,16 @@ export async function relocateAdmittedRunToTicket(
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
       await rename(childDirectory, childTarget.runDirectory);
-      // Finished child legs will not settle again; refresh derived host.original now.
-      renderCurrentSync(childTarget.runDirectory);
+      // Finished child legs will not settle again; refresh derived host.original
+      // after the rename commit. A derived render fault must not undo or block
+      // the committed placement (#1161 L1) — note and keep the true cause.
+      try {
+        renderCurrentSync(childTarget.runDirectory);
+      } catch (error) {
+        process.stderr.write(
+          `[invocation] current.json render refused after child relocate; placement kept: ${childTarget.runDirectory}: ${errorText(error)}\n`,
+        );
+      }
     }
   }
 
@@ -604,11 +612,10 @@ export async function relocateAdmittedRunToTicket(
   // outside the atomic directory move.
   // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
-  // current.json projects host.original from this run directory; re-render after the move.
-  renderCurrentSync(target.runDirectory);
 
-  // rename moved the open lock inode with the directory. Transfer cleanup
-  // ownership immediately after the commit.
+  // rename moved the open lock inode with the directory. Transfer cleanup and
+  // admitted path ownership immediately after the commit — before any derived
+  // render that may refuse (#1161 L1 / BASE order).
   heldLease?.relocate(target.runDirectory);
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
@@ -633,6 +640,11 @@ export async function relocateAdmittedRunToTicket(
     ) as string;
   }
   (admitted as { principal: DurablePrincipal }).principal = principal;
+
+  // current.json projects host.original from this run directory. Ownership is
+  // already transferred; a refuse still carries the true cause to the caller
+  // (#1161 L1) without leaving the leg under the unbound path.
+  renderCurrentSync(target.runDirectory);
 
   return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }

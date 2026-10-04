@@ -33,10 +33,14 @@ export function createSessionIdentityAuthority(
       return authority.decode(principal).sessionFile;
     },
     async load(principal) {
-      const { records, diagnostics } = await readSitianRecords(join(runDirectoryOf(principal), RUN_STATE_FILE));
+      const runDirectory = runDirectoryOf(principal);
+      const { records, diagnostics } = await readSitianRecords(join(runDirectory, RUN_STATE_FILE));
+      // Control path fails closed on damaged rows — same class as readPageSync.
+      // Rendering may keep reachable facts; dispatch must not reuse a prior binding
+      // after syntax damage (#1161 C3).
       if (diagnostics.length > 0) {
-        process.stderr.write(
-          `[session-identity] ${RUN_STATE_FILE} has ${diagnostics.length} malformed row(s); reachable bindings kept: ${runDirectoryOf(principal)}\n`,
+        throw new Error(
+          `${RUN_STATE_FILE} has ${diagnostics.length} malformed row(s); refusing stale session binding: ${runDirectory}`,
         );
       }
       let bound: string | undefined;

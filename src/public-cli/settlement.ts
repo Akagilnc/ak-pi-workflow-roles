@@ -1365,16 +1365,18 @@ function terminalBelongingFields(
 
 /**
  * Belonging attempt-history identity for a non-recording re-projection (#1161 甲 / R2).
- * Uses the append identity previously written onto that court's own terminal row in
- * state.jsonl — never the leg's latest terminal, never payload equality, never
- * invent-append (N1), never subject.attemptId on attempt-history rows.
+ * Court-tagged settle recovers from that court's own prior terminal row in
+ * state.jsonl. Untagged normal rewrite (bare resume after a sealed face, no open
+ * court) keeps the face being rewritten's already-persisted identity — not a
+ * guess across courts, not invent-append (N1), not subject.attemptId on
+ * attempt-history. Court-tagged lookup that finds no row (e.g. history appended
+ * but that court's terminal never wrote) still returns undefined — the approved gap.
  */
 async function belongingAttemptHistoryIdentity(
   runDirectory: string,
   scope: SettlementCourtScope | undefined,
 ): Promise<string | undefined> {
   const courtAttemptId = scope?.courtAttemptId;
-  if (courtAttemptId === undefined || courtAttemptId.length === 0) return undefined;
   let rows: readonly Record<string, unknown>[];
   try {
     rows = readStateRowsSync(runDirectory);
@@ -1389,10 +1391,21 @@ async function belongingAttemptHistoryIdentity(
     return undefined;
   }
   let found: string | undefined;
+  if (courtAttemptId !== undefined && courtAttemptId.length > 0) {
+    for (const row of rows) {
+      if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
+      const body = row.payload.body;
+      if (!isRecord(body) || body[TERMINAL_COURT_ATTEMPT_FIELD] !== courtAttemptId) continue;
+      const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
+      if (typeof identity === "string" && identity.length > 0) found = identity;
+    }
+    return found;
+  }
+  // Untagged rewrite owns the current face only: preserve its persisted pointer.
   for (const row of rows) {
     if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
     const body = row.payload.body;
-    if (!isRecord(body) || body[TERMINAL_COURT_ATTEMPT_FIELD] !== courtAttemptId) continue;
+    if (!isRecord(body)) continue;
     const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
     if (typeof identity === "string" && identity.length > 0) found = identity;
   }
