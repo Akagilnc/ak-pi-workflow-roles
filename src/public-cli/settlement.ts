@@ -426,15 +426,15 @@ async function settleNoReceiptTerminal(
   let attemptHistoryIdentity: string | undefined;
   if (scope?.recordAttemptHistory === true) {
     const pointer = await appendRunAttemptHistory(
-      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      attemptHistorySource(admitted, coordinates, scope),
       roleOutcome,
     );
     attemptHistoryIdentity = pointer.identity;
   } else {
-    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
       admitted.runDirectory,
       admitted.role,
-      roleOutcome,
+      scope,
     );
   }
   if (scope?.previewOnly !== true) {
@@ -1032,7 +1032,25 @@ type AttemptHistorySource = {
   readonly role: string;
   readonly runId: string;
   readonly sessionFile: string;
+  /** Court identity for this settlement (#1161 甲); same subject.attemptId tag as the submission ledger. */
+  readonly attemptId?: string;
 };
+
+function attemptHistorySource(
+  admitted: Pick<AdmittedRoleInvocation, "role" | "runId">,
+  coordinates: Pick<DurablePrincipalCoordinates, "sessionFile">,
+  scope: SettlementCourtScope | undefined,
+): AttemptHistorySource {
+  const courtAttemptId = scope?.courtAttemptId;
+  return {
+    role: admitted.role,
+    runId: admitted.runId,
+    sessionFile: coordinates.sessionFile,
+    ...(courtAttemptId !== undefined && courtAttemptId.length > 0
+      ? { attemptId: courtAttemptId }
+      : {}),
+  };
+}
 
 /** Append the complete attempt to the package ledger before overwriting pointer artifacts (#419). */
 export async function appendRunAttemptHistory(
@@ -1042,7 +1060,10 @@ export async function appendRunAttemptHistory(
   return sitianReport({
     level: "event",
     kind: "attempt-history",
-    subject: { runId: source.runId },
+    subject: {
+      runId: source.runId,
+      ...(source.attemptId === undefined ? {} : { attemptId: source.attemptId }),
+    },
     sessionParent: source.sessionFile,
     payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
     source: "settlement",
@@ -1302,31 +1323,31 @@ async function extractNavigatorFactFromAdmittedSession(
  * current.json. The report carries the outcome's verdict facts; the role's
  * submitted payloads live in history.jsonl. The terminal names the
  * attempt-history row that belongs to this settlement — the row this settle
- * appended, or the existing row whose outcome is this settlement's (#1161 甲).
- * Non-recording re-projection must not guess from the run's latest terminal
- * and must not invent a new history row (R2 / N1).
+ * appended under this courtAttemptId, or that court's existing history row
+ * (#1161 甲). Never content-match payloads, never inherit the run's latest
+ * terminal, never invent a history row on re-projection (R2 / N1).
  */
 async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  recordAttemptHistory: boolean,
+  scope: SettlementCourtScope | undefined,
   report: Record<string, unknown>,
 ): Promise<TerminalArtifactRef[]> {
   // #419: a dispatched turn appends before rewriting last-write-wins views;
   // a later projection may refresh views but must not invent another attempt.
   let attemptHistoryIdentity: string | undefined;
-  if (recordAttemptHistory) {
+  if (scope?.recordAttemptHistory === true) {
     const pointer = await appendRunAttemptHistory(
-      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      attemptHistorySource(admitted, coordinates, scope),
       roleOutcome,
     );
     attemptHistoryIdentity = pointer.identity;
   } else {
-    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
       admitted.runDirectory,
       admitted.role,
-      roleOutcome,
+      scope,
     );
   }
   writeRunTerminal(admitted.runDirectory, "report", {
@@ -1338,45 +1359,45 @@ async function publishAcceptedTerminal(
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
+/** Court tag on an attempt-history row — subject.attemptId only (甲 identity, not payload words). */
+function historyRowCourtAttemptId(row: Record<string, unknown>): string | undefined {
+  if (!isRecord(row.subject)) return undefined;
+  const attemptId = row.subject.attemptId;
+  return typeof attemptId === "string" && attemptId.length > 0 ? attemptId : undefined;
+}
+
 /**
- * Find the attempt-history identity that belongs to this settlement's outcome.
- * Last matching row wins when the same words were recorded more than once.
+ * Belonging attempt-history identity for a non-recording re-projection (#1161 甲).
+ * Binds by courtAttemptId on the history row's subject — never by payload equality.
  */
-function attemptHistoryIdentityForOutcome(
+async function belongingAttemptHistoryIdentity(
   runDirectory: string,
   role: string,
-  outcome: AttemptHistoryOutcome,
-): string | undefined {
-  // History unreadable is a gap, not a settlement abort — the ledger's failure
-  // domain does not block the terminal face (#1161 / main history disposition).
+  scope: SettlementCourtScope | undefined,
+): Promise<string | undefined> {
+  const courtAttemptId = scope?.courtAttemptId;
+  if (courtAttemptId === undefined || courtAttemptId.length === 0) return undefined;
   let rows: readonly Record<string, unknown>[];
   try {
     rows = readHistoryRowsSync(runDirectory);
-  } catch {
+  } catch (error) {
+    // Documented: history failure domain does not block the terminal face
+    // (#1161 / main history disposition). True cause must leave a trace.
+    await noteSettlementFault(
+      runDirectory,
+      scope,
+      `attempt-history read failed beside terminal projection: ${describeErrorIdentity(error)}`,
+    );
     return undefined;
   }
   let found: string | undefined;
   for (const row of rows) {
     if (row.kind !== "attempt-history" || typeof row.identity !== "string") continue;
-    if (!isRecord(row.payload) || row.payload.role !== role || !isRecord(row.payload.outcome)) continue;
-    if (!sameAttemptHistoryOutcome(row.payload.outcome, outcome)) continue;
+    if (!isRecord(row.payload) || row.payload.role !== role) continue;
+    if (historyRowCourtAttemptId(row) !== courtAttemptId) continue;
     found = row.identity;
   }
   return found;
-}
-
-function sameAttemptHistoryOutcome(
-  stored: Record<string, unknown>,
-  current: AttemptHistoryOutcome,
-): boolean {
-  if (stored.kind !== current.kind) return false;
-  if ("payloads" in current) {
-    return JSON.stringify(stored.payloads) === JSON.stringify(current.payloads);
-  }
-  if (current.kind === "failure") {
-    return stored.diagnostic === current.diagnostic && stored.cause === current.cause;
-  }
-  return JSON.stringify(stored) === JSON.stringify(current);
 }
 
 type LawfulSessionRead =
@@ -1438,7 +1459,7 @@ async function finishLawfulSeat(
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
-    : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope?.recordAttemptHistory === true);
+    : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope);
   const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: extractNavigatorFact(entries),
@@ -1523,7 +1544,7 @@ async function publishDeclaredSeatTerminal(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
-  recordAttemptHistory: boolean,
+  scope: SettlementCourtScope | undefined,
 ): Promise<TerminalArtifactRef[]> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
@@ -1531,7 +1552,7 @@ async function publishDeclaredSeatTerminal(
     : {};
   // Payloads are the role's submitted words: they live in history.jsonl, not here.
   const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  return publishAcceptedTerminal(admitted, roleOutcome, coordinates, recordAttemptHistory, {
+  return publishAcceptedTerminal(admitted, roleOutcome, coordinates, scope, {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
@@ -1740,7 +1761,7 @@ export async function publishFailureTerminal(
   failure: ControlledFailure,
   coordinates: DurablePrincipalCoordinates,
   onErrorPublished?: (path: string) => void,
-  recordAttemptHistory = false,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   // #419: a dispatched failure joins history before the terminal changes. A history
   // write failure never strands the failure terminal; it is rethrown after it.
@@ -1748,10 +1769,10 @@ export async function publishFailureTerminal(
   let historyFailed = false;
   const failureOutcome = { kind: "failure" as const, role: admitted.role, ...failure };
   let attemptHistoryIdentity: string | undefined;
-  if (recordAttemptHistory) {
+  if (scope?.recordAttemptHistory === true) {
     try {
       const pointer = await appendRunAttemptHistory(
-        { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+        attemptHistorySource(admitted, coordinates, scope),
         failureOutcome,
       );
       attemptHistoryIdentity = pointer.identity;
@@ -1760,10 +1781,10 @@ export async function publishFailureTerminal(
       historyFailed = true;
     }
   } else {
-    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
       admitted.runDirectory,
       admitted.role,
-      failureOutcome,
+      scope,
     );
   }
   writeRunTerminal(admitted.runDirectory, "error", {
@@ -1810,7 +1831,7 @@ export async function settleFailureTerminalResult(
   let artifacts: TerminalArtifactRef[] = [];
   if (options.previewOnly !== true) {
     try {
-      artifacts = await publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options.recordAttemptHistory === true);
+      artifacts = await publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options);
     } catch (error) {
       await noteSettlementFault(
         admitted.runDirectory,
