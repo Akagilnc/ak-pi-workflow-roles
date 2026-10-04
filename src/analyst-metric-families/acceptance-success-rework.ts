@@ -97,7 +97,10 @@ export type AnalystAcceptanceSuccessReworkSection = {
   readonly rework: AnalystReworkLens;
 };
 
-/** Locate collector groups array: receipt.groups or top-level groups. */
+/**
+ * Locate collector groups array from the canonical typed receipt faces.
+ * Same leaf order as extractStatus: body / receipt / decisiveFacts / payloads.
+ */
 function findCollectorGroups(body: Record<string, unknown>): unknown {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
@@ -106,6 +109,15 @@ function findCollectorGroups(body: Record<string, unknown>): unknown {
   if (isRecord(outcome)) {
     const facts = outcome.decisiveFacts;
     if (isRecord(facts) && Array.isArray(facts.groups)) return facts.groups;
+    // Typed sealed receipt: settlement keeps payloads on attempt-history; the
+    // terminal reader rehydrates them onto outcome.payloads. Groups are the
+    // collector leaf on that receipt — never invent a second discriminator.
+    if (Array.isArray(outcome.payloads)) {
+      for (let index = outcome.payloads.length - 1; index >= 0; index -= 1) {
+        const payload = outcome.payloads[index];
+        if (isRecord(payload) && Array.isArray(payload.groups)) return payload.groups;
+      }
+    }
   }
   return undefined;
 }

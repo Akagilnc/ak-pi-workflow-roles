@@ -21,7 +21,6 @@ import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { runDirectoryFromHostContext } from "../host-contracts.ts";
 import { sitianReportSafe } from "../host-session-record.ts";
 import { isTerminatingToolName } from "../package-contracts/terminating-tools.ts";
-import { terminatingToolJsonSchema } from "../role-envelope.ts";
 import { sessionFileOf } from "../role-run-placement.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
 import {
@@ -197,10 +196,12 @@ export function createPiRoleHostAdapter(
             const runDirectory = runDirectoryFromHostContext(projected);
             if (runDirectory !== undefined && position === beforeAgentStartHandlers - 1) {
               const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
+              // Record the same parameters object Pi was handed — not a
+              // headless draft-07 projection of another host's transport.
               let outputSchema: unknown;
               for (const [name, parameters] of registeredToolParameters) {
                 if (!isTerminatingToolName(name)) continue;
-                outputSchema = terminatingToolJsonSchema(parameters);
+                outputSchema = parameters;
                 break;
               }
               // History write failures do not stop a run (#833): declared, and Pi starts.

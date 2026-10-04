@@ -25,15 +25,13 @@ import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
-import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
+import { readLedgerSessionJsonlLines, readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 import { copyAndRecordHostDossier } from "../host-session-record.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
-import { renderCurrentSync } from "../run-dossier.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
 import { sitianReport } from "../sitian-facade.ts";
-import { isRecord } from "../unknown-value.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -462,8 +460,9 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
-      // Deliver already-written Pi host facts into the rows current.json projects.
-      // Pi has no external copy step; the landing is session/session.jsonl itself.
+      // Deliver already-written Pi host facts. Pi lands at session/session.jsonl;
+      // bind projects host.sessions; copy records the landing. Host adapters do
+      // not write current.json — public bind/settlement seams own that render.
       try {
         const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);
         const sessionId = await readPiSessionHeaderId(sessionFile);
@@ -480,8 +479,6 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
             sessionParent: sessionFile,
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
-          // Bind already rendered sessions; re-render so original lands before settlement.
-          renderCurrentSync(request.runDirectory);
         }
       } catch (error) {
         await retainPackageFault({
@@ -495,12 +492,16 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
   };
 }
 
-/** Session header id from the Pi volume the child (or fixture) already wrote. */
+/**
+ * Session header id from the Pi volume the child (or fixture) already wrote.
+ * Reuses the ledger line kernel: a later malformed line must not erase a valid
+ * header already present (ADR 0086 originals are not validated whole-file).
+ */
 async function readPiSessionHeaderId(sessionFile: string): Promise<string | undefined> {
   try {
-    const entries = await readStrictPiSessionJsonl(sessionFile);
-    for (const entry of entries) {
-      if (!isRecord(entry) || entry.type !== "session") continue;
+    for (const line of await readLedgerSessionJsonlLines(sessionFile)) {
+      const entry = line.row;
+      if (entry === undefined || entry.type !== "session") continue;
       if (typeof entry.id === "string" && entry.id.trim() !== "") return entry.id;
     }
   } catch (error) {

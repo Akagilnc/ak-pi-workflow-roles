@@ -8,7 +8,7 @@ import {
 } from "./host-descriptions.ts";
 import { renderCurrentSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
-import { isRecord } from "./unknown-value.ts";
+import { errorText, isRecord } from "./unknown-value.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 
 /** Log record kind of one host-session binding (a host's native session id for this run). */
@@ -17,9 +17,10 @@ export const HOST_SESSION_ID_RECORD_KIND = "host-session-id" as const;
 /**
  * Durable session binding: one state row per bind, scoped by host name — a run
  * that changes hosts on resume must never hand one host's native session id to
- * another. The latest record for the host wins. The public call renders
- * `current.json` at the bind itself so host.sessions is projected before the
- * host CLI starts, not only at settlement.
+ * another. The latest record for the host wins. The public call projects
+ * `current.json` at the bind so host.sessions appears before the host CLI
+ * starts; a refused projection does not undo the binding fact or become a
+ * host/session failure (facts stay in state.jsonl; settlement still renders).
  */
 export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
@@ -50,7 +51,13 @@ export function createSessionIdentityAuthority(
     async bind(principal, sessionId) {
       const runDirectory = runDirectoryOf(principal);
       reportRunRecord(runDirectory, HOST_SESSION_ID_RECORD_KIND, { host: hostName, sessionId }, "session-identity");
-      renderCurrentSync(runDirectory);
+      try {
+        renderCurrentSync(runDirectory);
+      } catch (error) {
+        process.stderr.write(
+          `[session-identity] current.json render refused after host-session-id; binding fact kept: ${runDirectory}: ${errorText(error)}\n`,
+        );
+      }
     },
   };
 }

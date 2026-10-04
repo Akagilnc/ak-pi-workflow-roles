@@ -374,9 +374,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           currentSessionId: () => sessionId,
           async runRound({ prompt, abortSignal }) {
             // One history row per actual session/prompt start (催交回合各算一次).
+            // MCP advertises tool.parameters; prepared.jsonSchema is the headless
+            // draft-07 stamp of that clone — record the delivered parameters face.
+            const { $schema: _headlessStamp, ...deliveredSchema } = prepared.jsonSchema;
             await recordTurnDelivery(request.runDirectory, {
               systemPrompt: systemPromptOverride,
-              outputSchema: prepared.jsonSchema,
+              outputSchema: deliveredSchema,
             }, "acp-host");
             let result: Readonly<Record<string, unknown>>;
             // Open the prose gate only for this prompt round; clear any stale chunks first.
