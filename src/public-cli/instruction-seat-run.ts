@@ -1099,7 +1099,11 @@ export async function continueParentAfterChild(
       && heldUnreadableTerminal(stopped.terminal)
       && stopped.terminal !== undefined
     ) {
-      const parentTerminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+      const parentTerminal = await trySettlePublicSeat(
+        admitted,
+        env.principalAuthority,
+        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
+      );
       if (
         parentTerminal?.roleOutcome.kind === "accepted"
         || parentTerminal?.roleOutcome.kind === "audit_escalation"
@@ -1118,7 +1122,7 @@ export async function continueParentAfterChild(
       const terminal = await trySettlePublicSeat(
         admitted,
         env.principalAuthority,
-        packageFaultScope(admitted, env, io),
+        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted, latestQueuePayload(resolved.terminal));

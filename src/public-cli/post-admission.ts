@@ -174,6 +174,7 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
   deferredPersist: { needsPersist?: true } | Record<string, never>;
   invocationScopeId: string | undefined;
   notePackageFault?: (diagnostic: string) => void | Promise<void>;
+  courtAttemptId?: string;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -204,6 +205,7 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
     input.io,
     input.persistRunState,
     input.notePackageFault,
+    input.courtAttemptId,
   );
   return {
     ...failed,
@@ -472,6 +474,8 @@ export async function presentControlledFailure<
   io: CliIo,
   persistRunState = true,
   notePackageFault?: (diagnostic: string) => void | Promise<void>,
+  /** Open-court identity already on the turn request / currentCourt (#1161). */
+  courtAttemptId?: string,
 ): Promise<{
   exitCode: number;
   admitted: A;
@@ -544,6 +548,9 @@ export async function presentControlledFailure<
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
       recordAttemptHistory: true,
       ...(notePackageFault === undefined ? {} : { notePackageFault }),
+      ...(courtAttemptId === undefined || courtAttemptId.length === 0
+        ? {}
+        : { courtAttemptId }),
       ...(failureInput.invocationScopeId === undefined ||
         failureInput.invocationScopeId.length === 0
         ? {}
@@ -587,6 +594,7 @@ async function settleAfterTurnStarted<
   io: CliIo,
   persistRunState: boolean,
   notePackageFault?: (diagnostic: string) => void | Promise<void>,
+  courtAttemptId?: string,
 ): Promise<{ exitCode: number; admitted: A; terminal: T }> {
   try {
     return (await presentControlledFailure(
@@ -597,6 +605,7 @@ async function settleAfterTurnStarted<
       io,
       persistRunState,
       notePackageFault,
+      courtAttemptId,
     )) as { exitCode: number; admitted: A; terminal: T };
   } catch (error) {
     throw new TurnDispatchedFailure(error);
@@ -836,6 +845,9 @@ async function settleCompletedHostTurn<
           deferredPersist,
           invocationScopeId: request.invocationScopeId,
           notePackageFault: courtScope.notePackageFault,
+          ...(courtScope.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: courtScope.courtAttemptId }),
         }),
       ) };
     }
@@ -887,6 +899,7 @@ async function settleCompletedHostTurn<
       io,
       persistRunState,
       courtScope.notePackageFault,
+      courtScope.courtAttemptId,
     );
     return { kind: "settled", outcome: await finishAfterTurn(
       withProcessCancelSkipAutoResume(
@@ -1044,6 +1057,7 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
           courtScope.notePackageFault,
+          courtScope.courtAttemptId,
         )),
         turnDispatched: true as const,
         skipAutoResume: true as const,
@@ -1133,6 +1147,7 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
           courtScope.notePackageFault,
+          courtScope.courtAttemptId,
         )) as { exitCode: number; admitted: A; terminal: T },
         ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
         ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
@@ -1171,6 +1186,7 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
           courtScope.notePackageFault,
+          courtScope.courtAttemptId,
         )) as { exitCode: number; admitted: A; terminal: T };
         return { ...settled, ...deferredPersist };
       }
@@ -1237,6 +1253,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
         courtScope.notePackageFault,
+        courtScope.courtAttemptId,
       );
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
@@ -1311,6 +1328,8 @@ export async function dispatchPostAdmissionTurn<
           env.principalAuthority,
           io,
           persistRunState,
+          courtScope.notePackageFault,
+          courtScope.courtAttemptId,
         );
         return await finishAfterTurn(
           withProcessCancelSkipAutoResume(
@@ -1391,6 +1410,9 @@ export async function dispatchPostAdmissionTurn<
           deferredPersist,
           invocationScopeId: request.invocationScopeId,
           notePackageFault: courtScope.notePackageFault,
+          ...(courtScope.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: courtScope.courtAttemptId }),
         }),
       );
     }

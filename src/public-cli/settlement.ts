@@ -10,7 +10,7 @@ import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { sessionFileOf } from "../role-run-placement.ts";
 
 import { sitianReport, type RecordPointer } from "../sitian-facade.ts";
-import { ATTEMPT_HISTORY_IDENTITY_FIELD, writeRunTerminal } from "../run-terminal-artifacts.ts";
+import { ATTEMPT_HISTORY_IDENTITY_FIELD, readRunTerminal, writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 import {
   readAttemptScopedSubmissionRows,
@@ -68,7 +68,7 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
-import { readHistoryRowsSync, runCurrentPath } from "../run-dossier.ts";
+import { runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
@@ -426,16 +426,12 @@ async function settleNoReceiptTerminal(
   let attemptHistoryIdentity: string | undefined;
   if (scope?.recordAttemptHistory === true) {
     const pointer = await appendRunAttemptHistory(
-      attemptHistorySource(admitted, coordinates, scope),
+      attemptHistorySource(admitted, coordinates),
       roleOutcome,
     );
     attemptHistoryIdentity = pointer.identity;
   } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      admitted.role,
-      scope,
-    );
+    attemptHistoryIdentity = existingAttemptHistoryIdentity(admitted.runDirectory);
   }
   if (scope?.previewOnly !== true) {
     // Belonging settlement only (#1161 甲 / R2): never inherit another court's
@@ -1032,23 +1028,16 @@ type AttemptHistorySource = {
   readonly role: string;
   readonly runId: string;
   readonly sessionFile: string;
-  /** Court identity for this settlement (#1161 甲); same subject.attemptId tag as the submission ledger. */
-  readonly attemptId?: string;
 };
 
 function attemptHistorySource(
   admitted: Pick<AdmittedRoleInvocation, "role" | "runId">,
   coordinates: Pick<DurablePrincipalCoordinates, "sessionFile">,
-  scope: SettlementCourtScope | undefined,
 ): AttemptHistorySource {
-  const courtAttemptId = scope?.courtAttemptId;
   return {
     role: admitted.role,
     runId: admitted.runId,
     sessionFile: coordinates.sessionFile,
-    ...(courtAttemptId !== undefined && courtAttemptId.length > 0
-      ? { attemptId: courtAttemptId }
-      : {}),
   };
 }
 
@@ -1060,10 +1049,7 @@ export async function appendRunAttemptHistory(
   return sitianReport({
     level: "event",
     kind: "attempt-history",
-    subject: {
-      runId: source.runId,
-      ...(source.attemptId === undefined ? {} : { attemptId: source.attemptId }),
-    },
+    subject: { runId: source.runId },
     sessionParent: source.sessionFile,
     payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
     source: "settlement",
@@ -1322,10 +1308,10 @@ async function extractNavigatorFactFromAdmittedSession(
  * Sole success-terminal publisher (#953): replace the leg's terminal in
  * current.json. The report carries the outcome's verdict facts; the role's
  * submitted payloads live in history.jsonl. The terminal names the
- * attempt-history row that belongs to this settlement — the row this settle
- * appended under this courtAttemptId, or that court's existing history row
- * (#1161 甲). Never content-match payloads, never inherit the run's latest
- * terminal, never invent a history row on re-projection (R2 / N1).
+ * attempt-history row that belongs to this settlement — from this settle's
+ * append when recording, otherwise the existing 甲 pointer already on the
+ * terminal. Never content-match payloads, never inherit another court's
+ * latest identity, never invent a history row on re-projection (R2 / N1).
  */
 async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
@@ -1339,16 +1325,12 @@ async function publishAcceptedTerminal(
   let attemptHistoryIdentity: string | undefined;
   if (scope?.recordAttemptHistory === true) {
     const pointer = await appendRunAttemptHistory(
-      attemptHistorySource(admitted, coordinates, scope),
+      attemptHistorySource(admitted, coordinates),
       roleOutcome,
     );
     attemptHistoryIdentity = pointer.identity;
   } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      admitted.role,
-      scope,
-    );
+    attemptHistoryIdentity = existingAttemptHistoryIdentity(admitted.runDirectory);
   }
   writeRunTerminal(admitted.runDirectory, "report", {
     ...report,
@@ -1359,45 +1341,18 @@ async function publishAcceptedTerminal(
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
-/** Court tag on an attempt-history row — subject.attemptId only (甲 identity, not payload words). */
-function historyRowCourtAttemptId(row: Record<string, unknown>): string | undefined {
-  if (!isRecord(row.subject)) return undefined;
-  const attemptId = row.subject.attemptId;
-  return typeof attemptId === "string" && attemptId.length > 0 ? attemptId : undefined;
-}
-
 /**
- * Belonging attempt-history identity for a non-recording re-projection (#1161 甲).
- * Binds by courtAttemptId on the history row's subject — never by payload equality.
+ * Non-recording re-projection keeps the terminal's existing 甲 pointer.
+ * Owner 甲 (`80c43271-2371-43a1-a0c0-f5f57d7916f6`) authorized only this field on
+ * the terminal — not a new subject.attemptId on attempt-history rows. Never
+ * invent-append (N1), never guess by payload, never inherit another court's
+ * latest identity by scanning history.
  */
-async function belongingAttemptHistoryIdentity(
-  runDirectory: string,
-  role: string,
-  scope: SettlementCourtScope | undefined,
-): Promise<string | undefined> {
-  const courtAttemptId = scope?.courtAttemptId;
-  if (courtAttemptId === undefined || courtAttemptId.length === 0) return undefined;
-  let rows: readonly Record<string, unknown>[];
-  try {
-    rows = readHistoryRowsSync(runDirectory);
-  } catch (error) {
-    // Documented: history failure domain does not block the terminal face
-    // (#1161 / main history disposition). True cause must leave a trace.
-    await noteSettlementFault(
-      runDirectory,
-      scope,
-      `attempt-history read failed beside terminal projection: ${describeErrorIdentity(error)}`,
-    );
-    return undefined;
-  }
-  let found: string | undefined;
-  for (const row of rows) {
-    if (row.kind !== "attempt-history" || typeof row.identity !== "string") continue;
-    if (!isRecord(row.payload) || row.payload.role !== role) continue;
-    if (historyRowCourtAttemptId(row) !== courtAttemptId) continue;
-    found = row.identity;
-  }
-  return found;
+function existingAttemptHistoryIdentity(runDirectory: string): string | undefined {
+  const terminal = readRunTerminal(runDirectory);
+  if (terminal.status !== "present") return undefined;
+  const identity = terminal.body[ATTEMPT_HISTORY_IDENTITY_FIELD];
+  return typeof identity === "string" && identity.length > 0 ? identity : undefined;
 }
 
 type LawfulSessionRead =
@@ -1772,7 +1727,7 @@ export async function publishFailureTerminal(
   if (scope?.recordAttemptHistory === true) {
     try {
       const pointer = await appendRunAttemptHistory(
-        attemptHistorySource(admitted, coordinates, scope),
+        attemptHistorySource(admitted, coordinates),
         failureOutcome,
       );
       attemptHistoryIdentity = pointer.identity;
@@ -1781,11 +1736,7 @@ export async function publishFailureTerminal(
       historyFailed = true;
     }
   } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      admitted.role,
-      scope,
-    );
+    attemptHistoryIdentity = existingAttemptHistoryIdentity(admitted.runDirectory);
   }
   writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",

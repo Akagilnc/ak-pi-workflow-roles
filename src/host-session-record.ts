@@ -18,7 +18,7 @@ import {
   type Dirent,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
@@ -190,27 +190,6 @@ function copyGrokDossier(srcDir: string, destDir: string): void {
 }
 
 /**
- * After a kill between park and swap-in, landing may be absent while one
- * attempt-owned `.previous.<token>` still holds the old original. Restore that
- * sole orphan. If landing is already present, do nothing — another call may
- * have succeeded. If more than one orphan exists, do not guess (#1161 C2).
- */
-function restoreSoleOrphanedGrokPrevious(landingPath: string): void {
-  if (existsSync(landingPath)) return;
-  const dir = dirname(landingPath);
-  if (!existsSync(dir)) return;
-  const prefix = `${basename(landingPath)}.previous.`;
-  let orphan: string | undefined;
-  for (const name of readdirSync(dir)) {
-    if (!name.startsWith(prefix)) continue;
-    if (orphan !== undefined) return;
-    orphan = name;
-  }
-  if (orphan === undefined) return;
-  renameSync(join(dir, orphan), landingPath);
-}
-
-/**
  * Copy the native host session original over the run's single landing path
  * after the child process exits. Copies beside the landing path and swaps in
  * on success, so a failed copy never destroys the previous good original.
@@ -262,10 +241,8 @@ export function copyAndRecordHostDossier(options: {
   // Per-attempt staging/previous names: concurrent copies of the same landing
   // must not share one `.copying` / `.previous` path (#1161 C2). Node's fs
   // copy is not atomic; unique sibling + rename is the smallest ownership fix.
-  // Kill between the two renames can leave landing absent and one owned
-  // `.previous.<token>` holding the old original — restore that orphan only
-  // when landing is still missing and exactly one such sibling exists. Never
-  // restore over a present landing (another call may already have succeeded).
+  // Swap-failure restores that attempt's own `.previous.<token>` inline — no
+  // next-call orphan scan (J6: do not invent a second recovery mechanism).
 
   let lastError: unknown;
   let copySuccess = false;
@@ -276,7 +253,6 @@ export function copyAndRecordHostDossier(options: {
     stagingForCleanup = staging;
     try {
       if (options.host === "grok-build") {
-        restoreSoleOrphanedGrokPrevious(landingPath);
         copyGrokDossier(nativePath!, staging);
       } else {
         if (nativePath === undefined || !existsSync(nativePath)) {
