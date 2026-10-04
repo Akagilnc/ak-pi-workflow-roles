@@ -276,6 +276,7 @@ export function copyAndRecordHostDossier(options: {
         let keepUniquePrevious = false;
         let cleanupError: unknown;
         let swapFailure: unknown;
+        let restoreError: unknown;
         try {
           if (hadPrevious) {
             renameSync(landingPath, previous);
@@ -284,7 +285,6 @@ export function copyAndRecordHostDossier(options: {
           try {
             renameSync(staging, landingPath);
           } catch (swapError) {
-            let restoreError: unknown;
             if (parked && existsSync(previous) && !existsSync(landingPath)) {
               try {
                 renameSync(previous, landingPath);
@@ -296,16 +296,7 @@ export function copyAndRecordHostDossier(options: {
                 }
               }
             }
-            // native-session-warning uses errorText (= Error.message). Keep every
-            // residual-previous cause in message and AggregateError.errors — no catch{}.
-            swapFailure =
-              restoreError === undefined
-                ? swapError
-                : new AggregateError(
-                    [swapError, restoreError],
-                    `${errorText(swapError)}; restore failed: ${errorText(restoreError)}`,
-                    { cause: swapError },
-                  );
+            swapFailure = swapError;
           }
         } finally {
           if (parked && existsSync(previous) && !keepUniquePrevious) {
@@ -317,17 +308,22 @@ export function copyAndRecordHostDossier(options: {
           }
         }
         if (swapFailure !== undefined) {
-          // Combine swap(/restore) with cleanup when both ran; do not retry —
-          // retry would re-park and wash the residual-previous causes (#1161 C2).
-          lastError =
-            cleanupError === undefined
-              ? swapFailure
-              : new AggregateError(
-                  [swapFailure, cleanupError],
-                  `${errorText(swapFailure)}; cleanup failed: ${errorText(cleanupError)}`,
-                  { cause: swapFailure },
-                );
-          break;
+          // Keep every residual cause in message and AggregateError.errors.
+          lastError = combineCopyFailureCauses(swapFailure, restoreError, cleanupError);
+          // Ordinary swap fail with restore+cleanup success → ADR 0086 retry once.
+          // Restore or cleanup incomplete → keep residual paths; do not retry
+          // (retry would re-park / wash residual-previous causes).
+          if (restoreError !== undefined || cleanupError !== undefined) {
+            break;
+          }
+          try {
+            rmSync(staging, { recursive: true, force: true });
+            stagingForCleanup = undefined;
+          } catch (stagingCleanupError) {
+            lastError = combineCopyFailureCauses(swapFailure, undefined, stagingCleanupError);
+            break;
+          }
+          continue;
         }
         if (cleanupError !== undefined) {
           // Swap landed but cleanup ownership is incomplete — leave the true
@@ -344,8 +340,15 @@ export function copyAndRecordHostDossier(options: {
       break;
     } catch (error) {
       lastError = error;
-      try { rmSync(staging, { recursive: true, force: true }); }
-      catch { /* retry or warning below */ }
+      try {
+        rmSync(staging, { recursive: true, force: true });
+        stagingForCleanup = undefined;
+      } catch (cleanupError) {
+        lastError = combineCopyFailureCauses(error, undefined, cleanupError, staging);
+        // Residual already recorded; clear so the final pass does not re-rm / duplicate.
+        stagingForCleanup = undefined;
+        break;
+      }
     }
   }
 
@@ -354,8 +357,11 @@ export function copyAndRecordHostDossier(options: {
   } else {
     // A partial attempt must not masquerade as a complete native original.
     if (stagingForCleanup !== undefined) {
-      try { rmSync(stagingForCleanup, { recursive: true, force: true }); }
-      catch { /* warning below reports the original copy failure */ }
+      try {
+        rmSync(stagingForCleanup, { recursive: true, force: true });
+      } catch (cleanupError) {
+        lastError = combineCopyFailureCauses(lastError, undefined, cleanupError, stagingForCleanup);
+      }
     }
     report({
       type: "native-session-warning",
@@ -365,4 +371,29 @@ export function copyAndRecordHostDossier(options: {
       error: errorText(lastError),
     });
   }
+}
+
+/** Fold swap / restore / staging-or-previous cleanup causes without washing any. */
+function combineCopyFailureCauses(
+  primary: unknown,
+  restoreError: unknown,
+  cleanupError: unknown,
+  residualPath?: string,
+): unknown {
+  const errors: unknown[] = [primary];
+  const parts = [errorText(primary)];
+  if (restoreError !== undefined) {
+    errors.push(restoreError);
+    parts.push(`restore failed: ${errorText(restoreError)}`);
+  }
+  if (cleanupError !== undefined) {
+    errors.push(cleanupError);
+    parts.push(
+      residualPath === undefined
+        ? `cleanup failed: ${errorText(cleanupError)}`
+        : `cleanup failed: ${errorText(cleanupError)} (residual: ${residualPath})`,
+    );
+  }
+  if (errors.length === 1) return primary;
+  return new AggregateError(errors, parts.join("; "), { cause: primary });
 }

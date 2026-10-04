@@ -45,9 +45,13 @@ export function createSessionIdentityAuthority(
       }
       let bound: string | undefined;
       for (const record of records) {
-        if (record.kind !== HOST_SESSION_ID_RECORD_KIND || !isRecord(record.payload)) continue;
+        if (record.kind !== HOST_SESSION_ID_RECORD_KIND) continue;
+        // Null / non-object / non-string sessionId: refuse — same class as BASE
+        // binding JSON reject. Do not skip and reuse a prior host binding (#1161 C3).
+        if (!isRecord(record.payload) || typeof record.payload.sessionId !== "string") {
+          throw new Error("durable session binding is invalid");
+        }
         if (record.payload.host !== hostName) continue;
-        if (typeof record.payload.sessionId !== "string") throw new Error("durable session binding is invalid");
         bound = record.payload.sessionId;
       }
       return bound;

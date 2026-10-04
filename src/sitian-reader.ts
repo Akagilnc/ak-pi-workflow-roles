@@ -6,7 +6,6 @@
  * - Zero whitewashing, zero deduplication.
  * - Canonical rows after malformed lines are always reachable.
  */
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -15,7 +14,7 @@ import type {
   SitianRecord,
 } from "./sitian-contracts.ts";
 
-import { isRecord, errorText } from "./unknown-value.ts";
+import { isRecord, errorText, isEnoent } from "./unknown-value.ts";
 
 /** One non-blank JSONL line through the sole Sitian decoder. Blank → undefined. */
 export type SitianLineDecode =
@@ -80,8 +79,12 @@ export function parseSitianRecordText(text: string): SitianReadResult {
 
 /** Read a Sitian record volume with full traversal and non-destructive diagnostics. */
 export async function readSitianRecords(recordFile: string): Promise<SitianReadResult> {
-  if (!existsSync(recordFile)) {
-    return { records: [], diagnostics: [] };
+  // Direct read: only ENOENT is absence. EACCES/EPERM and other IO keep their cause
+  // (Node fs docs: do not existsSync/access before open — #1161 C3).
+  try {
+    return parseSitianRecordText(await readFile(recordFile, "utf8"));
+  } catch (error) {
+    if (isEnoent(error)) return { records: [], diagnostics: [] };
+    throw error;
   }
-  return parseSitianRecordText(await readFile(recordFile, "utf8"));
 }

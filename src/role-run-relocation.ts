@@ -6,7 +6,6 @@
  * frozen attachment/artifact bytes. Nested walk is confined to package-owned
  * `session/` seams.
  */
-import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 
@@ -262,8 +261,13 @@ async function rewriteSitianRecordsJsonl(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  if (!existsSync(path)) return;
-  const raw = await readFile(path, "utf8");
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (isEnoent(error)) return;
+    throw error;
+  }
   if (raw.length === 0) return;
   const endsWithNewline = raw.endsWith("\n");
   const lines = raw.split("\n");
@@ -321,8 +325,13 @@ async function rewriteSessionTranscriptBindings(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  if (!existsSync(path)) return;
-  const raw = await readFile(path, "utf8");
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (isEnoent(error)) return;
+    throw error;
+  }
   if (raw.length === 0) return;
   const endsWithNewline = raw.endsWith("\n");
   const lines = raw.split("\n");
@@ -476,8 +485,14 @@ export async function rewriteRoleRunDurablePages(input: {
     ["run-state.json", pageRewriters.runState],
   ] as const) {
     const path = join(pagesDirectory, file);
-    if (!existsSync(path)) continue;
-    const page = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch (error) {
+      if (isEnoent(error)) continue;
+      throw error;
+    }
+    const page = JSON.parse(raw) as Record<string, unknown>;
     const before = JSON.stringify(page);
     rewrite(page);
     if (JSON.stringify(page) !== before) {

@@ -91,16 +91,27 @@ export function clearCurrentSection(runDirectory: string, section: CurrentSectio
   }
 }
 
-/** Every line of `<run>/history.jsonl`, parsed raw (`[]` when absent). */
-export function readHistoryRows(runDirectory: string): Record<string, unknown>[] {
+/**
+ * One JSONL volume beside a run: ENOENT → `[]`; other IO and JSON.parse throw.
+ * Sole rule for history / state / log fixture reads (#1161 T1) — not a production hook.
+ */
+function readRunJsonlRows(runDirectory: string, fileName: string): Record<string, unknown>[] {
   let raw: string;
   try {
-    raw = readFileSync(join(runDirectory, "history.jsonl"), "utf8");
+    raw = readFileSync(join(runDirectory, fileName), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+  return raw
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** Every line of `<run>/history.jsonl`, parsed raw (`[]` when absent). */
+export function readHistoryRows(runDirectory: string): Record<string, unknown>[] {
+  return readRunJsonlRows(runDirectory, "history.jsonl");
 }
 
 /** The `payload` of every history.jsonl row of one kind, in append order. */
@@ -110,14 +121,7 @@ export function historyPayloads<T = Record<string, unknown>>(runDirectory: strin
 
 /** Every line of `<run>/state.jsonl` (the four whole-page fact rows), parsed raw (`[]` when absent). */
 export function readStateRows(runDirectory: string): Record<string, unknown>[] {
-  let raw: string;
-  try {
-    raw = readFileSync(join(runDirectory, "state.jsonl"), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  return raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+  return readRunJsonlRows(runDirectory, "state.jsonl");
 }
 
 /** The `payload` of every state.jsonl row of one kind, in append order. */
@@ -131,14 +135,7 @@ export function statePayloads<T = Record<string, unknown>>(runDirectory: string,
  * resume-diagnostic, host-session, ...). Each row's content is its `payload`.
  */
 export function readRunLogRows(runDirectory: string, kind?: string): Record<string, unknown>[] {
-  let raw: string;
-  try {
-    raw = readFileSync(join(runDirectory, "log.jsonl"), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  const rows = raw.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as Record<string, unknown>);
+  const rows = readRunJsonlRows(runDirectory, "log.jsonl");
   return kind === undefined ? rows : rows.filter((row) => row.kind === kind);
 }
 

@@ -674,6 +674,30 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
  *
  * The caller owns the live delivery policy; the request projects its next send.
  */
+/** Attach durable host session id on resume when the caller left it unset. */
+async function withStoredHostSessionId(
+  turnRequest: RoleTurnRequest,
+  env: Pick<PostAdmissionEnv, "host" | "principalAuthority">,
+  principal: RoleTurnRequest["principal"],
+): Promise<RoleTurnRequest> {
+  if (
+    turnRequest.continuation.kind !== "resume"
+    || turnRequest.continuation.hostSessionId !== undefined
+  ) {
+    return turnRequest;
+  }
+  const hostSessionId = await readStoredHostSessionId(
+    env.host,
+    env.principalAuthority,
+    principal,
+  );
+  if (hostSessionId === undefined) return turnRequest;
+  return {
+    ...turnRequest,
+    continuation: { ...turnRequest.continuation, hostSessionId },
+  };
+}
+
 async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(input: {
   admitted: A;
   env: PostAdmissionEnv;
@@ -681,21 +705,22 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): Promise<RoleTurnRequest> {
   const { admitted, env, request, receiptDelivery } = input;
-  const hostSessionId = await readStoredHostSessionId(
-    env.host,
-    env.principalAuthority,
+  const withBinding = await withStoredHostSessionId(
+    {
+      ...request,
+      continuation: {
+        kind: "resume",
+        prompt: JSON.stringify({
+          ...receiptDelivery.deliveryState(),
+          deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
+        }),
+      },
+    },
+    env,
     admitted.principal,
   );
   return {
-    ...request,
-    continuation: {
-      kind: "resume",
-      prompt: JSON.stringify({
-        ...receiptDelivery.deliveryState(),
-        deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
-      }),
-      ...(hostSessionId === undefined ? {} : { hostSessionId }),
-    },
+    ...withBinding,
     deliveryRequestLimit: receiptDelivery.limit,
   };
 }
@@ -1211,6 +1236,9 @@ export async function dispatchPostAdmissionTurn<
     if (typeof env.host === "string" && env.host.trim() !== "") {
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }
+    // In-call auto-resume builds a bare resume continuation; attach here so
+    // invalid host-session-id fails closed before the host turn (#1161 C3).
+    turnRequest = await withStoredHostSessionId(turnRequest, env, admitted.principal);
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
@@ -1810,23 +1838,11 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
-        if (
-          turnRequest.continuation.kind === "resume"
-          && turnRequest.continuation.hostSessionId === undefined
-        ) {
-          const hostSessionId = await readStoredHostSessionId(
-            env.host,
-            env.principalAuthority,
-            admittedForBuild.principal,
-          );
-          if (hostSessionId !== undefined) {
-            turnRequest = {
-              ...turnRequest,
-              continuation: { ...turnRequest.continuation, hostSessionId },
-            };
-          }
-        }
+        let turnRequest = await withStoredHostSessionId(
+          await input.buildTurnRequest(admittedForBuild, request),
+          env,
+          admittedForBuild.principal,
+        );
 
         // Open court continue, or a new court for a real re-summons
         // (clause 0 新庭可再交卷; #833). Bare resume — with or without caller
