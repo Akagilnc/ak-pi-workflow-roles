@@ -705,6 +705,12 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): Promise<RoleTurnRequest> {
   const { admitted, env, request, receiptDelivery } = input;
+  // Carry an already-attached hostSessionId into the delivery resume so
+  // withStoredHostSessionId does not re-read state for the same request (#1161 C3).
+  const priorHostSessionId =
+    request.continuation.kind === "resume"
+      ? request.continuation.hostSessionId
+      : undefined;
   const withBinding = await withStoredHostSessionId(
     {
       ...request,
@@ -714,6 +720,7 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
           ...receiptDelivery.deliveryState(),
           deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
         }),
+        ...(priorHostSessionId === undefined ? {} : { hostSessionId: priorHostSessionId }),
       },
     },
     env,

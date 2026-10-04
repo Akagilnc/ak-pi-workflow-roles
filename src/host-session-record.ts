@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
-import { errorText } from "./unknown-value.ts";
+import { errorText, isEnoent } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
 export const HOST_SESSION_RECORD_KIND = "host-session" as const;
@@ -44,15 +44,16 @@ export function sitianReportSafe(input: SitianRecordInput): void {
 
 /** Recursively scan for Codex rollout file matching sessionId under sessionsDir. */
 function findCodexRollout(sessionsDir: string, sessionId: string): string | undefined {
-  if (!existsSync(sessionsDir)) return undefined;
+  // Direct readdir: only ENOENT is absence. EACCES/EPERM keep their cause (#1161 C3-io).
   const matches: Array<{ path: string; mtime: number }> = [];
   function scan(dir: string, depth = 0): void {
     if (depth > 6) return;
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (error) {
+      if (isEnoent(error)) return;
+      throw error;
     }
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
@@ -63,12 +64,18 @@ function findCodexRollout(sessionsDir: string, sessionId: string): string | unde
           const stat = statSync(fullPath);
           matches.push({ path: fullPath, mtime: stat.mtimeMs });
         } catch {
+          // mtime optional for ranking; path itself is still a candidate.
           matches.push({ path: fullPath, mtime: 0 });
         }
       }
     }
   }
-  scan(sessionsDir);
+  try {
+    scan(sessionsDir);
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
   if (matches.length === 0 || matches[0] === undefined) return undefined;
   matches.sort((a, b) => b.mtime - a.mtime);
   return matches[0]?.path;
@@ -172,21 +179,15 @@ function copyFileCloneOrFallback(src: string, dest: string): void {
   copyFileSync(src, dest);
 }
 
-/** Copy both grok-build originals: chat_history.jsonl and usage.json into destDir. */
+/**
+ * Copy both grok-build originals: chat_history.jsonl and usage.json into destDir.
+ * Direct copy — no existsSync/access preflight. Real ENOENT/EACCES surface from
+ * the copy itself (Node fs: do not exists/access before open — #1161 C3-io).
+ */
 function copyGrokDossier(srcDir: string, destDir: string): void {
-  const chatHistorySrc = join(srcDir, "chat_history.jsonl");
-  if (!existsSync(chatHistorySrc)) {
-    throw new Error(`Grok native chat_history.jsonl missing at ${chatHistorySrc}`);
-  }
   mkdirSync(destDir, { recursive: true });
-  const chatHistoryDest = join(destDir, "chat_history.jsonl");
-  copyFileCloneOrFallback(chatHistorySrc, chatHistoryDest);
-
-  const usageSrc = join(srcDir, "usage.json");
-  if (!existsSync(usageSrc)) {
-    throw new Error(`Grok native usage.json missing at ${usageSrc}`);
-  }
-  copyFileCloneOrFallback(usageSrc, join(destDir, "usage.json"));
+  copyFileCloneOrFallback(join(srcDir, "chat_history.jsonl"), join(destDir, "chat_history.jsonl"));
+  copyFileCloneOrFallback(join(srcDir, "usage.json"), join(destDir, "usage.json"));
 }
 
 /**
@@ -255,7 +256,9 @@ export function copyAndRecordHostDossier(options: {
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, staging);
       } else {
-        if (nativePath === undefined || !existsSync(nativePath)) {
+        // Undefined path = discovery found nothing (true absence). Present path:
+        // copy directly so EACCES/EPERM keep their cause — no existsSync wash.
+        if (nativePath === undefined) {
           throw new Error(`Native session file missing for ${options.host} session ${options.sessionId}`);
         }
         mkdirSync(dirname(landingPath), { recursive: true });
@@ -308,8 +311,15 @@ export function copyAndRecordHostDossier(options: {
           }
         }
         if (swapFailure !== undefined) {
-          // Keep every residual cause in message and AggregateError.errors.
-          lastError = combineCopyFailureCauses(swapFailure, restoreError, cleanupError);
+          // Keep every residual cause; previous cleanup names its path explicitly
+          // (Node errno usually embeds path — still pass residual so AggregateError
+          // never silently omits which leftover remains; #1161 C2).
+          lastError = combineCopyFailureCauses(
+            swapFailure,
+            restoreError,
+            cleanupError,
+            cleanupError === undefined ? undefined : previous,
+          );
           // Ordinary swap fail with restore+cleanup success → ADR 0086 retry once.
           // Restore or cleanup incomplete → keep residual paths; do not retry
           // (retry would re-park / wash residual-previous causes).
@@ -320,15 +330,22 @@ export function copyAndRecordHostDossier(options: {
             rmSync(staging, { recursive: true, force: true });
             stagingForCleanup = undefined;
           } catch (stagingCleanupError) {
-            lastError = combineCopyFailureCauses(swapFailure, undefined, stagingCleanupError);
+            lastError = combineCopyFailureCauses(
+              swapFailure,
+              undefined,
+              stagingCleanupError,
+              staging,
+            );
+            // Residual already recorded; clear so the final pass does not re-rm / duplicate.
+            stagingForCleanup = undefined;
             break;
           }
           continue;
         }
         if (cleanupError !== undefined) {
           // Swap landed but cleanup ownership is incomplete — leave the true
-          // cause; do not retry (would re-park the good landing) or claim copy.
-          lastError = cleanupError;
+          // cause with residual previous path; do not retry or claim copy.
+          lastError = combineCopyFailureCauses(cleanupError, undefined, cleanupError, previous);
           stagingForCleanup = undefined;
           break;
         }
@@ -387,13 +404,13 @@ function combineCopyFailureCauses(
     parts.push(`restore failed: ${errorText(restoreError)}`);
   }
   if (cleanupError !== undefined) {
-    errors.push(cleanupError);
+    if (cleanupError !== primary) errors.push(cleanupError);
     parts.push(
       residualPath === undefined
         ? `cleanup failed: ${errorText(cleanupError)}`
         : `cleanup failed: ${errorText(cleanupError)} (residual: ${residualPath})`,
     );
   }
-  if (errors.length === 1) return primary;
+  if (errors.length === 1 && parts.length === 1) return primary;
   return new AggregateError(errors, parts.join("; "), { cause: primary });
 }
