@@ -626,6 +626,15 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     reportRunRecord(judgeRunDirectory(home), OFFICER_POINTER_RECORD_KIND, { officer: "inspector", kind: "something-else" }, "submission-gate");
     await assertAuditorRolesUnreadable("unknown pointer shape", home);
 
+    // Null / empty-object payloads are the same damage class — never lawful zero (#1161 O1).
+    await clearGateVolumes(home);
+    reportRunRecord(judgeRunDirectory(home), OFFICER_POINTER_RECORD_KIND, null, "submission-gate");
+    await assertAuditorRolesUnreadable("null pointer payload", home);
+
+    await clearGateVolumes(home);
+    reportRunRecord(judgeRunDirectory(home), OFFICER_POINTER_RECORD_KIND, {}, "submission-gate");
+    await assertAuditorRolesUnreadable("empty pointer payload", home);
+
     // Accepted gate receipt with inverted span must not silently omit the volume.
     await clearGateVolumes(home);
     await write(

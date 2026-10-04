@@ -143,15 +143,20 @@ function lastPagePayload(
 /**
  * Latest officer-pointer payload per officer from already-decoded history rows.
  * Sole reducer for the "last booking wins per officer" rule (#753 / #1161 officers).
+ * A booked officer-pointer row with a non-object payload or non-string officer is
+ * damaged topology — never silently omitted into lawful zero rounds (#1161 O1).
+ * Absence of any officer-pointer row remains lawful empty.
  */
 export function latestOfficerPointersFromRecords(
   records: readonly { readonly kind?: unknown; readonly payload?: unknown }[],
 ): Readonly<Record<string, unknown>> {
   const latest: Record<string, unknown> = {};
   for (const record of records) {
-    if (record.kind !== OFFICER_POINTER_RECORD_KIND || !isRecord(record.payload)) continue;
-    const officer = record.payload.officer;
-    if (typeof officer === "string") latest[officer] = record.payload;
+    if (record.kind !== OFFICER_POINTER_RECORD_KIND) continue;
+    if (!isRecord(record.payload) || typeof record.payload.officer !== "string") {
+      throw new Error("officer-pointer payload is damaged");
+    }
+    latest[record.payload.officer] = record.payload;
   }
   return latest;
 }
