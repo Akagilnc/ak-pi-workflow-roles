@@ -204,7 +204,28 @@ export function copyAndRecordHostDossier(options: {
   readonly sessionParent: string;
   readonly home?: string | undefined;
 }): void {
-  if (options.host === "pi" || options.host === "hermes") {
+  if (options.host === "hermes") {
+    return;
+  }
+  const report = (payload: Record<string, unknown>): void => sitianReportSafe({
+    level: "event",
+    kind: HOST_SESSION_RECORD_KIND,
+    host: options.host,
+    cwd: options.cwd,
+    sessionParent: options.sessionParent,
+    source: `${options.host}-dossier`,
+    payload,
+  });
+  // Pi already lands at session/session.jsonl; record that landing through the
+  // same native-session-copy row current.json projects — no copy, no second
+  // original parser.
+  if (options.host === "pi") {
+    report({
+      type: "native-session-copy",
+      nativePath: options.sessionParent,
+      landingPath: options.sessionParent,
+      sessionId: options.sessionId,
+    });
     return;
   }
   const nativePath = resolveNativeSessionPath({
@@ -217,15 +238,6 @@ export function copyAndRecordHostDossier(options: {
 
   const landingPath = resolveHostDossierLandingPath(options);
   const staging = `${landingPath}.copying`;
-  const report = (payload: Record<string, unknown>): void => sitianReportSafe({
-    level: "event",
-    kind: HOST_SESSION_RECORD_KIND,
-    host: options.host,
-    cwd: options.cwd,
-    sessionParent: options.sessionParent,
-    source: `${options.host}-dossier`,
-    payload,
-  });
 
   let lastError: unknown;
   let copySuccess = false;

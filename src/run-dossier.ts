@@ -256,13 +256,6 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
   });
 }
 
-/** The current whole page of one section: the payload of its last row, never `current.json`. */
-function currentPage(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
-  if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  return lastPagePayload(state.rows, PAGE_ROW_KIND[section], runDirectory);
-}
-
 /**
  * The fact itself: a whole-page section as its last row says. The public call
  * reads its own facts here, not from the rendering, so a rendering that is stale
@@ -303,7 +296,7 @@ export function updateSectionSync(
   section: CurrentSection,
   update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
 ): void {
-  const current = currentPage(runDirectory, section);
+  const current = readPageSync(runDirectory, section);
   if (current === undefined) {
     throw new Error(`${RUN_STATE_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
   }

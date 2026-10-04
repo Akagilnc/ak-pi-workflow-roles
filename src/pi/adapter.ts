@@ -20,6 +20,8 @@ import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../rol
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { runDirectoryFromHostContext } from "../host-contracts.ts";
 import { sitianReportSafe } from "../host-session-record.ts";
+import { isTerminatingToolName } from "../package-contracts/terminating-tools.ts";
+import { terminatingToolJsonSchema } from "../role-envelope.ts";
 import { sessionFileOf } from "../role-run-placement.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
 import {
@@ -155,6 +157,8 @@ export function createPiRoleHostAdapter(
   // prompt Pi sends is the one the last registered handler leaves. Only that handler's result is
   // what a start was given, so only it records.
   let beforeAgentStartHandlers = 0;
+  // Parameters of registered terminating tools — the schema Pi was handed.
+  const registeredToolParameters = new Map<string, unknown>();
   // Decode transport exactly once before Pi's native handler chain. Pi retains
   // its own transform/image propagation and per-handler error isolation.
   pi.on("input", (value) => {
@@ -167,10 +171,13 @@ export function createPiRoleHostAdapter(
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
-    registerTool: (tool) => pi.registerTool(toPiToolDefinition(
-      tool,
-      (context) => projectPiContext(context, options.transcriptFromContext),
-    )),
+    registerTool: (tool) => {
+      registeredToolParameters.set(tool.name, tool.parameters);
+      return pi.registerTool(toPiToolDefinition(
+        tool,
+        (context) => projectPiContext(context, options.transcriptFromContext),
+      ));
+    },
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),
@@ -190,13 +197,22 @@ export function createPiRoleHostAdapter(
             const runDirectory = runDirectoryFromHostContext(projected);
             if (runDirectory !== undefined && position === beforeAgentStartHandlers - 1) {
               const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
+              let outputSchema: unknown;
+              for (const [name, parameters] of registeredToolParameters) {
+                if (!isTerminatingToolName(name)) continue;
+                outputSchema = terminatingToolJsonSchema(parameters);
+                break;
+              }
               // History write failures do not stop a run (#833): declared, and Pi starts.
               sitianReportSafe({
                 level: "event",
                 kind: "turn-delivery",
                 sessionParent: sessionFileOf(runDirectory),
                 source: "pi-adapter",
-                payload: { systemPrompt: delivered },
+                payload: {
+                  systemPrompt: delivered,
+                  ...(outputSchema === undefined ? {} : { outputSchema }),
+                },
               });
             }
             return folded;

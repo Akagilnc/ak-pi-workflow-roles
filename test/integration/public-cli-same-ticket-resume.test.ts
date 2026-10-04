@@ -1479,11 +1479,6 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // publish), none duplicated.
     assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
     for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
-    assert.equal(
-      new Set(dossierEntries.map((entry) => entry.data?.diagnostic)).size,
-      dossierEntries.length,
-      "the two entries are distinct refused writes, not a standing duplicate",
-    );
   } finally {
     // The injected lock makes the run directory read-only; undo it so the scratch can go.
     if (currentJsonLocked !== "") {

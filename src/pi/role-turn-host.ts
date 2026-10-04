@@ -26,9 +26,14 @@ import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { readStrictPiSessionJsonl } from "../ledger-session-read.ts";
+import { copyAndRecordHostDossier } from "../host-session-record.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
+import { renderCurrentSync } from "../run-dossier.ts";
+import { createSessionIdentityAuthority } from "../session-identity.ts";
+import { sitianReport } from "../sitian-facade.ts";
+import { isRecord } from "../unknown-value.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -450,18 +455,60 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         );
       }
       const timeoutMs = request.timeoutMs ?? config.timeoutMs;
-      return await spawnRunner(args, {
+      const result = await spawnRunner(args, {
         cwd: request.cwd,
         env,
         stdin,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
+      // Deliver already-written Pi host facts into the rows current.json projects.
+      // Pi has no external copy step; the landing is session/session.jsonl itself.
+      try {
+        const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);
+        const sessionId = await readPiSessionHeaderId(sessionFile);
+        if (sessionId !== undefined) {
+          await createSessionIdentityAuthority(config.principalAuthority, "pi").bind(
+            request.principal,
+            sessionId,
+          );
+          copyAndRecordHostDossier({
+            host: "pi",
+            sessionId,
+            cwd: request.cwd,
+            sessionDirectory,
+            sessionParent: sessionFile,
+            ...(request.home !== undefined ? { home: request.home } : {}),
+          });
+          // Bind already rendered sessions; re-render so original lands before settlement.
+          renderCurrentSync(request.runDirectory);
+        }
+      } catch (error) {
+        await retainPackageFault({
+          runDirectory: request.runDirectory,
+          diagnostic: `pi host dossier record failed beside host terminal: ${describeErrorIdentity(error)}`,
+          error,
+        });
+      }
+      return result;
     },
   };
 }
 
-import { sitianReport } from "../sitian-facade.ts";
+/** Session header id from the Pi volume the child (or fixture) already wrote. */
+async function readPiSessionHeaderId(sessionFile: string): Promise<string | undefined> {
+  try {
+    const entries = await readStrictPiSessionJsonl(sessionFile);
+    for (const entry of entries) {
+      if (!isRecord(entry) || entry.type !== "session") continue;
+      if (typeof entry.id === "string" && entry.id.trim() !== "") return entry.id;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  return undefined;
+}
 
 /** Last non-session entry id. Session headers are not parents of custom lines. */
 export function piSessionCustomParentId(

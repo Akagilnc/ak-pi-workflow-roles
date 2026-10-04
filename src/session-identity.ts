@@ -6,7 +6,7 @@ import {
   lookupHeadlessHostDescription,
   lookupHostDescription,
 } from "./host-descriptions.ts";
-import { RUN_STATE_FILE } from "./run-dossier.ts";
+import { renderCurrentSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
 import { isRecord } from "./unknown-value.ts";
 import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
@@ -15,10 +15,11 @@ import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 export const HOST_SESSION_ID_RECORD_KIND = "host-session-id" as const;
 
 /**
- * Durable session binding: one log record per bind, scoped by host name — a run
+ * Durable session binding: one state row per bind, scoped by host name — a run
  * that changes hosts on resume must never hand one host's native session id to
- * another. The latest record for the host wins; the settlement seam projects
- * the bindings into current.json `host`.
+ * another. The latest record for the host wins. The public call renders
+ * `current.json` at the bind itself so host.sessions is projected before the
+ * host CLI starts, not only at settlement.
  */
 export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
@@ -47,7 +48,9 @@ export function createSessionIdentityAuthority(
       return bound;
     },
     async bind(principal, sessionId) {
-      reportRunRecord(runDirectoryOf(principal), HOST_SESSION_ID_RECORD_KIND, { host: hostName, sessionId }, "session-identity");
+      const runDirectory = runDirectoryOf(principal);
+      reportRunRecord(runDirectory, HOST_SESSION_ID_RECORD_KIND, { host: hostName, sessionId }, "session-identity");
+      renderCurrentSync(runDirectory);
     },
   };
 }
