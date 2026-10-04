@@ -69,7 +69,8 @@ def main():
         # Kit sys.txt / --sys is the full prompt (recorded turn-delivery or caller experiment).
         cmd = ["pi", "-p", "--no-extensions", "--no-skills", "--no-prompt-templates", "--session-dir", sess,
                "--model", model, "--system-prompt", sysfile, instr or "审。"]
-        out = f"{kit}/out-{tag}.txt"    err = f"{kit}/err-{tag}.txt"
+        out = f"{kit}/out-{tag}.txt"
+    err = f"{kit}/err-{tag}.txt"
     print(f"leg {tag}: host={host} cwd={wt}\n  {' '.join(cmd[:12])} ...\n  stdout -> {out}")
     with open(out, "w") as fo, open(err, "w") as fe, open(os.devnull) as fi:
         rc = subprocess.run(cmd, cwd=wt, env=env, stdin=fi, stdout=fo, stderr=fe).returncode

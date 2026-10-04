@@ -214,13 +214,19 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                       },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
-    // Host-dispatched failure: assert this call's terminal error body (#1161 T2-current).
+    // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
     const recorded = terminalBodyAt(join(runDir, "current.json"), "error") as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
+    assert.equal(res.terminal?.roleOutcome.kind,"failure");
     assert.equal(recorded.runId,runId);
+    assert.equal(
+      res.terminal?.roleOutcome.kind==="failure"
+        && res.terminal.roleOutcome.diagnostic===recorded.diagnostic,
+      true,
+    );
     assert.equal(recorded.details?.exitCode,1);
     await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
