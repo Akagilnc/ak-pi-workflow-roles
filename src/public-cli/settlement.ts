@@ -1286,9 +1286,9 @@ async function extractNavigatorFactFromAdmittedSession(
 
 /**
  * Sole success-terminal publisher (#953): replace the leg's terminal in
- * current.json. The report carries this settlement's full outcome (including
- * payloads); history.jsonl still records the same attempt. last-write-wins
- * requires the terminal face itself to keep settlement correspondence (#1161 R2).
+ * current.json. The report carries the outcome's verdict facts; the role's
+ * submitted payloads live in history.jsonl, the latest also in current.json
+ * `submission`.
  */
 async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
@@ -1459,14 +1459,13 @@ async function publishDeclaredSeatTerminal(
   const phase = face.reportPhase === true
     ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
-  // Last-write-wins terminal must carry this settlement's full outcome (including
-  // payloads). History still records the same attempt; readers must not re-pick
-  // another concurrent attempt-history row by role alone (#1161 R2).
+  // Payloads are the role's submitted words: they live in history.jsonl, not here.
+  const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
   return publishAcceptedTerminal(admitted, roleOutcome, coordinates, recordAttemptHistory, {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
-    outcome: roleOutcome,
+    outcome: verdict,
     ...doctorReportFacts(face, roleOutcome, entries),
   });
 }

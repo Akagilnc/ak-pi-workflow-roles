@@ -109,8 +109,8 @@ function findCollectorGroups(body: Record<string, unknown>): unknown {
   if (isRecord(outcome)) {
     const facts = outcome.decisiveFacts;
     if (isRecord(facts) && Array.isArray(facts.groups)) return facts.groups;
-    // Typed sealed receipt: settlement keeps this settlement's payloads on the
-    // terminal outcome (and the matching attempt-history row). Groups are the
+    // Typed sealed receipt: settlement keeps payloads on attempt-history; the
+    // terminal reader rehydrates them onto outcome.payloads. Groups are the
     // collector leaf on that receipt — never invent a second discriminator.
     if (Array.isArray(outcome.payloads)) {
       for (let index = outcome.payloads.length - 1; index >= 0; index -= 1) {
@@ -128,8 +128,8 @@ export function extractStatus(body: Record<string, unknown>): string | undefined
   if (isRecord(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
-  // Typed sealed receipt: settlement keeps this settlement's payloads on the
-  // terminal outcome (and the matching attempt-history row). Status is the role's
+  // Typed sealed receipt: settlement keeps payloads on attempt-history; the
+  // terminal reader rehydrates them onto outcome.payloads. Status is the role's
   // own leaf on that receipt — never invent a second mapping.
   if (isRecord(outcome) && Array.isArray(outcome.payloads)) {
     for (let index = outcome.payloads.length - 1; index >= 0; index -= 1) {
