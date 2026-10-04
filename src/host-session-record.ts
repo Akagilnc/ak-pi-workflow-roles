@@ -60,12 +60,15 @@ function findCodexRollout(sessionsDir: string, sessionId: string): string | unde
       if (entry.isDirectory()) {
         scan(fullPath, depth + 1);
       } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)) {
+        // Ranking needs a real mtime. Silent mtime:0 would sort unreadable
+        // matches last and let an older readable sibling win (#1161 C3-io).
+        // ENOENT = vanished between readdir and stat (skip); other IO keeps cause.
         try {
           const stat = statSync(fullPath);
           matches.push({ path: fullPath, mtime: stat.mtimeMs });
-        } catch {
-          // mtime optional for ranking; path itself is still a candidate.
-          matches.push({ path: fullPath, mtime: 0 });
+        } catch (error) {
+          if (isEnoent(error)) continue;
+          throw error;
         }
       }
     }
@@ -230,13 +233,6 @@ export function copyAndRecordHostDossier(options: {
     });
     return;
   }
-  const nativePath = resolveNativeSessionPath({
-    host: options.host,
-    sessionId: options.sessionId,
-    cwd: options.cwd,
-    ...(options.home !== undefined ? { home: options.home } : {}),
-  });
-  if (nativePath === undefined && options.host !== "codex") return;
 
   const landingPath = resolveHostDossierLandingPath(options);
   // Per-attempt staging/previous names: concurrent copies of the same landing
@@ -244,15 +240,30 @@ export function copyAndRecordHostDossier(options: {
   // copy is not atomic; unique sibling + rename is the smallest ownership fix.
   // Swap-failure restores that attempt's own `.previous.<token>` inline — no
   // next-call orphan scan (J6: do not invent a second recovery mechanism).
+  //
+  // Native-path discovery (incl. Codex rollout scan) stays inside this attempt
+  // try: ADR 0086 one-retry + native-session-warning covers discover/copy
+  // failure alike. A throw outside would abort the host leg (#1161 C3-io).
 
   let lastError: unknown;
   let copySuccess = false;
   let stagingForCleanup: string | undefined;
+  let nativePath: string | undefined;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const attemptToken = randomBytes(6).toString("hex");
     const staging = `${landingPath}.copying.${attemptToken}`;
     stagingForCleanup = staging;
     try {
+      nativePath = resolveNativeSessionPath({
+        host: options.host,
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        ...(options.home !== undefined ? { home: options.home } : {}),
+      });
+      if (nativePath === undefined && options.host !== "codex") {
+        stagingForCleanup = undefined;
+        return;
+      }
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, staging);
       } else {

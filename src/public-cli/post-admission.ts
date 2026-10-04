@@ -705,12 +705,11 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): Promise<RoleTurnRequest> {
   const { admitted, env, request, receiptDelivery } = input;
-  // Carry an already-attached hostSessionId into the delivery resume so
-  // withStoredHostSessionId does not re-read state for the same request (#1161 C3).
-  const priorHostSessionId =
-    request.continuation.kind === "resume"
-      ? request.continuation.hostSessionId
-      : undefined;
+  // Each 催交 is a new host start. Build a bare resume (no carried
+  // hostSessionId) so withStoredHostSessionId re-reads the live binding and
+  // keeps C3 fail-closed. Caller-explicit ids stay on the first-turn request
+  // via withStoredHostSessionId's existing "already set → keep" branch;
+  // in-call delivery leaves the field absent by contract (host-contracts).
   const withBinding = await withStoredHostSessionId(
     {
       ...request,
@@ -720,7 +719,6 @@ async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(inp
           ...receiptDelivery.deliveryState(),
           deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
         }),
-        ...(priorHostSessionId === undefined ? {} : { hostSessionId: priorHostSessionId }),
       },
     },
     env,
