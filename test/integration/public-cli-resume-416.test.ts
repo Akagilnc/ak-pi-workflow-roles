@@ -1,4 +1,4 @@
-import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
+import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
@@ -214,8 +214,8 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                       },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
-    // #1058: structured failure record on the run (stderr pointer = human hint only).
-    const recorded=await pointedErrorRecord(runDir) as {
+    // Host-dispatched failure: assert this call's terminal error body (#1161 T2-current).
+    const recorded = terminalBodyAt(join(runDir, "current.json"), "error") as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);

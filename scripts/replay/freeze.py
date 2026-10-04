@@ -8,8 +8,8 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   sources/       the driver transcripts those records point at, truncated at the cut
   run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
   pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
-  sys.txt        frozen system prompt (turn-delivery: full prompt as sent; else rebuilt pi-tail)
-  schema.json    headless output schema when the run had one
+  sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
+  schema.json    headless output schema when turn-delivery recorded one; omitted on gap
   instr.txt      the instruction the run was admitted with
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
@@ -289,18 +289,21 @@ def main():
         f.write(pointer)
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
-    # The prompt and schema each turn was started with are turn-delivery records of history.jsonl;
-    # take the last one at or before the cut for every host (pi records the delivered prompt the
-    # same way). Rebuild via pi-tail only when no turn-delivery row exists before the cut.
+    # Prompt and schema come only from turn-delivery rows at or before the cut (#1161).
+    # Missing material is a declared gap — never reconstructed.
     delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)
     delivered = (delivered_row or {}).get("payload") or None
     delivered_prompt = delivered.get("systemPrompt") if delivered else None
+    gaps = []
     if isinstance(delivered_prompt, str):
         sys_kind = "turn-delivery"
         sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run)
     else:
-        sys_kind = "pi-tail"
-        sysprompt = None
+        sys_kind = "missing-turn-delivery"
+        sysprompt = ""
+        gaps.append("systemPrompt")
+    if delivered is None or delivered.get("outputSchema") is None:
+        gaps.append("outputSchema")
 
     sh("git", "-C", repo, "worktree", "prune")
     sh("git", "-C", repo, "worktree", "add", "--detach", f"{kit}/wt", head)
@@ -308,13 +311,6 @@ def main():
     if os.path.isdir(nm) and not os.path.exists(f"{kit}/wt/node_modules"):
         os.symlink(nm, f"{kit}/wt/node_modules")
 
-    if sysprompt is None:
-        env = dict(os.environ, AK_REPLAY_POINTER=f"{kit}/pointer.md")
-        p = subprocess.run(["node", "--import", "tsx", f"{a.tool_dir}/pi-tail.ts", role, f"{kit}/wt"],
-                           cwd=f"{kit}/wt", env=env, text=True, capture_output=True)
-        if p.returncode != 0:
-            sys.exit(f"pi tail assembly failed at {head[:8]} (hand-build a --sys for run.py):\n{p.stderr}")
-        sysprompt = p.stdout.replace(run, frozen_run)
     with open(f"{kit}/sys.txt", "w") as f:
         f.write(notice + sysprompt)
 
@@ -329,15 +325,18 @@ def main():
             "project": project, "cut": cut_raw, "cutSource": cut_src, "head": head, "sysKind": sys_kind,
             "issueBodyAt": issue["updatedAt"], "recordsKept": len(kept), "recordsSource": records_src, "frozenSources": sorted(frozen_sources), "frozenRun": frozen_run, "payloadsKept": sealed_before,
             "frozenAt": datetime.now(timezone.utc).isoformat()}
+    if gaps:
+        meta["gaps"] = gaps
     with open(f"{kit}/meta.json", "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
 
     print(f"kit: {kit}")
     for k in ("role", "host", "model", "thinking", "ticket", "cut", "cutSource", "head", "sysKind", "issueBodyAt", "recordsKept"):
         print(f"  {k}: {meta[k]}")
+    if gaps:
+        print(f"GAP: missing turn-delivery material before cut: {', '.join(gaps)}; not reconstructed — pass --sys for an experimental prompt")
     if warn:
         print(f"WARNING: {warn}")
     print("next: replay-run.sh run <kit> <arm> <n> [--sys edited-copy-of-sys.txt]")
-
 if __name__ == "__main__":
     main()

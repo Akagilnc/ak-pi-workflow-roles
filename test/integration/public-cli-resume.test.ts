@@ -1,5 +1,4 @@
 import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
-import { pointedErrorRecord } from "../helpers/pointed-error-record.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
@@ -1517,8 +1516,8 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     });
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
-    // #1058: structured failure record on the run (stderr pointer = human hint only).
-    const noted = await pointedErrorRecord(runDirectory) as {
+    // Host-dispatched failure: assert this call's terminal error body (#1161 T2-current).
+    const noted = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
     };
@@ -1766,30 +1765,40 @@ test("public resume failures persist structured diagnostics", async () => {
         });
         return { ...result, stderr: captured.stderr.join("") };
       };
-      // #1058: the record must be the one the caller was pointed at, not a path
-      // this test already knows — persistence alone proves nothing about delivery.
-      const readError = async (pointed: Promise<Record<string, unknown>>, expectedRunId: string) => {
-        const record = await pointed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
+      // #1058 / #1161 T2-current: assert the structured record this call left at its
+      // known failure seam — not a face/latest-record selector that can prefer an older error.
+      const readTerminalError = (runDirectory: string, expectedRunId: string) => {
+        const record = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
+          kind?: unknown;
+          runId?: unknown;
+          diagnostic?: unknown;
+          details?: unknown;
+        };
         assert.equal(record.kind, "error");
         assert.equal(record.runId, expectedRunId);
         assert.equal(typeof record.diagnostic, "string");
         return record;
       };
-      const assertRecordedFailure = async (
+      const assertPreHostResumeDiagnostic = async (
         runDirectory: string,
         runId: string,
         argv: readonly string[] = ["resume", "--model", "test/caller-seat:high", runId],
       ) => {
         const callsBefore = seen.length;
+        const diagnosticsBefore = runLogPayloads(runDirectory, "resume-diagnostic");
         const result = await resume(argv);
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
-        // #1058: structured failure record on the run (stderr pointer = human hint only).
-        const record = await pointedErrorRecord(runDirectory) as {
+        const diagnostics = runLogPayloads(runDirectory, "resume-diagnostic") as Array<{
           runId?: unknown;
           diagnostic?: unknown;
           details?: unknown;
-        };
+        }>;
+        assert.ok(
+          diagnostics.length > diagnosticsBefore.length,
+          `this call must append resume-diagnostic: ${runDirectory}`,
+        );
+        const record = diagnostics[diagnostics.length - 1]!;
         assert.equal(record.runId, runId);
         assert.equal(typeof record.diagnostic, "string");
         assert.equal(
@@ -1809,7 +1818,7 @@ test("public resume failures persist structured diagnostics", async () => {
         projectRoot: project,
       });
       seedCurrentSection(corruptRunState.runDirectory, "runState", {});
-      await assertRecordedFailure(corruptRunState.runDirectory, "1058-corrupt-run-state");
+      await assertPreHostResumeDiagnostic(corruptRunState.runDirectory, "1058-corrupt-run-state");
       assert.deepEqual(readCurrentSection(corruptRunState.runDirectory, "runState"), {});
 
       const seatSelectionFailure = await seed({
@@ -1818,16 +1827,29 @@ test("public resume failures persist structured diagnostics", async () => {
         session: true,
         projectRoot: project,
       });
+      // First: real host-dispatched failure leaves terminal.face=error (#1161 T2-current counterexample setup).
+      const firstDispatched = await resume([
+        "resume", "--model", "test/caller-seat:high", "1058-seat-selection-failure",
+      ]);
+      assert.notEqual(firstDispatched.exitCode, 0);
+      assert.ok(seen.length > 0);
+      const oldTerminal = readTerminalError(seatSelectionFailure.runDirectory, "1058-seat-selection-failure");
+      assert.equal(oldTerminal.diagnostic, "zeta-unique-host-diagnostic");
       const sessionBeforeSelectionFailure = await readFile(
         seatSelectionFailure.sessionFile,
         "utf8",
       );
-      const selectionFailureResult = await assertRecordedFailure(
+      // Second: unregistered host fails before dispatch; must assert this-call diagnostic, not the old terminal.
+      const selectionFailureResult = await assertPreHostResumeDiagnostic(
         seatSelectionFailure.runDirectory,
         "1058-seat-selection-failure",
         ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
       );
       assert.equal(selectionFailureResult.hostFailure?.kind, "host-unregistered");
+      const newestDiagnostic = runLogPayloads(seatSelectionFailure.runDirectory, "resume-diagnostic").at(-1) as {
+        diagnostic?: unknown;
+      };
+      assert.notEqual(newestDiagnostic?.diagnostic, oldTerminal.diagnostic);
       assert.equal(
         await readFile(seatSelectionFailure.sessionFile, "utf8"),
         sessionBeforeSelectionFailure,
@@ -1909,11 +1931,14 @@ test("public resume failures persist structured diagnostics", async () => {
         `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
       );
       assert.equal(readCurrentJson(parent.runDirectory).admitted, undefined);
-      const parentDiagnostic = await pointedErrorRecord(parent.runDirectory) as {
+      // Parent preload fails before this parent's host turn — assert this-call resume-diagnostic.
+      const parentDiagnostics = runLogPayloads(parent.runDirectory, "resume-diagnostic") as Array<{
         runId?: unknown;
         diagnostic?: unknown;
         details?: unknown;
-      };
+      }>;
+      assert.ok(parentDiagnostics.length > 0);
+      const parentDiagnostic = parentDiagnostics[parentDiagnostics.length - 1]!;
       assert.equal(parentDiagnostic.runId, "1058-parent-preload-failure");
       assert.equal(typeof parentDiagnostic.diagnostic, "string");
       assert.equal(
@@ -1936,18 +1961,12 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.notEqual(dispatchedParentResult.exitCode, 0);
       assert.ok(parentDispatches > 0);
       assert.equal(childDispatches, 2);
-      await readError(
-        pointedErrorRecord(dispatchedParent.runDirectory),
-        "1058-parent-dispatch-failure",
-      );
+      readTerminalError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
 
       const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(deletedResult.exitCode, 0);
       const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
-      const deletedRecord = await readError(
-        pointedErrorRecord(relocatedDirectory),
-        "1058-no-workspace",
-      );
+      const deletedRecord = readTerminalError(relocatedDirectory, "1058-no-workspace");
       assert.equal(typeof deletedRecord.diagnostic, "string");
       assert.equal(deletedRecord.diagnostic, "zeta-unique-host-diagnostic");
       assert.equal((deletedRecord as { details?: { exitCode?: unknown } }).details?.exitCode, 1);
@@ -1965,10 +1984,7 @@ test("public resume failures persist structured diagnostics", async () => {
       const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
       assert.notEqual(unknown.exitCode, 0);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
-      const unknownRecord = await readError(
-        pointedErrorRecord(unknownHost.runDirectory),
-        "1058-unknown-host",
-      );
+      const unknownRecord = readTerminalError(unknownHost.runDirectory, "1058-unknown-host");
       assert.equal(
         unknown.terminal?.roleOutcome.kind === "failure"
           && unknown.terminal.roleOutcome.diagnostic === unknownRecord.diagnostic,

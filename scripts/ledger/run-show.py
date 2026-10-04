@@ -22,6 +22,49 @@ def jsonl(path):
             rows.append({"_damaged": line[:80]})
     return rows
 
+def resolve_original(run, host, cur):
+    """The run's one host original — binding success is not a gate (#1161 R1)."""
+    pointed = ((cur.get("host") or {}).get("original"))
+    if isinstance(pointed, str) and pointed.strip():
+        return pointed
+    if host == "pi":
+        return f"{run}/session/session.jsonl"
+    if host == "grok-build":
+        return f"{run}/session/grok-build"
+    if host in ("codex", "claude"):
+        return f"{run}/session/{host}.jsonl"
+    return None
+
+def print_codex_stats(rollout):
+    rows = jsonl(rollout)
+    compacted = sum(1 for r in rows if r.get("type") == "compacted")
+    usage = None
+    for r in rows:
+        p = r.get("payload") or {}
+        if r.get("type") == "event_msg" and p.get("type") == "token_count" and isinstance(p.get("info"), dict):
+            usage = p["info"]
+    print(f"compaction count: {compacted} ({rollout})")
+    if usage:
+        t, l = usage.get("total_token_usage", {}), usage.get("last_token_usage", {})
+        print(f"token usage: total={t.get('total_tokens')} (input {t.get('input_tokens')}, cached {t.get('cached_input_tokens')}, output {t.get('output_tokens')}); last turn={l.get('total_tokens')}; context window={usage.get('model_context_window')}")
+    else:
+        print("token usage: unavailable (no token_count event in rollout)")
+    return rows
+
+def print_pi_stats(sess_rows, where):
+    comp = sum(1 for r in sess_rows if r.get("type") == "compaction")
+    tot = {}
+    n = 0
+    for r in sess_rows:
+        m = r.get("message") or {}
+        if r.get("type") == "message" and m.get("role") == "assistant" and isinstance(m.get("usage"), dict):
+            n += 1
+            for k, v in m["usage"].items():
+                if isinstance(v, (int, float)):
+                    tot[k] = tot.get(k, 0) + v
+    print(f"compaction count: {comp} ({where})")
+    print(f"token usage: {json.dumps(tot, ensure_ascii=False)} summed over {n} assistant messages" if n else "token usage: unavailable (no assistant usage in session volume)")
+
 def main():
     argv = sys.argv[1:]
     limit = 1200
@@ -74,64 +117,70 @@ def main():
         status = acc.get("status") or acc.get("countersignStatus") or acc.get("secretariatStatus") if isinstance(acc, dict) else None
         print(f"  {r.get('timestamp')}  {status}")
 
-    # 3. host session id
+    # 3. host session id — binding if present; else from this host's original.
+    # Never borrow package session.jsonl for a non-pi host (#1161 R1).
+    host = inv.get("host")
+    original = resolve_original(run, host, cur)
     ids = []
-    sid = ((cur.get("host") or {}).get("sessions") or {}).get(inv.get("host"))
+    sid = ((cur.get("host") or {}).get("sessions") or {}).get(host)
     if isinstance(sid, str) and sid.strip():
         ids.append(("current.json host", sid))
-    sess_rows = jsonl(f"{run}/session/session.jsonl")
-    if not ids and sess_rows and sess_rows[0].get("type") == "session":
-        ids.append(("pi session header", sess_rows[0].get("id")))
+
+    codex_rows = None
+    sess_rows = []
+    if host == "codex" and isinstance(original, str) and os.path.isfile(original):
+        codex_rows = jsonl(original)
+        if not ids:
+            for r in codex_rows:
+                if r.get("type") != "session_meta":
+                    continue
+                meta_id = (r.get("payload") or {}).get("id")
+                if isinstance(meta_id, str) and meta_id.strip():
+                    ids.append(("codex original session_meta", meta_id))
+                    break
+    elif host == "pi" and isinstance(original, str) and os.path.exists(original):
+        sess_rows = jsonl(original)
+        if not ids and sess_rows and sess_rows[0].get("type") == "session":
+            ids.append(("pi session header", sess_rows[0].get("id")))
+    elif host == "claude" and isinstance(original, str) and os.path.isfile(original) and not ids:
+        # No existing session-id reader for the claude original in this script (#1161: report gap).
+        pass
+    elif host == "grok-build" and isinstance(original, str) and os.path.isdir(original) and not ids:
+        # No existing session-id reader for the grok-build original in this script.
+        pass
     print("host session id:", ", ".join(f"{v} ({k})" for k, v in ids) if ids else "unavailable")
 
-    # 4 + 5. compaction count and token usage, by host family
-    host = inv.get("host")
-    codex_ids = [v for k, v in ids if k == "current.json host"] if host == "codex" else []
-    if host not in ("codex", "claude", "pi"):
-        print(f"compaction count: unavailable (host {host!r} not parsed by this script)")
-        print(f"token usage: unavailable (host {host!r} not parsed by this script)")
-    elif codex_ids:
-        home = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "sessions")
-        own = f"{run}/session/codex.jsonl"  # the run's one host original (copied at exit)
-        cands = [own] if os.path.exists(own) else [p for p in glob.glob(f"{home}/**/*.jsonl", recursive=True) if any(i in os.path.basename(p) for i in codex_ids)]
-        if cands:
-            rollout = max(cands, key=os.path.getmtime)
-            rows = jsonl(rollout)
-            compacted = sum(1 for r in rows if r.get("type") == "compacted")
-            usage = None
-            for r in rows:
-                p = r.get("payload") or {}
-                if r.get("type") == "event_msg" and p.get("type") == "token_count" and isinstance(p.get("info"), dict):
-                    usage = p["info"]
-            print(f"compaction count: {compacted} ({rollout})")
-            if usage:
-                t, l = usage.get("total_token_usage", {}), usage.get("last_token_usage", {})
-                print(f"token usage: total={t.get('total_tokens')} (input {t.get('input_tokens')}, cached {t.get('cached_input_tokens')}, output {t.get('output_tokens')}); last turn={l.get('total_tokens')}; context window={usage.get('model_context_window')}")
-            else:
-                print("token usage: unavailable (no token_count event in rollout)")
+    # 4 + 5. compaction count and token usage from the host original (reuse existing
+    # host-family readers; do not invent parsers for hosts this script never parsed).
+    if host == "codex":
+        own = original if (isinstance(original, str) and os.path.isfile(original)) else f"{run}/session/codex.jsonl"
+        if os.path.isfile(own):
+            print_codex_stats(own)
         else:
-            print(f"compaction count: unavailable (no rollout for {codex_ids} under {home})")
-            print("token usage: unavailable (no rollout)")
+            home = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "sessions")
+            codex_ids = [v for k, v in ids]
+            cands = [p for p in glob.glob(f"{home}/**/*.jsonl", recursive=True) if any(i in os.path.basename(p) for i in codex_ids)] if codex_ids else []
+            if cands:
+                print_codex_stats(max(cands, key=os.path.getmtime))
+            else:
+                print(f"compaction count: unavailable (no codex original in the run; no rollout for {codex_ids or '∅'} under {home})")
+                print("token usage: unavailable (no rollout)")
     elif host == "claude":
-        original = f"{run}/session/claude.jsonl"
-        where = original if os.path.exists(original) else "no host original in the run"
+        where = original if (isinstance(original, str) and os.path.exists(original)) else "no host original in the run"
         print(f"compaction count: unavailable (claude original not parsed by this script; {where})")
         print(f"token usage: unavailable (claude original not parsed by this script; {where})")
-    elif sess_rows:
-        comp = sum(1 for r in sess_rows if r.get("type") == "compaction")
-        tot = {}
-        n = 0
-        for r in sess_rows:
-            m = r.get("message") or {}
-            if r.get("type") == "message" and m.get("role") == "assistant" and isinstance(m.get("usage"), dict):
-                n += 1
-                for k, v in m["usage"].items():
-                    if isinstance(v, (int, float)):
-                        tot[k] = tot.get(k, 0) + v
-        print(f"compaction count: {comp} (pi session volume)")
-        print(f"token usage: {json.dumps(tot, ensure_ascii=False)} summed over {n} assistant messages" if n else "token usage: unavailable (no assistant usage in session volume)")
+    elif host == "pi":
+        if sess_rows:
+            print_pi_stats(sess_rows, original or "pi session volume")
+        else:
+            print("compaction count: unavailable\ntoken usage: unavailable")
+    elif host == "grok-build":
+        where = original if (isinstance(original, str) and os.path.exists(original)) else "no host original in the run"
+        print(f"compaction count: unavailable (grok-build original not parsed by this script; {where})")
+        print(f"token usage: unavailable (grok-build original not parsed by this script; {where})")
     else:
-        print("compaction count: unavailable\ntoken usage: unavailable")
+        print(f"compaction count: unavailable (host {host!r} not parsed by this script)")
+        print(f"token usage: unavailable (host {host!r} not parsed by this script)")
 
 if __name__ == "__main__":
     main()
