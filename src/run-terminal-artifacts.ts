@@ -9,7 +9,7 @@
 import { basename } from "node:path";
 
 import { parseRunLeaf } from "./role-run-placement.ts";
-import { readHistoryRowsSync, readSectionSync, writeSectionSync } from "./run-dossier.ts";
+import { readSectionSync, writeSectionSync } from "./run-dossier.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
@@ -51,25 +51,7 @@ export function readRunTerminal(runDirectory: string): RunTerminalRead {
   if (typeof body.role !== "string" || body.role.trim() === "") {
     return { status: "unreadable", reason: "terminal body missing nonblank producer-owned role field" };
   }
-  return { status: "present", face, body: face === "report" ? withSubmittedPayloads(runDirectory, body) : body };
-}
-
-/**
- * The report's outcome carries the verdict facts only; the role's submitted payloads are not
- * stored a second time. A reader that wants them takes them from the attempt-history row the
- * same settlement appended: the last row of this role, whose outcome holds the payloads.
- */
-function withSubmittedPayloads(runDirectory: string, body: Record<string, unknown>): Record<string, unknown> {
-  const outcome = body.outcome;
-  if (!isRecord(outcome) || outcome.payloads !== undefined) return body;
-  for (const row of [...readHistoryRowsSync(runDirectory)].reverse()) {
-    if (row.kind !== "attempt-history" || !isRecord(row.payload)) continue;
-    const attempt = row.payload.outcome;
-    if (isRecord(attempt) && attempt.role === outcome.role && Array.isArray(attempt.payloads)) {
-      return { ...body, outcome: { ...outcome, payloads: attempt.payloads } };
-    }
-  }
-  return body;
+  return { status: "present", face, body };
 }
 
 /**

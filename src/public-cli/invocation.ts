@@ -59,7 +59,7 @@ import {
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
-import { readPageSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
+import { readPageSync, renderCurrentSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -590,6 +590,8 @@ export async function relocateAdmittedRunToTicket(
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
       await rename(childDirectory, childTarget.runDirectory);
+      // Finished child legs will not settle again; refresh derived host.original now.
+      renderCurrentSync(childTarget.runDirectory);
     }
   }
 
@@ -602,6 +604,8 @@ export async function relocateAdmittedRunToTicket(
   // outside the atomic directory move.
   // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
+  // current.json projects host.original from this run directory; re-render after the move.
+  renderCurrentSync(target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup
   // ownership immediately after the commit.

@@ -26,6 +26,7 @@ import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
 } from "./role-run-relocation.ts";
+import { renderCurrentSync } from "./run-dossier.ts";
 import {
   MIGRATION_TICKET_DERIVATION_PAGE,
   readMigrationBoardTicketNumber,
@@ -367,6 +368,8 @@ export async function relocateBoardBoundUnboundRunsInBook(
   for (const move of planned) {
     await mkdir(dirname(move.targetPath), { recursive: true });
     await rename(move.sourcePath, move.targetPath);
+    // Same live relocate seam: derived host.original follows the new run directory.
+    renderCurrentSync(move.targetPath);
   }
 
   return planned.map((move) => ({
