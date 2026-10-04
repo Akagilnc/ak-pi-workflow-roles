@@ -31,7 +31,12 @@ def load_json(path):
     with open(path) as f:
         return json.load(f)
 
-def jsonl(path):
+def jsonl_read(path):
+    """Parse jsonl like scripts/ledger/run-show.py: good rows + damaged markers; no silent drop.
+
+    Damaged lines are not cut-before facts (no usable timestamp/payload). Callers that
+    need facts must skip `_damaged`; callers that freeze bytes use truncate_row_file.
+    """
     if not os.path.exists(path):
         return []
     rows = []
@@ -42,9 +47,45 @@ def jsonl(path):
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                rows.append({"_damaged": line[:80], "_damage_error": exc.msg})
     return rows
+
+def jsonl(path):
+    """Fact rows only — malformed lines are never treated as dossier facts."""
+    return [r for r in jsonl_read(path) if "_damaged" not in r]
+
+def truncate_row_file(src, dest, cut, repoint):
+    """Freeze one append-only row file at cut; preserve raw damaged lines; report gaps.
+
+    Same chronological rule as freeze_source: timestamped rows after cut stop the
+    stream; untimestamped/malformed lines are not cut-before facts but stay as raw
+    bytes so renderCurrentSync can mark unreadable (sitian diagnostics), matching
+    the live dossier. Returns gap labels for meta.gaps.
+    """
+    gaps = []
+    damaged_lines = []
+    with open(dest, "w") as out, open(src) as fh:
+        for lineno, line in enumerate(fh, 1):
+            raw = line if line.endswith("\n") else line + "\n"
+            stripped = line.strip()
+            if not stripped:
+                out.write(raw)
+                continue
+            try:
+                obj = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                damaged_lines.append(f"line {lineno}:{exc.msg}")
+                out.write(raw)  # preserve bytes; not a fact
+                continue
+            ts = obj.get("timestamp") if isinstance(obj, dict) else None
+            if ts and iso(ts) > cut:
+                break
+            out.write(repoint(json.dumps(obj, ensure_ascii=False)) + "\n")
+    if damaged_lines:
+        # One gap label per file + source reason; raw bad lines stay in the frozen file.
+        gaps.append(f"{os.path.basename(src)}:malformed ({'; '.join(damaged_lines)})")
+    return gaps
 
 def iso(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -235,12 +276,12 @@ def main():
     def kept_rows(rel):
         return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
     kept_history = kept_rows("history.jsonl")
+    row_gaps = []
     for rel in ("history.jsonl", "state.jsonl", "log.jsonl"):
-        rows = kept_history if rel == "history.jsonl" else kept_rows(rel)
-        if rows or os.path.exists(f"{run}/{rel}"):
-            with open(f"{frozen_run}/{rel}", "w") as f:
-                for r in rows:
-                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+        src = f"{run}/{rel}"
+        if not os.path.exists(src):
+            continue
+        row_gaps.extend(truncate_row_file(src, f"{frozen_run}/{rel}", cut, repoint))
     # current.json is the package's own rendering of the three truncated row files: nothing recorded
     # after the cut survives, and identity, admission and terminal are the last rows at or before it.
     p = subprocess.run(["node", "--import", "tsx", "-e",
@@ -270,13 +311,10 @@ def main():
             os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
             for leaf in os.listdir(path):
                 shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
-    # session.jsonl only here — log.jsonl was already truncated with the other row files above.
+    # session.jsonl only here — same raw truncate as the three row files (no silent wash).
     if os.path.exists(f"{run}/session/session.jsonl"):
         os.makedirs(f"{frozen_run}/session", exist_ok=True)
-        with open(f"{frozen_run}/session/session.jsonl", "w") as f:
-            for r in jsonl(f"{run}/session/session.jsonl"):
-                if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
-                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+        row_gaps.extend(truncate_row_file(f"{run}/session/session.jsonl", f"{frozen_run}/session/session.jsonl", cut, repoint))
 
     pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
     pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
@@ -294,7 +332,7 @@ def main():
     delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)
     delivered = (delivered_row or {}).get("payload") or None
     delivered_prompt = delivered.get("systemPrompt") if delivered else None
-    gaps = []
+    gaps = list(row_gaps)
     if isinstance(delivered_prompt, str):
         sys_kind = "turn-delivery"
         sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run)
@@ -333,8 +371,12 @@ def main():
     print(f"kit: {kit}")
     for k in ("role", "host", "model", "thinking", "ticket", "cut", "cutSource", "head", "sysKind", "issueBodyAt", "recordsKept"):
         print(f"  {k}: {meta[k]}")
-    if gaps:
-        print(f"GAP: missing turn-delivery material before cut: {', '.join(gaps)}; not reconstructed — pass --sys for an experimental prompt")
+    material_gaps = [g for g in gaps if g in ("systemPrompt", "outputSchema")]
+    damage_gaps = [g for g in gaps if g not in ("systemPrompt", "outputSchema")]
+    if material_gaps:
+        print(f"GAP: missing turn-delivery material before cut: {', '.join(material_gaps)}; not reconstructed — pass --sys for an experimental prompt")
+    if damage_gaps:
+        print(f"GAP: malformed row(s) retained as raw bytes (not cut-before facts): {', '.join(damage_gaps)}")
     if warn:
         print(f"WARNING: {warn}")
     print("next: replay-run.sh run <kit> <arm> <n> [--sys edited-copy-of-sys.txt]")

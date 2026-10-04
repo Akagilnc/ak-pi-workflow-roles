@@ -29,11 +29,8 @@ def jsonl(path):
     except FileNotFoundError:
         return []
 
-def resolve_original(run, host, cur):
-    """The run's one host original — binding success is not a gate (#1161 R1)."""
-    pointed = ((cur.get("host") or {}).get("original"))
-    if isinstance(pointed, str) and pointed.strip():
-        return pointed
+def topology_original(run, host):
+    """Fixed landing from docs/dossier-topology.md / ADR 0086 — one path per host."""
     if host == "pi":
         return f"{run}/session/session.jsonl"
     if host == "grok-build":
@@ -41,6 +38,24 @@ def resolve_original(run, host, cur):
     if host in ("codex", "claude"):
         return f"{run}/session/{host}.jsonl"
     return None
+
+def resolve_original(run, host, cur):
+    """The run's one host original — binding success is not a gate (#1161 R1).
+
+    Topology landing for the *current* host wins when it exists. current.host.original
+    is the last successful native-session-copy pointer and may lag after a lawful
+    host switch when log.jsonl could not record the new landing — never prefer that
+    stale pointer over the fixed host path that is already on disk.
+    """
+    topo = topology_original(run, host)
+    if topo is not None:
+        present = os.path.isdir(topo) if host == "grok-build" else os.path.isfile(topo)
+        if present:
+            return topo
+    pointed = ((cur.get("host") or {}).get("original"))
+    if isinstance(pointed, str) and pointed.strip():
+        return pointed
+    return topo
 
 def print_codex_stats(rows, where):
     compacted = sum(1 for r in rows if r.get("type") == "compacted")
