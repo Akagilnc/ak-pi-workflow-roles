@@ -41,20 +41,32 @@ def main():
     print(f"run: {run}\nrole: {inv.get('role')}  host: {inv.get('host')}  model: {inv.get('provider')}/{inv.get('model')}:{inv.get('thinking')}  ticket: {inv.get('ticketNumber')}")
     history = jsonl(f"{run}/history.jsonl")
 
-    # 1. last verdict payload (the role's submitted words are on the sealed rows)
+    # 1. last verdict payload — terminal's attemptHistoryIdentity, not last sealed
     sealed = [r for r in history if r.get("kind") == "sealed"]
     attempts = [r for r in history if r.get("kind") == "attempt-history"]
     print(f"sealed rows: {len(sealed)}  attempts: {len(attempts)}")
-    if sealed:
-        accepted = (sealed[-1].get("payload") or {}).get("accepted")
-        print("last payload:", json.dumps(accepted, ensure_ascii=False)[:limit])
+    terminal = cur.get("terminal") or {}
+    body = terminal.get("body") if isinstance(terminal.get("body"), dict) else {}
+    identity = body.get("attemptHistoryIdentity") if isinstance(body, dict) else None
+    payloads = None
+    if isinstance(identity, str) and identity.strip():
+        for r in attempts:
+            if r.get("identity") != identity:
+                continue
+            outcome = (r.get("payload") or {}).get("outcome") or {}
+            if isinstance(outcome, dict) and isinstance(outcome.get("payloads"), list):
+                payloads = outcome["payloads"]
+            break
+    if isinstance(payloads, list) and payloads:
+        print("last payload:", json.dumps(payloads[-1], ensure_ascii=False)[:limit])
+    elif isinstance(identity, str) and identity.strip():
+        print(f"last payload: unavailable (attemptHistoryIdentity {identity!r} has no readable payloads)")
     else:
-        print("last payload: unavailable (no sealed rows in history.jsonl)")
-    terminal = cur.get("terminal")
+        print("last payload: unavailable (terminal has no attemptHistoryIdentity)")
     if terminal:
         print(f"terminal: {terminal.get('face')} at {terminal.get('at')}")
 
-    # 2. sealed rows
+    # 2. sealed rows (independent of current terminal)
     damaged = [r for r in history if "_damaged" in r]
     print("status of each sealed row:" + (f"  (damaged lines: {len(damaged)})" if damaged else ""))
     for r in sealed:

@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import { isRecord } from "./unknown-value.ts";
-import { RUN_HISTORY_FILE } from "./run-dossier.ts";
+import { latestOfficerPointersFromRecords, RUN_HISTORY_FILE } from "./run-dossier.ts";
+import { OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
@@ -27,7 +28,7 @@ export type DirectOfficerRunPointer = {
 };
 
 /** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
-export const OFFICER_POINTER_RECORD_KIND = "officer-pointer" as const;
+export { OFFICER_POINTER_RECORD_KIND };
 
 /**
  * Book a typed pointer as one history record of the parent run; the settlement
@@ -107,13 +108,7 @@ export async function resolveOfficerPointer(
 /** The latest pointer booked per officer on one run, as stored. History absent → empty. */
 export async function readBookedOfficerPointers(parentRunDirectory: string): Promise<Readonly<Record<string, unknown>>> {
   const { records } = await readSitianRecords(join(parentRunDirectory, RUN_HISTORY_FILE));
-  const latest: Record<string, unknown> = {};
-  for (const record of records) {
-    if (record.kind !== OFFICER_POINTER_RECORD_KIND || !isRecord(record.payload)) continue;
-    const officer = record.payload.officer;
-    if (typeof officer === "string") latest[officer] = record.payload;
-  }
-  return latest;
+  return latestOfficerPointersFromRecords(records);
 }
 
 /** Every pointer booked on one run, in officer-name order. No pointers → []. */

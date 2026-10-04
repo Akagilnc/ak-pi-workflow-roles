@@ -17,6 +17,48 @@ import type {
 
 import { isRecord, errorText } from "./unknown-value.ts";
 
+/** One non-blank JSONL line through the sole Sitian decoder. Blank → undefined. */
+export type SitianLineDecode =
+  | { readonly ok: true; readonly record: SitianRecord }
+  | { readonly ok: false; readonly diagnostic: SitianMalformedDiagnostic };
+
+/**
+ * Decode one Sitian JSONL line. Callers that must keep original bytes use this
+ * with the source line; volume readers fold it into records + diagnostics.
+ */
+export function decodeSitianRecordLine(
+  line: string,
+  lineNumber: number,
+): SitianLineDecode | undefined {
+  if (!line.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(line);
+    if (isRecord(parsed)) {
+      return { ok: true, record: parsed as unknown as SitianRecord };
+    }
+    const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
+    return {
+      ok: false,
+      diagnostic: {
+        kind: "malformed",
+        line: lineNumber,
+        raw: line,
+        error: `expected JSON object, got ${typeDesc}`,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostic: {
+        kind: "malformed",
+        line: lineNumber,
+        raw: line,
+        error: errorText(error),
+      },
+    };
+  }
+}
+
 /**
  * Sole decoder for one Sitian JSONL volume's text. Sync so the run-dossier
  * renderer and the async file reader share one implementation.
@@ -27,30 +69,10 @@ export function parseSitianRecordText(text: string): SitianReadResult {
   const diagnostics: SitianMalformedDiagnostic[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (!line.trim()) continue;
-
-    try {
-      const parsed = JSON.parse(line);
-      if (isRecord(parsed)) {
-        records.push(parsed as unknown as SitianRecord);
-      } else {
-        const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
-        diagnostics.push({
-          kind: "malformed",
-          line: index + 1,
-          raw: line,
-          error: `expected JSON object, got ${typeDesc}`,
-        });
-      }
-    } catch (error) {
-      diagnostics.push({
-        kind: "malformed",
-        line: index + 1,
-        raw: line,
-        error: errorText(error),
-      });
-    }
+    const decoded = decodeSitianRecordLine(lines[index]!, index + 1);
+    if (decoded === undefined) continue;
+    if (decoded.ok) records.push(decoded.record);
+    else diagnostics.push(decoded.diagnostic);
   }
 
   return { records, diagnostics };

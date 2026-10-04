@@ -17,6 +17,9 @@ export const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
   "attempt-history", "turn-delivery", "officer-pointer",
 ]);
 
+/** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
+export const OFFICER_POINTER_RECORD_KIND = "officer-pointer" as const;
+
 /**
  * The facts a run cannot go on without land in `state.jsonl`: the four whole pages only the
  * public call knows, and the native session id a host binds (a resume needs it). A

@@ -21,7 +21,7 @@ import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:
 import { basename, join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
-import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE } from "./run-dossier-files.ts";
+import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
@@ -140,6 +140,22 @@ function lastPagePayload(
   return payload;
 }
 
+/**
+ * Latest officer-pointer payload per officer from already-decoded history rows.
+ * Sole reducer for the "last booking wins per officer" rule (#753 / #1161 officers).
+ */
+export function latestOfficerPointersFromRecords(
+  records: readonly { readonly kind?: unknown; readonly payload?: unknown }[],
+): Readonly<Record<string, unknown>> {
+  const latest: Record<string, unknown> = {};
+  for (const record of records) {
+    if (record.kind !== OFFICER_POINTER_RECORD_KIND || !isRecord(record.payload)) continue;
+    const officer = record.payload.officer;
+    if (typeof officer === "string") latest[officer] = record.payload;
+  }
+  return latest;
+}
+
 /** `current.json` as the rows say right now. */
 function render(
   runDirectory: string,
@@ -154,15 +170,13 @@ function render(
     if (page !== undefined) whole[section] = page;
   }
   let latest: Record<string, unknown> | undefined;
-  const officers: Record<string, unknown> = {};
   for (const row of history) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
     if (row.kind === "sealed" && payload !== undefined) {
       latest = { toolCallId: payload.toolCallId, role: payload.role, accepted: payload.accepted, at: row.timestamp };
-    } else if (row.kind === "officer-pointer" && payload !== undefined && typeof payload.officer === "string") {
-      officers[payload.officer] = payload;
     }
   }
+  const officers = latestOfficerPointersFromRecords(history);
   const sessions: Record<string, unknown> = {};
   for (const row of state) {
     const payload = isRecord(row.payload) ? row.payload : undefined;

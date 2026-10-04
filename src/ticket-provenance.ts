@@ -3,7 +3,7 @@
  * 一册＝一个追加式 records.jsonl。每轮新投影经司天台 appender 追加为不可变提交；
  * 纯追加、不回读历史去重、不折叠。
  */
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
@@ -18,7 +18,6 @@ import {
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
-import { sitianVolumeRecordsFile } from "./sitian-appender.ts";
 import { RUN_HISTORY_FILE } from "./run-dossier-files.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
@@ -27,6 +26,7 @@ import {
   resolveSitianRecordPath,
   type SitianRecordInput,
 } from "./sitian-facade.ts";
+import { decodeSitianRecordLine } from "./sitian-reader.ts";
 import {
   TICKET_PROVENANCE_KIND,
   type TicketProvenanceBound,
@@ -35,7 +35,7 @@ import {
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 
-import { errorText, isRecord } from "./unknown-value.ts";
+import { errorText } from "./unknown-value.ts";
 
 /**
  * Typed input failure for diarist bounds/session path (reask, not infrastructure).
@@ -154,18 +154,9 @@ export async function rehomeUnboundTicketProvenance(
 ): Promise<void> {
   const ticketInput = ticketProvenanceRecordInput(ticketNumber, cwd, home);
 
-  // Legacy pre-#1161 staging volume at run/records.jsonl — move once if present.
-  const legacy = sitianVolumeRecordsFile(runDirectory);
-  try {
-    const content = await readFile(legacy, "utf8");
-    appendSitianRecordBlock(ticketInput, content);
-    await unlink(legacy);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") throw error;
-  }
-
   // Live staging: ticket-provenance rows in the run's history.jsonl. Append-only
   // history keeps the staging rows; the ticket-root diary is the home.
+  // Old run/records.jsonl is not a runtime input (#1161); only migration tools read it.
   let history: string;
   try {
     history = await readFile(join(runDirectory, RUN_HISTORY_FILE), "utf8");
@@ -175,15 +166,11 @@ export async function rehomeUnboundTicketProvenance(
   }
   const block = history
     .split("\n")
-    .flatMap((line) => {
-      if (line.trim() === "") return [];
-      try {
-        const row: unknown = JSON.parse(line);
-        if (!isRecord(row) || row.kind !== TICKET_PROVENANCE_KIND) return [];
-        return [`${line}\n`];
-      } catch {
-        return [];
-      }
+    .flatMap((line, index) => {
+      const decoded = decodeSitianRecordLine(line, index + 1);
+      if (decoded === undefined || !decoded.ok) return [];
+      if (decoded.record.kind !== TICKET_PROVENANCE_KIND) return [];
+      return [`${line}\n`];
     })
     .join("");
   if (block !== "") appendSitianRecordBlock(ticketInput, block);

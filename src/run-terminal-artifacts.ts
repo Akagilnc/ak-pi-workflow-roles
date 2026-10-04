@@ -58,27 +58,46 @@ export function readRunTerminal(runDirectory: string): RunTerminalRead {
   if (typeof body.role !== "string" || body.role.trim() === "") {
     return { status: "unreadable", reason: "terminal body missing nonblank producer-owned role field" };
   }
-  return { status: "present", face, body: face === "report" ? withSubmittedPayloads(runDirectory, body) : body };
+  if (face !== "report") return { status: "present", face, body };
+  const resolved = withSubmittedPayloads(runDirectory, body);
+  if (resolved.status === "unreadable") return resolved;
+  return { status: "present", face, body: resolved.body };
 }
 
 /**
  * The report's outcome carries the verdict facts only; the role's submitted payloads are not
  * stored a second time. A reader that wants them takes them from the attempt-history row this
- * settlement named on the terminal body (`attemptHistoryIdentity`).
+ * settlement named on the terminal body (`attemptHistoryIdentity`). When that identity is set
+ * but the named row cannot supply payloads, the gap is unreadable — not a silent present body.
  */
-function withSubmittedPayloads(runDirectory: string, body: Record<string, unknown>): Record<string, unknown> {
+function withSubmittedPayloads(
+  runDirectory: string,
+  body: Record<string, unknown>,
+):
+  | { readonly status: "present"; readonly body: Record<string, unknown> }
+  | { readonly status: "unreadable"; readonly reason: string } {
   const outcome = body.outcome;
-  if (!isRecord(outcome) || outcome.payloads !== undefined) return body;
+  if (!isRecord(outcome) || outcome.payloads !== undefined) {
+    return { status: "present", body };
+  }
   const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
-  if (typeof identity !== "string" || identity.trim() === "") return body;
+  if (typeof identity !== "string" || identity.trim() === "") {
+    return { status: "present", body };
+  }
   for (const row of readHistoryRowsSync(runDirectory)) {
     if (row.kind !== "attempt-history" || row.identity !== identity || !isRecord(row.payload)) continue;
     const attempt = row.payload.outcome;
     if (isRecord(attempt) && Array.isArray(attempt.payloads)) {
-      return { ...body, outcome: { ...outcome, payloads: attempt.payloads } };
+      return {
+        status: "present",
+        body: { ...body, outcome: { ...outcome, payloads: attempt.payloads } },
+      };
     }
   }
-  return body;
+  return {
+    status: "unreadable",
+    reason: `terminal attemptHistoryIdentity ${identity} has no readable attempt-history payloads`,
+  };
 }
 
 /**
