@@ -25,6 +25,7 @@ import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.t
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { resolveBoundHostSessionId } from "../../src/prepared-role-turn.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
 import { loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
@@ -32,6 +33,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -45,6 +47,18 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+
+/** Same binding load real headless/ACP adapters take via prepared-role-turn. */
+async function loadBoundHostSessionLikeAdapter(request: RoleTurnRequest): Promise<string | undefined> {
+  const hostName =
+    typeof request.host === "string" && request.host.trim() !== ""
+      ? request.host.trim()
+      : "grok-build";
+  return resolveBoundHostSessionId(
+    request,
+    createSessionIdentityAuthority(piDurablePrincipalAuthority, hostName),
+  );
+}
 
 async function withSeatHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-1132-", async (home) => {
@@ -107,6 +121,10 @@ async function runExternalJudge(
       if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
       if (request.activation.role !== "judge") {
         return { code: 0, stderr: "", timedOut: false };
+      }
+      // In-call resume/催交 omit hostSessionId; adapter loads the live binding.
+      if (request.continuation.kind === "resume") {
+        await loadBoundHostSessionLikeAdapter(request);
       }
       const turn: Turn = {
         prompt: request.continuation.prompt,
@@ -252,6 +270,9 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       async executeTurn(request: RoleTurnRequest) {
         if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
         if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
+        if (request.continuation.kind === "resume") {
+          await loadBoundHostSessionLikeAdapter(request);
+        }
         turns += 1;
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
@@ -324,6 +345,9 @@ test("#1132: a countersign first turn carries the configured delivery ceiling", 
       const host = {
         async executeTurn(request: RoleTurnRequest) {
           if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
+          if (request.continuation.kind === "resume") {
+            await loadBoundHostSessionLikeAdapter(request);
+          }
           turns += 1;
           seenLimits.push(request.deliveryRequestLimit);
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
@@ -628,6 +652,9 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         seatsDispatched.push(request.activation.role);
+        if (request.continuation.kind === "resume") {
+          await loadBoundHostSessionLikeAdapter(request);
+        }
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
         await writeFile(
@@ -699,6 +726,9 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
       let notaryCalls = 0;
       const host = {
         async executeTurn(request: RoleTurnRequest) {
+          if (request.continuation.kind === "resume") {
+            await loadBoundHostSessionLikeAdapter(request);
+          }
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
           await mkdir(coordinates.sessionDirectory, { recursive: true });
           await writeFile(
@@ -790,6 +820,9 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       const calls: Record<string, number> = {};
       const host = {
         async executeTurn(request: RoleTurnRequest) {
+          if (request.continuation.kind === "resume") {
+            await loadBoundHostSessionLikeAdapter(request);
+          }
           const role = request.activation.role;
           calls[role] = (calls[role] ?? 0) + 1;
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
@@ -853,7 +886,7 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
   }
 });
 
-// 首轮已经启动后，催交组装失败走已有的失败续跑，下一次是 resume。
+// 首轮已经启动后，催交 resume 经适配器 binding load 失败；不得派发旧 id。
 test("#1132: a delivery assembly failure after the turn started resumes the session", async () => {
   await withSeatHome(async (home) => {
     await setConfiguredLimit(home, 1);
@@ -866,7 +899,11 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
         runDirectory = request.runDirectory;
         kinds.push(request.continuation.kind);
         if (request.continuation.kind === "resume") {
+          // In-call delivery leaves hostSessionId absent (host-contracts). The
+          // adapter — not the dispatch layer — loads the live binding and must
+          // refuse damaged state instead of reusing a prior id.
           resumedWith.push(request.continuation.hostSessionId);
+          await loadBoundHostSessionLikeAdapter(request);
         }
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
@@ -875,8 +912,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        // A damaged durable session binding: valid bind then syntax-corrupt
-        // state.jsonl — control path must refuse before dispatching the old id.
+        // Valid bind then syntax-corrupt state.jsonl — next resume load fails closed.
         seedHostSessionId(dirname(coordinates.sessionDirectory), "grok-build", "old-native");
         appendFileSync(join(dirname(coordinates.sessionDirectory), "state.jsonl"), "not JSON\n");
         return { code: 0, stderr: "", timedOut: false };
@@ -897,11 +933,14 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
-    // Damage is appended after the initial turn starts. Control-path load must
-    // refuse before any resume dispatch reuses the prior binding — so executeTurn
-    // stays initial-only. autoResumeCount still records the one failed assembly.
-    assert.deepEqual(kinds, ["initial"]);
-    assert.deepEqual(resumedWith, []);
+    // Damage is appended after the initial turn. The催交 resume reaches the
+    // adapter with hostSessionId absent; adapter load refuses — never old-native.
+    assert.deepEqual(kinds, ["initial", "resume"]);
+    assert.equal(
+      resumedWith.includes("old-native"),
+      false,
+      "malformed state must not dispatch resume with the prior binding",
+    );
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.autoResumeCount, 1);
