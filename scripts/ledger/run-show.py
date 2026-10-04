@@ -29,8 +29,15 @@ def jsonl(path):
     except FileNotFoundError:
         return []
 
-def topology_original(run, host):
-    """Fixed landing from docs/dossier-topology.md / ADR 0086 — one path per host."""
+def resolve_original(run, host):
+    """The run's one host original — fixed topology path (#1161 R1).
+
+    docs/dossier-topology.md / ADR 0086 name one landing per known host. Binding
+    success and current.host.original are not gates: a stale pointer after a lawful
+    host switch must not redirect the reader to another host's file. Presence is
+    decided by open (FileNotFoundError → unavailable); no exists/isfile pre-check
+    that would wash EACCES. Unknown hosts stay unavailable — no pointer fallback.
+    """
     if host == "pi":
         return f"{run}/session/session.jsonl"
     if host == "grok-build":
@@ -38,24 +45,6 @@ def topology_original(run, host):
     if host in ("codex", "claude"):
         return f"{run}/session/{host}.jsonl"
     return None
-
-def resolve_original(run, host, cur):
-    """The run's one host original — binding success is not a gate (#1161 R1).
-
-    Topology landing for the *current* host wins when it exists. current.host.original
-    is the last successful native-session-copy pointer and may lag after a lawful
-    host switch when log.jsonl could not record the new landing — never prefer that
-    stale pointer over the fixed host path that is already on disk.
-    """
-    topo = topology_original(run, host)
-    if topo is not None:
-        present = os.path.isdir(topo) if host == "grok-build" else os.path.isfile(topo)
-        if present:
-            return topo
-    pointed = ((cur.get("host") or {}).get("original"))
-    if isinstance(pointed, str) and pointed.strip():
-        return pointed
-    return topo
 
 def print_codex_stats(rows, where):
     compacted = sum(1 for r in rows if r.get("type") == "compacted")
@@ -141,7 +130,7 @@ def main():
     # Never borrow package session.jsonl for a non-pi host (#1161 R1).
     # Hosts without an existing reader stay unavailable — no new parsers.
     host = inv.get("host")
-    original = resolve_original(run, host, cur)
+    original = resolve_original(run, host)
     ids = []
     sid = ((cur.get("host") or {}).get("sessions") or {}).get(host)
     if isinstance(sid, str) and sid.strip():
