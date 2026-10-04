@@ -674,15 +674,12 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
  *
  * The caller owns the live delivery policy; the request projects its next send.
  */
-async function buildReceiptDeliveryRequest<A extends AdmittedRoleInvocation>(input: {
-  admitted: A;
-  env: PostAdmissionEnv;
+/** Bare in-call催交 resume: hostSessionId absent; adapter is the sole load authority. */
+function buildReceiptDeliveryRequest(input: {
   request: RoleTurnRequest;
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
-}): Promise<RoleTurnRequest> {
+}): RoleTurnRequest {
   const { request, receiptDelivery } = input;
-  // In-call 催交 / auto-resume leave hostSessionId absent (host-contracts);
-  // the host adapter loads the live binding via resolveBoundHostSessionId.
   return {
     ...request,
     continuation: {
@@ -1291,11 +1288,9 @@ export async function dispatchPostAdmissionTurn<
       let deliveryResult: RoleTurnResult;
       let deliveryTurnRequest: RoleTurnRequest;
       try {
-        const deliveryRequest = await buildReceiptDeliveryRequest({
-          admitted,
-          env,
-          // Host and the other axes already selected on this turn ride the
-          // shared projection. The pre-projection request does not have them.
+        // Host and the other axes already selected on this turn ride the
+        // shared projection. The pre-projection request does not have them.
+        const deliveryRequest = buildReceiptDeliveryRequest({
           request: turnRequest,
           receiptDelivery,
         });

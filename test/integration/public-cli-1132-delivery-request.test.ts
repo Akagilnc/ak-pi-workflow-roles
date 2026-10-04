@@ -48,7 +48,10 @@ import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/p
 
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-/** Same binding load real headless/ACP adapters take via prepared-role-turn. */
+/**
+ * Prepared-role-turn binding entry (same resolveBoundHostSessionId headless/ACP use).
+ * Kept only for the negative fail-closed case — do not mock that refusal.
+ */
 async function loadBoundHostSessionLikeAdapter(request: RoleTurnRequest): Promise<string | undefined> {
   const hostName =
     typeof request.host === "string" && request.host.trim() !== ""
@@ -121,10 +124,6 @@ async function runExternalJudge(
       if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
       if (request.activation.role !== "judge") {
         return { code: 0, stderr: "", timedOut: false };
-      }
-      // In-call resume/催交 omit hostSessionId; adapter loads the live binding.
-      if (request.continuation.kind === "resume") {
-        await loadBoundHostSessionLikeAdapter(request);
       }
       const turn: Turn = {
         prompt: request.continuation.prompt,
@@ -270,9 +269,6 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       async executeTurn(request: RoleTurnRequest) {
         if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
         if (runDirectorySeen === undefined) runDirectorySeen = request.runDirectory;
-        if (request.continuation.kind === "resume") {
-          await loadBoundHostSessionLikeAdapter(request);
-        }
         turns += 1;
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
@@ -345,9 +341,6 @@ test("#1132: a countersign first turn carries the configured delivery ceiling", 
       const host = {
         async executeTurn(request: RoleTurnRequest) {
           if (request.activation.role !== "countersign") return { code: 0, stderr: "", timedOut: false };
-          if (request.continuation.kind === "resume") {
-            await loadBoundHostSessionLikeAdapter(request);
-          }
           turns += 1;
           seenLimits.push(request.deliveryRequestLimit);
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
@@ -652,9 +645,6 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         seatsDispatched.push(request.activation.role);
-        if (request.continuation.kind === "resume") {
-          await loadBoundHostSessionLikeAdapter(request);
-        }
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
         await writeFile(
@@ -726,9 +716,6 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
       let notaryCalls = 0;
       const host = {
         async executeTurn(request: RoleTurnRequest) {
-          if (request.continuation.kind === "resume") {
-            await loadBoundHostSessionLikeAdapter(request);
-          }
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
           await mkdir(coordinates.sessionDirectory, { recursive: true });
           await writeFile(
@@ -820,9 +807,6 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       const calls: Record<string, number> = {};
       const host = {
         async executeTurn(request: RoleTurnRequest) {
-          if (request.continuation.kind === "resume") {
-            await loadBoundHostSessionLikeAdapter(request);
-          }
           const role = request.activation.role;
           calls[role] = (calls[role] ?? 0) + 1;
           const coordinates = piDurablePrincipalAuthority.decode(request.principal);
@@ -933,14 +917,10 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
-    // Damage is appended after the initial turn. The催交 resume reaches the
-    // adapter with hostSessionId absent; adapter load refuses — never old-native.
+    // Damage is appended after the initial turn. Exactly one bare resume
+    // reaches the adapter (hostSessionId absent); identity.load refuses.
     assert.deepEqual(kinds, ["initial", "resume"]);
-    assert.equal(
-      resumedWith.includes("old-native"),
-      false,
-      "malformed state must not dispatch resume with the prior binding",
-    );
+    assert.deepEqual(resumedWith, [undefined]);
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.autoResumeCount, 1);
