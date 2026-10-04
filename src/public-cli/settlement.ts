@@ -68,7 +68,7 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
-import { readPageSync, runCurrentPath } from "../run-dossier.ts";
+import { readHistoryRowsSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
@@ -423,16 +423,23 @@ async function settleNoReceiptTerminal(
         kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
         ...facts, decisiveFacts: facts,
       };
+  let attemptHistoryIdentity: string | undefined;
   if (scope?.recordAttemptHistory === true) {
-    await appendRunAttemptHistory(
+    const pointer = await appendRunAttemptHistory(
       { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+    attemptHistoryIdentity = pointer.identity;
+  } else {
+    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+      admitted.runDirectory,
+      admitted.role,
       roleOutcome,
     );
   }
   if (scope?.previewOnly !== true) {
-    // Same pointer carry as failure: a later accepted re-projection must still
-    // name this settlement's history row (#1161 R2-gap).
-    const attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
+    // Belonging settlement only (#1161 甲 / R2): never inherit another court's
+    // latest terminal pointer, and never invent a history row on re-projection (N1).
     writeRunTerminal(admitted.runDirectory, "no_receipt", {
       role: admitted.role,
       runId: admitted.runId,
@@ -1293,10 +1300,11 @@ async function extractNavigatorFactFromAdmittedSession(
 /**
  * Sole success-terminal publisher (#953): replace the leg's terminal in
  * current.json. The report carries the outcome's verdict facts; the role's
- * submitted payloads live in history.jsonl. When this settlement appends an
- * attempt-history row, the terminal body keeps that row's identity so readers
- * rehydrate this settlement's payloads — never "last row of the same role"
- * (#1161 甲 / R2).
+ * submitted payloads live in history.jsonl. The terminal names the
+ * attempt-history row that belongs to this settlement — the row this settle
+ * appended, or the existing row whose outcome is this settlement's (#1161 甲).
+ * Non-recording re-projection must not guess from the run's latest terminal
+ * and must not invent a new history row (R2 / N1).
  */
 async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
@@ -1307,8 +1315,6 @@ async function publishAcceptedTerminal(
 ): Promise<TerminalArtifactRef[]> {
   // #419: a dispatched turn appends before rewriting last-write-wins views;
   // a later projection may refresh views but must not invent another attempt.
-  // #1161 R2-gap: a stripped report without an attempt-history pointer is an
-  // unreadable reader gap — book the row when this settlement has no prior id.
   let attemptHistoryIdentity: string | undefined;
   if (recordAttemptHistory) {
     const pointer = await appendRunAttemptHistory(
@@ -1317,33 +1323,60 @@ async function publishAcceptedTerminal(
     );
     attemptHistoryIdentity = pointer.identity;
   } else {
-    // Non-recording re-projection keeps this settlement's history pointer
-    // (#1161 甲 / R2). Read the fact row, not the rendering; do not fall back
-    // to last-by-role. Face may be error/no_receipt after a host fault — the
-    // pointer still lives on that body when carried.
-    attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
-  }
-  if (attemptHistoryIdentity === undefined) {
-    const pointer = await appendRunAttemptHistory(
-      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+      admitted.runDirectory,
+      admitted.role,
       roleOutcome,
     );
-    attemptHistoryIdentity = pointer.identity;
   }
   writeRunTerminal(admitted.runDirectory, "report", {
     ...report,
-    [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity,
+    ...(attemptHistoryIdentity === undefined
+      ? {}
+      : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
   });
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
-/** Prior terminal body's attempt-history identity, any face. */
-function priorAttemptHistoryIdentity(runDirectory: string): string | undefined {
-  const prior = readPageSync(runDirectory, "terminal");
-  const priorId = prior !== undefined && isRecord(prior.body)
-    ? prior.body[ATTEMPT_HISTORY_IDENTITY_FIELD]
-    : undefined;
-  return typeof priorId === "string" && priorId.trim() !== "" ? priorId : undefined;
+/**
+ * Find the attempt-history identity that belongs to this settlement's outcome.
+ * Last matching row wins when the same words were recorded more than once.
+ */
+function attemptHistoryIdentityForOutcome(
+  runDirectory: string,
+  role: string,
+  outcome: AttemptHistoryOutcome,
+): string | undefined {
+  // History unreadable is a gap, not a settlement abort — the ledger's failure
+  // domain does not block the terminal face (#1161 / main history disposition).
+  let rows: readonly Record<string, unknown>[];
+  try {
+    rows = readHistoryRowsSync(runDirectory);
+  } catch {
+    return undefined;
+  }
+  let found: string | undefined;
+  for (const row of rows) {
+    if (row.kind !== "attempt-history" || typeof row.identity !== "string") continue;
+    if (!isRecord(row.payload) || row.payload.role !== role || !isRecord(row.payload.outcome)) continue;
+    if (!sameAttemptHistoryOutcome(row.payload.outcome, outcome)) continue;
+    found = row.identity;
+  }
+  return found;
+}
+
+function sameAttemptHistoryOutcome(
+  stored: Record<string, unknown>,
+  current: AttemptHistoryOutcome,
+): boolean {
+  if (stored.kind !== current.kind) return false;
+  if ("payloads" in current) {
+    return JSON.stringify(stored.payloads) === JSON.stringify(current.payloads);
+  }
+  if (current.kind === "failure") {
+    return stored.diagnostic === current.diagnostic && stored.cause === current.cause;
+  }
+  return JSON.stringify(stored) === JSON.stringify(current);
 }
 
 type LawfulSessionRead =
@@ -1713,20 +1746,26 @@ export async function publishFailureTerminal(
   // write failure never strands the failure terminal; it is rethrown after it.
   let historyFailure: unknown;
   let historyFailed = false;
+  const failureOutcome = { kind: "failure" as const, role: admitted.role, ...failure };
+  let attemptHistoryIdentity: string | undefined;
   if (recordAttemptHistory) {
     try {
-      await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, {
-        kind: "failure", role: admitted.role, ...failure,
-      });
+      const pointer = await appendRunAttemptHistory(
+        { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+        failureOutcome,
+      );
+      attemptHistoryIdentity = pointer.identity;
     } catch (error) {
       historyFailure = error;
       historyFailed = true;
     }
+  } else {
+    attemptHistoryIdentity = attemptHistoryIdentityForOutcome(
+      admitted.runDirectory,
+      admitted.role,
+      failureOutcome,
+    );
   }
-  // Keep the settlement's attempt-history pointer across the error face so a
-  // later non-recording re-projection can still name the same history row
-  // (#1161 R2-gap). Do not invent a new attempt or guess last-by-role.
-  const attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
   writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,

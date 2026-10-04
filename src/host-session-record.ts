@@ -5,6 +5,7 @@
  * Writes native-session-copy (or native-session-warning on retry failure) after CLI exit.
  * Log line write failures declare to stderr and never abort the leg.
  */
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -237,18 +238,18 @@ export function copyAndRecordHostDossier(options: {
   if (nativePath === undefined && options.host !== "codex") return;
 
   const landingPath = resolveHostDossierLandingPath(options);
-  const staging = `${landingPath}.copying`;
+  // Per-attempt staging/previous names: concurrent copies of the same landing
+  // must not share one `.copying` / `.previous` path (#1161 C2). Node's fs
+  // copy is not atomic; unique sibling + rename is the smallest ownership fix.
 
   let lastError: unknown;
   let copySuccess = false;
+  let stagingForCleanup: string | undefined;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const attemptToken = randomBytes(6).toString("hex");
+    const staging = `${landingPath}.copying.${attemptToken}`;
+    stagingForCleanup = staging;
     try {
-      rmSync(staging, { recursive: true, force: true });
-      // grok's directory cannot be renamed over: a kill between the two renames
-      // below leaves the old original parked, so put it back first.
-      if (options.host === "grok-build" && !existsSync(landingPath) && existsSync(`${landingPath}.previous`)) {
-        renameSync(`${landingPath}.previous`, landingPath);
-      }
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, staging);
       } else {
@@ -261,24 +262,26 @@ export function copyAndRecordHostDossier(options: {
       if (options.host === "grok-build") {
         // A directory cannot be renamed over: park the previous original aside,
         // move the new one in, and put the old one back if that move fails.
-        const previous = `${landingPath}.previous`;
-        rmSync(previous, { recursive: true, force: true });
+        const previous = `${landingPath}.previous.${attemptToken}`;
         const hadPrevious = existsSync(landingPath);
         if (hadPrevious) renameSync(landingPath, previous);
         try {
           renameSync(staging, landingPath);
         } catch (swapError) {
-          if (hadPrevious) renameSync(previous, landingPath);
+          if (hadPrevious && existsSync(previous)) renameSync(previous, landingPath);
           throw swapError;
         }
-        rmSync(previous, { recursive: true, force: true });
+        if (hadPrevious) rmSync(previous, { recursive: true, force: true });
       } else {
         renameSync(staging, landingPath); // atomically replaces the previous file
       }
       copySuccess = true;
+      stagingForCleanup = undefined;
       break;
     } catch (error) {
       lastError = error;
+      try { rmSync(staging, { recursive: true, force: true }); }
+      catch { /* retry or warning below */ }
     }
   }
 
@@ -286,8 +289,10 @@ export function copyAndRecordHostDossier(options: {
     report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
   } else {
     // A partial attempt must not masquerade as a complete native original.
-    try { rmSync(staging, { recursive: true, force: true }); }
-    catch { /* warning below reports the original copy failure */ }
+    if (stagingForCleanup !== undefined) {
+      try { rmSync(stagingForCleanup, { recursive: true, force: true }); }
+      catch { /* warning below reports the original copy failure */ }
+    }
     report({
       type: "native-session-warning",
       nativePath,

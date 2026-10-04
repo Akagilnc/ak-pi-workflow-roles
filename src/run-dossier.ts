@@ -280,6 +280,13 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
+  // Control plane fails closed on damaged rows: reachable older pages must not
+  // silently drive lifecycle (#1161 C3). Rendering still keeps reachable facts.
+  if (state.diagnostics !== undefined && state.diagnostics.length > 0) {
+    throw new Error(
+      `${RUN_STATE_FILE} has malformed row(s); refusing stale control-plane page: ${runDirectory}`,
+    );
+  }
   return lastPagePayload(state.rows, PAGE_ROW_KIND[section], runDirectory);
 }
 

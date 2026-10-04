@@ -669,7 +669,9 @@ test("#953 a later success replaces an earlier failure terminal, and a later fai
       cwd: project, home, runId, runDirectory, role: "judge",
       details: { judgeStatus: "pass" },
     });
-    const settled = await trySettlePublicSeat(admitted, authority, undefined);
+    // This settle is the recording settlement for the sealed submission — not a
+    // later non-recording re-projection (#1161 N1: do not invent history on re-project).
+    const settled = await trySettlePublicSeat(admitted, authority, { recordAttemptHistory: true });
     assert.equal(settled?.roleOutcome.kind, "accepted");
     const afterSuccess = readRunTerminal(runDirectory);
     assert.equal(afterSuccess.status, "present");

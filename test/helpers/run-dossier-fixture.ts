@@ -195,7 +195,7 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
   if (!existsSync(sessionDirectory)) return;
   for (const entry of readdirSync(sessionDirectory)) {
     assert.equal(
-      /-\d+(\.jsonl|\.failed)?$|\.copying$|-(headless|acp)-session\.json$|^host-session$|^submission-ledger$|^attempt-history$|^auditor-roles$/.test(entry),
+      /-\d+(\.jsonl|\.failed)?$|\.copying(\.|$)|\.previous(\.|$)|-(headless|acp)-session\.json$|^host-session$|^submission-ledger$|^attempt-history$|^auditor-roles$/.test(entry),
       false,
       `retired session entry present: ${entry}`,
     );
