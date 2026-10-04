@@ -16,7 +16,8 @@
         "kind": "accepted",
         "role": "coder",
         "status": "completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       }
     }
   }

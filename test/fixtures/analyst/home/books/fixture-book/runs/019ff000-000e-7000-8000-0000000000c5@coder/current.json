@@ -16,7 +16,8 @@
         "kind": "accepted",
         "role": "coder",
         "status": "partially_completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "partially_completed",

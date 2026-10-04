@@ -15,7 +15,8 @@
         "kind": "accepted",
         "role": "collector",
         "status": "collected",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "host": "github.com",

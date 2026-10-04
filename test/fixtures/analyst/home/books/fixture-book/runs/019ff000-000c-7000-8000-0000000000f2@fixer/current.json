@@ -16,7 +16,8 @@
         "kind": "accepted",
         "role": "fixer",
         "status": "completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "completed",

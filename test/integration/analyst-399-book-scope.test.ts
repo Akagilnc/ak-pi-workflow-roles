@@ -131,6 +131,7 @@ async function writeReadableRun(input: {
       role: input.role,
       status: "completed",
       decisiveFacts: {},
+      payloads: [],
     },
   });
 }

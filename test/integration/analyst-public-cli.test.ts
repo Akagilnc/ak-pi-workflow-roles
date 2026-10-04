@@ -106,6 +106,8 @@ async function seedBookTicketRun(input: {
       role: "coder",
       status: "completed",
       decisiveFacts: {},
+      // Readable report needs payloads or attemptHistoryIdentity (#1161 R2-gap).
+      payloads: [],
     },
   });
   return bookKey;
@@ -418,6 +420,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
                 role: input.role,
                 status: "completed",
                 decisiveFacts: {},
+                payloads: [],
               },
             });
           } else {

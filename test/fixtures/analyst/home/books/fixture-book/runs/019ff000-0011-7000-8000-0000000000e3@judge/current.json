@@ -15,7 +15,8 @@
         "kind": "accepted",
         "role": "judge",
         "status": "escalate",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "escalate"

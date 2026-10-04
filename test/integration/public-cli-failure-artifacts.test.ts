@@ -739,7 +739,9 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
       bookKey: "proj",
     });
     seedTerminal(runDirectory, "report", {
-      role: "judge", runId, outcome: { kind: "accepted", role: "judge" },
+      role: "judge",
+      runId,
+      outcome: { kind: "accepted", role: "judge", payloads: [] },
     });
     // Sibling terminal the shared reader must keep after the target's no_receipt.
     seedTerminal(siblingDirectory, "error", {

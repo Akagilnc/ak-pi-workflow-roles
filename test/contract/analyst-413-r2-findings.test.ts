@@ -118,7 +118,13 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
         role: "coder",
         runId: RUN_ID,
         phase: "apply",
-        outcome: { kind: "accepted", role: "coder", status: "completed", decisiveFacts: {} },
+        outcome: {
+          kind: "accepted",
+          role: "coder",
+          status: "completed",
+          decisiveFacts: {},
+          payloads: [],
+        },
       });
       writeFileSync(
         join(runDir, "session", "session.jsonl"),

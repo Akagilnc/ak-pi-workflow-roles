@@ -105,9 +105,18 @@ export async function resolveOfficerPointer(
   };
 }
 
-/** The latest pointer booked per officer on one run, as stored. History absent → empty. */
+/**
+ * The latest pointer booked per officer on one run, as stored. History absent → empty.
+ * Canonical malformed diagnostics are not discarded: a damaged officer source must
+ * not wash into lawful zero rounds (#1161 O1).
+ */
 export async function readBookedOfficerPointers(parentRunDirectory: string): Promise<Readonly<Record<string, unknown>>> {
-  const { records } = await readSitianRecords(join(parentRunDirectory, RUN_HISTORY_FILE));
+  const { records, diagnostics } = await readSitianRecords(join(parentRunDirectory, RUN_HISTORY_FILE));
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `${RUN_HISTORY_FILE} has ${diagnostics.length} malformed row(s); officer pointers unreadable: ${parentRunDirectory}`,
+    );
+  }
   return latestOfficerPointersFromRecords(records);
 }
 

@@ -67,8 +67,9 @@ export function readRunTerminal(runDirectory: string): RunTerminalRead {
 /**
  * The report's outcome carries the verdict facts only; the role's submitted payloads are not
  * stored a second time. A reader that wants them takes them from the attempt-history row this
- * settlement named on the terminal body (`attemptHistoryIdentity`). When that identity is set
- * but the named row cannot supply payloads, the gap is unreadable — not a silent present body.
+ * settlement named on the terminal body (`attemptHistoryIdentity`). When payloads are absent
+ * and that identity is missing or cannot supply them, the gap is unreadable — never a silent
+ * present body (#1161 R2-gap).
  */
 function withSubmittedPayloads(
   runDirectory: string,
@@ -82,7 +83,10 @@ function withSubmittedPayloads(
   }
   const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
   if (typeof identity !== "string" || identity.trim() === "") {
-    return { status: "present", body };
+    return {
+      status: "unreadable",
+      reason: "terminal report has no payloads and no attemptHistoryIdentity",
+    };
   }
   for (const row of readHistoryRowsSync(runDirectory)) {
     if (row.kind !== "attempt-history" || row.identity !== identity || !isRecord(row.payload)) continue;

@@ -15,7 +15,8 @@
         "kind": "accepted",
         "role": "merger",
         "status": "completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "completed"

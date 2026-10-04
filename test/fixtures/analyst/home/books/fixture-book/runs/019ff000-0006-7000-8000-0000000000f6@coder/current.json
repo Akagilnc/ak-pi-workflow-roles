@@ -16,7 +16,8 @@
         "kind": "accepted",
         "role": "coder",
         "status": "planned",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "planned",

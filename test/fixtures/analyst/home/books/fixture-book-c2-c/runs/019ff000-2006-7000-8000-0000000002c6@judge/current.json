@@ -18,7 +18,8 @@
         "status": "converged",
         "decisiveFacts": {
           "classCount": 1
-        }
+        },
+        "payloads": []
       }
     }
   }

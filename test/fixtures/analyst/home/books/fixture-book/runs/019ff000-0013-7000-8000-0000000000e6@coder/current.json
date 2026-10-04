@@ -16,7 +16,8 @@
         "kind": "accepted",
         "role": "coder",
         "status": "refused",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "refused",

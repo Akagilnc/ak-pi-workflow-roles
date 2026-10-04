@@ -430,10 +430,16 @@ async function settleNoReceiptTerminal(
     );
   }
   if (scope?.previewOnly !== true) {
+    // Same pointer carry as failure: a later accepted re-projection must still
+    // name this settlement's history row (#1161 R2-gap).
+    const attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
     writeRunTerminal(admitted.runDirectory, "no_receipt", {
       role: admitted.role,
       runId: admitted.runId,
       outcome: roleOutcome,
+      ...(attemptHistoryIdentity === undefined
+        ? {}
+        : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
     });
   }
   return attachEngineDetourToolUsage({
@@ -1301,6 +1307,8 @@ async function publishAcceptedTerminal(
 ): Promise<TerminalArtifactRef[]> {
   // #419: a dispatched turn appends before rewriting last-write-wins views;
   // a later projection may refresh views but must not invent another attempt.
+  // #1161 R2-gap: a stripped report without an attempt-history pointer is an
+  // unreadable reader gap — book the row when this settlement has no prior id.
   let attemptHistoryIdentity: string | undefined;
   if (recordAttemptHistory) {
     const pointer = await appendRunAttemptHistory(
@@ -1310,23 +1318,32 @@ async function publishAcceptedTerminal(
     attemptHistoryIdentity = pointer.identity;
   } else {
     // Non-recording re-projection keeps this settlement's history pointer
-    // (#1161 甲 / R2). Read the fact row, not the rendering; do not invent a
-    // new attempt or fall back to last-by-role.
-    const prior = readPageSync(admitted.runDirectory, "terminal");
-    const priorId = prior !== undefined && prior.face === "report" && isRecord(prior.body)
-      ? prior.body[ATTEMPT_HISTORY_IDENTITY_FIELD]
-      : undefined;
-    if (typeof priorId === "string" && priorId.trim() !== "") {
-      attemptHistoryIdentity = priorId;
-    }
+    // (#1161 甲 / R2). Read the fact row, not the rendering; do not fall back
+    // to last-by-role. Face may be error/no_receipt after a host fault — the
+    // pointer still lives on that body when carried.
+    attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
+  }
+  if (attemptHistoryIdentity === undefined) {
+    const pointer = await appendRunAttemptHistory(
+      { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+      roleOutcome,
+    );
+    attemptHistoryIdentity = pointer.identity;
   }
   writeRunTerminal(admitted.runDirectory, "report", {
     ...report,
-    ...(attemptHistoryIdentity === undefined
-      ? {}
-      : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
+    [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity,
   });
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
+}
+
+/** Prior terminal body's attempt-history identity, any face. */
+function priorAttemptHistoryIdentity(runDirectory: string): string | undefined {
+  const prior = readPageSync(runDirectory, "terminal");
+  const priorId = prior !== undefined && isRecord(prior.body)
+    ? prior.body[ATTEMPT_HISTORY_IDENTITY_FIELD]
+    : undefined;
+  return typeof priorId === "string" && priorId.trim() !== "" ? priorId : undefined;
 }
 
 type LawfulSessionRead =
@@ -1706,6 +1723,10 @@ export async function publishFailureTerminal(
       historyFailed = true;
     }
   }
+  // Keep the settlement's attempt-history pointer across the error face so a
+  // later non-recording re-projection can still name the same history row
+  // (#1161 R2-gap). Do not invent a new attempt or guess last-by-role.
+  const attemptHistoryIdentity = priorAttemptHistoryIdentity(admitted.runDirectory);
   writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,
@@ -1717,6 +1738,9 @@ export async function publishFailureTerminal(
     // This package's own facts, kept beside the host's report.
     ...(failure.packageFact === undefined ? {} : { packageFact: failure.packageFact }),
     ...(failure.stderr === undefined ? {} : { stderr: failure.stderr }),
+    ...(attemptHistoryIdentity === undefined
+      ? {}
+      : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
   });
   const path = runCurrentPath(admitted.runDirectory);
   onErrorPublished?.(path);

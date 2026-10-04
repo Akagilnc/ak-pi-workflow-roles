@@ -15,7 +15,8 @@
         "kind": "accepted",
         "role": "reviewer",
         "status": "completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "completed"

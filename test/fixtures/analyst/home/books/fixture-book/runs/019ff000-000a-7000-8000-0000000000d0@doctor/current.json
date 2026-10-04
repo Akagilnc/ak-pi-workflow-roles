@@ -15,7 +15,8 @@
         "kind": "accepted",
         "role": "doctor",
         "status": "completed",
-        "decisiveFacts": {}
+        "decisiveFacts": {},
+        "payloads": []
       },
       "receipt": {
         "status": "completed"
