@@ -12,6 +12,7 @@
  * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
  * terminal face) for metric-family modules — no longer discarded after checks.
  */
+import { readSectionSync } from "./run-dossier.ts";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -26,7 +27,6 @@ import {
   parseRunLeaf,
   sessionFileOf,
 } from "./role-run-placement.ts";
-import { sitianRunVolumeDirectory } from "./sitian-appender.ts";
 import { autopsyWriterLock, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
@@ -40,8 +40,8 @@ import {
   type SessionToolInterval,
 } from "./ledger-session-read.ts";
 import {
-  readRunTerminalArtifact,
-  type RunTerminalArtifactFile,
+  readRunTerminal,
+  type RunTerminalFace,
 } from "./run-terminal-artifacts.ts";
 import type {
   AnalystFirstFrameAt,
@@ -51,7 +51,7 @@ import type {
   AnalystUnreadableRun,
 } from "./analyst-page.ts";
 import {
-  readAnalystGateCyclesFromAuditorRoles,
+  readAnalystGateCyclesFromOfficers,
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
 
@@ -63,7 +63,7 @@ export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);
 
 /**
- * Read lifecycle state from the existing run-state.json face.
+ * Read lifecycle state from the state.jsonl run-state fact row.
  * Used only to distinguish live in-flight runs from terminal no-receipt.
  */
 async function readExistingRunLifecycleState(
@@ -134,7 +134,7 @@ async function classifyGhostCandidate(input: {
  * Invocation scope faces used for issue 圈定 (C4 / #399).
  * projectRoot is retained for narrow path match and conflict facts;
  * ticketNumber is the #176 typed face when present (integer ≥ 1).
- * Single read of invocation.json — no second parse kernel.
+ * Single read of the current.json invocation section — no second parse kernel.
  */
 type InvocationScopeFields = {
   readonly projectRoot: string;
@@ -154,15 +154,8 @@ async function listLedgerBookNames(booksRoot: string): Promise<string[]> {
 async function readInvocationScopeFields(
   runDirectory: string,
 ): Promise<InvocationScopeFields | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(join(runDirectory, "invocation.json"), "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw error;
-  }
-  const parsed: unknown = JSON.parse(raw);
-  if (!isRecord(parsed)) return undefined;
+  const parsed = readSectionSync(runDirectory, "invocation");
+  if (parsed === undefined) return undefined;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return undefined;
   }
@@ -212,20 +205,11 @@ async function resolveSessionFile(
   runDirectory: string,
 ): Promise<string> {
   // Prefer invocation.sessionFile when present; fall back to S-family principal.
-  try {
-    const raw = await readFile(join(runDirectory, "invocation.json"), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      isRecord(parsed)
-      && typeof parsed.sessionFile === "string"
-      && parsed.sessionFile.trim() !== ""
-    ) {
-      return typeof parsed.runDirectory === "string"
-        ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
-        : parsed.sessionFile;
-    }
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
+  const parsed = readSectionSync(runDirectory, "invocation");
+  if (parsed !== undefined && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    return typeof parsed.runDirectory === "string"
+      ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string
+      : parsed.sessionFile;
   }
   return sessionFileOf(runDirectory);
 }
@@ -327,7 +311,7 @@ export type AnalystRunTerminalFace =
   | { readonly status: "absent" }
   | {
       readonly status: "present";
-      readonly file: RunTerminalArtifactFile;
+      readonly face: RunTerminalFace;
       readonly body: Record<string, unknown>;
       /** Nonblank producer role — sole owner is readRunTerminalArtifact. */
       readonly role: string;
@@ -352,9 +336,9 @@ export type AnalystReadableRunFacts = {
    */
   readonly models: readonly string[];
   /**
-   * Paired gate-cycle rounds from session/auditor-roles/ (#446).
-   * Missing directory → empty (lawful zero rounds).
-   * Damaged discovered nested JSONL → leg unreadable (`auditor-roles` source).
+   * Paired gate-cycle rounds of the officers booked in current.json (#446).
+   * No officers booked → empty (lawful zero rounds).
+   * A damaged officer pointer or session → leg unreadable (`auditor-roles` source).
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];
 };
@@ -515,10 +499,14 @@ async function classifyScopedRun(input: {
   }
 
   try {
-    const artifact = await readRunTerminalArtifact(input.runDirectory);
+    const read = readRunTerminal(input.runDirectory);
+    // A no_receipt terminal is the explicit form of "no accepted receipt".
+    const artifact = read.status === "present" && read.face === "no_receipt"
+      ? { status: "absent" as const }
+      : read;
     if (artifact.status === "unreadable") {
       missingSources.push("terminal-artifact");
-      reasons.push(`${artifact.file}: ${artifact.reason}`);
+      reasons.push(`terminal: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
       if (lifecycle === "admitted" || lifecycle === "running") {
         // No terminal yet: ghost report only, or live in-flight omit.
@@ -530,10 +518,10 @@ async function classifyScopedRun(input: {
       }
       terminal = { status: "absent" };
     } else {
-      // role already required nonblank by readRunTerminalArtifact (single owner).
+      // role already required nonblank by readRunTerminal (single owner).
       terminal = {
         status: "present",
-        file: artifact.file,
+        face: artifact.face,
         body: artifact.body,
         role: artifact.body.role as string,
       };
@@ -574,16 +562,13 @@ async function classifyScopedRun(input: {
     );
   }
 
-  // Nested auditor-roles gate pairs stay inside the sole scan (families must
+  // Officer gate pairs stay inside the sole scan (families must
   // not readdir this tree again). Missing directory → []. Damaged discovered
   // nested JSONL is page-local unreadable — never silently under-count rounds.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
     const parentSessionFile = sessionFileOf(input.runDirectory);
-    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      sitianRunVolumeDirectory(input.runDirectory, "auditor-roles"),
-      { parentSessionFile },
-    );
+    gateCycles = await readAnalystGateCyclesFromOfficers(input.runDirectory, { parentSessionFile });
   } catch (error) {
     return {
       kind: "unreadable",

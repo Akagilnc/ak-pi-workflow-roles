@@ -10,9 +10,12 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
+import { assertRunDirectoryHoldsOnlyDossier, historyPayloads } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { appendFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { randomUUID } from "node:crypto";
@@ -22,6 +25,7 @@ import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.t
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { resolveBoundHostSessionId } from "../../src/prepared-role-turn.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
 import { loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
@@ -29,6 +33,8 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -41,6 +47,21 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+
+/**
+ * Prepared-role-turn binding entry (same resolveBoundHostSessionId headless/ACP use).
+ * Kept only for the negative fail-closed case — do not mock that refusal.
+ */
+async function loadBoundHostSessionLikeAdapter(request: RoleTurnRequest): Promise<string | undefined> {
+  const hostName =
+    typeof request.host === "string" && request.host.trim() !== ""
+      ? request.host.trim()
+      : "grok-build";
+  return resolveBoundHostSessionId(
+    request,
+    createSessionIdentityAuthority(piDurablePrincipalAuthority, hostName),
+  );
+}
 
 async function withSeatHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-1132-", async (home) => {
@@ -183,9 +204,10 @@ async function freshProject(home: string): Promise<string> {
 // 催交取得卷后走既有审核，不跳审核、不转父席。
 test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", async () => {
   await withSeatHome(async (home) => {
+    const project = await freshProject(home);
     const run = await runExternalJudge(home, {
       runId: "1132-external-accepted",
-      project: await freshProject(home),
+      project,
       limit: 2,
       sealOnCall: 2,
     });
@@ -197,6 +219,8 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     assert.equal(run.turns[1]?.kind, "resume");
     assert.equal(run.turns[1]?.host, "grok-build");
     assert.equal(run.exitCode, 0);
+    // The grok-build leg at rest after a催交 resume: only the dossier (#1161).
+    assertRunDirectoryHoldsOnlyDossier(run.runDirectory!);
     assert.equal(run.terminal?.roleOutcome.kind, "accepted");
     // 票面 3：不跳审核。The audit handoff happens in the caller
     // (dispatchAdmitted → auditSubmittedRole) on the returned terminal's kind, so
@@ -208,10 +232,24 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
     assert.ok(run.runDirectory !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory!, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
+    // Structured ledger surface for this public催交 case (kinds/contents).
+    // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
+    // sealed↔reader mirror that would not prove the old ledger path.
+    const sealed = historyPayloads<{ type?: string; accepted?: unknown; toolCallId?: string; role?: string }>(
+      run.runDirectory!,
+      "sealed",
+    );
+    assert.deepEqual(
+      sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
+      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+    );
+    assert.deepEqual(
+      (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
+        .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
+      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+    );
   });
 });
 
@@ -284,9 +322,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       `催交得卷必须继续；seats=${JSON.stringify(seatsDispatched)}`,
     );
     assert.ok(runDirectorySeen !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(runDirectorySeen, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(runDirectorySeen, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
@@ -519,9 +555,7 @@ test("#1132: a failing催交 turn records the host failure and leaves the run ou
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
     assert.ok(run.runDirectory !== undefined);
-    const runState = JSON.parse(
-      await readFile(join(run.runDirectory, "run-state.json"), "utf8"),
-    ) as { state: string };
+    const runState = readCurrentSection(run.runDirectory, "runState") as { state: string };
     assert.notEqual(runState.state, "running");
   });
 });
@@ -836,17 +870,25 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
   }
 });
 
-// 首轮已经启动后，催交组装失败走已有的失败续跑，下一次是 resume。
+// 首轮已经启动后，催交 resume 经适配器 binding load 失败；不得派发旧 id。
 test("#1132: a delivery assembly failure after the turn started resumes the session", async () => {
   await withSeatHome(async (home) => {
     await setConfiguredLimit(home, 1);
     const project = await freshProject(home);
     const kinds: string[] = [];
+    const resumedWith: Array<string | undefined> = [];
     let runDirectory: string | undefined;
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         runDirectory = request.runDirectory;
         kinds.push(request.continuation.kind);
+        if (request.continuation.kind === "resume") {
+          // In-call delivery leaves hostSessionId absent (host-contracts). The
+          // adapter — not the dispatch layer — loads the live binding and must
+          // refuse damaged state instead of reusing a prior id.
+          resumedWith.push(request.continuation.hostSessionId);
+          await loadBoundHostSessionLikeAdapter(request);
+        }
         const coordinates = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coordinates.sessionDirectory, { recursive: true });
         await writeFile(
@@ -854,7 +896,9 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
           "utf8",
         );
-        await writeFile(join(coordinates.sessionDirectory, "grok-acp-session.json"), "not JSON\n");
+        // Valid bind then syntax-corrupt state.jsonl — next resume load fails closed.
+        seedHostSessionId(dirname(coordinates.sessionDirectory), "grok-build", "old-native");
+        appendFileSync(join(dirname(coordinates.sessionDirectory), "state.jsonl"), "not JSON\n");
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -873,15 +917,24 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
       },
     );
+    // Damage is appended after the initial turn. Exactly one bare resume
+    // reaches the adapter (hostSessionId absent); identity.load refuses.
     assert.deepEqual(kinds, ["initial", "resume"]);
+    assert.deepEqual(resumedWith, [undefined]);
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
     assert.equal(result.terminal?.autoResumeCount, 1);
     if (result.terminal?.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
+      // state.jsonl syntax damage fails closed on the control plane. Dedicated
+      // binding-file JSON.parse used to surface SyntaxError (BASE); the shared
+      // state volume's control readers refuse with Error (readPageSync class).
+      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "Error");
     }
     assert.ok(runDirectory !== undefined);
-    const runState = JSON.parse(await readFile(join(runDirectory!, "run-state.json"), "utf8")) as { state?: string };
-    assert.equal(runState.state, "terminal");
+    // Syntax damage fails closed for every control-plane page read, so
+    // markRunTerminal cannot flip runState (best-effort note beside the failure
+    // terminal — same persistence disposition as main). Do not pretend terminal.
+    const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
+    assert.equal(runState.state, "running");
   });
 });

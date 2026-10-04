@@ -5,6 +5,7 @@
  * submission and settlement faces. Navigator routebook read failure stays an
  * advisory diagnostic and leaves the accepted receipt in place.
  */
+import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -111,7 +112,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       const report = result.terminal?.artifacts.find((artifact) => artifact.kind === "report");
       let reportRole: unknown;
       if (report !== undefined) {
-        const body = JSON.parse(await readFile(report.path, "utf8")) as { role?: unknown };
+        const body = terminalBodyAt(report.path, "report") as { role?: unknown };
         reportRole = body.role;
       }
       const problems: string[] = [];
@@ -127,7 +128,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
         report !== undefined
         && (record.role === "diarist" || record.role === "countersign")
       ) {
-        firstRunDirectory.set(record.role, dirname(dirname(report.path)));
+        firstRunDirectory.set(record.role, dirname(report.path));
       }
       if (record.role === "navigator") {
         const navigator = result.terminal?.navigator;
@@ -172,7 +173,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       );
       const report = again.terminal?.artifacts.find((artifact) => artifact.kind === "report");
       assert.ok(report, `${role} second public summons produced no report`);
-      const second = dirname(dirname(report.path));
+      const second = dirname(report.path);
       assert.notEqual(second, firstRunDirectory.get(role), `${role} public re-summons resumed by ticket`);
       assert.ok(second.includes(`${join("505", "runs")}`), `${role} second run left the ticket: ${second}`);
     }

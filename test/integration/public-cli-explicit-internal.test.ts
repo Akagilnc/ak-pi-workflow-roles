@@ -2,7 +2,7 @@
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -16,7 +16,8 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
@@ -307,7 +308,9 @@ setInterval(() => {}, 1000);
 });
 
 test("Pi stdin delivery error stays independent of the child exit", async () => {
-  await withTempHome(async (home) => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-pi-stdin-epipe-", runName: "run@judge" });
+  try {
+    const home = ledger.home;
     const stub = join(home, "stdin-close-child.mjs");
     await writeExecutableStub(
       stub,
@@ -320,17 +323,16 @@ process.exit(0);
     const runner = createDefaultPiSpawnRunner({});
     const result = await runner([], {
       cwd: home,
-      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: home },
+      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
       stdin: "x".repeat(8 * 1024 * 1024),
     });
     assert.equal(result.code, 0);
     assert.equal(result.knownFailure, undefined);
-    const artifacts = join(home, "artifacts");
-    const notes = await Promise.all((await readdir(artifacts))
-      .filter((name) => name.startsWith("post-admission-diagnostic-"))
-      .map(async (name) => JSON.parse(await readFile(join(artifacts, name), "utf8"))));
+    const notes = runLogPayloads<{ failure?: { identity?: { code?: unknown } } }>(ledger.runDirectory, "post-admission-diagnostic");
     assert.ok(notes.some((note) => note.failure?.identity?.code === "EPIPE"));
-  });
+  } finally {
+    ledger.dispose();
+  }
 });
 
 test("a parent abort terminates the nested activation with SIGTERM", async () => {
@@ -410,7 +412,7 @@ test("turn host masks ambient ledger and machine Pi home after env remerge", asy
     const machineRun = join(home, "machine-run");
     const machineAgent = join(home, "machine-agent");
     const testAgent = join(home, "test-agent");
-    const invocation = join(machineRun, "invocation.json");
+    const invocation = join(machineRun, "current.json");
     const machineMarker = join(machineAgent, "marker");
     const observed = join(home, "observed.json");
     await mkdir(machineRun, { recursive: true });
@@ -465,7 +467,7 @@ process.exit(0);
 test("parent discards child stdout without inheriting the parent role ledger", async () => {
   await withTempHome(async (home) => {
     const parentRun = join(home, "parent-run");
-    const invocation = join(parentRun, "invocation.json");
+    const invocation = join(parentRun, "current.json");
     await mkdir(parentRun, { recursive: true });
     await writeFile(invocation, "parent-identity", "utf8");
     const stub = join(home, "flood-stdout.mjs");
@@ -475,7 +477,7 @@ test("parent discards child stdout without inheriting the parent role ledger", a
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const chunk = "X".repeat(64 * 1024);
-if (process.env.AK_ROLE_RUN_DIR) writeFileSync(join(process.env.AK_ROLE_RUN_DIR, "invocation.json"), "overwritten", "utf8");
+if (process.env.AK_ROLE_RUN_DIR) writeFileSync(join(process.env.AK_ROLE_RUN_DIR, "current.json"), "overwritten", "utf8");
 for (let i = 0; i < 200; i++) process.stdout.write(chunk);
 process.stderr.write("stderr-ok");
 process.exit(0);

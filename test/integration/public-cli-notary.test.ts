@@ -2,6 +2,7 @@
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
  */
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import {
@@ -247,32 +248,18 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
     const sessionFile = join(sessionDirectory, "session.jsonl");
-    const admittedRequestPath = join(runDirectory, "admitted-request.json");
     await writeFile(sessionFile, "\n", "utf8");
-    await writeFile(
-      admittedRequestPath,
-      `${JSON.stringify({ role: inventedRole, runId })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "run-state.json"),
-      `${JSON.stringify(
-        {
-          runId,
-          role: inventedRole,
-          state: "terminal",
-          bookKey,
-          projectRoot: project,
-          sessionDirectory,
-          sessionFile,
-          runDirectory,
-          admittedRequestPath,
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    seedCurrentSection(runDirectory, "admitted", { role: inventedRole, runId });
+    seedCurrentSection(runDirectory, "runState", {
+      runId,
+      role: inventedRole,
+      state: "terminal",
+      bookKey,
+      projectRoot: project,
+      sessionDirectory,
+      sessionFile,
+      runDirectory,
+    });
 
     await assert.rejects(
       () => readRoleRunState(runDirectory, piDurablePrincipalAuthority),
@@ -365,10 +352,9 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     assert.equal(await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), beforeProjection);
 
     // Locator consumes retained identity, not the full resumable run record.
-    const statePath = join(sourceRunPath, "run-state.json");
-    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const state = readCurrentSection(sourceRunPath, "runState");
     delete state.projectRoot;
-    await writeFile(statePath, JSON.stringify(state), "utf8");
+    seedCurrentSection(sourceRunPath, "runState", state);
     const identityOnly = await resolveNotarySourceRunLocator({
       projectRoot: project,
       sourceRun: bare,

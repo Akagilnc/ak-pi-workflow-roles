@@ -28,8 +28,8 @@ def main():
     sysfile = os.path.abspath(a.sys) if a.sys else f"{kit}/sys.txt"
     instr = a.instr if a.instr is not None else open(f"{kit}/instr.txt").read().strip()
     tag = f"{a.arm}-{a.n}"
-    if host == "codex" and meta["sysKind"] != "headless-system-prompt" and not a.sys:
-        sys.exit("this run was a pi-host run; its sys.txt is only the appended tail. Pass --host pi or a full --sys.")
+    if meta.get("sysKind") != "turn-delivery" and not a.sys:
+        sys.exit("no recorded turn-delivery prompt in this kit (sysKind=%s); pass --sys with an experimental prompt." % meta.get("sysKind"))
     wt = f"{kit}/wt-{tag}"
     if os.path.exists(wt):
         sys.exit(f"leg worktree exists: {wt} (pick another n, or replay-run.sh clean <kit>)")
@@ -66,8 +66,9 @@ def main():
         thinking = a.thinking or meta.get("thinking")
         if thinking:
             model += f":{thinking}"
+        # Kit sys.txt / --sys is the full prompt (recorded turn-delivery or caller experiment).
         cmd = ["pi", "-p", "--no-extensions", "--no-skills", "--no-prompt-templates", "--session-dir", sess,
-               "--model", model, "--append-system-prompt", sysfile, instr or "审。"]
+               "--model", model, "--system-prompt", sysfile, instr or "审。"]
         out = f"{kit}/out-{tag}.txt"
     err = f"{kit}/err-{tag}.txt"
     print(f"leg {tag}: host={host} cwd={wt}\n  {' '.join(cmd[:12])} ...\n  stdout -> {out}")

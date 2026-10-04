@@ -3,7 +3,7 @@
  * 一册＝一个追加式 records.jsonl。每轮新投影经司天台 appender 追加为不可变提交；
  * 纯追加、不回读历史去重、不折叠。
  */
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
@@ -18,7 +18,7 @@ import {
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
-import { sitianVolumeRecordsFile } from "./sitian-appender.ts";
+import { RUN_HISTORY_FILE } from "./run-dossier-files.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   appendSitianRecordBlock,
@@ -26,6 +26,7 @@ import {
   resolveSitianRecordPath,
   type SitianRecordInput,
 } from "./sitian-facade.ts";
+import { decodeSitianRecordLine } from "./sitian-reader.ts";
 import {
   TICKET_PROVENANCE_KIND,
   type TicketProvenanceBound,
@@ -151,16 +152,28 @@ export async function rehomeUnboundTicketProvenance(
   cwd: string,
   home: string,
 ): Promise<void> {
-  const source = sitianVolumeRecordsFile(runDirectory);
-  let content: string;
+  const ticketInput = ticketProvenanceRecordInput(ticketNumber, cwd, home);
+
+  // Live staging: ticket-provenance rows in the run's history.jsonl. Append-only
+  // history keeps the staging rows; the ticket-root diary is the home.
+  // Old run/records.jsonl is not a runtime input (#1161); only migration tools read it.
+  let history: string;
   try {
-    content = await readFile(source, "utf8");
+    history = await readFile(join(runDirectory, RUN_HISTORY_FILE), "utf8");
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return;
     throw error;
   }
-  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
-  await unlink(source);
+  const block = history
+    .split("\n")
+    .flatMap((line, index) => {
+      const decoded = decodeSitianRecordLine(line, index + 1);
+      if (decoded === undefined || !decoded.ok) return [];
+      if (decoded.record.kind !== TICKET_PROVENANCE_KIND) return [];
+      return [`${line}\n`];
+    })
+    .join("");
+  if (block !== "") appendSitianRecordBlock(ticketInput, block);
 }
 
 /**

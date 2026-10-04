@@ -1,0 +1,1 @@
+{"level":"event","kind":"invocation","identity":"d1f1f059-0ad4-400d-b332-a0a4f29a5e57","timestamp":"2026-08-01T00:00:00.000Z","host":"pi","source":"test-fixture-sync","payload":{"role":"coder","runId":"019ff000-0014-7000-8000-0000000000e7","bookKey":"fixture-book","projectRoot":"/analyst-fixture/issue-demo"}}

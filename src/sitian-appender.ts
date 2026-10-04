@@ -5,9 +5,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
-import { sessionDirectoryOf } from "./role-run-placement.ts";
+import { parseRunLeaf, sessionDirectoryOf } from "./role-run-placement.ts";
+import { RUN_HISTORY_FILE, RUN_HISTORY_KINDS, RUN_LOG_FILE, RUN_STATE_FILE, RUN_STATE_KINDS } from "./run-dossier-files.ts";
 import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -42,20 +43,8 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string)
   }
 }
 
-/** Authorized S4 submission ledger kinds that share a common run submission volume. */
-export const S4_SUBMISSION_LEDGER_KINDS = new Set([
-  "candidate",
-  "roundContext",
-  "outcome",
-  "sealed",
-  "post-seal-anomaly"
-]);
-
-/** Compute the volume partition key for directory placement. */
+/** Volume directory name for a record kind: the kind itself. */
 export function resolveSitianVolumeCategory(kind: string): string {
-  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
-    return "submission-ledger";
-  }
   return kind;
 }
 
@@ -115,8 +104,10 @@ export function resolveSitianRecordPathInLedger(
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
   } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
+    // True-unbound diary staging: the run's history volume (#1161). Never a
+    // top-level run/records.jsonl — that leaf is only the ticket-root diary.
     sessionDir = input.runDirectory;
-    recordFile = sitianVolumeRecordsFile(sessionDir);
+    recordFile = join(sessionDir, RUN_HISTORY_FILE);
   } else {
     if (
       input.sessionParent === undefined
@@ -125,8 +116,16 @@ export function resolveSitianRecordPathInLedger(
     ) {
       throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
-    sessionDir = sitianVolumeDirectory(dirname(input.sessionParent), category);
-    recordFile = sitianVolumeRecordsFile(sessionDir);
+    const sessionParentDir = dirname(input.sessionParent);
+    const runDirectory = dirname(sessionParentDir);
+    if (basename(sessionParentDir) === "session" && parseRunLeaf(basename(runDirectory)) !== undefined) {
+      // A role run's own session: every record kind shares the run's one log (#1161).
+      sessionDir = runDirectory;
+      recordFile = join(runDirectory, RUN_HISTORY_KINDS.has(input.kind) ? RUN_HISTORY_FILE : RUN_STATE_KINDS.has(input.kind) ? RUN_STATE_FILE : RUN_LOG_FILE);
+    } else {
+      sessionDir = sitianVolumeDirectory(sessionParentDir, category);
+      recordFile = sitianVolumeRecordsFile(sessionDir);
+    }
   }
   if (!physicallyContainedIn(ledgerHome, sessionDir)) {
     throw new Error("Sitian record ownership requires a directory inside the ledger home");

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -203,10 +204,7 @@ test("explicit resume hands the stored host session id to the selected host", as
           const suffix = `@${record.role}`;
           if (dirName.endsWith(suffix) && !request.runDirectory.includes(CANONICAL_SOURCE_RUN_ID)) {
             seatRunId = dirName.slice(0, -suffix.length);
-            await writeFile(
-              join(sessionDirectory, "grok-acp-session.json"),
-              `${JSON.stringify({ sessionId: nativeId })}\n`,
-            );
+            seedHostSessionId(dirname(sessionDirectory), "grok-build", nativeId);
           }
           return { code: 1, stderr: "stop", timedOut: false };
         },
@@ -237,16 +235,13 @@ test("explicit resume hands the stored host session id to the selected host", as
           }
         }
         if (runDirectory !== undefined) {
-          const admitted = JSON.parse(
-            await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-          ) as { sessionDirectory?: unknown; sessionFile?: unknown };
+          const admitted = readCurrentSection(runDirectory, "admitted") as {
+            sessionDirectory?: unknown; sessionFile?: unknown;
+          };
           if (typeof admitted.sessionDirectory === "string" && typeof admitted.sessionFile === "string") {
             await mkdir(admitted.sessionDirectory, { recursive: true });
             await writeFile(admitted.sessionFile, "", "utf8");
-            await writeFile(
-              join(admitted.sessionDirectory, "grok-acp-session.json"),
-              `${JSON.stringify({ sessionId: nativeId })}\n`,
-            );
+            seedHostSessionId(dirname(admitted.sessionDirectory), "grok-build", nativeId);
             const suffix = `@${record.role}`;
             seatRunId = basename(runDirectory).slice(0, -suffix.length);
           }
@@ -660,7 +655,7 @@ process.exit(0);
 }));
 
 /** #595: birth host is a typed invocation field at admission. */
-test("admission writes typed birth host onto invocation.json", async () => homeTest(async (home) => {
+test("admission writes typed birth host onto current.json invocation section", async () => homeTest(async (home) => {
   const selected: string[] = [];
   await configureJudge(home, "grok-build");
   await runAkRole(["judge", "record-birth-host"],
@@ -674,9 +669,7 @@ test("admission writes typed birth host onto invocation.json", async () => homeT
   const runsRoot = join(booksRoot, books[0]!, "unbound", "runs");
   const runs = await readdir(runsRoot);
   assert.equal(runs.length, 1);
-  const invocation = JSON.parse(
-    await readFile(join(runsRoot, runs[0]!, "invocation.json"), "utf8"),
-  ) as { host?: unknown };
+  const invocation = readCurrentSection(join(runsRoot, runs[0]!), "invocation") as { host?: unknown };
   assert.equal(invocation.host, "grok-build");
 }));
 
@@ -731,16 +724,8 @@ test("bare resume follows live seat table host when it drifts from birth host", 
     await seedResumableJudge({ home, project, runId });
 
     const books = await readdir(join(home, ".ak-roles", "books"));
-    const invPath = join(
-      home,
-      ".ak-roles",
-      "books",
-      books[0]!,
-      "unbound", "runs",
-      `${runId}@judge`,
-      "invocation.json",
-    );
-    const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+    const judgeRun = join(home, ".ak-roles", "books", books[0]!, "unbound", "runs", `${runId}@judge`);
+    const inv = readCurrentSection(judgeRun, "invocation") as { host?: unknown };
     assert.equal(inv.host, "pi");
 
     {
@@ -776,7 +761,7 @@ test("bare resume follows live seat table host when it drifts from birth host", 
       "bare resume must follow seat table grok-build despite birth host pi",
     );
 
-    const after = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+    const after = readCurrentSection(judgeRun, "invocation") as { host?: unknown };
     assert.equal(after.host, "grok-build", "resume must record the live seat host on invocation");
   });
 });
@@ -812,7 +797,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; planned receipt", a
         ["planned"],
         label,
       );
-      assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "evidence"), `${label}: evidence artifact`);
+      assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "report"), `${label}: report artifact`);
     }
 
     // --- ACP family: grok-build fake agent seals planned via MCP; set_model bare id (#1146) ---

@@ -1,8 +1,9 @@
+import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -16,8 +17,9 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { statSync } from "node:fs";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
@@ -105,9 +107,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
-    const persisted = JSON.parse(
-      await readFile(admitted.admittedRequestPath, "utf8"),
-    ) as {
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
       role: string;
       issueNumber: number;
       caseRunsPath: string;
@@ -382,23 +382,22 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
       ?.path;
     assert.ok(reportPath);
-    const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
+    const report = terminalBodyAt(reportPath!, "report") as {
       role: string;
       outcome?: { payloads?: unknown };
       cost: unknown;
     };
     assert.equal(report.role, "doctor");
-    assert.deepEqual(report.outcome?.payloads, [candidateDetails]);
+    assert.equal(report.outcome !== undefined && "payloads" in report.outcome, false);
+    assert.deepEqual(submittedParams(dirname(reportPath!)), [candidateDetails]);
     // #836: settlement publishes machine cost from the audit candidate entry
     // as an independent report field beside the role's original payload.
     assert.deepEqual(report.cost, candidateCost);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
-    const runState = JSON.parse(
-      await readFile(
-        join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor", "run-state.json"),
-        "utf8",
-      ),
+    const runState = readCurrentSection(
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor"),
+      "runState",
     ) as { state: string };
     assert.deepEqual(runState.state, "terminal", "doctor run must settle run-state terminal");
 
@@ -470,7 +469,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     );
     const refusedReportPath = refused.terminal!.artifacts.find((a) => a.kind === "report")?.path;
     assert.ok(refusedReportPath);
-    const refusedReport = JSON.parse(await readFile(refusedReportPath, "utf8")) as {
+    const refusedReport = terminalBodyAt(refusedReportPath, "report") as {
       cost?: unknown;
       auditNoReceipt?: unknown;
     };
@@ -537,7 +536,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
     assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
     const laterReport = result.terminal!.artifacts.find((a) => a.kind === "report");
     assert.ok(laterReport);
-    const laterBody = JSON.parse(await readFile(laterReport.path, "utf8")) as {
+    const laterBody = terminalBodyAt(laterReport.path, "report") as {
       cost?: unknown;
       auditNoReceipt?: unknown;
     };
@@ -670,14 +669,42 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
   });
 });
 
-test("terminal persistence failure is noted and the auditor read of that run is not delivered as success", async () => {
+/**
+ * Real run-state seam: the facade admitted the run and the coordinator already
+ * marked it running; once the doctor turn has recorded its submission, damage
+ * either the file that carries the run's facts (`rows`: state.jsonl holds the run-state
+ * row, as main's run-state.json held it) or only its rendering (`rendering`:
+ * current.json). The accepted doctor terminal stays; the refusals are package notes.
+ * No production hook, no direct markRunTerminal call.
+ */
+function poisonAfterTurn(mode: "rows" | "rendering", runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
+  return {
+    executeTurn: async (request) => {
+      const out = await inner.executeTurn(request);
+      if (request.activation.role === "doctor") {
+        if (mode === "rendering") {
+          lockCurrentJson(runDirectory);
+        } else {
+          await rm(join(runDirectory, "state.jsonl"), { force: true });
+          await mkdir(join(runDirectory, "state.jsonl"));
+        }
+      }
+      return out;
+    },
+  };
+}
+
+for (const mode of ["rows", "rendering"] as const) {
+test(mode === "rows"
+  ? "terminal persistence failure is noted and the auditor read of that run is not delivered as success"
+  : "terminal rendering failure is noted; the mandatory auditor still reads the recorded facts and the accepted doctor is delivered", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     await seedDoctorIssueRuns(home, bookKey, 41);
-    const runId = "run-doctor-terminal-write-fail";
+    const runId = `run-doctor-terminal-write-fail-${mode}`;
     const runDirectory = join(
       home,
       ".ak-roles",
@@ -687,9 +714,9 @@ test("terminal persistence failure is noted and the auditor read of that run is 
       `${runId}@doctor`,
     );
     const captured = captureIo();
-    // The accepted Doctor payload is the terminal. The run-state read failure
+    // The accepted Doctor payload is the terminal. The current.json read failure
     // is a note beside it. This run records a real submission (sealedAcceptance)
-    // before the run-state path is occupied. The assertion checks those bytes.
+    // before current.json is occupied. The assertion checks those bytes.
     // Mandatory auditor still runs; the note is not a substitute for that gate.
     await configurePassingReviewSeats(home);
     let recordedDetails: unknown;
@@ -701,7 +728,7 @@ test("terminal persistence failure is noted and the auditor read of that run is 
         credentials: { "openai-codex": true, xai: false },
         createRunId: () => runId,
         io: captured.io,
-        roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(poisonAfterTurn(mode, runDirectory, roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -728,16 +755,6 @@ test("terminal persistence failure is noted and the auditor read of that run is 
             })}\n`,
             "utf8",
           );
-          // Real run-state seam: the facade admitted the run and the
-          // coordinator already marked it running; now occupy run-state.json
-          // with a directory. markRunTerminal reads current run-state before
-          // it writes, so this actually fails that precondition read
-          // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
-          // write step. The real EISDIR identity must propagate through, not
-          // The accepted doctor terminal stays. EISDIR is a package note.
-          // No production hook, no direct markRunTerminal call, no new fixture.
-          await rm(join(runDirectory, "run-state.json"));
-          await mkdir(join(runDirectory, "run-state.json"));
           return {
             code: 0,
             sealedAcceptance: { role: "doctor" as const, details },
@@ -746,15 +763,27 @@ test("terminal persistence failure is noted and the auditor read of that run is 
             args: [...args],
           };
         },
-          })),
+          }))),
       },
     );
 
-    // The run-state directory is noted at persist, and the mandatory auditor
-    // then has to read that same run. That read is part of the audit, so the
-    // command must not deliver the parent as accepted.
-    assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal, undefined);
+    if (mode === "rows") {
+      // The run-state fact cannot be read from its damaged row file at persist (noted); the
+      // mandatory auditor then has to read that same run. That read is part of the audit,
+      // so the command must not deliver the parent as accepted.
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal, undefined);
+    } else {
+      // current.json is only a rendering of the rows. Occupying it refuses the run-state and
+      // terminal renderings (each a note beside the host terminal) but the facts are rows, so
+      // the mandatory auditor reads the run's admitted fact from them, passes, and the
+      // accepted doctor terminal is delivered.
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.role, "doctor");
+      assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
+      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
+    }
     const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
       .trim()
       .split("\n")
@@ -766,3 +795,4 @@ test("terminal persistence failure is noted and the auditor read of that run is 
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
   });
 });
+}

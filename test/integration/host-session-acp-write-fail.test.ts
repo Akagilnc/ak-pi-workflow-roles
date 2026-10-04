@@ -36,8 +36,8 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // A regular file prevents Sitian from creating host-session/ for every user.
-    await writeFile(join(sessionDir, "host-session"), "blocked");
+    // A directory where the run's log.jsonl belongs makes every Sitian append fail.
+    await mkdir(join(ledger.runDirectory, "log.jsonl"));
 
     const stderrChunks: string[] = [];
     const origStderrWrite = process.stderr.write;

@@ -25,22 +25,9 @@ export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
   ["ak_auditor_output", "auditor"],
 ]);
 
-/**
- * Success-face fields that still differ by seat. Presence and omission match
- * the former per-seat publishers. Key order is not part of the contract.
- */
-export type PackagedArtifactLeaf = {
-  readonly key: string;
-  readonly from?: string;
-  readonly omitUndefined?: true;
-  readonly copyArray?: true;
-  readonly callerProvenance?: true;
-};
-
+/** Success-terminal facts that still differ by seat. */
 export type PackagedArtifactFace = {
   readonly reportPhase?: true;
-  readonly evidenceRole?: true;
-  readonly leaves: readonly PackagedArtifactLeaf[];
   readonly doctorReportFacts?: true;
 };
 
@@ -126,13 +113,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "sealed",
     artifactFace: {
       reportPhase: true,
-      evidenceRole: true,
-      leaves: [
-        { key: "phase" },
-        { key: "packetPath" },
-        { key: "prerequisitesPath", omitUndefined: true },
-        { key: "prerequisites" },
-      ],
     },
     boardPlacement: "marshal",
     activationFlags: [
@@ -164,11 +144,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "sealed",
     artifactFace: {
       reportPhase: true,
-      evidenceRole: true,
-      leaves: [
-        { key: "phase" },
-        { key: "taskPath" },
-      ],
     },
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -203,13 +178,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Publish only an accepted ledger outcome; audit escalation stays unsettled here. */
     sealedAcceptedOnly: true,
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "baseRevision" },
-        { key: "lens" },
-        { key: "authorityRefs", copyArray: true },
-        { key: "callerProvenance", callerProvenance: true },
-      ],
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
@@ -242,12 +210,6 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: COLLECTOR_OUTPUT_TOOL,
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "prNumber", omitUndefined: true },
-        { key: "repository", from: "repository.canonical" },
-        { key: "manifestDigest" },
-      ],
     },
     boardPlacement: "collector",
     /** Taishi acceptance is a typed groups array, not a status leaf. */
@@ -277,12 +239,6 @@ export const PUBLIC_ROLE_RECORDS = [
     auditTool: DOCTOR_AUDIT_TOOL_NAME,
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "issueNumber" },
-        { key: "caseRunsPath" },
-        { key: "caseIdentity" },
-      ],
       doctorReportFacts: true,
     },
     /** Navigator subject is the doctor case, not the case-path file bytes. */
@@ -309,11 +265,6 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     settlement: "sealed",
     artifactFace: {
-      evidenceRole: true,
-      leaves: [
-        { key: "mergerInputPath" },
-        { key: "derived" },
-      ],
     },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

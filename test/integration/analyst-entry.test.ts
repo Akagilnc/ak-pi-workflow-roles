@@ -12,7 +12,9 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -41,6 +43,7 @@ import {
   withBusinessRepo,
   withTempHome,
 } from "../helpers/analyst-fixture-kit.ts";
+import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 /** Family sections are discovery-contributed — not on the A1 page envelope type. */
 type PageWithMetricFamilies = AnalystIssueMetricsPage & {
@@ -993,17 +996,9 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
 
 test("analyst issue-mode entry: null terminal artifact is terminal-artifact unreadable and excluded from legs", async () => {
   await withTempHome(async (home) => {
-    const reportPath = join(
-      home,
-      ".ak-roles",
-      "books",
-      BOOK,
-      "runs",
-      LEG_A1_DIR,
-      "artifacts",
-      "report.json",
-    );
-    await writeFile(reportPath, "null\n", "utf8");
+    const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
+    // A terminal section with no typed object body.
+    seedTerminal(runDirectory, "report", null);
 
     const result = await runAnalyst({
       mode: "issue",
@@ -1054,21 +1049,12 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
 
 test("analyst B3 and B4 use the same receipt status when outcome status is absent", async () => {
   await withTempHome(async (home) => {
-    const reportPath = join(
-      home,
-      ".ak-roles",
-      "books",
-      BOOK,
-      "runs",
-      LEG_A1_DIR,
-      "artifacts",
-      "report.json",
-    );
-    await writeFile(reportPath, JSON.stringify({
+    const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
+    seedTerminal(runDirectory, "report", {
       role: "coder",
       runId: LEG_A1_RUN,
       receipt: { status: "completed" },
-    }));
+    });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const page = result.page as PageWithMetricFamilies;
@@ -1086,8 +1072,22 @@ test("analyst B3 and B4 use the same receipt status when outcome status is absen
 test("analyst entry does not turn a malformed live run state into no-receipt", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
-    await rm(join(runDirectory, "artifacts", "report.json"));
-    await writeFile(join(runDirectory, "run-state.json"), "{broken", "utf8");
+    clearCurrentSection(runDirectory, "terminal");
+    // Same illegal value as the pre-move current.json runState: the string "{broken".
+    // Fact path is state.jsonl (#1161); do not change the failure shape into an object.
+    appendFileSync(
+      join(runDirectory, "state.jsonl"),
+      `${JSON.stringify({
+        level: "event",
+        kind: "run-state",
+        identity: randomUUID(),
+        timestamp: "2026-10-04T00:00:00.000Z",
+        host: "pi",
+        source: "test-seed",
+        payload: "{broken",
+      })}\n`,
+      "utf8",
+    );
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
@@ -1099,8 +1099,8 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
 test("analyst entry does not turn an incomplete live run state into no-receipt", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
-    await rm(join(runDirectory, "artifacts", "report.json"));
-    await writeFile(join(runDirectory, "run-state.json"), JSON.stringify({ state: "running" }), "utf8");
+    clearCurrentSection(runDirectory, "terminal");
+    seedCurrentSection(runDirectory, "runState", { state: "running" });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

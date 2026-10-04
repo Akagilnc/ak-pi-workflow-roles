@@ -91,7 +91,7 @@ export function createDefaultGateOfficerSummon(options: {
 }
 
 /**
- * Book a typed pointer under parent session/auditor-roles (archivist-owned write).
+ * Book a typed pointer in the parent run's current.json officers section.
  * Offline mocks without a real session leave no nested volume (lawful zero).
  */
 function bookDirectOfficerPointer(

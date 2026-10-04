@@ -1,10 +1,12 @@
 /**
  * Typed ticketNumber reader for a retained run's durable pages.
- * Board pages first (admitted-request, then invocation); migration derivation
- * page last so worktree-derived placement stays readable without forging a
- * board assertion. Missing page (ENOENT) → try next / undefined; damage and
- * non-ENOENT IO failures propagate.
+ * Production board reads use state.jsonl rows only (admitted, then invocation).
+ * Pre-#1161 page files are readable only via readMigrationBoardTicketNumber.
+ * Migration derivation page last so worktree-derived placement stays readable
+ * without forging a board assertion. Missing page (ENOENT) → try next / undefined;
+ * damage and non-ENOENT IO failures propagate.
  */
+import { readPageSync } from "./run-dossier.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -111,25 +113,53 @@ async function readJsonObject(
   }
 }
 
-async function readBoardPageTicketNumber(
+/** Pre-#1161 separate board pages — migration input only, not a runtime fact path. */
+const LEGACY_BOARD_PAGE: Readonly<Record<"admitted" | "invocation", string>> = {
+  admitted: "admitted-request.json",
+  invocation: "invocation.json",
+};
+
+function readBoardPageTicketNumberFromRows(
   runDirectory: string,
-  page: "admitted-request.json" | "invocation.json",
+  section: "admitted" | "invocation",
+): number | undefined {
+  const fromRows = readPageSync(runDirectory, section);
+  return fromRows === undefined ? undefined : ticketFromRecord(fromRows);
+}
+
+async function readBoardPageTicketNumberFromLegacy(
+  runDirectory: string,
+  section: "admitted" | "invocation",
 ): Promise<number | undefined> {
-  const record = await readJsonObject(join(runDirectory, page));
+  const record = await readJsonObject(join(runDirectory, LEGACY_BOARD_PAGE[section]));
   if (record === undefined) return undefined;
   return ticketFromRecord(record);
 }
 
 /**
- * Board-only ticketNumber (admitted → invocation). Placement attribution and
- * any caller that must ignore derivation pages use this sole projection.
+ * Board-only ticketNumber from fact rows (admitted → invocation).
+ * Public / production identity paths use this sole projection — never legacy pages.
  */
 export async function readBoardTicketNumber(
   runDirectory: string,
 ): Promise<number | undefined> {
   return (
-    (await readBoardPageTicketNumber(runDirectory, "admitted-request.json")) ??
-    (await readBoardPageTicketNumber(runDirectory, "invocation.json"))
+    readBoardPageTicketNumberFromRows(runDirectory, "admitted") ??
+    readBoardPageTicketNumberFromRows(runDirectory, "invocation")
+  );
+}
+
+/**
+ * Migration-boundary board ticket: fact rows first, then pre-#1161 page files.
+ * Only #852 migrators and placement may call this; runtime identity must not.
+ */
+export async function readMigrationBoardTicketNumber(
+  runDirectory: string,
+): Promise<number | undefined> {
+  return (
+    (await readBoardTicketNumber(runDirectory)) ??
+    (await readBoardPageTicketNumberFromLegacy(runDirectory, "admitted")) ??
+    (await readBoardPageTicketNumberFromLegacy(runDirectory, "invocation"))
   );
 }
 

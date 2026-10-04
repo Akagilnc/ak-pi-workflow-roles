@@ -14,6 +14,8 @@ const entries = [
   // navigator-session-contracts is a static import of the published attendance root
   // (#590: published non-bundle graph must stay closed under its own relative edges).
   "navigator-public-session",
+  // Static import of navigator-public-session (sitianReportSafe).
+  "host-session-record",
   "navigator-session-contracts",
   // Static import of navigator-attendance and navigator-public-session.
   "navigator-work-base",

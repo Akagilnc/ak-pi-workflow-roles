@@ -1,0 +1,28 @@
+{
+  "invocation": {
+    "role": "collector",
+    "runId": "019ff000-000d-7000-8000-0000000000a3",
+    "bookKey": "fixture-book",
+    "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "collector",
+      "runId": "019ff000-000d-7000-8000-0000000000a3",
+      "outcome": {
+        "kind": "accepted",
+        "role": "collector",
+        "status": "collected",
+        "decisiveFacts": {},
+        "payloads": []
+      },
+      "receipt": {
+        "host": "github.com",
+        "repository": "fixture/demo",
+        "prNumber": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "invocation": {
+    "role": "fixer",
+    "runId": "019ff000-000c-7000-8000-0000000000f2",
+    "bookKey": "fixture-book",
+    "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "fixer",
+      "runId": "019ff000-000c-7000-8000-0000000000f2",
+      "phase": "apply",
+      "outcome": {
+        "kind": "accepted",
+        "role": "fixer",
+        "status": "completed",
+        "decisiveFacts": {},
+        "payloads": []
+      },
+      "receipt": {
+        "status": "completed",
+        "report": "fixture fixer completed"
+      }
+    }
+  }
+}

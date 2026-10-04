@@ -5,16 +5,14 @@
  * Writes native-session-copy (or native-session-warning on retry failure) after CLI exit.
  * Log line write failures declare to stderr and never abort the leg.
  */
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
-  appendFileSync,
   copyFileSync,
-  closeSync,
   existsSync,
-  openSync,
-  readFileSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   type Dirent,
@@ -22,11 +20,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { RoleTurnContinuation } from "./host-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import type { SitianRecordInput } from "./sitian-contracts.ts";
 
-import { errorText } from "./unknown-value.ts";
+import { errorText, isEnoent } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
 export const HOST_SESSION_RECORD_KIND = "host-session" as const;
@@ -47,31 +44,41 @@ export function sitianReportSafe(input: SitianRecordInput): void {
 
 /** Recursively scan for Codex rollout file matching sessionId under sessionsDir. */
 function findCodexRollout(sessionsDir: string, sessionId: string): string | undefined {
-  if (!existsSync(sessionsDir)) return undefined;
+  // Direct readdir: only ENOENT is absence. EACCES/EPERM keep their cause (#1161 C3-io).
   const matches: Array<{ path: string; mtime: number }> = [];
   function scan(dir: string, depth = 0): void {
     if (depth > 6) return;
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (error) {
+      if (isEnoent(error)) return;
+      throw error;
     }
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         scan(fullPath, depth + 1);
       } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)) {
+        // Ranking needs a real mtime. Silent mtime:0 would sort unreadable
+        // matches last and let an older readable sibling win (#1161 C3-io).
+        // ENOENT = vanished between readdir and stat (skip); other IO keeps cause.
         try {
           const stat = statSync(fullPath);
           matches.push({ path: fullPath, mtime: stat.mtimeMs });
-        } catch {
-          matches.push({ path: fullPath, mtime: 0 });
+        } catch (error) {
+          if (isEnoent(error)) continue;
+          throw error;
         }
       }
     }
   }
-  scan(sessionsDir);
+  try {
+    scan(sessionsDir);
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
   if (matches.length === 0 || matches[0] === undefined) return undefined;
   matches.sort((a, b) => b.mtime - a.mtime);
   return matches[0]?.path;
@@ -118,55 +125,18 @@ function codexSessionsDirectory(home?: string): string {
   return join(process.env.CODEX_HOME || join(home || homedir(), ".codex"), "sessions");
 }
 
-/** Count each host activation, including Pi turns without an external copy. */
-export function recordRunStart(runDirectory: string): void {
-  try { appendFileSync(join(runDirectory, ".run-starts"), "\n"); }
-  catch (error) { declareHostSessionFailure(error); }
-}
-
 /**
- * Resolve the host dossier landing destination under `<run>/session/`.
- * Format: `<run>/session/<host>-<model>-<n>` (single file adds .jsonl; model slashes replaced with -).
- * Ordinal n is the start/resume count in the run (initial 1, each resume +1).
+ * Host original landing under `<run>/session/`: one file per host, never
+ * numbered — every exit overwrites the same name (#1161).
+ * codex / claude: `<host>.jsonl`; grok-build: directory `<host>`.
  */
 export function resolveHostDossierLandingPath(options: {
   readonly host: string;
-  readonly model?: { readonly model?: string; readonly thinking?: string } | undefined;
   readonly sessionDirectory: string;
-  readonly continuation: RoleTurnContinuation;
-}): { readonly landingPath: string; readonly ordinal: number; readonly sanitizedModel: string } {
-  const sanitizedModel = (options.model?.model ?? "default").replace(/[\/\\]+/g, "-");
-  let maxOrdinal = 0;
-
-  if (existsSync(options.sessionDirectory)) {
-    try {
-      const entries = readdirSync(options.sessionDirectory);
-      for (const entry of entries) {
-        const match = entry.match(/-(\d+)(?:\.jsonl|\.failed)?$/);
-        const first = match?.[1];
-        if (first !== undefined) {
-          const val = parseInt(first, 10);
-          if (!isNaN(val) && val > maxOrdinal) {
-            maxOrdinal = val;
-          }
-        }
-      }
-    } catch {
-      // Ignore directory read errors
-    }
-  }
-
-  const startsPath = join(dirname(options.sessionDirectory), ".run-starts");
-  let starts = 0;
-  if (existsSync(startsPath)) starts = readFileSync(startsPath, "utf8").length;
-  const ordinal = Math.max(maxOrdinal + 1, starts, options.continuation.kind === "resume" ? 2 : 1);
-
-  const baseName = `${options.host}-${sanitizedModel}-${ordinal}`;
-  const landingPath = options.host === "grok-build"
-    ? join(options.sessionDirectory, baseName)
-    : join(options.sessionDirectory, `${baseName}.jsonl`);
-
-  return { landingPath, ordinal, sanitizedModel };
+}): string {
+  return options.host === "grok-build"
+    ? join(options.sessionDirectory, options.host)
+    : join(options.sessionDirectory, `${options.host}.jsonl`);
 }
 
 /** Record native session pointer line to Sitian as soon as session ID is known. */
@@ -212,29 +182,24 @@ function copyFileCloneOrFallback(src: string, dest: string): void {
   copyFileSync(src, dest);
 }
 
-/** Copy both grok-build originals: chat_history.jsonl and usage.json into destDir. */
+/**
+ * Copy both grok-build originals: chat_history.jsonl and usage.json into destDir.
+ * Direct copy — no existsSync/access preflight. Real ENOENT/EACCES surface from
+ * the copy itself (Node fs: do not exists/access before open — #1161 C3-io).
+ */
 function copyGrokDossier(srcDir: string, destDir: string): void {
-  const chatHistorySrc = join(srcDir, "chat_history.jsonl");
-  if (!existsSync(chatHistorySrc)) {
-    throw new Error(`Grok native chat_history.jsonl missing at ${chatHistorySrc}`);
-  }
   mkdirSync(destDir, { recursive: true });
-  const chatHistoryDest = join(destDir, "chat_history.jsonl");
-  copyFileCloneOrFallback(chatHistorySrc, chatHistoryDest);
-
-  const usageSrc = join(srcDir, "usage.json");
-  if (!existsSync(usageSrc)) {
-    throw new Error(`Grok native usage.json missing at ${usageSrc}`);
-  }
-  copyFileCloneOrFallback(usageSrc, join(destDir, "usage.json"));
+  copyFileCloneOrFallback(join(srcDir, "chat_history.jsonl"), join(destDir, "chat_history.jsonl"));
+  copyFileCloneOrFallback(join(srcDir, "usage.json"), join(destDir, "usage.json"));
 }
 
 /**
- * Copy native host session original to run session dossier after child process exits.
- * If copy fails, retries once.
- * On success, appends native-session-copy line to Sitian.
- * On repeated failure, appends native-session-warning line to Sitian.
- * Does not throw; turn outcome is never altered by copy success or failure.
+ * Copy the native host session original over the run's single landing path
+ * after the child process exits. Copies beside the landing path and swaps in
+ * on success, so a failed copy never destroys the previous good original.
+ * Retries once. Success appends a native-session-copy line, repeated failure a
+ * native-session-warning line. Does not throw; the turn outcome is never
+ * altered by copy success or failure.
  */
 export function copyAndRecordHostDossier(options: {
   readonly host: string;
@@ -242,102 +207,221 @@ export function copyAndRecordHostDossier(options: {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly sessionParent: string;
-  readonly continuation: RoleTurnContinuation;
-  readonly model?: { readonly model?: string; readonly thinking?: string } | undefined;
   readonly home?: string | undefined;
 }): void {
-  if (options.host === "pi" || options.host === "hermes") {
+  if (options.host === "hermes") {
     return;
   }
-  const nativePath = resolveNativeSessionPath({
+  const report = (payload: Record<string, unknown>): void => sitianReportSafe({
+    level: "event",
+    kind: HOST_SESSION_RECORD_KIND,
     host: options.host,
-    sessionId: options.sessionId,
     cwd: options.cwd,
-    ...(options.home !== undefined ? { home: options.home } : {}),
+    sessionParent: options.sessionParent,
+    source: `${options.host}-dossier`,
+    payload,
   });
-  if (nativePath === undefined && options.host !== "codex") return;
-
-  let destination: ReturnType<typeof resolveHostDossierLandingPath>;
-  try {
-    destination = resolveHostDossierLandingPath(options);
-  } catch (error) {
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-warning",
-        sessionId: options.sessionId,
-        error: errorText(error),
-      },
+  // Pi already lands at session/session.jsonl; record that landing through the
+  // same native-session-copy row current.json projects — no copy, no second
+  // original parser.
+  if (options.host === "pi") {
+    report({
+      type: "native-session-copy",
+      nativePath: options.sessionParent,
+      landingPath: options.sessionParent,
+      sessionId: options.sessionId,
     });
     return;
   }
-  const { landingPath, ordinal, sanitizedModel } = destination;
+
+  const landingPath = resolveHostDossierLandingPath(options);
+  // Per-attempt staging/previous names: concurrent copies of the same landing
+  // must not share one `.copying` / `.previous` path (#1161 C2). Node's fs
+  // copy is not atomic; unique sibling + rename is the smallest ownership fix.
+  // Swap-failure restores that attempt's own `.previous.<token>` inline — no
+  // next-call orphan scan (J6: do not invent a second recovery mechanism).
+  //
+  // Native-path discovery (incl. Codex rollout scan) stays inside this attempt
+  // try: ADR 0086 one-retry + native-session-warning covers discover/copy
+  // failure alike. A throw outside would abort the host leg (#1161 C3-io).
 
   let lastError: unknown;
   let copySuccess = false;
+  let stagingForCleanup: string | undefined;
+  let nativePath: string | undefined;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const attemptToken = randomBytes(6).toString("hex");
+    const staging = `${landingPath}.copying.${attemptToken}`;
+    stagingForCleanup = staging;
     try {
+      nativePath = resolveNativeSessionPath({
+        host: options.host,
+        sessionId: options.sessionId,
+        cwd: options.cwd,
+        ...(options.home !== undefined ? { home: options.home } : {}),
+      });
+      if (nativePath === undefined && options.host !== "codex") {
+        stagingForCleanup = undefined;
+        return;
+      }
       if (options.host === "grok-build") {
-        copyGrokDossier(nativePath!, landingPath);
+        copyGrokDossier(nativePath!, staging);
       } else {
-        if (nativePath === undefined || !existsSync(nativePath)) {
+        // Undefined path = discovery found nothing (true absence). Present path:
+        // copy directly so EACCES/EPERM keep their cause — no existsSync wash.
+        if (nativePath === undefined) {
           throw new Error(`Native session file missing for ${options.host} session ${options.sessionId}`);
         }
         mkdirSync(dirname(landingPath), { recursive: true });
-        copyFileCloneOrFallback(nativePath, landingPath);
+        copyFileCloneOrFallback(nativePath, staging);
+      }
+      if (options.host === "grok-build") {
+        // A directory cannot be renamed over: park the previous original aside,
+        // move the new one in, and put the old one back only if the landing is
+        // still absent. This attempt owns its `.previous.<token>` through
+        // success or failure — restore-if-absent, then clear the token when it
+        // is no longer the unique original (peer may have published landing).
+        // Never delete previous when restore failed and landing is still absent.
+        // Cleanup failure must not wash into native-session-copy success
+        // (#1161 C2 / 失败诚实). No orphan scan, no cross-call recovery, no queue.
+        const previous = `${landingPath}.previous.${attemptToken}`;
+        const hadPrevious = existsSync(landingPath);
+        let parked = false;
+        let keepUniquePrevious = false;
+        let cleanupError: unknown;
+        let swapFailure: unknown;
+        let restoreError: unknown;
+        try {
+          if (hadPrevious) {
+            renameSync(landingPath, previous);
+            parked = true;
+          }
+          try {
+            renameSync(staging, landingPath);
+          } catch (swapError) {
+            if (parked && existsSync(previous) && !existsSync(landingPath)) {
+              try {
+                renameSync(previous, landingPath);
+              } catch (error) {
+                restoreError = error;
+                // Restore failed; previous may still be the only old original.
+                if (existsSync(previous) && !existsSync(landingPath)) {
+                  keepUniquePrevious = true;
+                }
+              }
+            }
+            swapFailure = swapError;
+          }
+        } finally {
+          if (parked && existsSync(previous) && !keepUniquePrevious) {
+            try {
+              rmSync(previous, { recursive: true, force: true });
+            } catch (error) {
+              cleanupError = error;
+            }
+          }
+        }
+        if (swapFailure !== undefined) {
+          // Keep every residual cause; previous cleanup names its path explicitly
+          // (Node errno usually embeds path — still pass residual so AggregateError
+          // never silently omits which leftover remains; #1161 C2).
+          lastError = combineCopyFailureCauses(
+            swapFailure,
+            restoreError,
+            cleanupError,
+            cleanupError === undefined ? undefined : previous,
+          );
+          // Ordinary swap fail with restore+cleanup success → ADR 0086 retry once.
+          // Restore or cleanup incomplete → keep residual paths; do not retry
+          // (retry would re-park / wash residual-previous causes).
+          if (restoreError !== undefined || cleanupError !== undefined) {
+            break;
+          }
+          try {
+            rmSync(staging, { recursive: true, force: true });
+            stagingForCleanup = undefined;
+          } catch (stagingCleanupError) {
+            lastError = combineCopyFailureCauses(
+              swapFailure,
+              undefined,
+              stagingCleanupError,
+              staging,
+            );
+            // Residual already recorded; clear so the final pass does not re-rm / duplicate.
+            stagingForCleanup = undefined;
+            break;
+          }
+          continue;
+        }
+        if (cleanupError !== undefined) {
+          // Swap landed but cleanup ownership is incomplete — leave the true
+          // cause with residual previous path; do not retry or claim copy.
+          lastError = combineCopyFailureCauses(cleanupError, undefined, cleanupError, previous);
+          stagingForCleanup = undefined;
+          break;
+        }
+      } else {
+        renameSync(staging, landingPath); // atomically replaces the previous file
       }
       copySuccess = true;
+      stagingForCleanup = undefined;
       break;
     } catch (error) {
       lastError = error;
+      try {
+        rmSync(staging, { recursive: true, force: true });
+        stagingForCleanup = undefined;
+      } catch (cleanupError) {
+        lastError = combineCopyFailureCauses(error, undefined, cleanupError, staging);
+        // Residual already recorded; clear so the final pass does not re-rm / duplicate.
+        stagingForCleanup = undefined;
+        break;
+      }
     }
   }
 
   if (copySuccess) {
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-copy",
-        nativePath,
-        landingPath,
-        ordinal,
-        sessionId: options.sessionId,
-      },
-    });
+    report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
   } else {
-    // A partial first attempt must not masquerade as a complete native original.
-    try { rmSync(landingPath, { recursive: options.host === "grok-build", force: true }); }
-    catch { /* warning below reports the original copy failure */ }
-    // Reserve the failed ordinal outside the native dossier landing namespace.
-    try {
-      mkdirSync(options.sessionDirectory, { recursive: true });
-      closeSync(openSync(join(options.sessionDirectory, `${options.host}-${sanitizedModel}-${ordinal}.failed`), "a"));
-    } catch { /* the warning below retains the original copy failure */ }
-    sitianReportSafe({
-      level: "event",
-      kind: HOST_SESSION_RECORD_KIND,
-      host: options.host,
-      cwd: options.cwd,
-      sessionParent: options.sessionParent,
-      source: `${options.host}-dossier`,
-      payload: {
-        type: "native-session-warning",
-        nativePath,
-        landingPath,
-        ordinal,
-        sessionId: options.sessionId,
-        error: errorText(lastError),
-      },
+    // A partial attempt must not masquerade as a complete native original.
+    if (stagingForCleanup !== undefined) {
+      try {
+        rmSync(stagingForCleanup, { recursive: true, force: true });
+      } catch (cleanupError) {
+        lastError = combineCopyFailureCauses(lastError, undefined, cleanupError, stagingForCleanup);
+      }
+    }
+    report({
+      type: "native-session-warning",
+      nativePath,
+      landingPath,
+      sessionId: options.sessionId,
+      error: errorText(lastError),
     });
   }
+}
+
+/** Fold swap / restore / staging-or-previous cleanup causes without washing any. */
+function combineCopyFailureCauses(
+  primary: unknown,
+  restoreError: unknown,
+  cleanupError: unknown,
+  residualPath?: string,
+): unknown {
+  const errors: unknown[] = [primary];
+  const parts = [errorText(primary)];
+  if (restoreError !== undefined) {
+    errors.push(restoreError);
+    parts.push(`restore failed: ${errorText(restoreError)}`);
+  }
+  if (cleanupError !== undefined) {
+    if (cleanupError !== primary) errors.push(cleanupError);
+    parts.push(
+      residualPath === undefined
+        ? `cleanup failed: ${errorText(cleanupError)}`
+        : `cleanup failed: ${errorText(cleanupError)} (residual: ${residualPath})`,
+    );
+  }
+  if (errors.length === 1 && parts.length === 1) return primary;
+  return new AggregateError(errors, parts.join("; "), { cause: primary });
 }

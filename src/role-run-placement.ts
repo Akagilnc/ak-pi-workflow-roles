@@ -17,7 +17,6 @@ export type RoleRunPlacement = {
   readonly runDirectory: string;
   readonly sessionDirectory: string;
   readonly sessionFile: string;
-  readonly artifactsDirectory: string;
   readonly attachmentsDirectory: string;
 };
 
@@ -150,14 +149,8 @@ export function roleRunPlacement(
     runDirectory,
     sessionDirectory,
     sessionFile: sessionFileIn(sessionDirectory),
-    artifactsDirectory: roleRunArtifactsDirectory(runDirectory),
     attachmentsDirectory: join(runDirectory, "attachments"),
   };
-}
-
-/** The single artifacts subpath definition for new and resumed role runs. */
-export function roleRunArtifactsDirectory(runDirectory: string): string {
-  return join(runDirectory, "artifacts");
 }
 
 /** Canonical unbound placement: a run directory under `<book>/unbound/runs/`. */
@@ -177,10 +170,6 @@ export function ensureRoleRunPlacement(
   ledgerHome: string,
   placement: RoleRunPlacement,
 ): void {
-  for (const directory of [
-    placement.sessionDirectory,
-    placement.attachmentsDirectory,
-  ]) {
-    ensureRoleRunDirectory(ledgerHome, directory);
-  }
+  // attachments/ appears only when something is frozen into it.
+  ensureRoleRunDirectory(ledgerHome, placement.sessionDirectory);
 }

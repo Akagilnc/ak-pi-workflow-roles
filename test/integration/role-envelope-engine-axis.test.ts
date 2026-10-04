@@ -493,7 +493,6 @@ function admittedInspector(instruction: string, runDirectory: string): AdmittedI
     attachments: [],
     runDirectory,
     principal: fixturePrincipal(join(runDirectory, "session")),
-    admittedRequestPath: join(runDirectory, "admitted-request.json"),
   };
 }
 

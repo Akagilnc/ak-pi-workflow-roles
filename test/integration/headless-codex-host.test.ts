@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -7,11 +7,13 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
-import { roleRunArtifactsDirectory } from "../../src/role-run-placement.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { assertNoRetiredDossierFiles, historyPayloads, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -70,17 +72,9 @@ function assertStrictObjectNodes(node: unknown, path: string): void {
   }
 }
 
-/** Existing placement API + ENOENT-only absence; other fs errors stay loud. */
-async function packageFaultNotes(runDirectory: string): Promise<unknown[]> {
-  const dir = roleRunArtifactsDirectory(runDirectory);
-  try {
-    await access(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  const names = (await readdir(dir)).filter((name) => name.startsWith("post-admission-diagnostic-"));
-  return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(dir, name), "utf8"))));
+/** The independent package-fault notes the run's log.jsonl carries. */
+function packageFaultNotes(runDirectory: string): unknown[] {
+  return runLogPayloads(runDirectory, "post-admission-diagnostic");
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
@@ -88,6 +82,7 @@ test("codex headless host binds and resumes a structured turn", { timeout: 10000
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
   const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
+  const deliveredLog = join(root, "delivered.jsonl");
   const promptLog = join(root, "prompt.log");
   const fakeBin = join(root, "fake-codex");
   const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
@@ -96,6 +91,16 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+// What this CLI was handed at start-up: the system prompt file and the closed output schema.
+// The host removes both input files after the turn, so read them while running.
+const instructions = args.find((arg) => arg.startsWith("model_instructions_file="));
+const schemaAt = args.indexOf("--output-schema");
+if (instructions !== undefined && schemaAt >= 0) {
+  appendFileSync(${JSON.stringify(deliveredLog)}, JSON.stringify({
+    systemPrompt: readFileSync(JSON.parse(instructions.slice("model_instructions_file=".length)), "utf8"),
+    outputSchema: JSON.parse(readFileSync(args[schemaAt + 1], "utf8")),
+  }) + "\\n");
+}
 const resumeAt = args.indexOf("resume");
 const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
@@ -111,7 +116,7 @@ const events = [
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
 process.stdout.write(JSON.stringify(events[0]) + "\\n");
-const pointerFile = ${JSON.stringify(join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl"))};
+const pointerFile = ${JSON.stringify(join(root, "log.jsonl"))};
 const hasPointer = () => existsSync(pointerFile) && readFileSync(pointerFile, "utf8")
   .split("\\n").filter(Boolean).some(line => {
     try { return JSON.parse(line).payload?.type === "native-session-pointer"; }
@@ -229,15 +234,28 @@ const waitForPointer = setInterval(() => {
     assert.equal(first.knownFailure, undefined, JSON.stringify(first));
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
-    assert.equal(await readFile(join(root, "session", "codex-gpt-test-1.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
-    const sitianFile = join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    const firstRecords = (await readSitianRecords(sitianFile)).records;
+    assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    const firstRecords = (await readSitianRecords(join(root, "log.jsonl"))).records
+      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND);
     assert.equal((firstRecords[0]?.payload as { type?: string })?.type, "native-session-pointer");
     assert.equal((firstRecords[0]?.payload as { nativePath?: string })?.nativePath, join(root, ".codex", "sessions"));
     assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
     assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
     assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
-    const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
+    const delivered = (await readFile(deliveredLog, "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as { systemPrompt: string; outputSchema: unknown });
+    // Starting the turn left one turn-delivery row on history.jsonl carrying exactly
+    // the system prompt and closed schema the CLI was started with.
+    const history = readHistoryRows(root);
+    assert.equal(history.length, 1);
+    assert.equal(history[0]!.kind, "turn-delivery");
+    const startedWith = history[0]!.payload as { systemPrompt: string; outputSchema: unknown };
+    assert.equal(startedWith.systemPrompt, delivered[0]!.systemPrompt);
+    assert.ok(delivered[0]!.systemPrompt.length > 0);
+    assert.deepEqual(startedWith.outputSchema, delivered[0]!.outputSchema);
+    // The CLI start-up input files are not dossier; nothing retired survives at rest.
+    assertNoRetiredDossierFiles(root);
+    const schema = delivered[0]!.outputSchema as {
       additionalProperties: unknown;
       required: string[];
       properties: Record<string, unknown>;
@@ -312,7 +330,7 @@ const waitForPointer = setInterval(() => {
       additionalProperties: { $ref: "#/$defs/codexJsonValue" },
     });
     // Normal call: structured absence of package-fault notes (not free-text diagnostic matching).
-    assert.deepEqual(await packageFaultNotes(root), []);
+    assert.deepEqual(packageFaultNotes(root), []);
 
     receipt = undefined;
     const resumed = await host.executeTurn({
@@ -321,9 +339,11 @@ const waitForPointer = setInterval(() => {
     });
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
-    assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    // The resume overwrites the single original; no second numbered copy appears.
+    assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    assert.deepEqual((await readdir(join(root, "session"))).filter((entry) => entry.startsWith("codex")), ["codex.jsonl"]);
     // Resume uses the same strict transport schema as the first call.
-    const resumedSchema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8"));
+    const resumedSchema = (JSON.parse((await readFile(deliveredLog, "utf8")).trim().split("\n")[1]!) as { outputSchema: any }).outputSchema;
     assertStrictObjectNodes(resumedSchema, "resumedSchema");
     assert.deepEqual(
       [...resumedSchema.required].sort(),
@@ -542,10 +562,7 @@ process.exit(1);
     );
     assert.deepEqual(bindFailed.knownFailure, persisted.knownFailure);
     assert.equal(bindFailed.code, 1);
-    const bindNotes = (await readdir(join(ledger.runDirectory, "artifacts")))
-      .filter((name) => name.startsWith("post-admission-diagnostic-"));
-    const bindBodies = await Promise.all(bindNotes.map(async (name) =>
-      JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8")) as { failure?: { identity?: { code?: unknown } } }));
+    const bindBodies = packageFaultNotes(ledger.runDirectory) as Array<{ failure?: { identity?: { code?: unknown } } }>;
     assert.equal(bindBodies.some((note) => note.failure?.identity?.code === "EBIND"), true);
     rejectBind = false;
     sessionParent = "/dev/null/session.jsonl";
@@ -608,12 +625,109 @@ process.exit(0);
     });
     assert.equal(result.code, 0);
     assert.equal(result.knownFailure, undefined);
-    const notes = await readdir(join(ledger.runDirectory, "artifacts"));
-    const bodies = await Promise.all(notes.filter((name) => name.startsWith("post-admission-diagnostic-"))
-      .map(async (name) => JSON.parse(await readFile(join(ledger.runDirectory, "artifacts", name), "utf8"))));
+    const bodies = packageFaultNotes(ledger.runDirectory) as Array<{ failure?: { identity?: { code?: unknown } } }>;
     assert.ok(bodies.some((note) => note.failure?.identity?.code === "EPIPE"));
-    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex-gpt-test-1.jsonl"), "utf8"), "native after close\n");
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex.jsonl"), "utf8"), "native after close\n");
   } finally {
     ledger.dispose();
   }
 });
+
+/**
+ * Each run-owned file keeps the failure behaviour of the file it replaced, through the production
+ * host with the production session-identity authority (no stub): a log.jsonl that cannot be
+ * written changes neither the bound thread nor the delivered receipt; a history.jsonl that cannot
+ * be written does not stop the CLI from starting (it is noted); every CLI start leaves its own
+ * turn-delivery row, a re-asked round included.
+ */
+for (const scenario of ["log-unwritable", "history-unwritable", "re-asked-round"] as const) {
+  test(`headless host, production session identity: ${scenario}`, { timeout: 20000 }, async () => {
+    const ledger = createTempPackageHomeLedger({ prefix: "ak-run-files-", runName: "run@codex" });
+    const root = ledger.runDirectory;
+    const startsFile = join(root, "starts.log");
+    const fakeBin = join(root, "fake-codex");
+    await writeFile(fakeBin, `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(startsFile)}, "start\\n");
+// What this start was handed: the system prompt file and the closed schema (removed after the turn).
+const args = process.argv.slice(2);
+const instructions = args.find((arg) => arg.startsWith("model_instructions_file="));
+const schemaAt = args.indexOf("--output-schema");
+appendFileSync(${JSON.stringify(join(root, "handed.jsonl"))}, JSON.stringify({
+  systemPrompt: readFileSync(JSON.parse(instructions.slice("model_instructions_file=".length)), "utf8"),
+  outputSchema: JSON.parse(readFileSync(args[schemaAt + 1], "utf8")),
+}) + "\\n");
+readFileSync(0, "utf8");
+const events = [
+  { type: "thread.started", thread_id: "thread-1" },
+  { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: "r" }) } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");
+`, "utf8");
+    await chmod(fakeBin, 0o755);
+    const readOnly = scenario === "log-unwritable" ? "log.jsonl" : scenario === "history-unwritable" ? "history.jsonl" : undefined;
+    try {
+      if (readOnly !== undefined) {
+        await writeFile(join(root, readOnly), "", { flag: "a" });
+        await chmod(join(root, readOnly), 0o400);
+      }
+      const principal = fixturePrincipal(join(root, "session"));
+      const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "codex");
+      let ingested = 0;
+      let closes = 0;
+      const description = lookupHeadlessHostDescription("codex");
+      assert.ok(description);
+      const host = createHeadlessRoleTurnHost({
+        description,
+        hostName: "codex",
+        binary: fakeBin,
+        env: { CODEX_HOME: join(root, ".codex") },
+        sessionIdentity,
+        prepare: async (request) => ({
+          mcpServers: [],
+          systemPrompt: { body: "system", materials: [] },
+          prompt: request.continuation.prompt,
+          jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"], additionalProperties: true },
+          terminatingToolName: "ak_probe_output",
+          async ingestStructuredOutput() { ingested += 1; },
+          async closeRound() {
+            closes += 1;
+            return scenario === "re-asked-round" && closes === 1
+              ? { accepted: false as const, retry: { code: "again", toolCallIds: [], message: "again" } }
+              : { accepted: true as const };
+          },
+        }),
+      });
+      const result = await host.executeTurn({
+        principal,
+        activation: { role: "inspector" },
+        methods: [],
+        continuation: { kind: "initial", prompt: "work" },
+        model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+        cwd: root,
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory: root,
+      });
+      const starts = (await readFile(startsFile, "utf8")).split("\n").filter(Boolean).length;
+      assert.equal(result.knownFailure, undefined);
+      assert.equal(result.code, 0);
+      assert.equal(await sessionIdentity.load(principal), "thread-1");
+      assert.equal(ingested, scenario === "re-asked-round" ? 2 : 1);
+      const delivered = readHistoryRows(root).filter((row) => row.kind === "turn-delivery").length;
+      if (scenario === "history-unwritable") {
+        assert.equal(starts, 1);
+        assert.equal(delivered, 0);
+        assert.equal(packageFaultNotes(root).length > 0, true, "the lost turn-delivery row is noted");
+      } else {
+        assert.equal(delivered, starts, "one turn-delivery row per CLI start");
+        const handed = (await readFile(join(root, "handed.jsonl"), "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        assert.deepEqual(historyPayloads(root, "turn-delivery"), handed, "each row is what that start was handed");
+        assert.equal(starts, scenario === "re-asked-round" ? 2 : 1);
+      }
+    } finally {
+      ledger.dispose();
+    }
+  });
+}

@@ -2,9 +2,10 @@
  * #1088 public Collector: seat + request-manifest admission; LLM submits groups.
  * Code-collection tools (observe/bind/wait/handbook) are gone.
  */
+import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
@@ -72,10 +73,13 @@ test("typed groups travel from real output settlement into the report artifact",
     assert.deepEqual(result.terminal && (objectPayloads(result.terminal.roleOutcome)[0] ?? {}).groups, receipt().groups);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
-    const artifact = JSON.parse(await readFile(reportPath, "utf8")) as {
-      outcome?: { payloads?: readonly { groups?: unknown[] }[] };
+    const artifact = terminalBodyAt(reportPath, "report") as {
+      outcome?: { payloads?: unknown };
     };
-    assert.deepEqual(artifact.outcome?.payloads?.[0]?.groups, receipt().groups);
+    // The submitted groups live in history.jsonl; the terminal carries only the verdict.
+    assert.equal(artifact.outcome !== undefined && "payloads" in artifact.outcome, false);
+    const submitted = submittedParams(dirname(reportPath)) as readonly { groups?: unknown[] }[];
+    assert.deepEqual(submitted[0]?.groups, receipt().groups);
     assert.equal(stdout.length > 0, true);
   });
 });

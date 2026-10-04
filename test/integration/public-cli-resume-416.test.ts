@@ -1,4 +1,4 @@
-import { pointedErrorRecordPath } from "../helpers/pointed-error-record.ts";
+import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
@@ -204,7 +204,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
     // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.runId,runId);
-    const {io:io2,stderr}=captureIo();let dispatched=false;
+    const {io:io2}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
@@ -214,14 +214,19 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                       },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
-    // #1058: read the record the caller was pointed at, not a test-known path.
-    const diagnosticPath=await pointedErrorRecordPath(runDir,stderr.join(""));
-    const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
+    // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
+    const recorded = terminalBodyAt(join(runDir, "current.json"), "error") as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
+    assert.equal(res.terminal?.roleOutcome.kind,"failure");
     assert.equal(recorded.runId,runId);
+    assert.equal(
+      res.terminal?.roleOutcome.kind==="failure"
+        && res.terminal.roleOutcome.diagnostic===recorded.diagnostic,
+      true,
+    );
     assert.equal(recorded.details?.exitCode,1);
     await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
@@ -554,10 +559,7 @@ test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", as
           const description =
             lookupHostDescription(hostName) ?? lookupHeadlessHostDescription(hostName);
           assert.ok(description, `host description registered for ${hostName}`);
-          await createSessionIdentityAuthority(
-            piDurablePrincipalAuthority,
-            description!.sessionBindingFile,
-          ).bind(request.principal, `native-session-${hostName}-${calls.n}`);
+          await createSessionIdentityAuthority(piDurablePrincipalAuthority, hostName).bind(request.principal, `native-session-${hostName}-${calls.n}`);
         }
         return { code: 1, stderr: `fail ${calls.n}\n`, timedOut: false };
       });

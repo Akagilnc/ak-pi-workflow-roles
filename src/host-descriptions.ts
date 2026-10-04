@@ -15,8 +15,6 @@ import type { HeadlessHostDescription } from "./headless-host/description.ts";
 export type HostIdentityDescription = Readonly<{
   /** Binary path segments relative to the operator home. */
   binaryFromHome: readonly string[];
-  /** Durable host session binding filename beside the session principal. */
-  sessionBindingFile: string;
 }>;
 
 /** Resolve a host description's agent binary under the operator home. */
@@ -45,7 +43,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     }),
     modelPassing: "set_model",
     setModelId: "bare",
-    sessionBindingFile: "grok-acp-session.json",
   }),
   /**
    * Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
@@ -63,7 +60,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     }),
     modelPassing: "set_model",
     setModelId: "provider:model",
-    sessionBindingFile: "hermes-acp-session.json",
     seatProfileSoul: Object.freeze({
       flag: "-p",
       namePrefix: "ak-",
@@ -84,7 +80,6 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
   "claude": Object.freeze({
     protocol: "claude-print",
     binaryFromHome: Object.freeze([".local", "bin", "claude"]),
-    sessionBindingFile: "claude-headless-session.json",
     fixedArgs: Object.freeze([
       // Live NDJSON events → sitian host-session records (#811); last line is the result receipt.
       "--output-format", "stream-json",
@@ -109,7 +104,6 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
   "codex": Object.freeze({
     protocol: "codex-exec",
     binaryFromHome: Object.freeze([".local", "bin", "codex"]),
-    sessionBindingFile: "codex-headless-session.json",
   }),
 });
 

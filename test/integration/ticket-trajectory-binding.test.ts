@@ -10,6 +10,7 @@ import {
   loadUnboundTrajectoryRuns,
 } from "../../src/ticket-trajectory.ts";
 import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 async function withBookDir<T>(scenario: (ledgerDir: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-ticket-traj-", async (root) => {
@@ -41,11 +42,7 @@ async function seedBookRun(
   if (options?.ticketNumber !== undefined) {
     invocation.ticketNumber = options.ticketNumber;
   }
-  await writeFile(
-    join(runDir, "invocation.json"),
-    `${JSON.stringify(invocation, null, 2)}\n`,
-    "utf8",
-  );
+  seedCurrentSection(runDir, "invocation", invocation);
   return runDir;
 }
 
@@ -66,11 +63,7 @@ async function seedLegacyRun(ledgerDir: string, issueNumber: number, runId: stri
     `${JSON.stringify({ type: "session", timestamp: "2026-08-07T00:00:01.000Z" })}\n`,
     "utf8",
   );
-  await writeFile(
-    join(runDir, "invocation.json"),
-    `${JSON.stringify({ role: "coder", runId }, null, 2)}\n`,
-    "utf8",
-  );
+  seedCurrentSection(runDir, "invocation", { role: "coder", runId });
 }
 
 test("flat run with typed invocation ticketNumber is included for that ticket", async () => {

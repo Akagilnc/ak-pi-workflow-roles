@@ -15,6 +15,7 @@
  * `ak-role resume`) mints a new one. Never courtAttemptId, never Pi session
  * toolResult join keys, and never a detour-owned sidecar file.
  */
+import { readPageSync, RUN_LOG_FILE } from "./run-dossier.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +26,6 @@ export {
 } from "./role-run-placement.ts";
 
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
-import { sitianRunVolumeDirectory, sitianVolumeRecordsFile } from "./sitian-appender.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPath,
@@ -42,13 +42,11 @@ export const ENGINE_DETOUR_CALL_KIND = "engine-detour-call" as const;
 export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as const;
 
 /**
- * Run-relative sitian volume path for one detour call.
+ * Run-relative path of the log that holds one detour call's record.
  * Openable once the run directory is known from the terminal's run id.
  * Contains no runId bytes itself (#108 + #537).
  */
-export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = sitianVolumeRecordsFile(
-  sitianRunVolumeDirectory("", ENGINE_DETOUR_CALL_KIND),
-);
+export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = RUN_LOG_FILE;
 
 /** stdout UTF-8 byte length (ticket-frozen metric; empty stdout is real 0). */
 export function engineDetourStdoutByteLength(stdout: string): number {
@@ -253,22 +251,14 @@ export async function readEngineDetourToolUsage(input: {
   return { callCount: calls.length, calls };
 }
 
-/** One shared invocation.json reader (ENOENT → undefined; other errors propagate). */
+/** One shared state.jsonl invocation-row reader (absent → undefined; other errors propagate). */
 function readInvocationRecord(
   runDirectory: string,
 ): Record<string, unknown> | undefined {
-  try {
-    const raw = JSON.parse(
-      readFileSync(join(runDirectory, "invocation.json"), "utf8"),
-    ) as unknown;
-    return isRecord(raw) ? raw : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw error;
-  }
+  return readPageSync(runDirectory, "invocation");
 }
 
-/** True when invocation.json carries a non-empty engine axis. */
+/** True when the invocation section carries a non-empty engine axis. */
 export async function readInvocationEngineMounted(
   runDirectory: string,
 ): Promise<boolean> {

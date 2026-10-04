@@ -56,6 +56,7 @@ import {
   type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
+  bindDiaristAssertedTicketNumber,
   presentControlledFailure,
   packageFaultNoteFor,
   prepareSummonsResumeMaterials,
@@ -321,6 +322,8 @@ async function bindAndRelocateDiarist(
   authority: DurablePrincipalAuthority,
   lease?: RunWriterLease,
 ): Promise<RunDirectoryRelocation | undefined> {
+  // The diarist's asserted ticketNumber binds here, in the public call's process.
+  await bindDiaristAssertedTicketNumber(admitted);
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
   if (boardTicket === undefined) return undefined;
   if (admitted.ticketNumber === undefined) {
@@ -1096,7 +1099,11 @@ export async function continueParentAfterChild(
       && heldUnreadableTerminal(stopped.terminal)
       && stopped.terminal !== undefined
     ) {
-      const parentTerminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+      const parentTerminal = await trySettlePublicSeat(
+        admitted,
+        env.principalAuthority,
+        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
+      );
       if (
         parentTerminal?.roleOutcome.kind === "accepted"
         || parentTerminal?.roleOutcome.kind === "audit_escalation"
@@ -1115,7 +1122,7 @@ export async function continueParentAfterChild(
       const terminal = await trySettlePublicSeat(
         admitted,
         env.principalAuthority,
-        packageFaultScope(admitted, env, io),
+        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted, latestQueuePayload(resolved.terminal));

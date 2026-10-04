@@ -33,6 +33,7 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
@@ -106,28 +107,25 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       // One typed-ticketed run inside book root:foo.
       const runDir = join(ledgerHome, "books", "root:foo", "runs", `${RUN_ID}@coder`);
       mkdirSync(join(runDir, "session"), { recursive: true });
-      mkdirSync(join(runDir, "artifacts"), { recursive: true });
-      writeFileSync(
-        join(runDir, "invocation.json"),
-        `${JSON.stringify({
+      seedCurrentSection(runDir, "invocation", {
+        role: "coder",
+        runId: RUN_ID,
+        bookKey: "root:foo",
+        projectRoot: repoIdentity,
+        ticketNumber: 7,
+      });
+      seedTerminal(runDir, "report", {
+        role: "coder",
+        runId: RUN_ID,
+        phase: "apply",
+        outcome: {
+          kind: "accepted",
           role: "coder",
-          runId: RUN_ID,
-          bookKey: "root:foo",
-          projectRoot: repoIdentity,
-          ticketNumber: 7,
-        }, null, 2)}\n`,
-        "utf8",
-      );
-      writeFileSync(
-        join(runDir, "artifacts", "report.json"),
-        `${JSON.stringify({
-          role: "coder",
-          runId: RUN_ID,
-          phase: "apply",
-          outcome: { kind: "accepted", role: "coder", status: "completed", decisiveFacts: {} },
-        }, null, 2)}\n`,
-        "utf8",
-      );
+          status: "completed",
+          decisiveFacts: {},
+          payloads: [],
+        },
+      });
       writeFileSync(
         join(runDir, "session", "session.jsonl"),
         [

@@ -6,10 +6,10 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (ledger rows, payloads, attachments)
+  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
   pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
-  sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
-  schema.json    headless output schema when the run had one
+  sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
+  schema.json    headless output schema when turn-delivery recorded one; omitted on gap
   instr.txt      the instruction the run was admitted with
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
@@ -32,25 +32,28 @@ def load_json(path):
         return json.load(f)
 
 def jsonl(path):
-    if not os.path.exists(path):
-        return []
+    """Parse jsonl facts. Absent file → []. Malformed completed line fails loudly with path:line."""
     rows = []
-    with open(path) as f:
-        for line in f:
+    try:
+        fh = open(path)
+    except FileNotFoundError:
+        return []
+    with fh:
+        for lineno, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"malformed JSONL {path}:{lineno}: {exc.msg}") from exc
     return rows
 
 def iso(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 def default_cut(run):
-    sealed = [r["timestamp"] for r in jsonl(f"{run}/session/submission-ledger/records.jsonl") if r.get("kind") == "sealed" and r.get("timestamp")]
+    sealed = [r["timestamp"] for r in jsonl(f"{run}/history.jsonl") if r.get("kind") == "sealed" and r.get("timestamp")]
     if sealed:
         return min(sealed), "first sealed submission"
     rows = jsonl(f"{run}/session/session.jsonl")
@@ -113,16 +116,26 @@ def main():
     a = ap.parse_args()
 
     run = os.path.abspath(a.run_dir.rstrip("/"))
-    inv = load_json(f"{run}/invocation.json")
-    adm = load_json(f"{run}/admitted-request.json") if os.path.exists(f"{run}/admitted-request.json") else {}
+    if not os.path.exists(f"{run}/state.jsonl"):
+        sys.exit(f"not a run directory (no state.jsonl): {run}")
+    cut_raw, cut_src = (a.cut, "--cut") if a.cut else default_cut(run)
+    cut = iso(cut_raw)
+    # Identity and admission are the last rows of state.jsonl at or before the cut, not the live
+    # current.json (a later resume may have rewritten them).
+    at_cut = {}
+    for r in jsonl(f"{run}/state.jsonl"):
+        if (not r.get("timestamp") or iso(r["timestamp"]) <= cut) and isinstance(r.get("payload"), dict):
+            at_cut[r.get("kind")] = r["payload"]
+    inv = at_cut.get("invocation")
+    if not inv:
+        sys.exit(f"no invocation row at or before the cut in {run}/state.jsonl")
+    adm = at_cut.get("admitted-request") or {}
     role, host, num = inv["role"], inv.get("host", "pi"), inv.get("ticketNumber") or adm.get("ticketNumber")
     if host not in SUPPORTED_HOSTS:
         sys.exit(f"recorded host {host!r} has no replay runner (supported: {', '.join(SUPPORTED_HOSTS)})")
     if num is None:
         sys.exit("run has no ticket number; cannot freeze the ticket body")
 
-    cut_raw, cut_src = (a.cut, "--cut") if a.cut else default_cut(run)
-    cut = iso(cut_raw)
     project = inv["projectRoot"]
     src_repo = a.repo or project
     if not os.path.isdir(src_repo):
@@ -186,7 +199,7 @@ def main():
     # The run's own directory keeps growing after the cut (later verdicts, ledger rows). Freeze a
     # copy truncated at the cut and point every prompt reference at it.
     frozen_run = f"{kit}/run/{os.path.basename(run)}"
-    os.makedirs(f"{frozen_run}/session/submission-ledger", exist_ok=True)
+    os.makedirs(f"{frozen_run}/session", exist_ok=True)
     cut_epoch = cut.timestamp()
     home = os.path.expanduser("~")
     def repoint(text):
@@ -197,8 +210,8 @@ def main():
         return text
     for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
         src_path = f"{run}/{name}"
-        if not os.path.isfile(src_path):
-            continue
+        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "state.jsonl", "log.jsonl"):
+            continue  # dossier files are rebuilt truncated below
         try:
             with open(src_path, encoding="utf-8") as f:
                 text = f.read()
@@ -222,32 +235,51 @@ def main():
                         f.write(repoint(text))
                 except UnicodeDecodeError:
                     shutil.copy(src_path, dest)
-    ledger_rows = jsonl(f"{run}/session/submission-ledger/records.jsonl")
-    kept_ledger = [r for r in ledger_rows if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
-    with open(f"{frozen_run}/session/submission-ledger/records.jsonl", "w") as f:
-        for r in kept_ledger:
-            f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
-    # The report face is rebuilt from the truncated ledger alone: payloads are the sealed rows'
-    # accepted bodies in order, and no post-cut terminal fields survive.
-    payloads_before = []
-    for r in kept_ledger:
-        if r.get("kind") != "sealed":
-            continue
-        accepted = (r.get("payload") or {}).get("accepted", r.get("accepted"))
-        if accepted is not None:
-            payloads_before.append(accepted)
-    sealed_before = len(payloads_before)
-    if os.path.exists(f"{run}/artifacts/report.json"):
-        os.makedirs(f"{frozen_run}/artifacts", exist_ok=True)
-        with open(f"{frozen_run}/artifacts/report.json", "w") as f:
-            json.dump({"frozenAt": cut_raw, "outcome": {"payloads": payloads_before}}, f, ensure_ascii=False, indent=1)
-    for rel in ("session/session.jsonl", "session/host-session/records.jsonl"):
-        if os.path.exists(f"{run}/{rel}"):
-            os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
+    def kept_rows(rel):
+        return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
+    kept_history = kept_rows("history.jsonl")
+    for rel in ("history.jsonl", "state.jsonl", "log.jsonl"):
+        rows = kept_history if rel == "history.jsonl" else kept_rows(rel)
+        if rows or os.path.exists(f"{run}/{rel}"):
             with open(f"{frozen_run}/{rel}", "w") as f:
-                for r in jsonl(f"{run}/{rel}"):
-                    if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
-                        f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+                for r in rows:
+                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+    # current.json is the package's own rendering of the three truncated row files: nothing recorded
+    # after the cut survives, and identity, admission and terminal are the last rows at or before it.
+    p = subprocess.run(["node", "--import", "tsx", "-e",
+                        "import('" + os.path.abspath(f"{a.tool_dir}/../../src/run-dossier.ts") + "').then((m) => m.renderCurrentSync(process.argv[1]))",
+                        frozen_run], cwd=os.path.abspath(f"{a.tool_dir}/../.."), text=True, capture_output=True)
+    if p.returncode != 0:
+        sys.exit(f"rendering the frozen current.json failed:\n{p.stderr}")
+    kept_sealed = [r for r in kept_history if r.get("kind") == "sealed"]
+    payloads_before = [(r.get("payload") or {}).get("accepted") for r in kept_sealed if (r.get("payload") or {}).get("accepted") is not None]
+    sealed_before = len(payloads_before)
+    # The host original (codex / claude single file, grok directory) up to the cut.
+    session_dir = f"{run}/session"
+    for name in (os.listdir(session_dir) if os.path.isdir(session_dir) else []):
+        path = f"{session_dir}/{name}"
+        if name in ("codex.jsonl", "claude.jsonl") and os.path.isfile(path):
+            os.makedirs(f"{frozen_run}/session", exist_ok=True)
+            with open(f"{frozen_run}/session/{name}", "w") as out, open(path) as src:
+                for line in src:
+                    try:
+                        ts = json.loads(line).get("timestamp") if line.strip() else None
+                    except (json.JSONDecodeError, AttributeError):
+                        ts = None
+                    if ts and iso(ts) > cut:
+                        break
+                    out.write(line if line.endswith("\n") else line + "\n")
+        elif name == "grok-build" and os.path.isdir(path):
+            os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
+            for leaf in os.listdir(path):
+                shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
+    # session.jsonl only here — log.jsonl was already truncated with the other row files above.
+    if os.path.exists(f"{run}/session/session.jsonl"):
+        os.makedirs(f"{frozen_run}/session", exist_ok=True)
+        with open(f"{frozen_run}/session/session.jsonl", "w") as f:
+            for r in jsonl(f"{run}/session/session.jsonl"):
+                if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
+                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
 
     pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
     pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
@@ -260,9 +292,21 @@ def main():
         f.write(pointer)
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
-    hp = f"{run}/headless-system-prompt.txt"
-    sys_kind = "headless-system-prompt" if os.path.exists(hp) else "pi-tail"
-    sysprompt = open(hp).read().replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
+    # Prompt and schema come only from turn-delivery rows at or before the cut (#1161).
+    # Missing material is a declared gap — never reconstructed.
+    delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)
+    delivered = (delivered_row or {}).get("payload") or None
+    delivered_prompt = delivered.get("systemPrompt") if delivered else None
+    gaps = []
+    if isinstance(delivered_prompt, str):
+        sys_kind = "turn-delivery"
+        sysprompt = delivered_prompt.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run)
+    else:
+        sys_kind = "missing-turn-delivery"
+        sysprompt = ""
+        gaps.append("systemPrompt")
+    if delivered is None or delivered.get("outputSchema") is None:
+        gaps.append("outputSchema")
 
     sh("git", "-C", repo, "worktree", "prune")
     sh("git", "-C", repo, "worktree", "add", "--detach", f"{kit}/wt", head)
@@ -270,18 +314,12 @@ def main():
     if os.path.isdir(nm) and not os.path.exists(f"{kit}/wt/node_modules"):
         os.symlink(nm, f"{kit}/wt/node_modules")
 
-    if sysprompt is None:
-        env = dict(os.environ, AK_REPLAY_POINTER=f"{kit}/pointer.md")
-        p = subprocess.run(["node", "--import", "tsx", f"{a.tool_dir}/pi-tail.ts", role, f"{kit}/wt"],
-                           cwd=f"{kit}/wt", env=env, text=True, capture_output=True)
-        if p.returncode != 0:
-            sys.exit(f"pi tail assembly failed at {head[:8]} (hand-build a --sys for run.py):\n{p.stderr}")
-        sysprompt = p.stdout.replace(run, frozen_run)
     with open(f"{kit}/sys.txt", "w") as f:
         f.write(notice + sysprompt)
 
-    if os.path.exists(f"{run}/headless-output-schema.json"):
-        shutil.copy(f"{run}/headless-output-schema.json", f"{kit}/schema.json")
+    if delivered is not None and delivered.get("outputSchema") is not None:
+        with open(f"{kit}/schema.json", "w") as f:
+            json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
     with open(f"{kit}/instr.txt", "w") as f:
         f.write((adm.get("instruction") or "").replace(run, frozen_run))
 
@@ -290,15 +328,18 @@ def main():
             "project": project, "cut": cut_raw, "cutSource": cut_src, "head": head, "sysKind": sys_kind,
             "issueBodyAt": issue["updatedAt"], "recordsKept": len(kept), "recordsSource": records_src, "frozenSources": sorted(frozen_sources), "frozenRun": frozen_run, "payloadsKept": sealed_before,
             "frozenAt": datetime.now(timezone.utc).isoformat()}
+    if gaps:
+        meta["gaps"] = gaps
     with open(f"{kit}/meta.json", "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
 
     print(f"kit: {kit}")
     for k in ("role", "host", "model", "thinking", "ticket", "cut", "cutSource", "head", "sysKind", "issueBodyAt", "recordsKept"):
         print(f"  {k}: {meta[k]}")
+    if gaps:
+        print(f"GAP: missing turn-delivery material before cut: {', '.join(gaps)}; not reconstructed — pass --sys for an experimental prompt")
     if warn:
         print(f"WARNING: {warn}")
     print("next: replay-run.sh run <kit> <arm> <n> [--sys edited-copy-of-sys.txt]")
-
 if __name__ == "__main__":
     main()

@@ -1,0 +1,26 @@
+{
+  "invocation": {
+    "role": "doctor",
+    "runId": "019ff000-000a-7000-8000-0000000000d0",
+    "bookKey": "fixture-book",
+    "projectRoot": "/analyst-fixture/issue-demo"
+  },
+  "terminal": {
+    "face": "report",
+    "at": "2026-08-01T00:00:00.000Z",
+    "body": {
+      "role": "doctor",
+      "runId": "019ff000-000a-7000-8000-0000000000d0",
+      "outcome": {
+        "kind": "accepted",
+        "role": "doctor",
+        "status": "completed",
+        "decisiveFacts": {},
+        "payloads": []
+      },
+      "receipt": {
+        "status": "completed"
+      }
+    }
+  }
+}
