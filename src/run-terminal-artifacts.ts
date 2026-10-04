@@ -24,6 +24,13 @@ export type RunTerminalRead =
     }
   | { readonly status: "unreadable"; readonly reason: string };
 
+/**
+ * Terminal body field naming the `attempt-history` row this settlement appended.
+ * Readers resolve submitted payloads by this identity (#1161 甲); they must not
+ * pick the last history row of the same role.
+ */
+export const ATTEMPT_HISTORY_IDENTITY_FIELD = "attemptHistoryIdentity" as const;
+
 /** Replace the leg's terminal. */
 export function writeRunTerminal(
   runDirectory: string,
@@ -56,16 +63,18 @@ export function readRunTerminal(runDirectory: string): RunTerminalRead {
 
 /**
  * The report's outcome carries the verdict facts only; the role's submitted payloads are not
- * stored a second time. A reader that wants them takes them from the attempt-history row the
- * same settlement appended: the last row of this role, whose outcome holds the payloads.
+ * stored a second time. A reader that wants them takes them from the attempt-history row this
+ * settlement named on the terminal body (`attemptHistoryIdentity`).
  */
 function withSubmittedPayloads(runDirectory: string, body: Record<string, unknown>): Record<string, unknown> {
   const outcome = body.outcome;
   if (!isRecord(outcome) || outcome.payloads !== undefined) return body;
-  for (const row of [...readHistoryRowsSync(runDirectory)].reverse()) {
-    if (row.kind !== "attempt-history" || !isRecord(row.payload)) continue;
+  const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
+  if (typeof identity !== "string" || identity.trim() === "") return body;
+  for (const row of readHistoryRowsSync(runDirectory)) {
+    if (row.kind !== "attempt-history" || row.identity !== identity || !isRecord(row.payload)) continue;
     const attempt = row.payload.outcome;
-    if (isRecord(attempt) && attempt.role === outcome.role && Array.isArray(attempt.payloads)) {
+    if (isRecord(attempt) && Array.isArray(attempt.payloads)) {
       return { ...body, outcome: { ...outcome, payloads: attempt.payloads } };
     }
   }

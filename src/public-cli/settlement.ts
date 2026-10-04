@@ -9,7 +9,8 @@ import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import { sessionFileOf } from "../role-run-placement.ts";
 
-import { sitianReport } from "../sitian-facade.ts";
+import { sitianReport, type RecordPointer } from "../sitian-facade.ts";
+import { ATTEMPT_HISTORY_IDENTITY_FIELD, writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 import {
   readAttemptScopedSubmissionRows,
@@ -69,7 +70,6 @@ import type {
 } from "../host-contracts.ts";
 import { runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
-import { writeRunTerminal } from "../run-terminal-artifacts.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
 function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
@@ -1025,8 +1025,8 @@ type AttemptHistorySource = {
 export async function appendRunAttemptHistory(
   source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
-): Promise<void> {
-  sitianReport({
+): Promise<RecordPointer> {
+  return sitianReport({
     level: "event",
     kind: "attempt-history",
     subject: { runId: source.runId },
@@ -1287,8 +1287,10 @@ async function extractNavigatorFactFromAdmittedSession(
 /**
  * Sole success-terminal publisher (#953): replace the leg's terminal in
  * current.json. The report carries the outcome's verdict facts; the role's
- * submitted payloads live in history.jsonl, the latest also in current.json
- * `submission`.
+ * submitted payloads live in history.jsonl. When this settlement appends an
+ * attempt-history row, the terminal body keeps that row's identity so readers
+ * rehydrate this settlement's payloads — never "last row of the same role"
+ * (#1161 甲 / R2).
  */
 async function publishAcceptedTerminal(
   admitted: AdmittedRoleInvocation,
@@ -1299,13 +1301,20 @@ async function publishAcceptedTerminal(
 ): Promise<TerminalArtifactRef[]> {
   // #419: a dispatched turn appends before rewriting last-write-wins views;
   // a later projection may refresh views but must not invent another attempt.
+  let attemptHistoryIdentity: string | undefined;
   if (recordAttemptHistory) {
-    await appendRunAttemptHistory(
+    const pointer = await appendRunAttemptHistory(
       { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
       roleOutcome,
     );
+    attemptHistoryIdentity = pointer.identity;
   }
-  writeRunTerminal(admitted.runDirectory, "report", report);
+  writeRunTerminal(admitted.runDirectory, "report", {
+    ...report,
+    ...(attemptHistoryIdentity === undefined
+      ? {}
+      : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
+  });
   return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
