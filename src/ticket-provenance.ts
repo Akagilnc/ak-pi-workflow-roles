@@ -19,6 +19,7 @@ import {
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
 import { sitianVolumeRecordsFile } from "./sitian-appender.ts";
+import { RUN_HISTORY_FILE } from "./run-dossier-files.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   appendSitianRecordBlock,
@@ -34,7 +35,7 @@ import {
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 
-import { errorText } from "./unknown-value.ts";
+import { errorText, isRecord } from "./unknown-value.ts";
 
 /**
  * Typed input failure for diarist bounds/session path (reask, not infrastructure).
@@ -151,16 +152,41 @@ export async function rehomeUnboundTicketProvenance(
   cwd: string,
   home: string,
 ): Promise<void> {
-  const source = sitianVolumeRecordsFile(runDirectory);
-  let content: string;
+  const ticketInput = ticketProvenanceRecordInput(ticketNumber, cwd, home);
+
+  // Legacy pre-#1161 staging volume at run/records.jsonl — move once if present.
+  const legacy = sitianVolumeRecordsFile(runDirectory);
   try {
-    content = await readFile(source, "utf8");
+    const content = await readFile(legacy, "utf8");
+    appendSitianRecordBlock(ticketInput, content);
+    await unlink(legacy);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+
+  // Live staging: ticket-provenance rows in the run's history.jsonl. Append-only
+  // history keeps the staging rows; the ticket-root diary is the home.
+  let history: string;
+  try {
+    history = await readFile(join(runDirectory, RUN_HISTORY_FILE), "utf8");
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return;
     throw error;
   }
-  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
-  await unlink(source);
+  const block = history
+    .split("\n")
+    .flatMap((line) => {
+      if (line.trim() === "") return [];
+      try {
+        const row: unknown = JSON.parse(line);
+        if (!isRecord(row) || row.kind !== TICKET_PROVENANCE_KIND) return [];
+        return [`${line}\n`];
+      } catch {
+        return [];
+      }
+    })
+    .join("");
+  if (block !== "") appendSitianRecordBlock(ticketInput, block);
 }
 
 /**

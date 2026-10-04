@@ -104,8 +104,10 @@ export function resolveSitianRecordPathInLedger(
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
   } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
+    // True-unbound diary staging: the run's history volume (#1161). Never a
+    // top-level run/records.jsonl — that leaf is only the ticket-root diary.
     sessionDir = input.runDirectory;
-    recordFile = sitianVolumeRecordsFile(sessionDir);
+    recordFile = join(sessionDir, RUN_HISTORY_FILE);
   } else {
     if (
       input.sessionParent === undefined

@@ -68,7 +68,7 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
-import { runCurrentPath } from "../run-dossier.ts";
+import { readPageSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
@@ -1308,6 +1308,17 @@ async function publishAcceptedTerminal(
       roleOutcome,
     );
     attemptHistoryIdentity = pointer.identity;
+  } else {
+    // Non-recording re-projection keeps this settlement's history pointer
+    // (#1161 甲 / R2). Read the fact row, not the rendering; do not invent a
+    // new attempt or fall back to last-by-role.
+    const prior = readPageSync(admitted.runDirectory, "terminal");
+    const priorId = prior !== undefined && prior.face === "report" && isRecord(prior.body)
+      ? prior.body[ATTEMPT_HISTORY_IDENTITY_FIELD]
+      : undefined;
+    if (typeof priorId === "string" && priorId.trim() !== "") {
+      attemptHistoryIdentity = priorId;
+    }
   }
   writeRunTerminal(admitted.runDirectory, "report", {
     ...report,

@@ -1767,11 +1767,16 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
     ).decisiveFacts;
     assert.equal(facts?.ticketNumber ?? null, null);
     const bookKey = resolveBookKeyFromGit(project);
-    const unboundRecord = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@diarist`, "records.jsonl");
-    const rows = (await readFile(unboundRecord, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
-    assert.equal(rows[0]?.kind, "ticket-provenance");
-    assert.equal(rows[0]?.sessionParent, undefined);
-    assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
+    const unboundRun = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@diarist`);
+    assert.equal(existsSync(join(unboundRun, "records.jsonl")), false, "true-unbound must not mint run/records.jsonl");
+    const historyRows = (await readFile(join(unboundRun, "history.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((row) => JSON.parse(row));
+    const diary = historyRows.find((row) => row?.kind === "ticket-provenance");
+    assert.ok(diary, "true-unbound diary rows land in history.jsonl");
+    assert.equal(diary?.sessionParent, undefined);
+    assert.equal(diary?.payload?.lines?.[0]?.speaker, "owner");
 
     // Ticket dir stays unminted until a typed ticket bind.
     const sample = resolveTicketProvenanceVolume(1, project, home);

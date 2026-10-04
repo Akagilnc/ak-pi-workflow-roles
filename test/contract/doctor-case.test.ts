@@ -29,14 +29,17 @@ test("one retained runs directory yields an independently cited single-case cost
     const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
     await writeFile(join(runs, "review-004/session/real.jsonl"), body);
     await writeFile(join(runs, "review-004-retry/log.jsonl"), JSON.stringify({ kind: "stderr", text: "failed before session\n" }) + "\n");
-    // history.jsonl is the run's submission history, never doctor evidence.
+    // history.jsonl is the moved submission ledger; Doctor still cites it as evidence.
     await writeFile(join(runs, "review-004/history.jsonl"), JSON.stringify({ kind: "submission", note: "history row" }) + "\n");
     const patient = await loadDoctorCase(runs);
     assert.deepEqual(patient.evidence.filter((entry) => entry.kind === "log").map((entry) => entry.id), ["review-004-retry/log.jsonl"]);
-    assert.equal(patient.evidence.some((entry) => entry.id.endsWith("history.jsonl")), false);
+    assert.equal(patient.evidence.some((entry) => entry.id.endsWith("history.jsonl")), true);
     assert.equal(patient.identity.issueNumber, 28);
     assert.deepEqual(patient.cost.invocations, { count: 2, sources: ["review-004", "review-004-retry"] });
-    assert.deepEqual(patient.cost.legs, { count: 1, sources: ["review-004/session/real.jsonl"] });
+    assert.deepEqual(patient.cost.legs, {
+      count: 2,
+      sources: ["review-004/history.jsonl", "review-004/session/real.jsonl"],
+    });
     assert.equal(patient.cost.modelApiTurns.count, 1);
     assert.equal(patient.cost.outputTokens.count, 7);
     assert.equal(patient.cost.toolCalls.count, 2);
@@ -44,8 +47,9 @@ test("one retained runs directory yields an independently cited single-case cost
     assert.equal(patient.cost.statuses[0]?.status, "completed");
     assert.deepEqual(patient.cost.commits, []);
     assert.equal(patient.cost.outputBytes.payload, "raw JSONL bytes");
-    assert.equal(patient.cost.sessions[0]?.completion, "accepted");
-    assert.equal(patient.cost.sessions[0]?.wallMilliseconds, 1420);
+    const acceptedSession = patient.cost.sessions.find((session) => session.completion === "accepted");
+    assert.ok(acceptedSession, "native session still yields an accepted cost session");
+    assert.equal(acceptedSession.wallMilliseconds, 1420);
 
   });
 });
