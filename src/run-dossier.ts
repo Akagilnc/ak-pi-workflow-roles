@@ -297,6 +297,13 @@ export function readHistoryRowsSync(runDirectory: string): readonly Record<strin
   return history.rows;
 }
 
+/** Every row of state.jsonl, in order; a file that cannot be read throws. */
+export function readStateRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
+  const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
+  if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
+  return state.rows;
+}
+
 /** Rewrite one section whole: append its row, then render `current.json`. */
 export function writeSectionSync(
   runDirectory: string,

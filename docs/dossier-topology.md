@@ -44,7 +44,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 | `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `state.jsonl` 里最后一条 `invocation` |
 | `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 | 最后一条 `admitted-request` |
 | `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
-| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 的 `body` 不含各轮交卷原文，只带所属结算追加进 `history.jsonl` 的 `attempt-history` 行 identity（`attemptHistoryIdentity`），读者凭它取原文，不按席位取最后一条 | 最后一条 `terminal` |
+| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 的 `body` 不含各轮交卷原文，只带所属结算追加进 `history.jsonl` 的 `attempt-history` 行 identity（`attemptHistoryIdentity`）及所属庭 `courtAttemptId`（便于非记次重投影从 `state.jsonl` 历史终局取回指针，不读整腿最新终局、不按原文猜），读者凭 identity 取原文，不按席位取最后一条 | 最后一条 `terminal` |
 | `submission` | `latest`：最新一次封存的交卷原文 | 最后一条 `sealed` |
 | `officers` | 本腿传召的官员腿指针，每官一格 | 各官最后一条 `officer-pointer` |
 | `host` | `sessions[<host>]` 宿主会话 id（按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（宿主原件现在的路径：最近一次复制落在哪个文件名，就取本腿目录 `session/` 下该名；腿归位到票目录后仍指向归位后的原件） | `state.jsonl` 的 `host-session-id` 行；`log.jsonl` 的 `host-session`（`native-session-copy`）行 |
@@ -62,7 +62,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `state.jsonl`——四整页事实行
 
-只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`；`report` 的 `body` 不含各轮交卷原文，只带 `attemptHistoryIdentity` 指向所属那次结算的 `attempt-history` 行），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。单列一卷是因为三种写失败处置各不相同，与 main 上原文件一一对应：状态页写失败抛错；交卷账本卷（`history.jsonl`）不可写不拦续跑；辅助流水（`log.jsonl`）写失败只申报一次、不改宿主终局。
+只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`；`report` 的 `body` 不含各轮交卷原文，只带 `attemptHistoryIdentity` 指向所属那次结算的 `attempt-history` 行，并带所属庭 `courtAttemptId`），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。单列一卷是因为三种写失败处置各不相同，与 main 上原文件一一对应：状态页写失败抛错；交卷账本卷（`history.jsonl`）不可写不拦续跑；辅助流水（`log.jsonl`）写失败只申报一次、不改宿主终局。
 
 ### `log.jsonl`——司天台流水
 

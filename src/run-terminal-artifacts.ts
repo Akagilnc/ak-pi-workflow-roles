@@ -31,6 +31,14 @@ export type RunTerminalRead =
  */
 export const ATTEMPT_HISTORY_IDENTITY_FIELD = "attemptHistoryIdentity" as const;
 
+/**
+ * Terminal body field naming the court that wrote this terminal (#1161 R2).
+ * Historical `state.jsonl` terminal rows keep it so a later re-projection of the
+ * same court can recover that court's `attemptHistoryIdentity` without reading
+ * the leg's latest terminal or guessing by payload.
+ */
+export const TERMINAL_COURT_ATTEMPT_FIELD = "courtAttemptId" as const;
+
 /** Replace the leg's terminal. */
 export function writeRunTerminal(
   runDirectory: string,
