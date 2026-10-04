@@ -146,8 +146,9 @@ function lastPagePayload(
  * A booked officer-pointer row with a non-object payload or non-string officer is
  * damaged topology — never silently omitted into lawful zero rounds (#1161 O1).
  * Absence of any officer-pointer row remains lawful empty.
+ * Invalid input is a TypeError (same class as other dossier illegal payloads).
  * Control readers (`readBookedOfficerPointers`) let this throw into the existing
- * auditor-roles unreadable seam; `render` catches the same error and marks
+ * auditor-roles unreadable seam; `render` catches only that TypeError and marks
  * `history.jsonl` unreadable so other reachable facts stay in current.json.
  */
 export function latestOfficerPointersFromRecords(
@@ -157,7 +158,7 @@ export function latestOfficerPointersFromRecords(
   for (const record of records) {
     if (record.kind !== OFFICER_POINTER_RECORD_KIND) continue;
     if (!isRecord(record.payload) || typeof record.payload.officer !== "string") {
-      throw new Error("officer-pointer payload is damaged");
+      throw new TypeError("officer-pointer payload is not a record with string officer");
     }
     latest[record.payload.officer] = record.payload;
   }
@@ -187,13 +188,13 @@ function render(
   // Control readers still fail closed via latestOfficerPointersFromRecords.
   // Render must keep other reachable facts and surface damage on the existing
   // file unreadable seam — never abort the whole current.json (#1161 O1).
+  // Catch only the reducer's known TypeError; unknown throws stay unknown
+  // (never wash into malformed by free-text message).
   let officers: Readonly<Record<string, unknown>> = {};
   try {
     officers = latestOfficerPointersFromRecords(history);
   } catch (error) {
-    if (!(error instanceof Error) || error.message !== "officer-pointer payload is damaged") {
-      throw error;
-    }
+    if (!(error instanceof TypeError)) throw error;
     if (unreadable[RUN_HISTORY_FILE] === undefined) unreadable[RUN_HISTORY_FILE] = "malformed";
   }
   const sessions: Record<string, unknown> = {};
@@ -263,6 +264,9 @@ export function renderCurrentSync(runDirectory: string): void {
       if (file.fault !== undefined) unreadable[name] = file.fault;
       else if (file.diagnostics !== undefined && file.diagnostics.length > 0) unreadable[name] = "malformed";
     }
+    // Render may add officer-pointer TypeError damage onto the same unreadable map;
+    // declare after render so that cause enters the existing diagnostics/unreadable seam.
+    const whole = render(runDirectory, history.rows, state.rows, log.rows, unreadable);
     for (const [name, code] of Object.entries(unreadable)) {
       const key = `${runDirectory}\0${name}`;
       if (declaredUnreadable.get(key) === code) continue;
@@ -272,7 +276,7 @@ export function renderCurrentSync(runDirectory: string): void {
       process.stderr.write(`[run-dossier] ${detail}: ${runDirectory}\n`);
       declaredUnreadable.set(key, code);
     }
-    writeWhole(runDirectory, render(runDirectory, history.rows, state.rows, log.rows, unreadable));
+    writeWhole(runDirectory, whole);
     // Growth uses physical bytes; a malformed diagnostic must not skip the check.
     const grew = [history, state, log].some((file, index) => file.fault === undefined && fileBytes(paths[index]!) !== file.bytes);
     if (!grew) return;
