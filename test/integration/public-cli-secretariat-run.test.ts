@@ -715,6 +715,63 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
   });
 });
 
+test("#1165 secretariat --attach hands caller path to court diarist as-is", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const relativeAttach = "notes/sec-attach.md";
+    await mkdir(join(project, "notes"), { recursive: true });
+    await writeFile(join(project, relativeAttach), "sec material", "utf8");
+    const gateCalls: Array<{ kind: string }> = [];
+    const diaristRunDirectories: string[] = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls,
+      diaristRunDirectories,
+      submissionGateHost: "codex",
+      parentDiaristRunner: courtDiaristFor924(),
+      countersignSequence: [{ details: { status: "converged", note: "署" } }],
+      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+    });
+    const result = await runAkRole(
+      [
+        "secretariat",
+        "--model", "test/caller-seat:high",
+        "--project", project,
+        "--attach", relativeAttach,
+        "请辨认并建立本票。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => "01a0sec1165-0000-7000-8000-000000000001",
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(diaristRunDirectories.length, 1, "secretariat must summon court diarist");
+
+    // After ticket bind the diarist run leaves unbound/; read the relocated admitted page.
+    const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    const diaristLeaves = (await readdir(join(book, "924", "runs")))
+      .filter((name) => name.endsWith("@diarist"));
+    assert.equal(diaristLeaves.length, 1);
+    const diaristAdmitted = readCurrentSection(
+      join(book, "924", "runs", diaristLeaves[0]!),
+      "admitted",
+    ) as { attachments: Array<{ path: string }> };
+    assert.deepEqual(
+      diaristAdmitted.attachments.map((attachment) => attachment.path),
+      [relativeAttach],
+    );
+  });
+});
+
 for (const preliminaryTicket of [null, 923] as const) {
   test(`Secretariat's submitted issue follows preliminary ${preliminaryTicket ?? "unbound"} diarist identity`, async () => {
   await withTempHome(async (home) => {

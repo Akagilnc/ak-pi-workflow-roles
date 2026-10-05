@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
@@ -22,12 +21,10 @@ import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./
 import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
-  freezeAttachmentsIntoRun,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
-import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 import {
@@ -135,10 +132,11 @@ function projectRelocatedTurnIdentity(
   mutableRequest.principal = admitted.principal;
   const activation = mutableRequest.activation;
   if (isRecord(activation)) {
-    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath", "requestManifestPath"] as const) {
+    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath"] as const) {
       const record = activation as Record<string, unknown>;
       if (field in record) record[field] = rewrite(record[field]);
     }
+    // #1165: activation.requestManifestPath is a caller path — do not rewrite.
   }
   if (result.terminal !== undefined) {
     for (const artifact of result.terminal.artifacts) {
@@ -1476,7 +1474,7 @@ export function resumeTurnRequestProjectionOptions(
   summonsPrepared?: {
     readonly instruction: string;
     readonly instructionEmpty: boolean;
-    readonly attachments: readonly { frozenPath: string }[];
+    readonly attachments: readonly { path: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
   // #879: officer dialogue content is caller/peer words only — no「请重读」,
@@ -1487,7 +1485,7 @@ export function resumeTurnRequestProjectionOptions(
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words.
-      // #879 station-child officer: words only (attachments are independent freeze).
+      // #879 station-child officer: words only (paths remain on summons materials).
       prompt = officerDialogue
         ? request.message
         : buildInstructionTransportPrompt({
@@ -1504,8 +1502,10 @@ export function resumeTurnRequestProjectionOptions(
   } else if (summonsPrepared !== undefined) {
     // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
     // Other seats keep #755 instruction + optional attachment path listing.
+    // #1165 J3: officer dialogue is raw instruction bytes; do not gate on
+    // instructionEmpty metadata (resume of older admitted pages).
     prompt = officerDialogue
-      ? (summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction)
+      ? summonsPrepared.instruction
       : buildInstructionTransportPrompt(summonsPrepared);
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
@@ -1634,31 +1634,17 @@ async function runSettledAutoResumeLoop<
   });
 }
 
-function isAlreadyFrozenSummonsAttachment(
-  runDirectory: string,
-  attachmentPath: string,
-): boolean {
-  const absolute = isAbsolute(attachmentPath)
-    ? attachmentPath
-    : resolve(attachmentPath);
-  return pathContainedIn(join(runDirectory, "attachments"), absolute);
-}
-
 /**
- * Freeze same-ticket summons attachments into the retained run directory (#637).
- * No-op materials (no paths / instruction-only) skip the freeze.
- * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them for the same internal re-summons flow.
- * Manual resume never calls this — old attachment semantics stay intact.
+ * Same-ticket summons materials: caller paths as-is (#1165). No copy or freeze.
  */
 export async function prepareSummonsResumeMaterials(
-  runDirectory: string,
+  _runDirectory: string,
   summons: SameTicketSummonsMaterials | undefined,
 ): Promise<
   | {
       readonly instruction: string;
       readonly instructionEmpty: boolean;
-      readonly attachments: readonly { frozenPath: string }[];
+      readonly attachments: readonly { path: string }[];
     }
   | undefined
 > {
@@ -1668,16 +1654,8 @@ export async function prepareSummonsResumeMaterials(
   }
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
-    summons.instructionEmpty ?? instruction.trim() === "";
-  let attachments: readonly { frozenPath: string }[] = [];
-  if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
-    const alreadyFrozen = summons.attachmentPaths.every((path) =>
-      isAlreadyFrozenSummonsAttachment(runDirectory, path),
-    );
-    attachments = alreadyFrozen
-      ? summons.attachmentPaths.map((frozenPath) => ({ frozenPath }))
-      : await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
-  }
+    summons.instructionEmpty ?? instruction.length === 0;
+  const attachments = (summons.attachmentPaths ?? []).map((path) => ({ path }));
   return { instruction, instructionEmpty, attachments };
 }
 
@@ -1775,28 +1753,6 @@ export async function runPostAdmissionSeatResume<
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
             openCourtAttemptId = openCourt.courtAttemptId;
-          }
-        }
-
-        // Internal re-summons freezes external paths once and records that identity.
-        if (request.summons !== undefined) {
-          const prepared = await prepareSummonsResumeMaterials(
-            admittedForBuild.runDirectory,
-            request.summons,
-          );
-          if (
-            prepared !== undefined &&
-            (request.summons.attachmentPaths?.length ?? 0) > 0
-          ) {
-            request = {
-              ...request,
-              summons: {
-                ...request.summons,
-                attachmentPaths: prepared.attachments.map(
-                  (attachment) => attachment.frozenPath,
-                ),
-              },
-            };
           }
         }
 

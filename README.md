@@ -23,6 +23,8 @@ Public entry and result delivery: [ADR 0052](https://github.com/Akagilnc/ak-pi-w
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
+`--attach` and collector `--request-manifest` pass the caller path as-is into the role's first message. The package does not read, copy, or validate the file; when the caller's cwd differs from `--project`, pass an absolute path ([ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)).
+
 Exit status and Terminal semantics: [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md), [Terminal implementation](src/public-cli/terminal.ts).
 
 Manual continuation and flag placement: `ak-role help resume`; model / host resolution: `ak-role help`; engine configuration: `ak-role help config`. Audit continuation: [ADR 0003](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0003-per-role-submission-tools.md). Host switching and prior-record delivery: [ADR 0086](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md). Resume failure handling: [public execution seam](src/public-cli/post-admission.ts). Headless turn-input directory cleanup after a host terminal (or beside a setup failure that is rethrown) retains the cleanup cause via package-fault retention and continues; it does not invent a host failure or abort an already-formed terminal ([headless host](src/headless-host/role-turn-host.ts)).

@@ -119,7 +119,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         repository: admitted.repository as string,
         prNumber: admitted.prNumber as number,
         prState: "OPEN",
-        manifestDigest: admitted.manifestDigest as string,
+        manifestDigest: "role-submitted-optional",
         groups: [],
       }) satisfies CollectorReceipt,
   },

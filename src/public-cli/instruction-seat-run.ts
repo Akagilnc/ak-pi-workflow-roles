@@ -48,7 +48,6 @@ import {
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
-  withPreparedAttachments,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
@@ -618,7 +617,7 @@ async function runCountersignBody(
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.trim() === "",
+        instructionEmpty: resumeInstruction.length === 0,
       },
     });
     if (resumed != null) return resumed;
@@ -634,12 +633,12 @@ async function runCountersignBody(
   }
 
   try {
-    return await withPreparedAttachments(parsed.attachmentPaths ?? [], async (preparedAttachments) => {
+    {
       const materializeAdmission = async (ticketNumber?: number): Promise<void> => {
         await materializeCountersignInvocation(admitted, {
           home: env.home,
           principalAuthority: env.principalAuthority,
-          preparedAttachments,
+          attachmentPaths: parsed.attachmentPaths ?? [],
           ...(env.model === undefined ? {} : { model: env.model }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         });
@@ -676,7 +675,7 @@ async function runCountersignBody(
       });
       await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
       return result;
-    });
+    }
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -749,7 +748,7 @@ export async function runPublicInstructionSeat(
     const summons: SameTicketSummonsMaterials = {
       ...sameParentInstruction(env, {
         instruction: parsed.instruction ?? "",
-        instructionEmpty: (parsed.instruction ?? "").trim() === "",
+        instructionEmpty: (parsed.instruction ?? "").length === 0,
       }),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
@@ -775,7 +774,7 @@ export async function runPublicInstructionSeat(
         sourceRunPath: parentRunPath,
         ...sameParentInstruction(env, {
           instruction: parsed.instruction ?? "",
-          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+          instructionEmpty: (parsed.instruction ?? "").length === 0,
         }),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };
@@ -865,7 +864,7 @@ export async function runPublicInstructionSeat(
           instruction: parsed.instruction ?? "",
           projectRoot: admitted.projectRoot,
           failureLabel: "secretariat unbound summons",
-          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.path),
           correlationId: admitted.runId,
         }, env, io);
       } catch (error) {

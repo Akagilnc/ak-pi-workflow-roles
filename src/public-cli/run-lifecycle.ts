@@ -53,6 +53,7 @@ import {
   type AdmittedRoleInvocation,
   type CoderPhase,
   type DerivedMergerEnvelope,
+  normalizeAdmittedAttachment,
   type FrozenAttachment,
   type InvocationEffectiveModel,
   type ReviewerLens,
@@ -183,7 +184,7 @@ function parseSameTicketSummonsMaterials(
   const instructionEmpty =
     typeof record.instructionEmpty === "boolean" ? record.instructionEmpty : undefined;
   const attachmentPaths = Array.isArray(record.attachmentPaths)
-    ? record.attachmentPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+    ? record.attachmentPaths.filter((p): p is string => typeof p === "string")
     : undefined;
   const sourceRunPath =
     typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
@@ -1007,7 +1008,6 @@ type LoadedAdmittedRequestFields = {
   readonly repository?: string;
   readonly repositoryDisplay?: string;
   readonly requestManifestPath?: string;
-  readonly manifestDigest?: string;
   /** Collector wait-window ms restored on resume (#678). */
   readonly waitWindowMs?: number;
   /** Doctor — admitted single-case identity restored on resume (#633). */
@@ -1096,7 +1096,6 @@ async function loadResumableRunRecord(
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
   let requestManifestPath: string | undefined;
-  let manifestDigest: string | undefined;
   let waitWindowMs: number | undefined;
   let issueNumber: number | undefined;
   let caseRunsPath: string | undefined;
@@ -1122,7 +1121,9 @@ async function loadResumableRunRecord(
         instructionEmpty = record.instructionEmpty;
       }
       if (Array.isArray(record.attachments)) {
-        attachments = record.attachments as FrozenAttachment[];
+        attachments = record.attachments
+          .map((item) => normalizeAdmittedAttachment(item))
+          .filter((item): item is FrozenAttachment => item !== undefined);
       }
       if (record.phase === "plan" || record.phase === "apply") {
         phase = record.phase;
@@ -1161,11 +1162,9 @@ async function loadResumableRunRecord(
       if (typeof record.repositoryDisplay === "string" && record.repositoryDisplay.trim() !== "") {
         repositoryDisplay = record.repositoryDisplay;
       }
-      if (typeof record.requestManifestPath === "string" && record.requestManifestPath.trim() !== "") {
+      // #1165: opaque caller path on resume — do not trim-filter provided values.
+      if (typeof record.requestManifestPath === "string") {
         requestManifestPath = record.requestManifestPath;
-      }
-      if (typeof record.manifestDigest === "string" && record.manifestDigest.trim() !== "") {
-        manifestDigest = record.manifestDigest;
       }
       if (typeof record.waitWindowMs === "number" && Number.isSafeInteger(record.waitWindowMs) && record.waitWindowMs >= 1) {
         waitWindowMs = record.waitWindowMs;
@@ -1335,7 +1334,6 @@ async function loadResumableRunRecord(
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
       ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-      ...(manifestDigest === undefined ? {} : { manifestDigest }),
       ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
       ...(issueNumber === undefined ? {} : { issueNumber }),
       ...(caseRunsPath === undefined ? {} : { caseRunsPath }),
@@ -1575,12 +1573,8 @@ function admitResumedRole(loaded: {
       return admitted;
     }
     case "collect-target": {
-      const { prNumber, repository, repositoryDisplay, manifestDigest } = fields;
-      if (
-        repository === undefined ||
-        repositoryDisplay === undefined ||
-        manifestDigest === undefined
-      ) {
+      const { prNumber, repository, repositoryDisplay } = fields;
+      if (repository === undefined || repositoryDisplay === undefined) {
         throw new CliUsageError(
           `role run admitted collector repository identity is missing: ${runId}`,
         );
@@ -1606,7 +1600,6 @@ function admitResumedRole(loaded: {
           ? {}
           : { requestManifestPath: fields.requestManifestPath }),
         ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
-        manifestDigest,
       };
       return admitted;
     }

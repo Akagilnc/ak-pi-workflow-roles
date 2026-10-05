@@ -18,7 +18,6 @@ import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
 
-import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
@@ -137,12 +136,11 @@ async function seedDoctorIssue(home: string, project: string, issueNumber: numbe
 }
 
 function collectorReceipt() {
-  const manifest = emptyCollectorManifest();
   return {
     host: "github.com" as const,
     repository: "acme/widgets",
     prNumber: 3,
-    manifestDigest: manifest.digest,
+    manifestDigest: "role-submitted-optional",
     groups: [] as Array<Record<string, unknown>>,
   };
 }

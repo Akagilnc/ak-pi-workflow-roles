@@ -200,14 +200,14 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
- * #1161: what a run directory may hold at rest — the dossier files, the session volume,
- * `attachments/` when something was frozen, and the seat's frozen input files — and none of the
- * retired names.
+ * #1161 / #1165: what a run directory may hold at rest — the dossier files, the session volume,
+ * and seat input files still written at admission — and none of the retired names.
+ * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
 export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
   const allowed = new Set([
-    "current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session", "attachments",
-    "task.md", "fix-packet.md", "prerequisites.json", "request-manifest.json", "merger-input.json",
+    "current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session",
+    "task.md", "fix-packet.md", "prerequisites.json", "merger-input.json",
   ]);
   for (const entry of readdirSync(runDirectory)) {
     assert.equal(allowed.has(entry), true, `unexpected run directory entry: ${entry}`);
