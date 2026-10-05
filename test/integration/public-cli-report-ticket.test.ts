@@ -38,7 +38,6 @@ import {
   lockCurrentJson,
   readCurrentSection,
   seedCurrentSection,
-  seedTerminal,
 } from "../helpers/run-dossier-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
@@ -57,7 +56,6 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { bookDirectOfficerRunPointer } from "../../src/archivist-record-pointer.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 
@@ -1042,88 +1040,63 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
           // on the same leg may seal meanwhile — ownership must not invent a
           // substitute from that foreign seal. Audit-continue silence paths
           // (R4a/R5) keep plain silence; their necessary inputs stay separate.
-          // F2-R8: same foreign-court seal plus a台院 pass bound to that foreign
-          // toolCallId — original audit must not borrow the pass (distinct court
-          // id; do not nest a second public resume into the open soft-reask court).
+          // F2-R8: another public resume seals foreign-volume and passes台院 —
+          // reuse the existing public-entry seam (no hand-crafted inspector pages).
           if (input.inspectorContinuesOnce !== true) {
-            const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
-            await sealAcceptedSubmission({
-              cwd: project,
-              home,
-              runId,
-              role: "fixer",
-              runDirectory,
-              courtAttemptId: "foreign-court-other-public-call",
-              toolCallId: "call_fixer_foreign_court",
-              details: {
-                ...FIXER_DONE,
-                report: input.foreignCourtPassesAudit === true
-                  ? "foreign-volume"
-                  : "foreign-court-volume",
-              },
-            });
             if (input.foreignCourtPassesAudit === true) {
-              const inspRunId = `${runId}-foreign-insp`;
-              const inspDir = unboundLeaf(home, bookKey, inspRunId, "inspector");
-              await mkdir(sessionDirectoryOf(inspDir), { recursive: true });
-              seedCurrentSection(inspDir, "invocation", {
-                role: "inspector",
-                runId: inspRunId,
-                bookKey,
-                projectRoot: project,
-                runDirectory: inspDir,
-                host: "pi",
-                provider: "test",
-                model: "caller-seat",
+              const foreignHost = roleTurnHostFromLegacyPiRunner({
+                packageRoot,
+                principalAuthority: piDurablePrincipalAuthority,
+                piRunner: async (foreignArgs, foreignOptions) => {
+                  const foreignRole = foreignArgs[foreignArgs.indexOf("--ak-role") + 1]!;
+                  if (foreignRole === "fixer") {
+                    return scriptedTerminatingToolSession({
+                      role: "fixer",
+                      toolName: FIXER_OUTPUT_TOOL_NAME,
+                      details: {
+                        ...FIXER_DONE,
+                        report: "foreign-volume",
+                        ticketNumber: TICKET,
+                      },
+                      toolCallId: "call_fixer_foreign_court",
+                      sessionWriteMode: "append",
+                    })(foreignArgs, foreignOptions);
+                  }
+                  return scriptedTerminatingToolSession({
+                    role: foreignRole as "inspector",
+                    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+                    details: {
+                      status: "converged",
+                      findings: [],
+                      reason: "ok",
+                      ticketNumber: TICKET,
+                    },
+                    toolCallId: "call_inspector_foreign",
+                  })(foreignArgs, foreignOptions);
+                },
               });
-              seedCurrentSection(inspDir, "admitted", {
-                role: "inspector",
-                runId: inspRunId,
-                bookKey,
-                projectRoot: project,
-                runDirectory: inspDir,
-                instruction: "review foreign",
-                instructionEmpty: false,
-                attachments: [],
-                ticketNumber: TICKET,
-                sessionDirectory: sessionDirectoryOf(inspDir),
-                sessionFile: sessionFileOf(inspDir),
-              });
-              seedCurrentSection(inspDir, "runState", {
-                runId: inspRunId,
-                role: "inspector",
-                state: "terminal",
-                bookKey,
-                projectRoot: project,
-                runDirectory: inspDir,
-                sessionDirectory: sessionDirectoryOf(inspDir),
-                sessionFile: sessionFileOf(inspDir),
-              });
+              // Same-run public resume face (`message`) during an open soft-reask
+              // court is adopted as that court's substitute. The proven interleave
+              // seam is summons resume — real seal→audit→settle, distinct court.
+              await runPublicInstructionSeatResume(
+                { runId, summons: { instruction: "manual public continue" } },
+                seatEnv(home, project, runId, "pi", foreignHost),
+                captureIo().io,
+              );
+            } else {
+              const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
               await sealAcceptedSubmission({
                 cwd: project,
                 home,
-                runId: inspRunId,
-                role: "inspector",
-                runDirectory: inspDir,
-                courtAttemptId: "insp-foreign-pass",
-                toolCallId: "call_inspector_foreign",
-                details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
-              });
-              seedTerminal(inspDir, "report", {
-                role: "inspector",
-                runId: inspRunId,
-                outcome: {
-                  kind: "accepted",
-                  role: "inspector",
-                  payloads: [{ status: "converged", findings: [], reason: "ok", ticketNumber: TICKET }],
+                runId,
+                role: "fixer",
+                runDirectory,
+                courtAttemptId: "foreign-court-other-public-call",
+                toolCallId: "call_fixer_foreign_court",
+                details: {
+                  ...FIXER_DONE,
+                  report: "foreign-court-volume",
                 },
-              });
-              bookDirectOfficerRunPointer({
-                parentSessionFile: sessionFileOf(runDirectory),
-                officer: "inspector",
-                sessionFile: sessionFileOf(inspDir),
-                runDirectory: inspDir,
-                submissionToolCallId: "call_fixer_foreign_court",
               });
             }
           }
@@ -1319,13 +1292,18 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     );
   }
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
-  // Foreign-court seal (F2-R7 / F2-R8) writes ledger rows but not attempt-history.
+  // F2-R7 ledger-only foreign seal does not append attempt-history.
+  // F2-R8 real public resume seals foreign-volume → accepted before reask no_receipt.
   const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
     .map((row) => row.outcome?.kind);
   assert.deepEqual(
     attemptKinds,
-    ["accepted", "no_receipt"],
-    `${reask}: attempt history must keep original accepted and append reask no_receipt`,
+    input.foreignCourtPassesAudit === true
+      ? ["accepted", "accepted", "no_receipt"]
+      : ["accepted", "no_receipt"],
+    input.foreignCourtPassesAudit === true
+      ? `${reask}: original, foreign public resume, soft-reask no_receipt`
+      : `${reask}: attempt history must keep original accepted and append reask no_receipt`,
   );
   const durable = readCurrentSection(live!, "terminal") as {
     face?: string;
