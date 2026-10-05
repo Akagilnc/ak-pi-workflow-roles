@@ -343,7 +343,7 @@ test("concurrent envelopes arm detour per request without process.env writes", a
       label: string,
       engine?: string,
     ): Promise<{ socketPath: string; request: RoleTurnRequest }> => {
-      const runDirectory = join(home, label, "run");
+      const runDirectory = ledgerProbeRun(home, `${label}@judge`);
       await mkdir(join(runDirectory, "session"), { recursive: true });
       return {
         socketPath: join(home, `${label}.sock`),
