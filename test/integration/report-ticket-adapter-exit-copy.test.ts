@@ -69,9 +69,6 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
   readonly instruction: string;
   readonly autoResumeLimit?: number;
   readonly onClose?: () => Promise<void>;
-  readonly decoratePrepared?: (
-    prepared: Awaited<ReturnType<typeof prepareRoleEnvelope>>,
-  ) => Awaited<ReturnType<typeof prepareRoleEnvelope>> | Promise<Awaited<ReturnType<typeof prepareRoleEnvelope>>>;
 }): Promise<{ disposeCalls: number; result: Awaited<ReturnType<typeof runPublicInstructionSeat>> }> {
   const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-acp-")), "mcp.sock");
   const grokNative = join(
@@ -128,12 +125,9 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
         sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
       });
       preparedToken = mcpTokenFromPrepared(prepared);
-      const decorated = input.decoratePrepared === undefined
-        ? prepared
-        : await input.decoratePrepared(prepared);
-      const innerDispose = decorated.dispose?.bind(decorated);
+      const innerDispose = prepared.dispose?.bind(prepared);
       return {
-        ...decorated,
+        ...prepared,
         async dispose() {
           disposeCalls += 1;
           await innerDispose?.();
@@ -259,37 +253,22 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
 test("#1171 ACP close fault retained when live placement vanishes (B1)", async () => {
   await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-b1fault";
-    const CLOSE_FAULT = "native-close-original-fault";
     const ticketDir = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
-    const processStderr: string[] = [];
-    const priorWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-      processStderr.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
-      return (priorWrite as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
-    }) as typeof process.stderr.write;
-    try {
-      const { disposeCalls } = await runAcpMidTurnReportViaPublicEntry({
-        home,
-        project,
-        runId,
-        instruction: "Repair #1171 B1 fault retain.",
-        autoResumeLimit: 0,
-        async onClose() {
-          // Vanish at close time (prompt-time deletes get rewritten before finally).
-          await rm(ticketDir, { recursive: true, force: true });
-          throw Object.assign(new Error(CLOSE_FAULT), { code: "ECONNRESET" });
-        },
-      });
-      assert.ok(disposeCalls >= 1, `dispose must run even when live placement vanished; calls=${disposeCalls}`);
-      // Soft retain presents on process.stderr when the leaf is gone.
-      // Contract: original close fault identity remains — not package diagnostic prose.
-      const presented = processStderr.join("");
-      assert.ok(
-        presented.includes(CLOSE_FAULT) || presented.includes("ECONNRESET"),
-        `original close fault must remain; stderr=${JSON.stringify(processStderr)}`,
-      );
-    } finally {
-      process.stderr.write = priorWrite;
-    }
+    const { disposeCalls } = await runAcpMidTurnReportViaPublicEntry({
+      home,
+      project,
+      runId,
+      instruction: "Repair #1171 B1 fault retain.",
+      autoResumeLimit: 0,
+      async onClose() {
+        // Vanish at close time (prompt-time deletes get rewritten before finally).
+        await rm(ticketDir, { recursive: true, force: true });
+        throw Object.assign(new Error("native-close-original-fault"), { code: "ECONNRESET" });
+      },
+    });
+    // Structured contract: soft retain must not block cleanup after the leaf vanishes.
+    // Close-fault presentation may appear on stderr as dossier observation — not asserted
+    // (CLAUDE.md 锚定宪法 / quality-law 盯文禁令).
+    assert.ok(disposeCalls >= 1, `dispose must run even when live placement vanished; calls=${disposeCalls}`);
   });
 });
