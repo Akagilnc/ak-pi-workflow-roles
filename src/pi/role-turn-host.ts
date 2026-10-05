@@ -7,7 +7,7 @@ import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { existsSync } from "node:fs";
 import { access, appendFile, realpath } from "node:fs/promises";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -28,37 +28,16 @@ import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { readLedgerSessionJsonlLines, readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 import { copyAndRecordHostDossier } from "../host-session-record.ts";
-import { syncTurnRequestLivePlacement } from "../external-host-turn-loop.ts";
-import { tryBookKeyFromAkRolesPath, homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import {
+  resolveLiveRunDirectoryPath,
+  syncTurnRequestLivePlacement,
+} from "../external-host-turn-loop.ts";
+import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
-import { describeErrorIdentity, findRunDirectoryById } from "../public-cli/run-lifecycle.ts";
+import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
-import { parseRunLeaf } from "../role-run-placement.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
 import { sitianReport } from "../sitian-facade.ts";
-
-/**
- * #1171 F4: mid-turn report may have renamed the spawn-time unbound leaf.
- * Fault notes must follow the live run id, not revive the vanished path.
- */
-async function liveRunDirectoryForPackageFault(
-  spawnRunDirectory: string | undefined,
-): Promise<string | undefined> {
-  if (typeof spawnRunDirectory !== "string" || spawnRunDirectory.trim() === "") {
-    return undefined;
-  }
-  if (existsSync(spawnRunDirectory)) return spawnRunDirectory;
-  const parsed = parseRunLeaf(basename(spawnRunDirectory));
-  const bookKey = tryBookKeyFromAkRolesPath(spawnRunDirectory);
-  if (parsed === undefined || bookKey === undefined) return spawnRunDirectory;
-  const found = await findRunDirectoryById(
-    homeFromRunDirectory(spawnRunDirectory),
-    parsed.runId,
-    bookKey,
-    parsed.role,
-  );
-  return found ?? spawnRunDirectory;
-}
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -385,9 +364,20 @@ export function createDefaultPiSpawnRunner(options: {
           if (stdinDeliveryError !== undefined) packageErrors.push(stdinDeliveryError);
           for (const error of packageErrors) {
             const diagnostic = `Pi transport handling failed beside host terminal: ${describeErrorIdentity(error)}`;
-            const runDirectory = await liveRunDirectoryForPackageFault(
-              spawnOptions.env.AK_ROLE_RUN_DIR,
-            );
+            // #1171 F4: spawn-time path may have been renamed; reuse
+            // resolveLiveRunDirectoryPath (same authority as syncTurnRequestLivePlacement).
+            const spawnDir = spawnOptions.env.AK_ROLE_RUN_DIR;
+            let runDirectory: string | undefined;
+            if (typeof spawnDir === "string" && spawnDir.trim() !== "") {
+              try {
+                runDirectory = await resolveLiveRunDirectoryPath(
+                  spawnDir,
+                  homeFromRunDirectory(spawnDir),
+                );
+              } catch {
+                runDirectory = existsSync(spawnDir) ? spawnDir : undefined;
+              }
+            }
             if (runDirectory !== undefined) {
               await retainPackageFault({ runDirectory, diagnostic, error });
             } else {

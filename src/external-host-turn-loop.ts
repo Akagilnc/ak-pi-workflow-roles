@@ -23,34 +23,40 @@ import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 /**
- * #1171: mid-turn report-ticket may have moved the leg (envelope HostContext /
- * child process). Prefer the request path when it still exists; otherwise
- * re-locate by run id inside the original book (same seam as post-admission
- * refresh). Mutates the live request so later turn-record / exit-copy / fault
- * notes stay on the new leaf. A vanished path with no replacement must not
- * keep writing under the dead unbound leaf.
+ * #1171: mid-turn report-ticket may have moved the leg. Prefer the recorded
+ * path when it still exists; otherwise re-locate by run id inside the book.
+ * Undefined means vanished and unlocatable — callers must not revive the dead leaf.
+ */
+export async function resolveLiveRunDirectoryPath(
+  recordedPath: string,
+  home: string,
+): Promise<string | undefined> {
+  if (existsSync(recordedPath)) return recordedPath;
+  const parsed = parseRunLeaf(basename(recordedPath));
+  const bookKey = tryBookKeyFromAkRolesPath(recordedPath);
+  if (parsed === undefined || bookKey === undefined) return undefined;
+  return await findRunDirectoryById(
+    home,
+    parsed.runId,
+    bookKey,
+    parsed.role,
+  );
+}
+
+/**
+ * Prefer the request path when it still exists; otherwise re-locate by run id
+ * (resolveLiveRunDirectoryPath). Mutates the live request so later turn-record /
+ * exit-copy / fault notes stay on the new leaf.
  */
 export async function syncTurnRequestLivePlacement(
   request: RoleTurnRequest,
 ): Promise<string> {
-  let live = request.runDirectory;
-  if (!existsSync(live)) {
-    const parsed = parseRunLeaf(basename(live));
-    const bookKey = tryBookKeyFromAkRolesPath(live);
-    const found = parsed === undefined || bookKey === undefined
-      ? undefined
-      : await findRunDirectoryById(
-        request.home,
-        parsed.runId,
-        bookKey,
-        parsed.role,
-      );
-    if (found === undefined) {
-      throw new Error(
-        `admitted run ${parsed?.runId ?? "(unparseable)"} missing after host turn; not found under ${request.home}`,
-      );
-    }
-    live = found;
+  const live = await resolveLiveRunDirectoryPath(request.runDirectory, request.home);
+  if (live === undefined) {
+    const parsed = parseRunLeaf(basename(request.runDirectory));
+    throw new Error(
+      `admitted run ${parsed?.runId ?? "(unparseable)"} missing after host turn; not found under ${request.home}`,
+    );
   }
   if (live !== request.runDirectory) {
     projectTurnRequestLiveRunDirectory(
