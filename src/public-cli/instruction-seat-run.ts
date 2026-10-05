@@ -313,6 +313,9 @@ function reaskSealedSubstituteSubmission(reask: SeatRunResult): boolean {
  * #1171 F2: missing-ticket reask must not replace the original sealed submission
  * unless the reask itself sealed a new one. Keep original terminal; take live
  * placement from the reask when it relocated.
+ * #1171 F2-R1: silence / report-only stays on the original chain; a real host
+ * failure (nonzero exit) must be delivered honestly — do not wash it into the
+ * original accepted result. Sealed original volume remains on disk either way.
  */
 function mergeMissingTicketReask(
   original: SeatRunResult,
@@ -320,6 +323,7 @@ function mergeMissingTicketReask(
 ): SeatRunResult {
   if (ticketReask === undefined) return original;
   if (reaskSealedSubstituteSubmission(ticketReask)) return ticketReask;
+  if (ticketReask.exitCode !== 0) return ticketReask;
   const admitted = ticketReask.admitted ?? original.admitted;
   return admitted === undefined ? { ...original } : { ...original, admitted };
 }
@@ -822,9 +826,9 @@ export async function runPublicInstructionSeat(
     const result = await runCountersignBody(parsed, env, {
       stdout: (value) => held.push(value), stderr: io.stderr,
     });
-    if (result.terminal?.roleOutcome.kind === "accepted") return auditSubmittedRole(result, env, io);
-    await presentOriginalVolume(held, result.terminal, io, result.admitted?.runDirectory);
-    return result;
+    // Same post-submission guards as every other seat (#1171 F8): missing-ticket
+    // soft reask once, then audit — no early return that skips the reask.
+    return continueAfterPostSubmissionGuards(result, "countersign", env, io, held);
   }
 
   if ("parallelLenses" in record && record.parallelLenses === true) {

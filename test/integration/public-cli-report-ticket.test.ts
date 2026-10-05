@@ -15,6 +15,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
@@ -669,50 +670,137 @@ test("#1171 public resume first sealed submit without ticket soft-reasks once", 
 });
 
 test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_DIR", async () => {
-  await withSeatProject(async ({ home, project }) => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000000f1nest";
     const parentUnbound = join(home, ".ak-roles", "books", "parent-book", "unbound", "runs", "parent@fixer");
-    const childUnbound = join(home, ".ak-roles", "books", "child-book", "unbound", "runs", "child@fixer");
-    const childTicket = join(home, ".ak-roles", "books", "child-book", String(TICKET), "runs", "child@fixer");
-    await mkdir(sessionDirectoryOf(childUnbound), { recursive: true });
-    seedCurrentSection(childUnbound, "invocation", {
-      role: "fixer", runId: "child", bookKey: "child-book", projectRoot: project,
-    });
-    seedCurrentSection(childUnbound, "admitted", {
-      role: "fixer", runId: "child", bookKey: "child-book", projectRoot: project,
-    });
+    await mkdir(parentUnbound, { recursive: true });
     const prior = process.env.AK_ROLE_RUN_DIR;
     process.env.AK_ROLE_RUN_DIR = parentUnbound;
     try {
-      const context: HostContext = {
-        cwd: project,
-        mode: "print",
-        model: undefined,
-        runDirectory: childUnbound,
-        sessionManager: {
-          getLeafEntry: () => undefined,
-          getLeafId: () => "child",
-          getEntries: () => [],
-          getSessionDir: () => sessionDirectoryOf(childUnbound),
-          getSessionFile: () => sessionFileOf(childUnbound),
-          setSessionFile() {},
-          appendCustomEntry() {},
+      const host = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          const oldSession = argvFlagValue(args, "--session");
+          const oldSessionDir = argvFlagValue(args, "--session-dir");
+          assert.ok(oldSession && oldSessionDir);
+          const runDirectory = dirname(oldSessionDir);
+          await mkdir(oldSessionDir, { recursive: true });
+          if (!existsSync(oldSession)) {
+            await writeFile(oldSession, "", "utf8");
+          }
+          const sessionManager = SessionManager.open(oldSession, oldSessionDir, options.cwd);
+          const context: HostContext = {
+            cwd: options.cwd,
+            mode: "rpc",
+            model: undefined,
+            runDirectory,
+            sessionManager: {
+              getLeafEntry: () => sessionManager.getLeafEntry(),
+              getLeafId: () => sessionManager.getLeafId(),
+              getEntries: () => sessionManager.getEntries(),
+              getSessionDir: () => sessionManager.getSessionDir(),
+              getSessionFile: () => sessionManager.getSessionFile(),
+              getHeader: () => sessionManager.getHeader(),
+              setSessionFile: (path) => sessionManager.setSessionFile(path),
+              appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
+            },
+            abort() {},
+          };
+          // Parent ambient stays parent; child HostContext owns this turn's leaf.
+          assert.equal(process.env.AK_ROLE_RUN_DIR, parentUnbound);
+          const reported = await reportTicketFromHostContext(context, TICKET);
+          assert.equal(reported.relocated, true);
+          assert.equal(
+            process.env.AK_ROLE_RUN_DIR,
+            parentUnbound,
+            "parent ambient env must stay parent when child relocates",
+          );
+          assert.equal(context.runDirectory, ticketLeaf(home, bookKey, TICKET, runId, "fixer"));
+          const newSession = sessionManager.getSessionFile();
+          assert.ok(newSession && newSession.includes(`/${TICKET}/`));
+          options.env.AK_ROLE_RUN_DIR = context.runDirectory;
+          const patched = args.flatMap((arg, i) => {
+            if (args[i - 1] === "--session") return [newSession];
+            if (args[i - 1] === "--session-dir") return [dirname(newSession)];
+            return [arg];
+          });
+          return scriptedTerminatingToolSession({
+            role: "fixer",
+            toolName: FIXER_OUTPUT_TOOL_NAME,
+            details: { ...FIXER_DONE },
+            sessionWriteMode: "append",
+          })(patched, options);
         },
-        abort() {},
-      };
-      const reported = await reportTicketFromHostContext(context, TICKET);
-      assert.equal(reported.relocated, true);
-      assert.equal(context.runDirectory, childTicket);
-      assert.equal(
-        process.env.AK_ROLE_RUN_DIR,
-        parentUnbound,
-        "parent ambient env must stay parent when child relocates",
+      }));
+      const result = await runPublicInstructionSeat(
+        ["apply", "Child report under foreign ambient."],
+        seatEnv(home, project, runId, "pi", host),
+        captureIo().io,
+        "fixer",
+        (args) => parsePublicSeatArgv("fixer", args),
       );
-      assert.equal(existsSync(childUnbound), false);
-      assert.equal(existsSync(childTicket), true);
+      assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
+      assert.equal(process.env.AK_ROLE_RUN_DIR, parentUnbound);
+      assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
+      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     } finally {
       if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = prior;
     }
+  });
+});
+
+test("#1171 F2-R1 reask host failure keeps original volume but delivers nonzero exit", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000000f2fail";
+    const roles: string[] = [];
+    const parent = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1]!;
+        roles.push(role);
+        if (role === "fixer") {
+          const turn = roles.filter((r) => r === "fixer").length;
+          if (turn === 1) {
+            return scriptedTerminatingToolSession({
+              role: "fixer",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              details: { ...FIXER_DONE },
+            })(args, options);
+          }
+          // Soft reask: real host failure — no substitute sealed submission.
+          return { code: 7, stderr: "injected reask host failure", timedOut: false };
+        }
+        return scriptedTerminatingToolSession({
+          role: role as "inspector",
+          toolName: "ak_submission_output",
+          details: { status: "converged", findings: [], reason: "ok" },
+        })(args, options);
+      },
+    });
+    const result = await runPublicInstructionSeat(
+      ["apply", "Repair without ticket; reask host fails."],
+      seatEnv(home, project, runId, "pi", parent),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(roles.filter((r) => r === "fixer").length, 2, "must soft-reask once");
+    assert.notEqual(result.exitCode, 0, "real reask failure must not wash to exit 0");
+    assert.notEqual(
+      result.terminal?.roleOutcome.kind,
+      "accepted",
+      "must not present washed accepted over a failed reask",
+    );
+    assert.equal(
+      roles.includes("inspector"),
+      false,
+      "failed reask must not continue into audit as accepted",
+    );
+    // Original sealed volume remains under unbound (no ticket reported).
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
   });
 });
 
@@ -810,6 +898,49 @@ test("#1171 F3 status-reask exhaustion still issues missing-ticket reask once", 
     );
     assert.ok(scripted.turns >= 3, `missing-ticket reask must run after status budget; turns=${scripted.turns}`);
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
+    assert.equal(result.admitted?.ticketNumber, TICKET);
+  });
+});
+
+test("#1171 F8 countersign unbound seal soft-reasks missing ticket once", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000000f8ask";
+    let countersignTurns = 0;
+    let notaryTurns = 0;
+    const countersignHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        countersignTurns += 1;
+        return scriptedTerminatingToolSession({
+          role: "countersign",
+          toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+          details: countersignTurns === 1
+            ? { status: "converged", note: "no ticket first" }
+            : { status: "converged", note: "after reask", ticketNumber: TICKET },
+          ...(countersignTurns === 1 ? {} : { sessionWriteMode: "append" as const }),
+        })(args, options);
+      },
+    });
+    const review = withPassingReviewHost(countersignHost);
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.activation.role === "notary") notaryTurns += 1;
+        return review.executeTurn(request);
+      },
+    };
+    const result = await runPublicInstructionSeat(
+      ["裁：无号卷须补问一次。"],
+      seatEnv(home, project, runId, "pi", host),
+      captureIo().io,
+      "countersign",
+      (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.equal(countersignTurns, 2, "exactly one soft reask turn");
+    assert.ok(notaryTurns >= 1, "after reask the sealed volume still enters audit");
+    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "countersign")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
   });
 });
