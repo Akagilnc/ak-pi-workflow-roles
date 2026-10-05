@@ -8,7 +8,6 @@ import {
 } from "../../src/notary-contracts.ts";
 import {
   createNotaryRoleRuntime,
-  projectNotaryAuditedRunIdentity,
   projectNotaryBoundFromFlags,
   readNotaryTicketFlag,
 } from "../../src/notary-role.ts";
@@ -85,7 +84,7 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   assert.ok(h.beforeStart());
 });
 
-test("Notary agent-start projects audited-run identity into readingMaterial", async () => {
+test("Notary agent-start projects audited-run identity exactly (no path)", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -97,31 +96,11 @@ test("Notary agent-start projects audited-run identity into readingMaterial", as
   await runtime.activate({ ticketNumber: 582 });
   const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
     systemPrompt?: string;
-    readingMaterial?: ReturnType<typeof projectNotaryAuditedRunIdentity>;
+    readingMaterial?: { kind: string; identity: string };
   };
   assert.equal(typeof result.systemPrompt, "string");
-  assert.deepEqual(
-    result.readingMaterial,
-    projectNotaryAuditedRunIdentity({ sourceRun: LOCATOR }),
-  );
-  assert.equal(result.readingMaterial?.identity, `${LOCATOR.runId}@${LOCATOR.role}`);
-});
-
-test("Notary agent-start identity omits directory path", async () => {
-  const h = notaryHarness();
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    { failInfrastructure(error) { throw error; } },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  await runtime.activate();
-  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    readingMaterial?: ReturnType<typeof projectNotaryAuditedRunIdentity>;
-  };
-  assert.deepEqual(
-    result.readingMaterial,
-    projectNotaryAuditedRunIdentity({ sourceRun: LOCATOR }),
-  );
-  assert.equal(JSON.stringify(result.readingMaterial).includes(LOCATOR.runDirectory), false);
+  assert.deepEqual(result.readingMaterial, {
+    kind: "audited-run-identity",
+    identity: `${LOCATOR.runId}@${LOCATOR.role}`,
+  });
 });

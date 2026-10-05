@@ -94,6 +94,11 @@ async function listMcpToolNames(
     .filter((name): name is string => typeof name === "string");
 }
 
+/** Same ledger-local run leaf as createTempPackageHomeLedger / #818 withEnvelopeHome. */
+function ledgerProbeRun(home: string, leaf: string): string {
+  return join(home, ".ak-roles", "books", "probe", "runs", leaf);
+}
+
 async function withEnvelopeHome<T>(
   run: (input: {
     home: string;
@@ -104,7 +109,7 @@ async function withEnvelopeHome<T>(
 ): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-818-envelope-engine-"));
   try {
-    const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-818@judge");
+    const runDirectory = ledgerProbeRun(home, "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
     // stationChild: real envelope without automatic Navigator attendance.
@@ -426,7 +431,7 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
   const home = await mkdtemp(join(tmpdir(), "ak-1092-envelope-no-dossier-"));
   try {
     const mkRun = async (label: string, courtAttemptId: string) => {
-      const runDirectory = join(home, label, "run");
+      const runDirectory = ledgerProbeRun(home, `${label}@judge`);
       // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).
       const freezeDir = join(runDirectory, "attachments", "case-dossier");
       await mkdir(freezeDir, { recursive: true });
@@ -523,7 +528,7 @@ test("#879 inspector first mint: parent path on activation, payload stays dialog
 test("#879/#1166 inspector audited-run identity rides readingMaterial, not prompt", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-879-inspector-bind-"));
   const parentRun = await seedCanonicalSourceRun(home, packageRoot);
-  const runDirectory = join(home, "run");
+  const runDirectory = ledgerProbeRun(home, "run-inspector@inspector");
   await mkdir(join(runDirectory, "session"), { recursive: true });
   const request = buildInstructionSeatTurnRequest(
     {
@@ -557,7 +562,6 @@ test("#879/#1166 inspector audited-run identity rides readingMaterial, not promp
       kind: "audited-run-identity",
       identity: `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
     });
-    assert.equal(JSON.stringify(bindings[0]).includes(parentRun), false);
   } finally {
     await prepared.dispose?.();
     await rm(home, { recursive: true, force: true });
@@ -575,7 +579,7 @@ test("#879 station-child officer engine material stays off dialogue", async () =
   ];
   try {
     for (const activation of seats) {
-      const runDirectory = join(home, activation.role, "run");
+      const runDirectory = ledgerProbeRun(home, `${activation.role}-engine@${activation.role}`);
       await mkdir(join(runDirectory, "session"), { recursive: true });
       const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
       if (activation.role === "auditor") {
