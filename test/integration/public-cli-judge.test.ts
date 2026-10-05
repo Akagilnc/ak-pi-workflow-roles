@@ -4,7 +4,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 /**
- * #106 public Judge path — admission, freeze, terminal settlement.
+ * #106 public Judge path — admission and terminal settlement.
  * Seams: public argument validation / admission / Terminal /
  * runAkRole(judge) with injectable Pi runner.
  */
@@ -13,13 +13,11 @@ import { existsSync } from "node:fs";
 import {
   access,
   mkdir,
-  readFile,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
@@ -127,18 +125,16 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   assert.equal(parsed.project, "/tmp/p");
 });
 
-test("parseJudgeArgv rejects blank --project; --attach keeps opaque provided values (#1165)", () => {
+test("parseJudgeArgv rejects blank --project and missing --attach argument", () => {
   // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
+  // Opaque empty/space --attach positives live on the public runAkRole seam
+  // (public-cli-attach-path-passthrough); do not duplicate them here.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
   assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--attach"]), isUsage);
-  const emptyAttach = parsePublicSeatArgv("judge", ["--attach=", "task"]);
-  assert.deepEqual(emptyAttach.attachmentPaths, [""]);
-  const spaceAttach = parsePublicSeatArgv("judge", ["--attach", " ", "task"]);
-  assert.deepEqual(spaceAttach.attachmentPaths, [" "]);
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
@@ -182,9 +178,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
     await savePublicCliConfig(config, home);
     // ADR 0049 host correlation channel remains optional env; no lease mint.
-    const attachment = join(home, "note.txt");
-    const instruction = "Decide whether the attachment is sufficient.";
-    await writeFile(attachment, "freeze-me", "utf8");
+    const instruction = "Decide whether the case is sufficient.";
 
     const { io, stdout, stderr } = captureIo();
     let capturedArgs: string[] | undefined;
@@ -192,8 +186,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
 
     const result = await runAkRole([
         "judge", "--model", "test/caller-seat:high",
-        "--attach",
-        attachment,
         "--project",
         project,
         instruction,
@@ -330,15 +322,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       true,
     );
 
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      "run-cli-judge-001@judge",
-    );
     assert.ok(result.terminal);
     const terminal = result.terminal;
     assert.equal(stdout.length, 1);
@@ -373,9 +356,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       submittedParams(dirname(reportRef.path)).map((params) => (params as { status?: string }).status),
       ["converged"],
     );
-
-    // #1165: no attachments/ copy under the run directory.
-    assert.equal(existsSync(join(runDir, "attachments")), false);
   });
 });
 

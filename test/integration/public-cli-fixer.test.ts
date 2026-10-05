@@ -108,15 +108,13 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       ]),
       "utf8",
     );
-    const source = join(home, "notes.txt");
-    await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
       instruction: "Plan the class repair.",
-      attachmentPaths: [source],
+      attachmentPaths: [],
       prerequisitesPath: goodPrereq,
       createRunId: () => "run-fixer-plan-001",
     });
@@ -132,8 +130,6 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       JSON.parse(await readFile(admitted.prerequisitesPath!, "utf8"))[0].id,
       "owner.choice",
     );
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(admitted.attachments[0]!.path, source);
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(

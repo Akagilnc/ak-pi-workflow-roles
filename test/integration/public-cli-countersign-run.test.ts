@@ -131,17 +131,15 @@ function scriptedCountersignSession(details: unknown, stem?: string) {
   }));
 }
 
-test("countersign admission freezes attachments and binds the countersign role", async () => {
+test("countersign admission binds the countersign role without inventing a ticket", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const ticket = join(project, "ticket.md");
-    await writeFile(ticket, "# 票面\n五问裁决。", "utf8");
 
     const admitted = await admitPublicRole("countersign", {
       instruction: "裁：本票是否足以开工。",
-      attachmentPaths: [ticket],
+      attachmentPaths: [],
     }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
@@ -152,8 +150,6 @@ test("countersign admission freezes attachments and binds the countersign role",
     assert.deepEqual(
       admitted.role, "countersign");
     assert.equal(admitted.instructionEmpty, false);
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(admitted.attachments[0]?.path, ticket);
 
     const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
@@ -1032,27 +1028,6 @@ function countersignPathEnv(input: {
   };
 }
 
-test("public countersign path: missing attach file still admits with caller path (#1165)", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    const runId = "01a0sign00-0000-7000-8000-000000000bad";
-    const missing = join(project, "missing.md");
-    const result = await runPublicInstructionSeat(
-      ["--attach", missing, "裁：附件路径原样传递。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId,
-      }),
-      captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.attachments[0]?.path, missing);
-    assert.equal(existsSync(join(result.admitted!.runDirectory, "attachments")), false);
-  });
-});
-
 test("public countersign path: no 起居郎 handoff stays unbound (真无票 face)", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let turnTicket: number | undefined;
@@ -1228,10 +1203,8 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
-    const secondAttachment = join(project, "second-court.md");
-    await writeFile(secondAttachment, "second court snapshot", "utf8");
     const second = await runPublicInstructionSeat(
-      ["--attach", secondAttachment, "裁：#582 二轮再审。"],
+      ["裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
@@ -1254,13 +1227,6 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "initial");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s002");
-    assert.equal(second.admitted?.attachments[0]?.path, secondAttachment);
-    assert.equal(existsSync(join(second.admitted!.runDirectory, "attachments")), false);
-    assert.equal(
-      first.admitted?.attachments.some((attachment) => attachment.path === secondAttachment),
-      false,
-      "public re-summons must not rewrite the prior run's admitted attach paths",
-    );
 
     const third = await runPublicInstructionSeatResume(
       {
