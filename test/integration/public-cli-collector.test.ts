@@ -10,7 +10,6 @@ import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
-import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { admitPublicRole, parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
@@ -21,13 +20,13 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 
 function receipt(overrides: Record<string, unknown> = {}) {
-  const manifest = emptyCollectorManifest();
   return {
     host: "github.com",
     repository: "acme/widgets",
     prNumber: 1168,
     prState: "OPEN",
-    manifestDigest: manifest.digest,
+    // Open receipt field may still be submitted by the role; package does not invent it.
+    manifestDigest: "role-submitted-optional",
     groups: [{
       identity: { userType: "Bot", userId: 199175422 },
       displayLogin: "chatgpt-codex-connector[bot]",
@@ -81,41 +80,6 @@ test("typed groups travel from real output settlement into the report artifact",
     const submitted = submittedParams(dirname(reportPath)) as readonly { groups?: unknown[] }[];
     assert.deepEqual(submitted[0]?.groups, receipt().groups);
     assert.equal(stdout.length > 0, true);
-  });
-});
-
-test("#1088 public --request-manifest accepts semantic requests and rejects invalid input", async () => {
-  await withTempRoot("collector-manifest-admit-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project);
-    seedProject(project);
-    const good = join(home, "requests.json");
-    await writeFile(good, JSON.stringify({ requests: [{ id: "codex", body: "@codex review" }] }));
-    let invocation = 0;
-    const invoke = (path: string) => runAkRole([
-      "collector", "--model", "test/caller-seat:high", "--pr", "42", "--repo", "acme/widgets",
-      "--request-manifest", path, "--project", project,
-    ], {
-      packageRoot, home, cwd: project,
-      credentials: { "openai-codex": true, xai: false },
-      createRunId: () => `collector-manifest-${++invocation}`,
-      io: { stdout: () => undefined, stderr: () => undefined },
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot, principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          const details = receipt();
-          await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
-          return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
-        },
-      }),
-    });
-    assert.equal((await invoke(good)).exitCode, 0);
-    const bad = join(home, "bad.json");
-    for (const bytes of ["{ not json", Buffer.from([0xff]), JSON.stringify({ requests: [{}] })]) {
-      await writeFile(bad, bytes);
-      assert.equal((await invoke(bad)).exitCode, 2);
-    }
   });
 });
 

@@ -10,7 +10,6 @@ import test from "node:test";
 
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { loadCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { packagedRoleMetadata } from "../../src/packaged-role-registry.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
@@ -121,26 +120,6 @@ test("#1088 collector seat stays evidence-only (not construction worker)", () =>
     "phases" in meta && Array.isArray(meta.phases) && meta.phases.includes("apply"),
     false,
   );
-});
-
-test("#1088 public request-manifest keeps semantic validation (UTF-8 JSON + required fields)", async () => {
-  await withTempRoot("collector-1088-manifest-", async (root) => {
-    const path = join(root, "requests.json");
-    await writeFile(
-      path,
-      JSON.stringify({ requests: [{ id: "codex", body: "@codex review" }] }),
-    );
-    const manifest = await loadCollectorManifest(path);
-    assert.equal(manifest.requests.length, 1);
-    assert.equal(manifest.requests[0]?.id, "codex");
-
-    await writeFile(path, "{ not json", "utf8");
-    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) =>
-      err instanceof Error && err.cause instanceof SyntaxError);
-
-    await writeFile(path, JSON.stringify({ requests: [{ id: "x", body: "" }] }));
-    await assert.rejects(() => loadCollectorManifest(path), (err: unknown) => err instanceof Error);
-  });
 });
 
 test("#1088 collector activation keeps host CLI tools and drops code-collection tools", async () => {

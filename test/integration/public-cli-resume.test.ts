@@ -574,7 +574,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           }),
         },
       );
-      // Mutate source attachment after admission — resume must keep frozen bytes.
+      // Caller may mutate the source file; package recorded only the path (#1165).
       await writeFile(attachmentSrc, "authority-bytes-MUTATED\n", "utf8");
     }
 
@@ -599,12 +599,11 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     await symlink(movedProject, project);
     const admittedBefore = readCurrentSection(runDirectory, "admitted") as {
       instruction: string;
-      attachments: Array<{ frozenPath: string; sha256: string }>;
+      attachments: Array<{ path: string }>;
     };
     assert.equal(admittedBefore.instruction, instruction);
     assert.equal(admittedBefore.attachments.length, 1);
-    const frozenPath = admittedBefore.attachments[0]!.frozenPath;
-    const frozenSha = admittedBefore.attachments[0]!.sha256;
+    assert.equal(admittedBefore.attachments[0]!.path, attachmentSrc);
 
     const { io, stderr } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -666,11 +665,9 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
 
-    // Frozen attachment bytes unchanged after source mutation.
-    const frozenBytes = await readFile(frozenPath, "utf8");
-    assert.equal(frozenBytes, "authority-bytes-v1\n");
-    const admittedAfter = readCurrentSection(runDirectory, "admitted") as { attachments: Array<{ sha256: string }> };
-    assert.equal(admittedAfter.attachments[0]!.sha256, frozenSha);
+    const admittedAfter = readCurrentSection(runDirectory, "admitted") as { attachments: Array<{ path: string }> };
+    assert.equal(admittedAfter.attachments[0]!.path, attachmentSrc);
+    assert.equal(existsSync(join(runDirectory, "attachments")), false);
 
     const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");

@@ -179,6 +179,5 @@ export function ensureRoleRunPlacement(
   ledgerHome: string,
   placement: RoleRunPlacement,
 ): void {
-  // attachments/ appears only when something is frozen into it.
   ensureRoleRunDirectory(ledgerHome, placement.sessionDirectory);
 }

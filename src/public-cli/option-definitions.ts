@@ -344,7 +344,7 @@ const SHARED_PROJECT_SEMANTICS = {
 } as const satisfies Omit<PublicOptionDefinition, "owner">;
 
 /**
- * Immutable shared semantics for the common frozen-file `--attach` face.
+ * Immutable shared semantics for the common `--attach` face (#1165).
  * Role rows bind owner only. Reviewer has no attach face; analyst sweep attach
  * keeps its own modes/selectsMode/description and must not use this binding.
  */
@@ -357,8 +357,8 @@ const SHARED_ATTACH_SEMANTICS = {
   repeatable: true,
   form: "option" as const,
   description: {
-    en: "Attach a regular file; frozen at admission (repeatable).",
-    zh: "附加普通文件；受理即冻结（可重复）。",
+    en: "Caller file path passed as-is to the role (repeatable). Package does not read, copy, or validate; use an absolute path when cwd differs from --project.",
+    zh: "调用方文件路径原样递给衙门（可重复）。包不读、不复制、不校验；调用方当前目录与 --project 不同时请给绝对路径。",
   },
 } as const satisfies Omit<PublicOptionDefinition, "owner">;
 
@@ -556,8 +556,8 @@ const COLLECTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional request manifest JSON path ({requests:[{id,body}]}). Parsed for semantics and passed to the Collector as materials — not a machine collection directive.",
-      zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。按语义解析后作为材料递给通进司，不是机器代收 finding 的指令。",
+      en: "Caller path to a request manifest JSON file, passed as-is. Package does not read, copy, or validate; use an absolute path when cwd differs from --project.",
+      zh: "调用方 request manifest JSON 路径，原样传递。包不读、不复制、不校验；调用方当前目录与 --project 不同时请给绝对路径。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];

@@ -7,7 +7,6 @@ import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
@@ -51,7 +50,7 @@ test("public report publication failure stays beside the accepted terminal", asy
       repository: "acme/widgets",
       prNumber: 1168,
       prState: "OPEN",
-      manifestDigest: emptyCollectorManifest().digest,
+      manifestDigest: "role-submitted-optional",
       groups: [],
       unfinishedReasons: [],
     };

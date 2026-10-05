@@ -48,7 +48,6 @@ import {
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
-  withPreparedAttachments,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
@@ -330,9 +329,9 @@ async function resolveReviewSeatDialogueBody(input: {
   readonly home: string;
 }): Promise<string | undefined> {
   const reask = input.reask;
-  if (reask !== undefined && reask.trim() !== "") return reask;
+  if (reask !== undefined && reask.length > 0) return reask;
   const caller = input.callerInstruction ?? "";
-  if (caller.trim() !== "") return caller;
+  if (caller.length > 0) return caller;
   const sourceRunPath = input.sourceRunPath?.trim() ?? "";
   if (sourceRunPath === "") return undefined;
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
@@ -355,7 +354,7 @@ async function resolveInitialPrompt(
     const reask = env.reviewReask ?? env.gateReviewInstruction;
     const body = await resolveReviewSeatDialogueBody({
       ...(reask === undefined ? {} : { reask }),
-      callerInstruction: admitted.instructionEmpty ? "" : admitted.instruction,
+      callerInstruction: admitted.instruction,
       ...(sourceRunPath === "" ? {} : { sourceRunPath }),
       projectRoot: admitted.projectRoot,
       home: env.home,
@@ -666,7 +665,7 @@ async function sameParentDialogue(
   const reask = env.reviewReask ?? env.gateReviewInstruction;
   const body = await resolveReviewSeatDialogueBody({
     ...(reask === undefined ? {} : { reask }),
-    callerInstruction: fallback.instructionEmpty ? "" : fallback.instruction,
+    callerInstruction: fallback.instruction,
     sourceRunPath,
     projectRoot,
     home: env.home,
@@ -704,7 +703,7 @@ async function runCountersignBody(
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.trim() === "",
+        instructionEmpty: resumeInstruction.length === 0,
       },
     });
     if (resumed != null) return resumed;
@@ -720,12 +719,12 @@ async function runCountersignBody(
   }
 
   try {
-    return await withPreparedAttachments(parsed.attachmentPaths ?? [], async (preparedAttachments) => {
+    {
       const materializeAdmission = async (ticketNumber?: number): Promise<void> => {
         await materializeCountersignInvocation(admitted, {
           home: env.home,
           principalAuthority: env.principalAuthority,
-          preparedAttachments,
+          attachmentPaths: parsed.attachmentPaths ?? [],
           ...(env.model === undefined ? {} : { model: env.model }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         });
@@ -762,7 +761,7 @@ async function runCountersignBody(
       });
       await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
       return result;
-    });
+    }
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -837,7 +836,7 @@ export async function runPublicInstructionSeat(
         env,
         {
           instruction: parsed.instruction ?? "",
-          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+          instructionEmpty: (parsed.instruction ?? "").length === 0,
         },
         sourceDirectory,
         projectRoot,
@@ -882,7 +881,7 @@ export async function runPublicInstructionSeat(
           env,
           {
             instruction: parsed.instruction ?? "",
-            instructionEmpty: (parsed.instruction ?? "").trim() === "",
+            instructionEmpty: (parsed.instruction ?? "").length === 0,
           },
           parentRunPath,
           projectRoot,
@@ -979,7 +978,7 @@ export async function runPublicInstructionSeat(
           instruction: parsed.instruction ?? "",
           projectRoot: admitted.projectRoot,
           failureLabel: "secretariat unbound summons",
-          attachmentPaths: admitted.attachments.map((attachment) => attachment.provenancePath),
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.path),
           correlationId: admitted.runId,
         }, env, io);
       } catch (error) {

@@ -390,123 +390,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
 });
 
-test("admitReviewerInvocation persists fixed base, lens, authority; caller text is provenance only", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    await assert.rejects(
-      () =>
-        admitReviewerInvocation({
-          principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: project,
-          instruction: "   ",
-          attachmentPaths: [],
-          baseRevision: "origin/main",
-          lens: "completeness",
-          authorityRefs: [],
-          createRunId: () => "run-reviewer-blank-no-auth",
-        }),
-      (error: unknown) =>
-        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
-    );
-
-    const blank = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "   ",
-      attachmentPaths: [],
-      baseRevision: "origin/main",
-      lens: "completeness",
-      authorityRefs: ["CLAUDE.md"],
-      createRunId: () => "run-reviewer-blank",
-    });
-    assert.deepEqual(
-      blank.instructionEmpty, true);
-    assert.equal(blank.baseRevision, "origin/main");
-    assert.equal(blank.lens, "completeness");
-    assert.deepEqual(blank.authorityRefs, ["CLAUDE.md"]);
-    assert.equal("taskPath" in blank, false);
-    await assert.rejects(
-      () => access(join(blank.runDirectory, "task.md")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-
-    const admitted = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Review the work since the base revision.",
-      attachmentPaths: [],
-      baseRevision: "origin/main",
-      lens: "correctness",
-      authorityRefs: ["docs/adr/0001-roles-grow-by-demand.md"],
-      createRunId: () => "run-reviewer-admit-001",
-    });
-    assert.equal(admitted.role, "reviewer");
-    assert.equal(admitted.instruction, "Review the work since the base revision.");
-    assert.equal(admitted.instructionEmpty, false);
-    assert.equal(admitted.baseRevision, "origin/main");
-    assert.equal(admitted.lens, "correctness");
-    assert.deepEqual(admitted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
-    assert.equal("taskPath" in admitted, false);
-    await assert.rejects(
-      () => access(join(admitted.runDirectory, "task.md")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-
-    const withRefs = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Scope only; refs carry authority.",
-      attachmentPaths: [],
-      baseRevision: "origin/main",
-      lens: "completeness",
-      authorityRefs: [
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-      ],
-      createRunId: () => "run-reviewer-admit-refs",
-    });
-    assert.deepEqual(withRefs.authorityRefs, [
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-    ]);
-    assert.equal(withRefs.lens, "completeness");
-
-    const bookKey = resolveBookKeyFromGit(project);
-    assert.equal(
-      admitted.runDirectory,
-      join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "unbound", "runs",
-        "run-reviewer-admit-001@reviewer",
-      ),
-    );
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted");
-    assert.equal(persisted.role, "reviewer");
-    assert.equal(persisted.baseRevision, "origin/main");
-    assert.equal(persisted.lens, "correctness");
-    assert.equal(persisted.instruction, "Review the work since the base revision.");
-    assert.deepEqual(persisted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
-    assert.equal("taskPath" in persisted, false);
-    assert.equal("taskSha256" in persisted, false);
-    const persistedRefs = readCurrentSection(withRefs.runDirectory, "admitted");
-    assert.deepEqual(persistedRefs.authorityRefs, [
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-    ]);
-    assert.equal(persistedRefs.lens, "completeness");
-  });
-});
-
 /** Shortest lawful child turn: write receipt from --ak-review-lens (or override). */
 async function lawfulChildTurn(
   args: readonly string[],
@@ -765,6 +648,29 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+
+    // Missing --authority-ref: public entry rejects before the host starts.
+    {
+      let hostStarted = 0;
+      const { io } = captureIo();
+      const missingAuthority = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "HEAD~1", "--lens", "correctness",
+        "Review without authority.",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        io,
+        roleTurnHost: reviewerHost(async () => {
+          hostStarted += 1;
+          throw new Error("missing authority must not dispatch");
+        }),
+      });
+      assert.equal(missingAuthority.exitCode, 2);
+      assert.equal(hostStarted, 0);
+    }
+
     let captured: string[] | undefined;
     let capturedStdin: string | undefined;
     let turnCwd: string | undefined;

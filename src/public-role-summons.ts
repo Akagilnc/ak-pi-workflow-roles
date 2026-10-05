@@ -505,7 +505,7 @@ export async function summonPublicRole(
           runId: resumeRunId,
           summons: {
             instruction,
-            instructionEmpty: instruction.trim() === "",
+            instructionEmpty: instruction.length === 0,
           },
         },
         env as never,

@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
@@ -22,12 +21,10 @@ import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./
 import {
   appendCallerFileFlagPaths,
   bindAdmittedTicketNumber,
-  freezeAttachmentsIntoRun,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
-import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 import {
@@ -135,10 +132,11 @@ function projectRelocatedTurnIdentity(
   mutableRequest.principal = admitted.principal;
   const activation = mutableRequest.activation;
   if (isRecord(activation)) {
-    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath", "requestManifestPath"] as const) {
+    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath"] as const) {
       const record = activation as Record<string, unknown>;
       if (field in record) record[field] = rewrite(record[field]);
     }
+    // #1165: activation.requestManifestPath is a caller path — do not rewrite.
   }
   if (result.terminal !== undefined) {
     for (const artifact of result.terminal.artifacts) {
@@ -1465,8 +1463,8 @@ export async function dispatchPostAdmissionTurn<
  * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
  * - manual resume (no same-ticket summons): caller message bytes, or
- * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
- *   attachment paths only — no「请重读」、no code-authored content substitute,
+ * - same-ticket summons (审核循环续话): caller/peer words + optional caller file-flag
+ *   paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
  * Caller message wins as prompt base when supplied (bytes unchanged, including
  * blank/whitespace); else summons instruction (parent payload or reask).
@@ -1481,10 +1479,7 @@ export function resumeTurnRequestProjectionOptions(
   summonsPrepared?: {
     readonly instruction: string;
     readonly instructionEmpty: boolean;
-    readonly attachments: readonly {
-      readonly provenancePath?: string;
-      readonly frozenPath?: string;
-    }[];
+    readonly attachments: readonly { path: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
   // #879: officer dialogue is caller/peer words; #1166 J11 merges caller file-flag
@@ -1505,7 +1500,7 @@ export function resumeTurnRequestProjectionOptions(
       prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
-    const body = summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction;
+    const body = summonsPrepared.instruction;
     // No file flags: body alone (gate peer words). With flags: merge delivery.
     prompt = officerDialogue && fileFlags.length === 0
       ? body
@@ -1645,34 +1640,17 @@ async function runSettledAutoResumeLoop<
   });
 }
 
-function isAlreadyFrozenSummonsAttachment(
-  runDirectory: string,
-  attachmentPath: string,
-): boolean {
-  const absolute = isAbsolute(attachmentPath)
-    ? attachmentPath
-    : resolve(attachmentPath);
-  return pathContainedIn(join(runDirectory, "attachments"), absolute);
-}
-
 /**
- * Freeze same-ticket summons attachments into the retained run directory (#637).
- * No-op materials (no paths / instruction-only) skip the freeze.
- * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them for the same internal re-summons flow.
- * Manual resume never calls this — old attachment semantics stay intact.
+ * Same-ticket summons materials: caller paths as-is (#1165). No copy or freeze.
  */
 export async function prepareSummonsResumeMaterials(
-  runDirectory: string,
+  _runDirectory: string,
   summons: SameTicketSummonsMaterials | undefined,
 ): Promise<
   | {
       readonly instruction: string;
       readonly instructionEmpty: boolean;
-      readonly attachments: readonly {
-        readonly provenancePath: string;
-        readonly frozenPath?: string;
-      }[];
+      readonly attachments: readonly { path: string }[];
     }
   | undefined
 > {
@@ -1682,22 +1660,8 @@ export async function prepareSummonsResumeMaterials(
   }
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
-    summons.instructionEmpty ?? instruction.trim() === "";
-  let attachments: readonly {
-    readonly provenancePath: string;
-    readonly frozenPath?: string;
-  }[] = [];
-  if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
-    // ADR 0087 / #1166 J11: dialogue always lists caller original paths.
-    const alreadyFrozen = summons.attachmentPaths.every((path) =>
-      isAlreadyFrozenSummonsAttachment(runDirectory, path),
-    );
-    if (!alreadyFrozen) {
-      // Disk freeze may still run for internal identity; never listed as file-flag path.
-      await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
-    }
-    attachments = summons.attachmentPaths.map((path) => ({ provenancePath: path }));
-  }
+    summons.instructionEmpty ?? instruction.length === 0;
+  const attachments = (summons.attachmentPaths ?? []).map((path) => ({ path }));
   return { instruction, instructionEmpty, attachments };
 }
 
@@ -1710,7 +1674,7 @@ export async function prepareSummonsResumeMaterials(
  * validation, turn builder, and adapters stay on the seat.
  *
  * Court handling (#637): public manual resume reads only the open court's
- * settlement identity; internal re-summons may freeze and record its materials.
+ * settlement identity; internal re-summons passes caller file-flag paths as-is.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -1798,9 +1762,9 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        // ADR 0087 / #1166 J11: summons keep caller file-flag paths. Freeze-for-copy
-        // rewriting is not legal dialogue delivery; prepareSummonsResumeMaterials in
-        // buildTurnRequest lists provenancePath and may still freeze for disk identity.
+        // Public explicit resume: attach the stored native id when the caller
+        // left it unset (399c3c8c). In-call auto-resume / 催交 / gate retry omit
+        // the field; those load inside the host adapter (host-contracts).
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
         if (
           turnRequest.continuation.kind === "resume"

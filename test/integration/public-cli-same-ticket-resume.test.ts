@@ -87,29 +87,6 @@ function runIdFromDirectory(runDirectory: string): string {
   return at === -1 ? base : base.slice(0, at);
 }
 
-/**
- * Find a frozen attachment file by content under a run's attachments tree.
- * Admission-time freeze is durable on disk; recover that identity from the
- * tree rather than from any live court pointer.
- */
-async function findFrozenAttachmentWithContent(
-  dir: string,
-  content: string,
-): Promise<string | undefined> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = await findFrozenAttachmentWithContent(full, content);
-      if (nested !== undefined) return nested;
-    } else {
-      const text = await readFile(full, "utf8").catch(() => undefined);
-      if (text === content) return full;
-    }
-  }
-  return undefined;
-}
-
 async function listBookRunDirs(home: string): Promise<string[]> {
   const booksRoot = join(home, ".ak-roles", "books");
   const books = await readdir(booksRoot).catch(() => [] as string[]);
@@ -592,7 +569,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     });
     const host = observingSealHost(inner, seen);
 
-    // 1) First inspector summons seals (birth freeze under admitted attachments).
+    // 1) First inspector summons seals (caller attach path recorded as-is).
     const first = await runAkRole(["inspector", "--source-run", parentRunPath, "--attach", external],
       {
         home,
@@ -672,23 +649,21 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       openCourtAttemptId,
       "no-seal this-court no_receipt must leave the open court",
     );
-    const frozenPath = await findFrozenAttachmentWithContent(
-      join(runDirectory, "attachments"),
-      "court-material-v1\n",
+    const admitted = JSON.parse(
+      await readFile(join(runDirectory, "current.json"), "utf8"),
+    ) as { admitted: { attachments: Array<{ path: string }> } };
+    assert.deepEqual(
+      admitted.admitted.attachments.map((a) => a.path),
+      [external],
+      "same-ticket attach keeps the caller path",
     );
-    assert.ok(frozenPath !== undefined, "admission-time freeze must be durable on disk");
-    assert.ok(
-      frozenPath!.startsWith(join(runDirectory, "attachments")),
-      "frozen attachment must be the in-run freeze identity",
+    await assert.rejects(
+      () => readdir(join(runDirectory, "attachments")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
     );
-    assert.notEqual(frozenPath, external, "frozen attachment must not keep the external original path");
 
-    const freezeDirsAfterOpen = await readdir(join(runDirectory, "attachments"));
-    // birth admit freeze + one summons freeze directory
-    assert.ok(freezeDirsAfterOpen.length >= 1);
-
-    // External original changes after the court accepted the freeze snapshot.
-    await writeFile(external, "external-changed-after-freeze\n", "utf8");
+    // External original may change or vanish; package does not keep a copy (#1165).
+    await writeFile(external, "external-changed-after-admit\n", "utf8");
     await rm(external, { force: true });
 
     // 4) Resume with a caller message continues the still-open no-seal court
@@ -718,17 +693,9 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     assert.equal(resumed.exitCode, 0, "open-court resume must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
-    // Reuse must not mint another summons freeze directory from the missing external path.
-    const freezeDirsAfterResume = await readdir(join(runDirectory, "attachments"));
-    assert.equal(
-      freezeDirsAfterResume.length,
-      freezeDirsAfterOpen.length,
-      "resume must reuse frozen paths; no additional freeze directory",
-    );
-    assert.equal(
-      await readFile(frozenPath!, "utf8"),
-      "court-material-v1\n",
-      "accepted freeze snapshot bytes must remain",
+    await assert.rejects(
+      () => readdir(join(runDirectory, "attachments")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
     );
     assert.equal(
       await readCurrentCourt(runDirectory),
