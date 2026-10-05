@@ -13,31 +13,26 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile
+import argparse, hashlib, json, os, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 def project_admitted_instruction(adm, tool_dir):
     """Reuse production appendCallerFileFlagPaths — no parallel join (#1169 J1)."""
     repo_root = os.path.abspath(f"{tool_dir}/../..")
     inv = os.path.abspath(f"{tool_dir}/../../src/public-cli/invocation.ts")
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-        json.dump(adm, tmp, ensure_ascii=False)
-        admitted_path = tmp.name
-    try:
-        p = subprocess.run(
-            ["node", "--import", "tsx", "-e",
-             "import { readFileSync } from 'node:fs';"
-             "import('" + inv + "').then((m) => {"
-             "  const a = JSON.parse(readFileSync(process.argv[1], 'utf8'));"
-             "  process.stdout.write(m.appendCallerFileFlagPaths("
-             "    a.instruction ?? '', a.attachments ?? [],"
-             "    a.requestManifestPath, a.prerequisitesPath));"
-             "})",
-             admitted_path],
-            cwd=repo_root, text=True, capture_output=True,
-        )
-    finally:
-        os.remove(admitted_path)
+    # Official: subprocess.run(input=...) → stdin; Node readFileSync(0) reads fd 0.
+    p = subprocess.run(
+        ["node", "--import", "tsx", "-e",
+         "import { readFileSync } from 'node:fs';"
+         "import('" + inv + "').then((m) => {"
+         "  const a = JSON.parse(readFileSync(0, 'utf8'));"
+         "  process.stdout.write(m.appendCallerFileFlagPaths("
+         "    a.instruction ?? '', a.attachments ?? [],"
+         "    a.requestManifestPath, a.prerequisitesPath));"
+         "})"],
+        cwd=repo_root, text=True, capture_output=True,
+        input=json.dumps(adm, ensure_ascii=False),
+    )
     if p.returncode != 0:
         sys.exit(f"projecting admitted file-flag instruction failed:\n{p.stderr}")
     return p.stdout
@@ -329,7 +324,11 @@ def main():
         with open(f"{kit}/schema.json", "w") as f:
             json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
     with open(f"{kit}/instr.txt", "w") as f:
-        f.write(repoint(project_admitted_instruction(adm, a.tool_dir)))
+        # Prior instruction remapping only; caller file-flag paths pass through as admitted.
+        f.write(project_admitted_instruction(
+            {**adm, "instruction": repoint(adm.get("instruction") or "")},
+            a.tool_dir,
+        ))
 
     meta = {"runId": inv["runId"], "runDir": run, "role": role, "host": host, "provider": inv.get("provider"),
             "model": inv.get("model"), "thinking": inv.get("thinking"), "ticket": num, "repoSlug": slug, "repo": repo,
