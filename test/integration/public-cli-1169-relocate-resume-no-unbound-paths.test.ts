@@ -7,25 +7,30 @@
  * Relocated leg top-level shape matches docs/dossier-topology.md.
  */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
+import {
+  configurePassingReviewSeats,
+  seedPublicSeat,
+} from "../helpers/passing-review-host.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import {
+  capturePreparedEnvelope,
+  createMinimalHost,
+  sessionToolExchangeRows,
+  writeSessionJsonl,
+} from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 const ENGINE = "cursor";
@@ -35,12 +40,7 @@ const TICKET = 1169;
 const DISPATCH = "Repair the class under review.";
 const CREDS = { "openai-codex": true, xai: true } as const;
 
-type Captured = {
-  readonly role: string;
-  readonly prompt: string;
-  readonly materials: readonly unknown[];
-  readonly runDirectory: string;
-};
+type Captured = Awaited<ReturnType<typeof capturePreparedEnvelope>>;
 
 function collectStrings(value: unknown, into: string[]): void {
   if (typeof value === "string") {
@@ -87,42 +87,36 @@ function assertNoUnboundPrefix(
   );
 }
 
-async function captureEnvelope(request: RoleTurnRequest): Promise<Captured> {
-  const prepared = await prepareRoleEnvelope({
-    request: { ...request, host: request.host ?? "codex" },
-    dependencies: createRoleRuntimeDependencies(packageRoot),
-    socketPath: `/tmp/ak-1169-${randomUUID()}.sock`,
-    sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+async function sealTerminatingTurn(input: {
+  readonly request: Parameters<RoleTurnHost["executeTurn"]>[0];
+  readonly role: "fixer" | "inspector";
+  readonly toolName: string;
+  readonly details: unknown;
+  readonly toolCallId: string;
+}): Promise<void> {
+  const coords = piDurablePrincipalAuthority.decode(input.request.principal);
+  await writeSessionJsonl(
+    coords.sessionFile,
+    sessionToolExchangeRows({
+      stem: "1",
+      parentId: "user-1",
+      callId: input.toolCallId,
+      toolName: input.toolName,
+      details: input.details,
+      body: `${input.role} output accepted`,
+      isError: false,
+      n: 2,
+    }),
+  );
+  await sealAcceptedSubmission({
+    cwd: input.request.cwd,
+    home: input.request.home,
+    runId: runIdFromRunDirectory(input.request.runDirectory)!,
+    runDirectory: input.request.runDirectory,
+    role: input.role,
+    details: input.details,
+    toolCallId: input.toolCallId,
   });
-  try {
-    return {
-      role: request.activation.role,
-      prompt: prepared.prompt,
-      materials: prepared.systemPrompt.materials,
-      runDirectory: request.runDirectory,
-    };
-  } finally {
-    await prepared.dispose?.();
-  }
-}
-
-async function seedSeat(
-  home: string,
-  role: "fixer" | "inspector",
-  engine?: { name: string; model?: string },
-): Promise<void> {
-  const { io } = captureIo();
-  assert.equal(
-    (await runAkRole(["config", "set", role, SEAT], { packageRoot, home, io })).exitCode,
-    0,
-  );
-  if (engine === undefined) return;
-  const args = ["config", "set-engine", role, engine.name];
-  if (engine.model !== undefined) args.push(engine.model);
-  assert.equal(
-    (await runAkRole(args, { packageRoot, home, io: captureIo().io })).exitCode,
-    0,
-  );
 }
 
 /** completed enters the worker→inspector gate; ticketNumber relocates unbound→ticket. */
@@ -149,9 +143,9 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    await seedSeat(home, "fixer", { name: ENGINE, model: ENGINE_MODEL });
+    await seedPublicSeat(home, "fixer", { name: ENGINE, model: ENGINE_MODEL });
     await configurePassingReviewSeats(home);
-    await seedSeat(home, "inspector", { name: ENGINE, model: ENGINE_MODEL });
+    await seedPublicSeat(home, "inspector", { name: ENGINE, model: ENGINE_MODEL });
 
     const attachRel = "notes/evidence.md";
     await mkdir(join(project, "notes"), { recursive: true });
@@ -167,29 +161,11 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
 
     const host: RoleTurnHost = createMinimalHost(async (request) => {
       if (request.activation.role === "inspector") {
-        captures.push(await captureEnvelope(request));
-        const coords = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(coords.sessionDirectory, { recursive: true });
-        await writeFile(
-          coords.sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "inspector-1169",
-              toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: INSPECTOR_CONTINUE,
-            },
-          })}\n`,
-          "utf8",
-        );
-        await sealAcceptedSubmission({
-          cwd: request.cwd,
-          home: request.home,
-          runId: runIdFromRunDirectory(request.runDirectory)!,
-          runDirectory: request.runDirectory,
+        captures.push(await capturePreparedEnvelope(request));
+        await sealTerminatingTurn({
+          request,
           role: "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
           details: INSPECTOR_CONTINUE,
           toolCallId: "inspector-1169",
         });
@@ -197,7 +173,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
       }
       if (request.activation.role === "fixer") {
         fixerTurns += 1;
-        const captured = await captureEnvelope(request);
+        const captured = await capturePreparedEnvelope(request);
         captures.push(captured);
         if (fixerTurns === 1) {
           unboundRunDirectory = request.runDirectory;
@@ -206,28 +182,10 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
             /[/\\]unbound[/\\]runs[/\\]/,
             "first fixer turn must start under unbound/",
           );
-          const coords = piDurablePrincipalAuthority.decode(request.principal);
-          await mkdir(coords.sessionDirectory, { recursive: true });
-          await writeFile(
-            coords.sessionFile,
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: "fixer-1169",
-                toolName: FIXER_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: FIXER_COMPLETED,
-              },
-            })}\n`,
-            "utf8",
-          );
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            home: request.home,
-            runId: runIdFromRunDirectory(request.runDirectory)!,
-            runDirectory: request.runDirectory,
+          await sealTerminatingTurn({
+            request,
             role: "fixer",
+            toolName: FIXER_OUTPUT_TOOL_NAME,
             details: FIXER_COMPLETED,
             toolCallId: "fixer-1169",
           });
@@ -235,8 +193,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
         }
         // Gate-continue auto-resume: observe the second fixer turn, then stop.
         const coords = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(coords.sessionDirectory, { recursive: true });
-        await writeFile(coords.sessionFile, "", "utf8");
+        await writeSessionJsonl(coords.sessionFile, []);
         return { code: 1, stderr: "stop after resume capture", timedOut: false };
       }
       return { code: 0, stderr: "", timedOut: false };

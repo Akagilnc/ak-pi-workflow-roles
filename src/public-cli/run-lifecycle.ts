@@ -118,7 +118,7 @@ export type CurrentCourtState = {
 
 /**
  * Materials delivered on same-ticket re-summons while reusing the same-run resume seam.
- * Instruction seats freeze new attachments into the retained run and ride the transport prompt;
+ * Instruction seats pass caller file-flag paths through the transport prompt (ADR 0087);
  * notary overrides the source-run activation pointer for this turn only.
  */
 export type SameTicketSummonsMaterials = {

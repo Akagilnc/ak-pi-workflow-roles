@@ -1708,8 +1708,8 @@ async function persistPlacedAdmission(
 }
 
 /**
- * Shared admission: project check, placement, attachment freeze,
- * admitted and invocation section write.
+ * Shared admission: project check, placement, admitted and invocation section write.
+ * Caller file-flag paths are recorded opaque on the admitted page (ADR 0087).
  * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.

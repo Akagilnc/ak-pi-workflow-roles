@@ -7,7 +7,6 @@
  * (#1132 public-entry gate observability), not a direct officer public call.
  */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,16 +15,18 @@ import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts"
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   configurePassingReviewSeats,
+  seedPublicSeat,
   withPassingReviewHost,
 } from "../helpers/passing-review-host.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import {
+  capturePreparedEnvelope,
+  createMinimalHost,
+} from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 const ENGINE = "cursor";
@@ -36,13 +37,7 @@ const DISPATCH = "fix the packet under review";
 const SEAT = "test/caller-seat:high";
 const CREDS = { "openai-codex": true, xai: true } as const;
 
-type Captured = {
-  readonly prompt: string;
-  readonly materials: readonly unknown[];
-  readonly engine?: string;
-  readonly stationChild?: boolean;
-  readonly role?: string;
-};
+type Captured = Awaited<ReturnType<typeof capturePreparedEnvelope>>;
 
 function engineMaterials(materials: readonly unknown[]): readonly Record<string, unknown>[] {
   return materials.filter((material): material is Record<string, unknown> =>
@@ -50,45 +45,6 @@ function engineMaterials(materials: readonly unknown[]): readonly Record<string,
     && material !== null
     && (material as { kind?: unknown }).kind === "engine-session-material",
   );
-}
-
-async function seedSeat(
-  home: string,
-  role: "fixer" | "judge" | "auditor" | "inspector" | "notary",
-  engine?: { name: string; model?: string },
-): Promise<void> {
-  const { io } = captureIo();
-  assert.equal(
-    (await runAkRole(["config", "set", role, SEAT], { packageRoot, home, io })).exitCode,
-    0,
-  );
-  if (engine === undefined) return;
-  const args = ["config", "set-engine", role, engine.name];
-  if (engine.model !== undefined) args.push(engine.model);
-  assert.equal(
-    (await runAkRole(args, { packageRoot, home, io: captureIo().io })).exitCode,
-    0,
-  );
-}
-
-async function captureTurn(request: RoleTurnRequest): Promise<Captured> {
-  const prepared = await prepareRoleEnvelope({
-    request: { ...request, host: request.host ?? "codex" },
-    dependencies: createRoleRuntimeDependencies(packageRoot),
-    socketPath: `/tmp/ak-1167-${randomUUID()}.sock`,
-    sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-  });
-  try {
-    return {
-      prompt: prepared.prompt,
-      materials: prepared.systemPrompt.materials,
-      ...(request.engine === undefined ? {} : { engine: request.engine }),
-      ...(request.stationChild === undefined ? {} : { stationChild: request.stationChild }),
-      role: request.activation.role,
-    };
-  } finally {
-    await prepared.dispose?.();
-  }
 }
 
 function firstCaptureHost(
@@ -136,9 +92,9 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
     const dispatch = await readFile(join(packageRoot, "resources/engine-dispatch.md"), "utf8");
 
     // With packaged handbook: name/model + handbook bodies; no materialPath.
-    await seedSeat(home, "fixer", { name: ENGINE, model: ENGINE_MODEL });
+    await seedPublicSeat(home, "fixer", { name: ENGINE, model: ENGINE_MODEL });
     {
-      const probe = firstCaptureHost(captureTurn);
+      const probe = firstCaptureHost(capturePreparedEnvelope);
       await runFixer(home, project, probe.host, "run-1167-with-engine", [
         "fixer", "--model", SEAT, "--project", project, DISPATCH,
       ]);
@@ -155,9 +111,9 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
     }
 
     // Per-call --engine overrides persistent seat engine.
-    await seedSeat(home, "fixer", { name: "agy" });
+    await seedPublicSeat(home, "fixer", { name: "agy" });
     {
-      const probe = firstCaptureHost(captureTurn);
+      const probe = firstCaptureHost(capturePreparedEnvelope);
       await runFixer(home, project, probe.host, "run-1167-override", [
         "--engine", ENGINE, "fixer", "--model", SEAT, "--project", project, DISPATCH,
       ]);
@@ -168,9 +124,9 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
     }
 
     // No handbook engine with model: only name/model.
-    await seedSeat(home, "fixer", { name: GHOST_ENGINE, model: GHOST_MODEL });
+    await seedPublicSeat(home, "fixer", { name: GHOST_ENGINE, model: GHOST_MODEL });
     {
-      const probe = firstCaptureHost(captureTurn);
+      const probe = firstCaptureHost(capturePreparedEnvelope);
       await runFixer(home, project, probe.host, "run-1167-name-model", [
         "fixer", "--model", SEAT, "--project", project, DISPATCH,
       ]);
@@ -189,7 +145,7 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
         (await runAkRole(["config", "unset-engine", "fixer"], { packageRoot, home, io })).exitCode,
         0,
       );
-      const probe = firstCaptureHost(captureTurn);
+      const probe = firstCaptureHost(capturePreparedEnvelope);
       await runFixer(home, project, probe.host, "run-1167-engine-free", [
         "fixer", "--model", SEAT, "--project", project, DISPATCH,
       ]);
@@ -204,11 +160,11 @@ test("#1167 gate-summoned review seat: same startup delivery as worker seats", a
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    await seedSeat(home, "judge");
+    await seedPublicSeat(home, "judge");
     await configurePassingReviewSeats(home);
     // Outfit every review seat — gate may summon auditor / inspector / notary.
     for (const role of ["auditor", "inspector", "notary"] as const) {
-      await seedSeat(home, role, { name: ENGINE, model: ENGINE_MODEL });
+      await seedPublicSeat(home, role, { name: ENGINE, model: ENGINE_MODEL });
     }
     const handbook = await readFile(join(packageRoot, "resources/engines/cursor.md"), "utf8");
     const dispatch = await readFile(join(packageRoot, "resources/engine-dispatch.md"), "utf8");
@@ -249,7 +205,7 @@ test("#1167 gate-summoned review seat: same startup delivery as worker seats", a
             || request.activation.role === "inspector"
             || request.activation.role === "notary")
         ) {
-          officer = await captureTurn(request);
+          officer = await capturePreparedEnvelope(request);
         }
         return reviewing.executeTurn(request);
       },

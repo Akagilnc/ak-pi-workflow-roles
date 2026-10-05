@@ -9,12 +9,38 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
   sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
   schema.json    headless output schema when turn-delivery recorded one; omitted on gap
-  instr.txt      the instruction the run was admitted with
+  instr.txt      admitted transport prompt (instruction + caller file-flag paths)
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys
+import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile
 from datetime import datetime, timezone
+
+def project_admitted_instruction(adm, tool_dir):
+    """Reuse production appendCallerFileFlagPaths — no parallel join (#1169 J1)."""
+    repo_root = os.path.abspath(f"{tool_dir}/../..")
+    inv = os.path.abspath(f"{tool_dir}/../../src/public-cli/invocation.ts")
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        json.dump(adm, tmp, ensure_ascii=False)
+        admitted_path = tmp.name
+    try:
+        p = subprocess.run(
+            ["node", "--import", "tsx", "-e",
+             "import { readFileSync } from 'node:fs';"
+             "import('" + inv + "').then((m) => {"
+             "  const a = JSON.parse(readFileSync(process.argv[1], 'utf8'));"
+             "  process.stdout.write(m.appendCallerFileFlagPaths("
+             "    a.instruction ?? '', a.attachments ?? [],"
+             "    a.requestManifestPath, a.prerequisitesPath));"
+             "})",
+             admitted_path],
+            cwd=repo_root, text=True, capture_output=True,
+        )
+    finally:
+        os.remove(admitted_path)
+    if p.returncode != 0:
+        sys.exit(f"projecting admitted file-flag instruction failed:\n{p.stderr}")
+    return p.stdout
 
 SUPPORTED_HOSTS = ("codex", "pi")
 NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态，"
@@ -303,7 +329,7 @@ def main():
         with open(f"{kit}/schema.json", "w") as f:
             json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
     with open(f"{kit}/instr.txt", "w") as f:
-        f.write((adm.get("instruction") or "").replace(run, frozen_run))
+        f.write(repoint(project_admitted_instruction(adm, a.tool_dir)))
 
     meta = {"runId": inv["runId"], "runDir": run, "role": role, "host": host, "provider": inv.get("provider"),
             "model": inv.get("model"), "thinking": inv.get("thinking"), "ticket": num, "repoSlug": slug, "repo": repo,
