@@ -121,6 +121,11 @@ export type PublicSummonRequest = {
    * (#946 / ADR 0082).
    */
   readonly stationChild?: boolean;
+  /**
+   * Navigator nest work-context locator (#1166). Request-scoped internal path —
+   * never dialogue content; never shared parent process.env across await.
+   */
+  readonly navigatorWorkContextPath?: string;
 };
 
 const execFileAsync = promisify(execFile);
@@ -421,6 +426,10 @@ export async function summonPublicRole(
             ? {}
             : { correlationId: options.correlationId }),
           ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+          ...(options.navigatorWorkContextPath === undefined
+            || options.navigatorWorkContextPath.trim() === ""
+            ? {}
+            : { navigatorWorkContextPath: options.navigatorWorkContextPath }),
         },
       };
     } catch (error) {
@@ -746,13 +755,13 @@ export async function summonGateOfficer(options: {
   /**
    * Plain-language re-ask when the prior officer reply was not three-state (#753 / #756).
    * Officers: reviewReask → same-ticket resume summons.instruction.
-   * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
+   * Never concatenated into argv (binding stays on --source-run / parentRunPath).
    */
   readonly reask?: string;
   /**
    * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim as officer
    * dialogue content when reask is absent (#879). Binding pointer stays on
-   * --source-run / 卷宗指针 / ticket argv — never a content substitute.
+   * --source-run / parentRunPath — never a content substitute.
    */
   readonly submission?: unknown;
   /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
@@ -808,6 +817,7 @@ export async function summonGateOfficer(options: {
   if (gateSummon === "subject-source") {
     // #756: judge compliance path — same queue law as notary/inspector.
     // Binding pointer on argv; dialogue content rides gateReviewInstruction.
+    // #1166: no code-authored 卷宗指针 instruction — identity is startup material.
     return summonPublicRole({
       role: options.officer,
       argv: [
@@ -815,7 +825,8 @@ export async function summonGateOfficer(options: {
         "judge",
         "--source-run",
         options.sourceRunDirectory,
-        `卷宗指针：${options.sourceRunDirectory}`,
+        "--project",
+        options.cwd,
       ],
       ...common,
     });
@@ -850,11 +861,11 @@ export async function summonGateOfficer(options: {
       ...(courtTicket === undefined ? {} : { boundTicketNumber: courtTicket }),
     });
   }
-  // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).
-  // Content (body/reask) rides env → summons.instruction / first-mint prompt.
+  // Inspector: bind via --source-run (same face as notary); dialogue rides env.
+  // #1166: no code-authored 卷宗指针 instruction — identity is startup material.
   return summonPublicRole({
     role: options.officer,
-    argv: [`卷宗指针：${options.sourceRunDirectory}`],
+    argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
     ...common,
   });
 }

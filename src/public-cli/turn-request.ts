@@ -17,7 +17,6 @@ import {
 import type { SeatModelConfig } from "./config.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
 import { installedMethodSkillPath } from "./machine-method-skills.ts";
-import { parentRunPathFromGatePointerInstruction } from "./run-lifecycle.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
 /** Structural model shape shared by the seam so seat/env sources fit. */
@@ -77,6 +76,11 @@ export type RoleTurnRequestProjectionOptions = {
    * execution seam count with the same configured number.
    */
   readonly deliveryRequestLimit?: number;
+  /**
+   * Navigator nest work-context locator (#1166). Request-scoped internal path —
+   * not dialogue content.
+   */
+  readonly navigatorWorkContextPath?: string;
 };
 
 export type AdmittedTurnInvocation = {
@@ -127,6 +131,10 @@ export function projectRoleTurnRequest(
     ...(options.deliveryRequestLimit === undefined
       ? {}
       : { deliveryRequestLimit: options.deliveryRequestLimit }),
+    ...(options.navigatorWorkContextPath === undefined
+      || options.navigatorWorkContextPath.trim() === ""
+      ? {}
+      : { navigatorWorkContextPath: options.navigatorWorkContextPath }),
   };
 }
 
@@ -163,13 +171,6 @@ function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActiva
   const activation: Record<string, unknown> = { role: admitted.role };
   for (const spec of packagedRoleActivationFlags(admitted.role)) {
     let value = readAdmittedPath(admitted, spec.from ?? spec.field);
-    if (spec.fallback === "gate-pointer") {
-      const trimmed = typeof value === "string" ? value.trim() : "";
-      value = trimmed !== ""
-        ? trimmed
-        : parentRunPathFromGatePointerInstruction(admitted.instruction);
-      if (typeof value !== "string" || value === "") continue;
-    }
     if (value === undefined) continue;
     if (spec.text === true) {
       if (typeof value !== "number") continue;

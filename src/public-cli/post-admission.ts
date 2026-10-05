@@ -20,8 +20,8 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
+  appendCallerFileFlagPaths,
   bindAdmittedTicketNumber,
-  buildInstructionTransportPrompt,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
@@ -475,6 +475,11 @@ export type PostAdmissionEnv = {
   boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
+  /**
+   * Navigator nest work-context locator (#1166). Request-scoped; never folded
+   * into dialogue. Child spawn may mirror onto child env only.
+   */
+  navigatorWorkContextPath?: string;
 };
 
 /**
@@ -1658,8 +1663,8 @@ export async function dispatchPostAdmissionTurn<
  * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
  * - manual resume (no same-ticket summons): caller message bytes, or
- * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
- *   attachment paths only — no「请重读」、no code-authored content substitute,
+ * - same-ticket summons (审核循环续话): caller/peer words + optional caller file-flag
+ *   paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
  * Caller message wins as prompt base when supplied (bytes unchanged, including
  * blank/whitespace); else summons instruction (parent payload or reask).
@@ -1677,22 +1682,17 @@ export function resumeTurnRequestProjectionOptions(
     readonly attachments: readonly { path: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
-  // #879: officer dialogue content is caller/peer words only — no「请重读」,
-  // no code-authored constant substitute, no attachment-list wrap of peer body.
-  // Binding pointer stays on summons sourceRunPath / activation / attachments.
+  // #879: officer dialogue is caller/peer words; #1166 J11 merges caller file-flag
+  // paths when present. Gate with no file flags stays body-only (ADR 0085).
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
+  const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
-      // #755: same-ticket review / open-court — caller words.
-      // #879 station-child officer: words only (paths remain on summons materials).
-      prompt = officerDialogue
+      // #755: same-ticket review / open-court — caller words + caller file flags.
+      prompt = officerDialogue && fileFlags.length === 0
         ? request.message
-        : buildInstructionTransportPrompt({
-            instruction: request.message,
-            instructionEmpty: false,
-            attachments: summonsPrepared.attachments,
-          });
+        : appendCallerFileFlagPaths(request.message, fileFlags);
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
@@ -1700,13 +1700,11 @@ export function resumeTurnRequestProjectionOptions(
       prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
-    // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
-    // Other seats keep #755 instruction + optional attachment path listing.
-    // #1165 J3: officer dialogue is raw instruction bytes; do not gate on
-    // instructionEmpty metadata (resume of older admitted pages).
-    prompt = officerDialogue
-      ? summonsPrepared.instruction
-      : buildInstructionTransportPrompt(summonsPrepared);
+    const body = summonsPrepared.instruction;
+    // No file flags: body alone (gate peer words). With flags: merge delivery.
+    prompt = officerDialogue && fileFlags.length === 0
+      ? body
+      : appendCallerFileFlagPaths(body, fileFlags);
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
@@ -1727,6 +1725,10 @@ export function resumeTurnRequestProjectionOptions(
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+    ...(env.navigatorWorkContextPath === undefined
+      || env.navigatorWorkContextPath.trim() === ""
+      ? {}
+      : { navigatorWorkContextPath: env.navigatorWorkContextPath }),
   };
 }
 
@@ -1747,6 +1749,10 @@ export function roleTurnOptions(
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+    ...(env.navigatorWorkContextPath === undefined
+      || env.navigatorWorkContextPath.trim() === ""
+      ? {}
+      : { navigatorWorkContextPath: env.navigatorWorkContextPath }),
   };
 }
 
@@ -1868,7 +1874,7 @@ export async function prepareSummonsResumeMaterials(
  * validation, turn builder, and adapters stay on the seat.
  *
  * Court handling (#637): public manual resume reads only the open court's
- * settlement identity; internal re-summons may freeze and record its materials.
+ * settlement identity; internal re-summons passes caller file-flag paths as-is.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,

@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
-import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./role-run-placement.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";

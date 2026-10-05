@@ -9,7 +9,6 @@ import {
 import {
   createNotaryRoleRuntime,
   projectNotaryBoundFromFlags,
-  projectNotarySessionBound,
   readNotaryTicketFlag,
 } from "../../src/notary-role.ts";
 
@@ -66,10 +65,6 @@ test("projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; i
     sourceRunPath: LOCATOR.runDirectory,
     ticketNumber: 582,
   });
-  assert.deepEqual(
-    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }).ticketNumber,
-    582,
-  );
 });
 
 test("Notary activate registers source-run flag + tool; ticket flag is envelope-owned", async () => {
@@ -87,44 +82,4 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   await runtime.activate();
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(h.beforeStart());
-});
-
-test("Notary agent-start projects envelope-admitted ticket into readingMaterial", async () => {
-  const h = notaryHarness();
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    { failInfrastructure(error) { throw error; } },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  // Ticket arrives as admitted value from envelope — role never getFlag's it.
-  await runtime.activate({ ticketNumber: 582 });
-  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    systemPrompt?: string;
-    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
-  };
-  assert.equal(typeof result.systemPrompt, "string");
-  assert.deepEqual(
-    result.readingMaterial,
-    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
-  );
-});
-
-test("Notary agent-start omits ticket when envelope admits none", async () => {
-  const h = notaryHarness();
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    { failInfrastructure(error) { throw error; } },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  await runtime.activate();
-  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
-  };
-  assert.deepEqual(
-    result.readingMaterial,
-    projectNotarySessionBound({ sourceRun: LOCATOR }),
-  );
-  assert.equal(result.readingMaterial?.ticketNumber, undefined);
 });

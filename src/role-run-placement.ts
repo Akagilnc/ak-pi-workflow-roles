@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   activationBookDirectory,
@@ -52,6 +52,15 @@ export function sessionFileOf(runDirectory: string): string {
 /** `<run>/session/session.jsonl` → run directory. */
 export function runDirectoryOfSessionFile(sessionFile: string): string {
   return dirname(dirname(sessionFile));
+}
+
+/** Climb session/session.jsonl → run directory when the host exposes a session file. */
+export function auditorRunDirectory(context: {
+  readonly sessionManager?: { getSessionFile?: () => string | undefined };
+}): string | undefined {
+  const sessionFile = context.sessionManager?.getSessionFile?.();
+  if (sessionFile === undefined) return undefined;
+  return resolve(runDirectoryOfSessionFile(sessionFile));
 }
 
 /** `<run>/session` → run directory. */

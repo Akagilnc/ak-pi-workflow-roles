@@ -2,12 +2,16 @@
  * #959: navigator prior advice stays on the host session via CLI resume.
  * Package only pins a host runId pointer — never a prose advice ledger.
  * Fresh mint only after typed load says principal cannot reopen (CliUsageError).
+ * #1166: nest work-context locator rides the public summon → RoleTurnRequest seam
+ * (no argv path inject; no parallel success-stub proof chain).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { resolveNavigatorWorkSubjectPlacement } from "../../src/archivist-record-topology.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import {
   createNativeNavigatorSessionFactory,
@@ -15,11 +19,17 @@ import {
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
-import { renderSystemPromptOverride } from "../../src/prepared-role-turn.ts";
+import {
+  navigatorWorkContextFile,
+  readNavigatorWorkBase,
+} from "../../src/navigator-work-base.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 
@@ -378,14 +388,28 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      `${JSON.stringify({ seats: { navigator: { provider: "test", model: "caller-seat" } } }, null, 2)}\n`,
     );
     const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
     await mkdir(join(parentRun, "session"), { recursive: true });
     const authority = "authority-token-9f3c";
     const subject = "task-bytes-9f3c";
     const subjectKey = `${join(root, ".ak/work")}#ad-hoc`;
+    const expectedLocator = navigatorWorkContextFile(
+      resolveNavigatorWorkSubjectPlacement({ cwd: root, subject: subjectKey, home: root }).sessionDir,
+    );
     const summons: string[] = [];
+    const liveRequests: RoleTurnRequest[] = [];
+    let mint = 0;
+    const sealHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "navigator",
+        toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        details: { prose: "下一步", ticketNumber: 1166 },
+      }),
+    });
     const nav = createNavigatorAttendance({
       context: {
         cwd: root,
@@ -398,15 +422,24 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
       subject,
       authority,
       createSession: createNativeNavigatorSessionFactory({
+        // Real public summon + in-repo fake host — same seam as #1166 / #1164.
         summonPublicRole: async (options) => {
           summons.push(options.argv[0] ?? "");
-          return {
-            exitCode: 0,
-            runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navbase@navigator"),
-            terminal: {
-              roleOutcome: { kind: "accepted", payloads: [{ prose: "下一步" }] },
+          mint += 1;
+          const { summonPublicRole } = await import("../../src/public-role-summons.ts");
+          return summonPublicRole({
+            ...options,
+            packageRoot,
+            home: root,
+            credentials: { "openai-codex": true, xai: true },
+            createRunId: () => `01navbase${String(mint).padStart(2, "0")}`,
+            roleTurnHost: {
+              async executeTurn(request) {
+                liveRequests.push(request);
+                return sealHost.executeTurn(request);
+              },
             },
-          } as never;
+          });
         },
         hostRunResumable: async () => false,
       }),
@@ -416,44 +449,19 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(summons.length, 2);
+    assert.equal(liveRequests.length, 2);
     for (const argv of summons) {
-      assert.equal(argv.includes(authority), false);
-      assert.equal(argv.includes(subject), false);
+      // #1166: package must not inject a work-context path — structured field only.
+      // Do not zero-hit-scan prompt/argv prose for subject/authority tokens (J6).
       const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
       assert.equal(fed.subjectKey, subjectKey);
-      assert.equal(typeof fed.workContextPath, "string");
-      const stored = JSON.parse(await readFile(fed.workContextPath ?? "", "utf8")) as {
-        subject: string;
-        authority: string;
-      };
-      assert.equal(stored.subject, subject);
-      assert.equal(stored.authority, authority);
+      assert.equal(fed.workContextPath, undefined);
     }
-
-    const delivered = summons[0] ?? "";
-    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navdeliver@navigator");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(join(runDirectory, "session")),
-        activation: { role: "navigator" },
-        methods: [],
-        continuation: { kind: "initial", prompt: delivered },
-        cwd: root,
-        home: root,
-        agentDir: join(root, "agent"),
-        runDirectory,
-      },
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath: join(root, "mcp.sock"),
-    });
-    try {
-      assert.equal(prepared.prompt, delivered);
-      const modelInput = renderSystemPromptOverride(prepared.systemPrompt);
-      assert.equal(modelInput.includes(subject), true);
-      assert.equal(modelInput.includes(authority), true);
-    } finally {
-      await prepared.dispose?.();
+    for (const request of liveRequests) {
+      assert.equal(request.activation.role, "navigator");
+      assert.equal(request.navigatorWorkContextPath, expectedLocator);
+      // Generated subject/authority materials: observe via structured nest file only.
+      assert.deepEqual(await readNavigatorWorkBase(expectedLocator), { subject, authority });
     }
     await nav.dispose();
   });

@@ -1,7 +1,7 @@
 /**
  * Durable work subject and controlling authority for one navigator nest.
- * Settlement user turns keep a path pointer; the navigator system prompt
- * loads the bytes once per agent start from this file (base material).
+ * Startup materials load these bytes from the nest session directory; the
+ * caller/summon prompt must not receive a package-injected path (#1166).
  */
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -11,6 +11,9 @@ import { writeFileAtomically } from "./atomic-write.ts";
 import { isEnoent, isRecord } from "./unknown-value.ts";
 
 export const NAVIGATOR_WORK_CONTEXT_BASENAME = "work-context.json";
+
+/** Child-process / in-process locator for nest work-context bytes — not prompt material (#1166). */
+export const AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV = "AK_ROLE_NAVIGATOR_WORK_CONTEXT" as const;
 
 export type NavigatorWorkBase = {
   readonly subject: string;
@@ -81,38 +84,20 @@ export async function readNavigatorWorkBase(path: string): Promise<NavigatorWork
   return { subject: record.subject, authority: record.authority };
 }
 
-function jsonObjectFromPrompt(prompt: string): Record<string, unknown> | undefined {
-  const head = prompt.trimStart().split("\n\n", 1)[0] ?? "";
-  if (!head.startsWith("{")) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(head);
-    if (!isRecord(parsed)) return undefined;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
-
-export function workContextPathFromPrompt(prompt: string): string | undefined {
-  const record = jsonObjectFromPrompt(prompt);
-  const path = record?.workContextPath;
-  if (typeof path !== "string" || path.trim() === "") return undefined;
-  return isNavigatorWorkContextFile(path) ? path : undefined;
-}
-
-/** Settlement JSON gains the nest pointer. Non-JSON prompts stay unchanged. */
-export function attachWorkContextPointer(text: string, workContextPath: string): string {
-  const record = jsonObjectFromPrompt(text);
-  if (record === undefined) return text;
-  if (typeof record.workContextPath === "string" && record.workContextPath.trim() !== "") return text;
-  const head = text.trimStart().split("\n\n", 1)[0] ?? "";
-  const rest = text.trimStart().slice(head.length);
-  return `${JSON.stringify({ ...record, workContextPath })}${rest}`;
-}
-
-/** System-prompt base for one agent start. Absent or unreadable file yields undefined. */
-export async function loadNavigatorWorkBaseSuffix(prompt: string): Promise<string | undefined> {
-  const path = workContextPathFromPrompt(prompt);
+/** System-prompt base for one agent start. Prefer request locator, else nest session dir. */
+export async function loadNavigatorWorkBaseSuffix(
+  sessionDir: string | undefined,
+  locatorPath?: string,
+): Promise<string | undefined> {
+  const path =
+    typeof locatorPath === "string" && locatorPath.trim() !== ""
+      ? locatorPath.trim()
+      : typeof process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV] === "string"
+        && process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV].trim() !== ""
+        ? process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV].trim()
+        : sessionDir !== undefined && sessionDir.trim() !== ""
+          ? navigatorWorkContextFile(sessionDir)
+          : undefined;
   if (path === undefined) return undefined;
   const body = await readNavigatorWorkBase(path);
   if (body === undefined) return undefined;

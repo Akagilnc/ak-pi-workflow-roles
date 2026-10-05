@@ -10,6 +10,10 @@ import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
  */
 
 import {
+  auditedRunIdentityFromParts,
+  auditedRunIdentityMaterial,
+} from "./audited-run-identity.ts";
+import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
@@ -53,24 +57,14 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
   return n;
 }
 
-/**
- * Typed session bound (locator + optional ticket).
- * Sole production projection for agent-start material + session custom entry.
- */
-export function projectNotarySessionBound(input: {
+/** Agent-start reading material: identity `<runId>@<席>` only — no directory path. */
+export function projectNotaryAuditedRunIdentity(input: {
   readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-}): {
-  readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-} {
-  return {
-    sourceRun: input.sourceRun,
-    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
-  };
+}) {
+  return auditedRunIdentityMaterial(
+    auditedRunIdentityFromParts(input.sourceRun.runId, input.sourceRun.role),
+  );
 }
-
-export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
 
 /**
  * Session custom-entry type for typed notary bound (written by shared envelope).
@@ -102,7 +96,7 @@ export function projectNotaryBoundFromFlags(
 }
 
 /** Assemble systemPrompt body from base + soul only (NO embedded bound JSON).
- * The typed session bound travels separately as `readingMaterial`; adapters fold
+ * Audited-run identity travels separately as `readingMaterial`; adapters fold
  * it into the provider-visible prompt at the send boundary. */
 export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
@@ -172,11 +166,8 @@ export function createNotaryRoleRuntime(
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
             }),
-            readingMaterial: projectNotarySessionBound({
+            readingMaterial: projectNotaryAuditedRunIdentity({
               sourceRun: activation.sourceRun,
-              ...(activation.ticketNumber === undefined
-                ? {}
-                : { ticketNumber: activation.ticketNumber }),
             }),
           };
         });
