@@ -20,7 +20,9 @@ def project_admitted_instruction(adm, tool_dir):
     """Reuse production appendCallerFileFlagPaths — no parallel join (#1169 J1)."""
     repo_root = os.path.abspath(f"{tool_dir}/../..")
     inv = os.path.abspath(f"{tool_dir}/../../src/public-cli/invocation.ts")
-    # Official: subprocess.run(input=...) → stdin; Node readFileSync(0) reads fd 0.
+    # Official: text/universal_newlines converts stdout CR/LF to \n; binary does not
+    # (docs.python.org/3/library/subprocess.html#frequently-used-arguments).
+    # stdin JSON + Node utf8 + binary capture keeps dispatch/file-flag bytes intact.
     p = subprocess.run(
         ["node", "--import", "tsx", "-e",
          "import { readFileSync } from 'node:fs';"
@@ -30,12 +32,15 @@ def project_admitted_instruction(adm, tool_dir):
          "    a.instruction ?? '', a.attachments ?? [],"
          "    a.requestManifestPath, a.prerequisitesPath));"
          "})"],
-        cwd=repo_root, text=True, capture_output=True,
-        input=json.dumps(adm, ensure_ascii=False),
+        cwd=repo_root, capture_output=True,
+        input=json.dumps(adm, ensure_ascii=False).encode("utf-8"),
     )
     if p.returncode != 0:
-        sys.exit(f"projecting admitted file-flag instruction failed:\n{p.stderr}")
-    return p.stdout
+        sys.exit(
+            "projecting admitted file-flag instruction failed:\n"
+            + p.stderr.decode("utf-8", errors="replace")
+        )
+    return p.stdout.decode("utf-8")
 
 SUPPORTED_HOSTS = ("codex", "pi")
 NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态，"
@@ -323,7 +328,9 @@ def main():
     if delivered is not None and delivered.get("outputSchema") is not None:
         with open(f"{kit}/schema.json", "w") as f:
             json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
-    with open(f"{kit}/instr.txt", "w") as f:
+    # Official open: newline='' returns/writes line endings untranslated
+    # (docs.python.org/3/library/functions.html#open). Match production utf-8.
+    with open(f"{kit}/instr.txt", "w", encoding="utf-8", newline="") as f:
         # Prior instruction remapping only; caller file-flag paths pass through as admitted.
         f.write(project_admitted_instruction(
             {**adm, "instruction": repoint(adm.get("instruction") or "")},

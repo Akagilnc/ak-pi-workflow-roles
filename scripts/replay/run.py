@@ -27,7 +27,12 @@ def main():
     host = a.host or meta["host"]
     sysfile = os.path.abspath(a.sys) if a.sys else f"{kit}/sys.txt"
     # #1169 J1: deliver frozen dispatch/file-flag text as-is — no strip / empty default.
-    instr = a.instr if a.instr is not None else open(f"{kit}/instr.txt").read()
+    # Official open: newline='' keeps CR/LF untranslated; utf-8 matches freeze write.
+    instr = (
+        a.instr
+        if a.instr is not None
+        else open(f"{kit}/instr.txt", encoding="utf-8", newline="").read()
+    )
     tag = f"{a.arm}-{a.n}"
     if meta.get("sysKind") != "turn-delivery" and not a.sys:
         sys.exit("no recorded turn-delivery prompt in this kit (sysKind=%s); pass --sys with an experimental prompt." % meta.get("sysKind"))
