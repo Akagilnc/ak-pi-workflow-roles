@@ -106,9 +106,15 @@ test("admitCoderInvocation rejects blank task and freezes plan phase", async () 
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-coder-plan-001@coder"),
     );
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as { phase: string; role: string };
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+      phase: string;
+      role: string;
+      instruction: string;
+    };
     assert.equal(persisted.role, "coder");
     assert.equal(persisted.phase, "plan");
+    // freeze.py instr.txt reads admitted.instruction (#1168).
+    assert.equal(persisted.instruction, "Plan the first vertical slice.");
   });
 });
 

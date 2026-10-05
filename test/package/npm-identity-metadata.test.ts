@@ -206,19 +206,18 @@ test("packed artifact ships the release inventory without bundled method Skills"
   assert.ok(extracted.paths.includes("dist/navigator-attendance.js"), "dist/navigator-attendance.js must be present in the npm tarball");
   assert.ok(extracted.paths.includes("dist/activation-ledger-topology.js"), "dist/activation-ledger-topology.js must be present in the npm tarball");
 
-  // Merger seat: source chain + packet contract module.
+  // Merger seat: source chain.
   for (const path of [
     "src/merger-contracts.ts",
     "src/merger-git-state.ts",
     "src/merger-role.ts",
-    "src/package-contracts/fixer-packet.ts",
-    "dist/package-contracts/fixer-packet.js",
   ]) {
     assert.ok(extracted.paths.includes(path), `${path} must be present in the npm tarball`);
   }
 
-  // Packets: repair doc + prerequisites schema ship; the closed repair.json
-  // shell must never come back into the tarball.
+  // Packets: repair doc + prerequisites example ship; the closed repair.json
+  // shell must never come back into the tarball. #1168: package no longer
+  // ships/validates fixer-packet.ts — --prerequisites is opaque path-only.
   assert.ok(extracted.paths.includes("packets/fixer-repair.md"), "packets/fixer-repair.md must be present in the npm tarball");
   assert.ok(extracted.paths.includes("packets/fixer-prerequisites.json"), "packets/fixer-prerequisites.json must be present in the npm tarball");
   assert.equal(

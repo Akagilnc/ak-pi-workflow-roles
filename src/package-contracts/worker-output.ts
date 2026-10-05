@@ -13,26 +13,18 @@ import {
   type FixerOutput,
   type FixerPhase,
 } from "./fixer-output.ts";
-import { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./fixer-packet.ts";
-import type { FixerInvocationInput, FixerPrerequisite } from "./fixer-packet.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export {
   FIXER_OUTPUT_TOOL_NAME,
   fixerOutputSchema,
   validateFixerOutput,
-  fixerPrerequisiteSchema,
-  fixerPrerequisitesSchema,
-  parseFixerPrerequisites,
-  validateFixerPrerequisites,
 };
 export type {
   FixerBlocker,
   FixerClassResult,
   FixerOutput,
   FixerPhase,
-  FixerInvocationInput,
-  FixerPrerequisite,
 };
 
 export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";

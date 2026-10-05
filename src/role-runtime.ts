@@ -346,8 +346,6 @@ export {
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
-export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
-export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export {
   AUDITOR_SOUL_ROLES,
   AK_ROLE_AUDITOR_SUBJECT_ENV,

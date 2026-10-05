@@ -173,41 +173,68 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       assert.equal(stderr.join("").length > 0, true);
     }
 
-    {
-      const bad = join(home, "bad.json");
-      await writeFile(bad, "{", "utf8");
+    // #1168: opaque --prerequisites — missing / non-JSON still admit+start; path only.
+    for (const [label, prereqPath, runId] of [
+      ["non-json", join(home, "bad.json"), "run-cli-fixer-opaque-bad-prereq"],
+      ["missing", join(home, "missing-prereqs.json"), "run-cli-fixer-opaque-missing-prereq"],
+    ] as const) {
+      if (label === "non-json") await writeFile(prereqPath, "{", "utf8");
       const { io } = captureIo();
-      const result = await runAkRole(["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", bad, "Repair."],
+      const result = await runAkRole(
+        ["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", prereqPath, "Repair."],
         {
           packageRoot,
           home,
           cwd: project,
-          createRunId: () => "run-cli-fixer-opaque-bad-prereq",
+          createRunId: () => runId,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-            const sessionFile = args[args.indexOf("--session") + 1]!;
-            await writeFile(
-              sessionFile,
-              fixerSessionLine({ status: "planned", report: "started despite bad prereq" }),
-            );
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: {
-                role: "fixer" as const,
-                details: { status: "planned", report: "started despite bad prereq" },
-              },
-            };
-          },
+              assert.equal(args.includes("--ak-fix-packet"), false);
+              const sessionFile = args[args.indexOf("--session") + 1]!;
+              await writeFile(
+                sessionFile,
+                fixerSessionLine({ status: "planned", report: `started despite ${label} prereq` }),
+              );
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                sealedAcceptance: {
+                  role: "fixer" as const,
+                  details: { status: "planned", report: `started despite ${label} prereq` },
+                },
+              };
+            },
           }),
         },
       );
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 0, `${label} must still start`);
+      const bookKey = resolveBookKeyFromGit(project);
+      const runDirectory = join(
+        home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`,
+      );
+      await assert.rejects(
+        () => access(join(runDirectory, "fix-packet.md")),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+      await assert.rejects(
+        () => access(join(runDirectory, "prerequisites.json")),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+      const admitted = readCurrentSection(runDirectory, "admitted") as {
+        instruction: string;
+        prerequisitesPath?: string;
+        prerequisites?: unknown;
+        packetPath?: string;
+      };
+      assert.equal(admitted.instruction, "Repair.");
+      assert.equal(admitted.prerequisitesPath, prereqPath);
+      assert.equal("prerequisites" in admitted, false);
+      assert.equal("packetPath" in admitted, false);
     }
 
     {
