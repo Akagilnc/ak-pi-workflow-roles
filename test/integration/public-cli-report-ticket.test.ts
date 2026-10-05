@@ -677,62 +677,22 @@ test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_D
     const prior = process.env.AK_ROLE_RUN_DIR;
     process.env.AK_ROLE_RUN_DIR = parentUnbound;
     try {
-      const host = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args, options) => {
-          const oldSession = argvFlagValue(args, "--session");
-          const oldSessionDir = argvFlagValue(args, "--session-dir");
-          assert.ok(oldSession && oldSessionDir);
-          const runDirectory = dirname(oldSessionDir);
-          await mkdir(oldSessionDir, { recursive: true });
-          if (!existsSync(oldSession)) {
-            await writeFile(oldSession, "", "utf8");
-          }
-          const sessionManager = SessionManager.open(oldSession, oldSessionDir, options.cwd);
-          const context: HostContext = {
-            cwd: options.cwd,
-            mode: "rpc",
-            model: undefined,
-            runDirectory,
-            sessionManager: {
-              getLeafEntry: () => sessionManager.getLeafEntry(),
-              getLeafId: () => sessionManager.getLeafId(),
-              getEntries: () => sessionManager.getEntries(),
-              getSessionDir: () => sessionManager.getSessionDir(),
-              getSessionFile: () => sessionManager.getSessionFile(),
-              getHeader: () => sessionManager.getHeader(),
-              setSessionFile: (path) => sessionManager.setSessionFile(path),
-              appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
-            },
-            abort() {},
-          };
-          // Parent ambient stays parent; child HostContext owns this turn's leaf.
-          assert.equal(process.env.AK_ROLE_RUN_DIR, parentUnbound);
-          const reported = await reportTicketFromHostContext(context, TICKET);
-          assert.equal(reported.relocated, true);
-          assert.equal(
-            process.env.AK_ROLE_RUN_DIR,
-            parentUnbound,
-            "parent ambient env must stay parent when child relocates",
-          );
-          assert.equal(context.runDirectory, ticketLeaf(home, bookKey, TICKET, runId, "fixer"));
-          const newSession = sessionManager.getSessionFile();
-          assert.ok(newSession && newSession.includes(`/${TICKET}/`));
-          options.env.AK_ROLE_RUN_DIR = context.runDirectory;
-          const patched = args.flatMap((arg, i) => {
-            if (args[i - 1] === "--session") return [newSession];
-            if (args[i - 1] === "--session-dir") return [dirname(newSession)];
-            return [arg];
-          });
-          return scriptedTerminatingToolSession({
-            role: "fixer",
-            toolName: FIXER_OUTPUT_TOOL_NAME,
-            details: { ...FIXER_DONE },
-            sessionWriteMode: "append",
-          })(patched, options);
-        },
-      }));
+      let observed = false;
+      const host = withPassingReviewHost(
+        piHostThatReportsThenSubmits({
+          ticketNumber: TICKET,
+          onAfterReport: ({ newSession }) => {
+            // Parent ambient stays parent; child HostContext owns this turn's leaf.
+            assert.equal(
+              process.env.AK_ROLE_RUN_DIR,
+              parentUnbound,
+              "parent ambient env must stay parent when child relocates",
+            );
+            assert.ok(newSession.includes(`/${TICKET}/`));
+            observed = true;
+          },
+        }),
+      );
       const result = await runPublicInstructionSeat(
         ["apply", "Child report under foreign ambient."],
         seatEnv(home, project, runId, "pi", host),
@@ -740,6 +700,7 @@ test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_D
         "fixer",
         (args) => parsePublicSeatArgv("fixer", args),
       );
+      assert.equal(observed, true);
       assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
       assert.equal(process.env.AK_ROLE_RUN_DIR, parentUnbound);
       assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
