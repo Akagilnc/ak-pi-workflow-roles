@@ -543,11 +543,12 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     );
     const sessionDirectory = join(runDirectory, "session");
     const admitted = readCurrentSection(runDirectory, "admitted") as {
-      phase: string; role: string; taskPath: string; ticketNumber?: number;
+      phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
+    assert.equal("taskPath" in admitted, false);
 
     const gateDirectory = join(sessionDirectory, "worker-submission-gate");
     const stalePointer = join(gateDirectory, "current-session.json");
@@ -572,7 +573,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
-        assert.equal(args[args.indexOf("--ak-coder-task") + 1], join(runDirectory, "task.md"));
+        assert.equal(args.includes("--ak-coder-task"), false);
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);

@@ -45,8 +45,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     packageRoot,
     loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
     loadRoleSoul: loadRegisteredRoleSoul,
-    loadFixPacket: (path) => readFile(path, "utf8"),
-    loadCoderTask: (path) => readFile(path, "utf8"),
     loadDoctorCase,
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),

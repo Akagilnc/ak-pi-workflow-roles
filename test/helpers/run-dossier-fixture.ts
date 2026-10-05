@@ -207,7 +207,7 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
   const allowed = new Set([
     "current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session",
-    "task.md", "fix-packet.md", "prerequisites.json", "merger-input.json",
+    "merger-input.json",
   ]);
   for (const entry of readdirSync(runDirectory)) {
     assert.equal(allowed.has(entry), true, `unexpected run directory entry: ${entry}`);

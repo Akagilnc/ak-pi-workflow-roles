@@ -65,11 +65,6 @@ import {
   type CollectorRepository,
 } from "../collector-config.ts";
 import { ownerRepoFromGitHubRemoteUrl } from "./github-remote.ts";
-import {
-  FixerPacketValidationError,
-  parseFixerPrerequisites,
-  type FixerPrerequisite,
-} from "../package-contracts/fixer-packet.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
 import type { MergerGitState } from "../merger-git-state.ts";
@@ -204,20 +199,14 @@ export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
   readonly role: "coder";
   /** Explicit plan or default apply — preserved through admission and continuation. */
   readonly phase: CoderPhase;
-  /** Durable task file path consumed by internal --ak-coder-task. */
-  readonly taskPath: string;
 };
 
 export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "fixer";
   /** Explicit plan or default apply — preserved through admission and continuation. */
   readonly phase: FixerPhase;
-  /** Durable opaque instruction path consumed by internal --ak-fix-packet. */
-  readonly packetPath: string;
-  /** Optional durable prerequisites JSON path for --ak-fixer-prerequisites. */
+  /** Optional caller --prerequisites path as-is (#1168; package does not read it). */
   readonly prerequisitesPath?: string;
-  /** Structurally validated prerequisite declarations frozen at admission. */
-  readonly prerequisites: readonly FixerPrerequisite[];
 };
 
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
@@ -622,15 +611,13 @@ export async function relocateAdmittedRunToTicket(
     admittedRecord,
     [
       "runDirectory",
-      "taskPath",
-      "packetPath",
-      "prerequisitesPath",
       "mergerInputPath",
     ],
     oldRunDirectory,
     target.runDirectory,
   );
-  // #1165: caller --attach / --request-manifest paths stay as given; do not rewrite.
+  // #1165/#1168: caller file-flag paths stay as given. Obsolete copy fields
+  // (taskPath/packetPath) are not rewritten — stock volumes keep their bytes.
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is
@@ -876,7 +863,8 @@ function assignPublicSeatOption(
       fields.authorityRefs.push(requireAuthorityRef(value));
       return;
     case "prerequisites":
-      fields.prerequisitesPath = requireOptionPath(taken.def.canonical, value);
+      // #1168: same opaque file-flag rule as --attach.
+      fields.prerequisitesPath = requireProvidedOptionValue(taken.def.canonical, value);
       return;
     case "pr":
       fields.prNumber = parsePositivePrOption(value);
@@ -1324,16 +1312,13 @@ export async function admitPublicRole(
       if (!record.phases.some((item) => item === phase)) {
         throw new CliUsageError("coder phase must be plan or apply");
       }
+      // #1168: dispatch text is the first message only — no task.md copy.
       return admitStandardMaterialInvocation("coder", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
-        placedFields: async (placed) => {
-          const taskPath = join(placed.runDirectory, "task.md");
-          await writeFile(taskPath, instruction, "utf8");
-          return { phase, taskPath };
-        },
+        placedFields: async () => ({ phase }),
       });
     }
     case "worker-packet": {
@@ -1344,53 +1329,18 @@ export async function admitPublicRole(
       if (!record.phases.some((item) => item === phase)) {
         throw new CliUsageError("fixer phase must be plan or apply");
       }
-      let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
-      let prerequisitesSource: string | undefined;
-      if (parsed.prerequisitesPath !== undefined) {
-        const absolutePrereq = isAbsolute(parsed.prerequisitesPath)
-          ? parsed.prerequisitesPath
-          : resolve(parsed.prerequisitesPath);
-        try {
-          prerequisitesSource = await readFile(absolutePrereq, "utf8");
-        } catch (error) {
-          throw new CliUsageError(
-            `fixer prerequisites path is unreadable: ${parsed.prerequisitesPath}`,
-            { cause: error },
-          );
-        }
-        try {
-          prerequisites = parseFixerPrerequisites(prerequisitesSource);
-        } catch (error) {
-          if (error instanceof FixerPacketValidationError) {
-            throw new CliUsageError(error.message, { cause: error });
-          }
-          throw error;
-        }
-      }
+      // #1168: dispatch once as first message; --prerequisites path as-is.
       return admitStandardMaterialInvocation("fixer", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
-        placedFields: async (placed) => {
-          let prerequisitesPath: string | undefined;
-          if (prerequisitesSource !== undefined) {
-            prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
-            await writeFile(
-              prerequisitesPath,
-              `${JSON.stringify(prerequisites, null, 2)}\n`,
-              "utf8",
-            );
-          }
-          const packetPath = join(placed.runDirectory, "fix-packet.md");
-          await writeFile(packetPath, instruction, "utf8");
-          return {
-            phase,
-            packetPath,
-            prerequisites,
-            ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-          };
-        },
+        placedFields: async () => ({
+          phase,
+          ...(parsed.prerequisitesPath === undefined
+            ? {}
+            : { prerequisitesPath: parsed.prerequisitesPath }),
+        }),
       });
     }
     case "collect-target": {
@@ -1579,13 +1529,12 @@ export async function admitPublicRole(
         placedFields: async (placed) => {
           const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
           const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
+          // #1168: git facts stay; do not encode dispatch text as task/authority copies.
           const mergerInput = validateMergerInput({
             attemptId: placed.runId,
             targetObjectId: derived.targetObjectId,
             sourceObjectId: derived.sourceObjectId,
             materials: {
-              task: mergerMaterialFromUtf8(instruction),
-              authority: mergerMaterialFromUtf8(instruction),
               targetIntent: mergerMaterialFromUtf8(
                 `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
               ),
@@ -1767,7 +1716,7 @@ async function persistPlacedAdmission(
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
  * Seats whose extra facts depend on the placed run pass placedFields
- * (coder writes task.md; fixer writes fix-packet.md; merger writes merger-input.json).
+ * (merger writes merger-input.json with git facts; coder/fixer dispatch is first-message only, #1168).
  */
 async function admitStandardMaterialInvocation<
   R extends PackagedRole,
@@ -1849,9 +1798,10 @@ export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
 type InstructionTransportSource = {
   readonly role?: string;
   readonly instruction: string;
-  readonly instructionEmpty: boolean;
+  readonly instructionEmpty?: boolean;
   readonly attachments: readonly { readonly path: string }[];
   readonly requestManifestPath?: string;
+  readonly prerequisitesPath?: string;
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
@@ -1913,14 +1863,17 @@ export function buildInstructionTransportPrompt(
     }
     return lines.join("\n");
   }
-  // #1165 J3: assemble from the admitted instruction bytes themselves.
+  // #1165 J3 / #1168: assemble from the admitted instruction bytes themselves.
   const lines: string[] = [admitted.instruction];
-  // #1164/#1165: each caller path keeps its file-flag provenance.
+  // #1164/#1165/#1168: each caller path keeps its file-flag provenance.
   const flaggedPaths: string[] = [
     ...admitted.attachments.map((attachment) => `--attach ${attachment.path}`),
     ...(admitted.requestManifestPath === undefined
       ? []
       : [`--request-manifest ${admitted.requestManifestPath}`]),
+    ...(admitted.prerequisitesPath === undefined
+      ? []
+      : [`--prerequisites ${admitted.prerequisitesPath}`]),
   ];
   if (flaggedPaths.length > 0) {
     lines.push("");
@@ -2022,7 +1975,7 @@ export type AdmitFixerInvocationOptions = {
   phase: FixerPhase;
   instruction: string;
   attachmentPaths: readonly string[];
-  /** Optional caller path to prerequisite JSON array; malformed grammar rejects here. */
+  /** Optional caller --prerequisites path as-is (#1168). */
   prerequisitesPath?: string;
   project?: string;
   createRunId?: () => string;
@@ -2198,7 +2151,7 @@ export function buildReviewerSkillArgProjection(
   ].join(" ");
 }
 
-function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {
+function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["targetIntent"] {
   const bytes = Buffer.from(text, "utf8");
   return Object.freeze({
     bytesBase64: bytes.toString("base64"),

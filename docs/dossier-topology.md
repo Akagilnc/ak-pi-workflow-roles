@@ -90,7 +90,7 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 
 - `session/session.jsonl`（headless／ACP 腿包自己写的那份）：太史取帧起止与工具区间（`analyst-ledger`）、票轨迹（`ticket-trajectory`）、起居郎取原生会话区间（`ticket-provenance`）、settlement 取无卷生命周期事实与导航员到场都读它。
 - `session/worker-submission-gate/`：worker 闸跨续跑保存的状态（提交基线、已提醒标记、缺理由催办次数），续跑时读回；由 ADR 0065 的 `createRecordSession` 持有，不是日志副本。
-- 各席受理时写入的输入，在 run 目录顶层：`task.md`、`fix-packet.md`、`prerequisites.json`、`merger-input.json`，席位运行时按路径读取。`--attach` 与通进司 `--request-manifest` 只在受理记录里留下调用方原路径，不在腿目录落抄件（#1165）。
+- 各席受理时写入的输入，在 run 目录顶层：`merger-input.json`（校书郎 git 事实），席位运行时按路径读取。`--attach`、修内司 `--prerequisites` 与通进司 `--request-manifest` 只在受理记录里留下调用方原路径，不在腿目录落抄件；修内司／将作监派单文只作第一句话，不写 `fix-packet.md`／`task.md`（#1165、#1168）。
 
 ## 边界
 

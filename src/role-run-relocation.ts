@@ -23,10 +23,9 @@ const ADMITTED_PAGE_FIELDS = [
   "admittedRequestPath", // pre-#1161 pages only
   "sessionDirectory",
   "sessionFile",
-  "taskPath",
-  "packetPath",
-  "prerequisitesPath",
-  // #1165: requestManifestPath is a caller path — never rewrite.
+  // #1165/#1168: caller file-flag paths (requestManifestPath, prerequisitesPath)
+  // stay as given. Obsolete copy fields (taskPath/packetPath) are not rewritten —
+  // stock volumes keep their bytes; live relocate no longer maintains them.
   "mergerInputPath",
   "sourceRunPath",
 ] as const;

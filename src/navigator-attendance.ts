@@ -229,14 +229,14 @@ export function navigatorSubjectKey(
 /**
  * Role inputs for one ad-hoc work item live below role-specific run folders.
  * The folder and filename are transport, not identity: the shared work root
- * keeps task.md, fix-packet.json, and other natural inputs on one subject.
+ * keeps natural inputs on one subject.
  */
 export function navigatorSubjectKeyForInput(subjectRoot: string, reference: string, cwd = process.cwd()): string {
   if (issueRoot(subjectRoot) !== undefined || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
   const resolvedReference = resolve(cwd, reference);
   const marker = "/runs/";
   if (resolvedReference.includes(marker)) {
-    // The work root, not task.md/fix-packet.json/etc., is the stable subject.
+    // The work root, not a role-input filename, is the stable subject.
     // Different roots remain isolated without inventing a filename convention.
     return subjectRoot;
   }
