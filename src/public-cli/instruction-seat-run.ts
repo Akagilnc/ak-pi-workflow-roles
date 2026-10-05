@@ -29,7 +29,6 @@ import {
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
-import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
@@ -359,13 +358,7 @@ async function resolveInitialPrompt(
     });
     if (body !== undefined) return body;
   }
-  return buildInstructionTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions({
-      ...pickEngineAxis(env),
-      packageRoot: env.packageRoot,
-    }),
-  );
+  return buildInstructionTransportPrompt(admitted);
 }
 
 function isBoardTicketSeat(
@@ -500,10 +493,7 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt({
-              packageRoot: activeEnv.packageRoot,
-              ...pickEngineAxis(activeEnv),
-            }),
+            prompt: buildAutoResumeContinuationPrompt(),
           }),
         ),
         adapters,
@@ -744,13 +734,7 @@ async function runCountersignBody(
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
         prompt: (env.reviewReask ?? env.gateReviewInstruction)
-          ?? buildInstructionTransportPrompt(
-            admitted,
-            engineSessionMaterialFromOptions({
-              ...pickEngineAxis(env),
-              packageRoot: env.packageRoot,
-            }),
-          ),
+          ?? buildInstructionTransportPrompt(admitted),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({

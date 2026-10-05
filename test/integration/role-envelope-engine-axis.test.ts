@@ -235,8 +235,8 @@ test("shared envelope registers engine detour when request.engine is set", async
               && material !== null
               && (material as { kind?: unknown }).kind === "engine-session-material",
           ),
-          false,
-          "ordinary judge must not fold engine readingMaterial (transport prompt already has it)",
+          true,
+          "ordinary judge folds engine readingMaterial (#1167 startup delivery)",
         );
       } finally {
         await prepared.dispose?.();
@@ -567,11 +567,17 @@ test("#879 station-child officer engine material stays off dialogue", async () =
             && (material as { kind?: unknown }).kind === "engine-session-material",
         );
         assert.equal(engines.length, 1, `${activation.role} must keep engine material`);
+        const handbook = await readFile(notesPath, "utf8");
+        const dispatch = await readFile(
+          join(packageRoot, "resources", "engine-dispatch.md"),
+          "utf8",
+        );
         assert.deepEqual(engines[0], {
           kind: "engine-session-material",
           name: ENGINE,
           model: ENGINE_MODEL,
-          materialPath: notesPath,
+          handbook,
+          dispatchHandbook: dispatch,
         });
       } finally {
         await prepared.dispose?.();
