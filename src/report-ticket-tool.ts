@@ -87,15 +87,19 @@ export function admittedForLiveTicketReport(
   } as AdmittedRoleInvocation;
 }
 
+/**
+ * Role-facing tool details only (#1171 / ADR 0087): ticket identity and whether
+ * placement moved. Never hand a package-computed runDirectory back to the seat.
+ */
 export type ReportTicketResult = {
   readonly ticketNumber: number;
-  readonly runDirectory: string;
   readonly relocated: boolean;
 };
 
 /**
  * Bind + relocate under the existing post-admission seams, then update the
  * executing process's live path handles (HostContext + optional env + setSessionFile).
+ * Pi: native SessionManager.setSessionFile so later appends stay on the moved file.
  */
 export async function reportTicketFromHostContext(
   context: HostContext,
@@ -126,12 +130,11 @@ export async function reportTicketFromHostContext(
   if (typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== "") {
     process.env.AK_ROLE_RUN_DIR = nextDirectory;
   }
-  const nextSessionFile = sessionFileOf(nextDirectory);
-  context.sessionManager.setSessionFile?.(nextSessionFile);
+  // Native host rebind only — SessionManager has no setSessionDir; appends follow sessionFile.
+  context.sessionManager.setSessionFile?.(sessionFileOf(nextDirectory));
 
   return {
     ticketNumber,
-    runDirectory: nextDirectory,
     relocated: relocation !== undefined,
   };
 }

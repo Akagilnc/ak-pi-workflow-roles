@@ -6,6 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -150,9 +151,11 @@ function projectRelocatedTurnIdentity(
 }
 
 /**
- * #1171: after the host exits, re-locate the leg by run id (report-ticket may
+ * #1171: after the host returns, re-locate the leg by run id (report-ticket may
  * have moved it mid-turn in the tool process). Settlement and render use the
  * live path; lease cleanup follows when the held path changed.
+ * Failure is not best-effort: a missing former path with no replacement must not
+ * settle or write back under the vanished unbound leaf (失败诚实宪法).
  */
 export async function refreshAdmittedPlacementAfterHostTurn(
   admitted: AdmittedRoleInvocation,
@@ -161,6 +164,11 @@ export async function refreshAdmittedPlacementAfterHostTurn(
 ): Promise<RunDirectoryRelocation | undefined> {
   const home = homeFromRunDirectory(admitted.runDirectory);
   const found = await findRunDirectoryById(home, admitted.runId, admitted.bookKey, admitted.role);
+  if (found === undefined && !existsSync(admitted.runDirectory)) {
+    throw new Error(
+      `admitted run ${admitted.runId} missing after host turn; not found under ${home}`,
+    );
+  }
   const boardTicket = await readBoardTicketNumber(found ?? admitted.runDirectory);
   if (boardTicket !== undefined) {
     (admitted as { ticketNumber?: number }).ticketNumber = boardTicket;
@@ -198,6 +206,21 @@ export async function refreshAdmittedPlacementAfterHostTurn(
   }
   heldLease?.relocate(found);
   return { oldRunDirectory, newRunDirectory: found };
+}
+
+/** Apply a successful post-host placement refresh onto the live turn request. */
+function applyRefreshedPlacementToTurn(
+  request: RoleTurnRequest,
+  turnRequest: RoleTurnRequest,
+  admitted: AdmittedRoleInvocation,
+  refreshed: RunDirectoryRelocation,
+): RoleTurnRequest {
+  projectRelocatedTurnIdentity(request, {}, admitted, refreshed);
+  return {
+    ...turnRequest,
+    runDirectory: admitted.runDirectory,
+    principal: admitted.principal,
+  };
 }
 
 /** #855: process-cancel settlement never re-enters auto-resume. */
@@ -1078,24 +1101,8 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcomeFor<A, T>): Promise<DispatchOutcomeFor<A, T>> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
-    // #1171: mid-turn report-ticket may have relocated the leg; settle on the live path.
-    try {
-      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
-        admitted,
-        env.principalAuthority,
-        lease,
-      );
-      if (refreshed !== undefined) {
-        projectRelocatedTurnIdentity(request, result, admitted, refreshed);
-      }
-    } catch (error) {
-      await recordBestEffortPostDispatchDiagnostic(
-        admitted,
-        env,
-        `post-host placement refresh failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-        io,
-      );
-    }
+    // #1171: placement refresh runs once after each host return (below), before
+    // settlement — not again here. finishAfterTurn only binds/relocates sealed tickets.
     // #855: re-read cancel before committing the terminal and afterDispatch.
     // A signal after the history-first commit cannot retroactively erase it.
     // skipRunStateWrite: run-state
@@ -1304,6 +1311,9 @@ export async function dispatchPostAdmissionTurn<
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
+      // #1171: one placement refresh before settlement — failure is a real cause,
+      // never catch-and-continue onto a vanished unbound leaf.
+      let refreshError: unknown;
       try {
         const refreshed = await refreshAdmittedPlacementAfterHostTurn(
           admitted,
@@ -1311,10 +1321,10 @@ export async function dispatchPostAdmissionTurn<
           lease,
         );
         if (refreshed !== undefined) {
-          turnRequest = { ...turnRequest, runDirectory: admitted.runDirectory, principal: admitted.principal };
+          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
         }
-      } catch {
-        // Placement refresh is best-effort beside the host throw; settlement keeps the true cause.
+      } catch (err) {
+        refreshError = err;
       }
       const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
@@ -1323,10 +1333,13 @@ export async function dispatchPostAdmissionTurn<
           timedOut: false,
           code: null,
           stderr: "",
-          // The thrown value is the host's report. A cancel received on this
-          // call is a second fact; it must not become a new Error in its place.
+          // Prefer the refresh failure when the live path is gone; otherwise the
+          // host throw remains the cause (失败诚实：不在旧 unbound 上结算写回).
           ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
-          thrown: error,
+          thrown: refreshError ?? error,
+          ...(refreshError === undefined
+            ? {}
+            : { knownDetails: { hostThrow: describeCaughtError(error) } }),
         }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
@@ -1343,7 +1356,8 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    // #1171: relocate may have happened mid-turn; settlement must use the live path.
+    // #1171: one placement refresh before settlement. Failure settles through the
+    // existing authority — never catch-and-continue onto a vanished unbound leaf.
     try {
       const refreshed = await refreshAdmittedPlacementAfterHostTurn(
         admitted,
@@ -1351,16 +1365,28 @@ export async function dispatchPostAdmissionTurn<
         lease,
       );
       if (refreshed !== undefined) {
-        turnRequest = { ...turnRequest, runDirectory: admitted.runDirectory, principal: admitted.principal };
-        projectRelocatedTurnIdentity(request, {}, admitted, refreshed);
+        turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
       }
     } catch (error) {
-      await recordBestEffortPostDispatchDiagnostic(
-        admitted,
-        env,
-        `post-host placement refresh failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-        io,
-      );
+      return await finishAfterTurn({
+        ...(await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope({
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          }, request.invocationScopeId),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+          courtScope.notePackageFault,
+          courtScope.courtAttemptId,
+        )),
+        turnDispatched: true as const,
+        ...deferredPersist,
+      });
     }
 
     // #1132: settle this turn through the ONE post-turn settlement authority,
@@ -1411,21 +1437,19 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
-        try {
-          const refreshed = await refreshAdmittedPlacementAfterHostTurn(
-            admitted,
-            env.principalAuthority,
-            lease,
-          );
-          if (refreshed !== undefined) {
-            turnRequest = {
-              ...turnRequest,
-              runDirectory: admitted.runDirectory,
-              principal: admitted.principal,
-            };
-          }
-        } catch {
-          // Best-effort beside delivery settlement.
+        // Same single refresh-before-settle rule as the first turn (#1171).
+        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+          admitted,
+          env.principalAuthority,
+          lease,
+        );
+        if (refreshed !== undefined) {
+          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
+          deliveryTurnRequest = {
+            ...deliveryTurnRequest,
+            runDirectory: admitted.runDirectory,
+            principal: admitted.principal,
+          };
         }
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
