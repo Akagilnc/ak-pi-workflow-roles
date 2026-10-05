@@ -99,12 +99,12 @@ import type { PublicThinkingLevel } from "./registry.ts";
 import { errorText, isRecord } from "../unknown-value.ts";
 
 /** Caller-supplied attachment path recorded as-is (#1165). */
-export type FrozenAttachment = {
+export type AdmittedAttachment = {
   readonly path: string;
 };
 
 /** Normalize admitted attachment records (caller path only; #1165). */
-export function normalizeAdmittedAttachment(raw: unknown): FrozenAttachment | undefined {
+export function normalizeAdmittedAttachment(raw: unknown): AdmittedAttachment | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const record = raw as Record<string, unknown>;
   const path = record.path;
@@ -115,7 +115,7 @@ export function normalizeAdmittedAttachment(raw: unknown): FrozenAttachment | un
 
 function admitCallerAttachments(
   attachmentPaths: readonly string[],
-): readonly FrozenAttachment[] {
+): readonly AdmittedAttachment[] {
   return attachmentPaths.map((path) => ({ path }));
 }
 
@@ -128,7 +128,7 @@ export type AdmittedRoleInvocationBase = {
   readonly instruction: string;
   /** True when the caller supplied a literally empty instruction (length 0). */
   readonly instructionEmpty: boolean;
-  readonly attachments: readonly FrozenAttachment[];
+  readonly attachments: readonly AdmittedAttachment[];
   readonly runDirectory: string;
   /** Host-issued opaque durable principal (coordinates only via authority.decode). */
   readonly principal: DurablePrincipal;
@@ -1610,7 +1610,7 @@ type PlacedRoleAdmission = {
   readonly principal: DurablePrincipal;
   readonly sessionDirectory: string;
   readonly sessionFile: string;
-  readonly attachments: readonly FrozenAttachment[];
+  readonly attachments: readonly AdmittedAttachment[];
   readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly ticketFields: ReturnType<typeof ticketAdmissionFields>;
@@ -1674,7 +1674,7 @@ async function placeRoleAdmission(options: {
 }
 
 function persistedAttachmentRefs(
-  attachments: readonly FrozenAttachment[],
+  attachments: readonly AdmittedAttachment[],
 ): ReadonlyArray<{ path: string }> {
   return attachments.map((attachment) => ({ path: attachment.path }));
 }
@@ -1937,7 +1937,7 @@ export async function materializeCountersignInvocation(
   if (ticketFields.ticketNumber !== undefined) {
     (admitted as { ticketNumber?: number }).ticketNumber = ticketFields.ticketNumber;
   }
-  (admitted as { attachments: readonly FrozenAttachment[] }).attachments = placement.attachments;
+  (admitted as { attachments: readonly AdmittedAttachment[] }).attachments = placement.attachments;
   writeAdmittedRequestPersistence(admitted.runDirectory, admitted, {
     sessionDirectory: placement.sessionDirectory,
     sessionFile: placement.sessionFile,
@@ -1955,7 +1955,7 @@ export async function loadAdmittedJudgeRequest(
 ): Promise<{
   instruction: string;
   instructionEmpty: boolean;
-  attachments: readonly FrozenAttachment[];
+  attachments: readonly AdmittedAttachment[];
 } | undefined> {
   try {
     const record = readPageSync(runDirectory, "admitted");
@@ -1966,7 +1966,7 @@ export async function loadAdmittedJudgeRequest(
     if (!Array.isArray(record.attachments)) return undefined;
     const attachments = record.attachments
       .map((item) => normalizeAdmittedAttachment(item))
-      .filter((item): item is FrozenAttachment => item !== undefined);
+      .filter((item): item is AdmittedAttachment => item !== undefined);
     return {
       instruction: record.instruction,
       instructionEmpty: record.instructionEmpty,
