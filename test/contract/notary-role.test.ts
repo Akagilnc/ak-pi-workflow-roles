@@ -10,7 +10,6 @@ import {
   createNotaryRoleRuntime,
   projectNotaryAuditedRunIdentity,
   projectNotaryBoundFromFlags,
-  projectNotarySessionBound,
   readNotaryTicketFlag,
 } from "../../src/notary-role.ts";
 
@@ -67,10 +66,6 @@ test("projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; i
     sourceRunPath: LOCATOR.runDirectory,
     ticketNumber: 582,
   });
-  assert.deepEqual(
-    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }).ticketNumber,
-    582,
-  );
 });
 
 test("Notary activate registers source-run flag + tool; ticket flag is envelope-owned", async () => {

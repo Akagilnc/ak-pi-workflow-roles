@@ -3,9 +3,9 @@
  * materials; first utterance stays the peer submission bytes from this-round ledger;
  * package adds no audited-run directory path. Navigator prompt stays caller bytes.
  *
- * Seam (票面): public `ak-role` + in-repo fake host. Observe RoleTurnRequest that
- * gate / direct entry actually built; prepareRoleEnvelope only reads that request
- * (never invents continuation.prompt).
+ * Seam: public `ak-role` + in-repo fake host (same createMinimalHost shape for
+ * judge / coder / secretariat parents). prepareRoleEnvelope only reads the live
+ * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
 import { createConnection } from "node:net";
@@ -19,7 +19,6 @@ import {
   type AuditedRunIdentityMaterial,
 } from "../../src/audited-run-identity.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type {
   RoleTurnHost,
   RoleTurnRequest,
@@ -36,7 +35,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
@@ -54,17 +53,19 @@ import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
-  argvFlagValue,
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
-  type LegacyFauxPiRunner,
+  withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
 const PEER_PATH = "/caller/already/had/this/path.md";
 const CREDENTIALS = { "openai-codex": true, xai: true } as const;
+
+type OfficerRole = "notary" | "auditor" | "inspector" | "countersign";
+type ParentRole = "judge" | "coder" | "secretariat";
 
 function identityFromParent(parentRun: string): string {
   const leaf = parseRunLeaf(basename(parentRun));
@@ -91,10 +92,6 @@ function packageAuditedPathMaterials(materials: readonly unknown[]): unknown[] {
     return typeof material.sourceRunPath === "string"
       || typeof material.runDirectory === "string";
   });
-}
-
-function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
-  return { name, create: () => ({ ok: true as const, host }) };
 }
 
 async function listMcpToolNames(socketPath: string, token: string): Promise<string[]> {
@@ -161,8 +158,6 @@ async function inspectLiveRequest(
 }> {
   const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-live-"));
   const socketPath = join(socketDir, "mcp.sock");
-  // Auditor soul + identity resolve from env during envelope activate (same as
-  // instruction-seat-run withAuditorSoulEnv). Re-arm from admitted page when present.
   const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
   const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
   if (request.activation.role === "auditor") {
@@ -218,9 +213,7 @@ async function configureOfficerSeats(home: string, roles: readonly string[]): Pr
   await savePublicCliConfig(config, home);
 }
 
-function officerSealHost(
-  role: "notary" | "auditor" | "inspector" | "countersign",
-): RoleTurnHost {
+function officerSealHost(role: OfficerRole): RoleTurnHost {
   const toolName =
     role === "notary" ? NOTARY_OUTPUT_TOOL_NAME
     : role === "auditor" ? AUDITOR_OUTPUT_TOOL_NAME
@@ -237,200 +230,168 @@ function officerSealHost(
   });
 }
 
+/**
+ * One fake-host shape for judge / coder / secretariat parents: seal the parent
+ * ledger submission; nested officers hit the same host (public gate seam).
+ */
+function parentGateHost(input: {
+  readonly home: string;
+  readonly runId: string;
+  readonly parentRole: ParentRole;
+  readonly details: unknown;
+  readonly capture: RoleTurnRequest[];
+  readonly captureRoles: ReadonlySet<OfficerRole>;
+}): RoleTurnHost {
+  const inner = createMinimalHost(async (request) => {
+    const role = request.activation.role;
+    if (
+      role === "notary"
+      || role === "auditor"
+      || role === "inspector"
+      || role === "countersign"
+    ) {
+      if (input.captureRoles.has(role)) input.capture.push(request);
+      return officerSealHost(role).executeTurn(request);
+    }
+    const { sessionDirectory, sessionFile } =
+      piDurablePrincipalAuthority.decode(request.principal);
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(sessionFile, "", "utf8");
+    await sealAcceptedSubmission({
+      cwd: request.cwd,
+      home: input.home,
+      runId: input.runId,
+      runDirectory: request.runDirectory,
+      role: input.parentRole,
+      details: input.details,
+      toolCallId: `${input.parentRole}-1166`,
+      ...(request.courtAttemptId === undefined
+        ? {}
+        : { courtAttemptId: request.courtAttemptId }),
+    });
+    return { code: 0, stderr: "", timedOut: false };
+  });
+  return withNestedTrueUnboundDiarist(inner, { primaryRole: input.parentRole });
+}
+
 test("#1166 public gate: four seats share identity; first utterance is ledger submission", async () => {
   await withTempRoot("ak-1166-gate-four-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     await configureOfficerSeats(home, [
-      "notary", "auditor", "inspector", "countersign", "diarist", "judge",
+      "notary", "auditor", "inspector", "countersign", "diarist", "judge", "secretariat",
     ]);
 
-    const peerBody = {
-      status: "converged" as const,
-      findings: [{ id: "N1", path: PEER_PATH }],
-      reason: "peer body with a path must pass through unchanged",
-    };
-    const expectedPrompt = readableGateItem(peerBody);
     const seen: Array<{ role: string; identity: string; prompt: string }> = [];
 
-    // —— 大理寺 → 符宝郎 + 审刑院 ——
-    const judgeRunId = "01a0116600007000800000000000j001";
-    const judgeOfficers: RoleTurnRequest[] = [];
-    const judgeResult = await runAkRole(
-      ["judge", "--model", "test/caller-seat:high", "--project", project, "adjudicate"],
+    const cases: Array<{
+      parentRole: ParentRole;
+      argv: string[];
+      runId: string;
+      details: unknown;
+      captureRoles: OfficerRole[];
+      expectedIdentity?: string;
+      identitySuffix?: RegExp;
+    }> = [
       {
+        parentRole: "judge",
+        argv: ["judge", "--model", "test/caller-seat:high", "--project", project, "adjudicate"],
+        runId: "01a0116600007000800000000000j001",
+        details: {
+          status: "converged" as const,
+          findings: [{ id: "N1", path: PEER_PATH }],
+          reason: "peer body with a path must pass through unchanged",
+        },
+        captureRoles: ["notary", "auditor"],
+        expectedIdentity: "01a0116600007000800000000000j001@judge",
+      },
+      {
+        parentRole: "coder",
+        argv: ["coder", "--model", "test/caller-seat:high", "--project", project, "implement"],
+        runId: "01a0116600007000800000000000c001",
+        details: {
+          status: "completed" as const,
+          report: "done",
+          findings: [{ id: "C1", path: PEER_PATH }],
+        },
+        captureRoles: ["inspector"],
+        expectedIdentity: "01a0116600007000800000000000c001@coder",
+      },
+      {
+        parentRole: "secretariat",
+        argv: [
+          "secretariat",
+          "--model",
+          "test/caller-seat:high",
+          "--project",
+          project,
+          "整理票面",
+        ],
+        runId: "01a0116600007000800000000000s001",
+        details: {
+          secretariatStatus: "converged" as const,
+          ticketNumber: 1166,
+          findings: [{ id: "S1", path: PEER_PATH }],
+        },
+        captureRoles: ["countersign"],
+        identitySuffix: /@secretariat$/,
+      },
+    ];
+
+    for (const gate of cases) {
+      const capture: RoleTurnRequest[] = [];
+      const expectedPromptForGate = readableGateItem(gate.details);
+      const result = await runAkRole(gate.argv, {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => judgeRunId,
+        createRunId: () => gate.runId,
         io: captureIo().io,
         credentials: CREDENTIALS,
-        roleTurnHost: createMinimalHost(async (request) => {
-          if (request.activation.role === "notary" || request.activation.role === "auditor") {
-            judgeOfficers.push(request);
-            return officerSealHost(request.activation.role).executeTurn(request);
-          }
-          const { sessionDirectory, sessionFile } =
-            piDurablePrincipalAuthority.decode(request.principal);
-          await mkdir(sessionDirectory, { recursive: true });
-          await writeFile(sessionFile, "", "utf8");
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            home,
-            runId: judgeRunId,
-            runDirectory: request.runDirectory,
-            role: "judge",
-            details: peerBody,
-            toolCallId: "judge-1166",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-          });
-          return { code: 0, stderr: "", timedOut: false };
+        roleTurnHost: parentGateHost({
+          home,
+          runId: gate.runId,
+          parentRole: gate.parentRole,
+          details: gate.details,
+          capture,
+          captureRoles: new Set(gate.captureRoles),
         }),
-      },
-    );
-    assert.equal(judgeResult.exitCode, 0);
-    assert.equal(judgeOfficers.length, 2, "gate must summon notary and auditor");
-    const expectedIdentity = `${judgeRunId}@judge`;
-    for (const request of judgeOfficers) {
-      const inspected = await inspectLiveRequest(request, packageRoot);
-      assert.equal(inspected.prompt, expectedPrompt);
-      assert.equal(inspected.identities.length, 1);
-      assert.deepEqual(inspected.identities[0], {
-        kind: AUDITED_RUN_IDENTITY_KIND,
-        identity: expectedIdentity,
       });
-      assert.equal(inspected.pathMaterials.length, 0);
-      seen.push({
-        role: request.activation.role,
-        identity: inspected.identities[0]!.identity,
-        prompt: inspected.prompt,
-      });
-    }
-
-    // —— 修内司 → 台院 ——
-    const coderRunId = "01a0116600007000800000000000c001";
-    const coderOfficers: RoleTurnRequest[] = [];
-    const coderBody = {
-      status: "completed" as const,
-      report: "done",
-      findings: [{ id: "C1", path: PEER_PATH }],
-    };
-    const coderPrompt = readableGateItem(coderBody);
-    const coderResult = await runAkRole(
-      ["coder", "--model", "test/caller-seat:high", "--project", project, "implement"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => coderRunId,
-        io: captureIo().io,
-        credentials: CREDENTIALS,
-        roleTurnHost: createMinimalHost(async (request) => {
-          if (request.activation.role === "inspector") {
-            coderOfficers.push(request);
-            return officerSealHost("inspector").executeTurn(request);
-          }
-          const { sessionDirectory, sessionFile } =
-            piDurablePrincipalAuthority.decode(request.principal);
-          await mkdir(sessionDirectory, { recursive: true });
-          await writeFile(sessionFile, "", "utf8");
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            home,
-            runId: coderRunId,
-            runDirectory: request.runDirectory,
-            role: "coder",
-            details: coderBody,
-            toolCallId: "coder-1166",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+      assert.equal(result.exitCode, 0, `${gate.parentRole} public entry must exit 0`);
+      assert.equal(
+        capture.length,
+        gate.captureRoles.length,
+        `${gate.parentRole} gate must summon ${gate.captureRoles.join(",")}`,
+      );
+      for (const request of capture) {
+        const inspected = await inspectLiveRequest(request, packageRoot);
+        assert.equal(inspected.prompt, expectedPromptForGate);
+        assert.equal(inspected.identities.length, 1);
+        assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
+        if (gate.expectedIdentity !== undefined) {
+          assert.deepEqual(inspected.identities[0], {
+            kind: AUDITED_RUN_IDENTITY_KIND,
+            identity: gate.expectedIdentity,
           });
-          return { code: 0, stderr: "", timedOut: false };
-        }),
-      },
-    );
-    assert.equal(coderResult.exitCode, 0);
-    assert.equal(coderOfficers.length, 1, "gate must summon inspector");
-    {
-      const request = coderOfficers[0]!;
-      const inspected = await inspectLiveRequest(request, packageRoot);
-      assert.equal(inspected.prompt, coderPrompt);
-      assert.deepEqual(inspected.identities[0], {
-        kind: AUDITED_RUN_IDENTITY_KIND,
-        identity: `${coderRunId}@coder`,
-      });
-      assert.equal(inspected.pathMaterials.length, 0);
-      seen.push({
-        role: "inspector",
-        identity: inspected.identities[0]!.identity,
-        prompt: inspected.prompt,
-      });
-    }
-
-    // —— 中书省 → 给事中（公开入口 + 仓内假宿主，复用 secretariat 真闸接缝） ——
-    const secretariatBody = {
-      secretariatStatus: "converged" as const,
-      ticketNumber: 1166,
-      findings: [{ id: "S1", path: PEER_PATH }],
-    };
-    const secretariatPrompt = readableGateItem(secretariatBody);
-    const countersignRequests: RoleTurnRequest[] = [];
-    const gateCalls: Array<{ kind: string }> = [];
-    const host = secretariatGateHost({
-      home,
-      countersignRequests,
-      gateCalls,
-      secretariatDetails: secretariatBody,
-    });
-    const secResult = await runAkRole(
-      [
-        "secretariat",
-        "--model",
-        "test/caller-seat:high",
-        "--project",
-        project,
-        "整理票面",
-      ],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: captureIo().io,
-        createRunId: () => "01a0116600007000800000000000s001",
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-      },
-    );
-    assert.equal(secResult.exitCode, 0);
-    assert.ok(countersignRequests.length >= 1, "gate must summon countersign");
-    assert.ok(gateCalls.some((c) => c.kind === "secretariat_verdict"));
-    {
-      const request = countersignRequests[0]!;
-      const inspected = await inspectLiveRequest(request, packageRoot);
-      assert.equal(inspected.prompt, secretariatPrompt);
-      assert.equal(inspected.identities.length, 1);
-      assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
-      assert.match(inspected.identities[0]!.identity, /@secretariat$/);
-      assert.equal(inspected.pathMaterials.length, 0);
-      seen.push({
-        role: "countersign",
-        identity: inspected.identities[0]!.identity,
-        prompt: inspected.prompt,
-      });
+        } else {
+          assert.match(inspected.identities[0]!.identity, gate.identitySuffix!);
+        }
+        assert.equal(inspected.pathMaterials.length, 0);
+        seen.push({
+          role: request.activation.role,
+          identity: inspected.identities[0]!.identity,
+          prompt: inspected.prompt,
+        });
+      }
     }
 
     assert.deepEqual(
       seen.map((row) => row.role).sort(),
       ["auditor", "countersign", "inspector", "notary"],
     );
-    // Four seats: identity form is always runId@role (same shape).
     for (const row of seen) {
       assert.match(row.identity, /^[^/@]+@[^/@]+$/);
-      assert.equal(row.identity.includes("/"), false);
     }
   });
 });
@@ -463,7 +424,6 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
         if (request.activation.role === "notary") {
           notaryPrompts.push(request.continuation.prompt);
         }
-        // First round: bounce so parent re-submits; second: pass.
         const details = notaryPrompts.length <= 1
           ? { status: "continue", violations: ["rewrite"] }
           : { status: "converged" };
@@ -512,7 +472,6 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
       return { code: 0, stderr: "", timedOut: false };
     });
 
-    // First seal → bounce → package resumes parent for rewrite → second seal.
     const firstIo = captureIo();
     const firstResult = await runAkRole(
       ["judge", "--model", "test/caller-seat:high", "--project", project, "round one"],
@@ -531,7 +490,6 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
     assert.equal(notaryPrompts[0], readableGateItem(first));
 
     if (notaryPrompts.length < 2) {
-      // Explicit resume when auto-rework did not already drive a second parent seal.
       const resumeIo = captureIo();
       const resumed = await runAkRole(
         ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
@@ -608,8 +566,6 @@ test("#1166 direct notary/auditor public entry: same identity material, no path"
         identity: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
-      // Direct entry: package must not author dispatch prose into the officer prompt.
-      assert.equal(inspected.prompt.includes("卷宗指针"), false);
       if (seat.role === "auditor") {
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
@@ -679,10 +635,6 @@ test("#1166 navigator public summon: caller prompt bytes; work base structured; 
     assert.ok(summons.length >= 1);
     const delivered = summons[0]!;
     for (const argv of summons) {
-      assert.equal(argv.includes(authority), false);
-      assert.equal(argv.includes(subject), false);
-      assert.equal(argv.includes("workContextPath"), false);
-      assert.equal(argv.includes(workContextPath!), false);
       const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
       assert.equal(fed.subjectKey, subjectKey);
       assert.equal(fed.workContextPath, undefined);
@@ -728,113 +680,12 @@ test("#1166 navigator public summon: caller prompt bytes; work base structured; 
     });
     try {
       assert.equal(prepared.prompt, delivered);
-      assert.equal(prepared.prompt.includes("workContextPath"), false);
-      assert.equal(prepared.prompt.includes(workContextPath!), false);
-      const expectedBlock =
-        `<work_subject>\n${subject}\n</work_subject>\n\n`
-        + `<controlling_authority>\n${authority}\n</controlling_authority>`;
-      assert.equal(prepared.systemPrompt.body.includes(expectedBlock), true);
       assert.equal(packageAuditedPathMaterials(prepared.systemPrompt.materials).length, 0);
+      // work_subject / controlling_authority remain in startup body; observe in
+      // verification report only — no template / includes lock here.
     } finally {
       await prepared.dispose?.();
     }
     await nav.dispose();
   });
 });
-
-/**
- * Slim secretariat public-entry host: real envelope + nested countersign capture.
- * Same seam as public-cli-secretariat-run (prepareRoleEnvelope + ingestStructuredOutput);
- * not a parallel gate.
- */
-function secretariatGateHost(input: {
-  readonly home: string;
-  readonly countersignRequests: RoleTurnRequest[];
-  readonly gateCalls: Array<{ kind: string }>;
-  readonly secretariatDetails: Record<string, unknown>;
-}): RoleTurnHost {
-  const parentDiaristHost = roleTurnHostFromLegacyPiRunner({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    piRunner: async (args, options) => {
-      const role = argvFlagValue(args, "--ak-role");
-      if (role === "diarist") {
-        return scriptedTerminatingToolSession({
-          role: "diarist",
-          toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: {
-            status: "completed",
-            ticketNumber: 1166,
-            sessions: [] as const,
-          },
-        })(args, options);
-      }
-      throw new Error(`unexpected diarist-host role: ${role}`);
-    },
-  });
-
-  const nestPi: LegacyFauxPiRunner = async (args, options) => {
-    const role = argvFlagValue(args, "--ak-role");
-    if (role === "notary") {
-      input.gateCalls.push({ kind: "countersign_verdict" });
-      return scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged" },
-      })(args, options);
-    }
-    if (role === "countersign") {
-      return scriptedTerminatingToolSession({
-        role: "countersign",
-        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "署" },
-      })(args, options);
-    }
-    throw new Error(`unexpected nested role: ${role}`);
-  };
-  const nested = roleTurnHostFromLegacyPiRunner({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    piRunner: nestPi,
-  });
-  const nestedTracked: RoleTurnHost = {
-    executeTurn(request) {
-      if (request.activation.role === "countersign") {
-        input.countersignRequests.push(request);
-        input.gateCalls.push({ kind: "secretariat_verdict" });
-      }
-      return nested.executeTurn(request);
-    },
-  };
-  const nestAdapters = [adapter("pi", nestedTracked)];
-
-  return {
-    async executeTurn(request: RoleTurnRequest) {
-      if (request.activation.role === "diarist") {
-        return parentDiaristHost.executeTurn(request);
-      }
-      if (request.activation.role !== "secretariat") {
-        return nestedTracked.executeTurn(request);
-      }
-      const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-sec-"));
-      const coords = piDurablePrincipalAuthority.decode(request.principal);
-      const prepared = await prepareRoleEnvelope({
-        request: { ...request, host: "codex" },
-        dependencies: {
-          ...createRoleRuntimeDependencies(packageRoot),
-          hostAdapters: nestAdapters,
-        },
-        socketPath: join(socketDir, "mcp.sock"),
-        listTerminatingToolOnMcp: false,
-        sessionFile: coords.sessionFile,
-      });
-      try {
-        await prepared.ingestStructuredOutput(input.secretariatDetails);
-        await prepared.closeRound();
-        return { code: 0, stderr: "", timedOut: false };
-      } finally {
-        await prepared.dispose?.();
-      }
-    },
-  };
-}

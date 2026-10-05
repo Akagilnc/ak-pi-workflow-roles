@@ -57,25 +57,6 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
   return n;
 }
 
-/**
- * Typed session bound kept for session custom-entry / internal locator use.
- * Startup materials for the LLM carry only audited-run identity (#1166 / ADR 0087).
- */
-export function projectNotarySessionBound(input: {
-  readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-}): {
-  readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-} {
-  return {
-    sourceRun: input.sourceRun,
-    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
-  };
-}
-
-export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
-
 /** Agent-start reading material: identity `<runId>@<席>` only — no directory path. */
 export function projectNotaryAuditedRunIdentity(input: {
   readonly sourceRun: NotarySourceRunLocator;
@@ -115,7 +96,7 @@ export function projectNotaryBoundFromFlags(
 }
 
 /** Assemble systemPrompt body from base + soul only (NO embedded bound JSON).
- * The typed session bound travels separately as `readingMaterial`; adapters fold
+ * Audited-run identity travels separately as `readingMaterial`; adapters fold
  * it into the provider-visible prompt at the send boundary. */
 export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
