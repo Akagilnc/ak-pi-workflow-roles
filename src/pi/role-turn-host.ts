@@ -374,8 +374,22 @@ export function createDefaultPiSpawnRunner(options: {
                   spawnDir,
                   homeFromRunDirectory(spawnDir),
                 );
-              } catch {
+              } catch (resolveError) {
+                // Resolve threw beside an already-closed child: keep both causes
+                // on the existing retain/stderr presentation path (失败诚实).
                 runDirectory = existsSync(spawnDir) ? spawnDir : undefined;
+                const resolveDiagnostic =
+                  `live run path resolve failed beside Pi transport fault: ${describeErrorIdentity(resolveError)}`;
+                if (runDirectory !== undefined) {
+                  await retainPackageFault({
+                    runDirectory,
+                    diagnostic: resolveDiagnostic,
+                    error: resolveError,
+                  });
+                } else {
+                  try { process.stderr.write(`${resolveDiagnostic}\n`); }
+                  catch { /* Best-effort presentation beside the already closed child. */ }
+                }
               }
             }
             if (runDirectory !== undefined) {
