@@ -165,7 +165,7 @@ test("shared envelope keeps seat identity separate from typed reference material
 
     const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
     process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-    const auditorRun = join(home, "auditor", "run");
+    const auditorRun = ledgerProbeRun(home, "auditor-materials@auditor");
     await mkdir(join(auditorRun, "session"), { recursive: true });
     let auditor;
     try {
@@ -228,7 +228,7 @@ test("Pi production root supplies typed main and auditor reference materials", a
 
     const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
     process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-    const auditorRun = join(home, "pi-auditor", "run");
+    const auditorRun = ledgerProbeRun(home, "pi-auditor-materials@auditor");
     await mkdir(join(auditorRun, "session"), { recursive: true });
     let auditor;
     try {
