@@ -1008,6 +1008,23 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
             })(args, options);
           }
           // silence: exit cleanly with neither report nor sealed substitute.
+          // F2-R7: on the plain soft-reask silence line, another lawful court
+          // on the same leg may seal meanwhile — ownership must not invent a
+          // substitute from that foreign seal. Audit-continue silence paths
+          // (R4a/R5) keep plain silence; their necessary inputs stay separate.
+          if (input.inspectorContinuesOnce !== true) {
+            const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
+            await sealAcceptedSubmission({
+              cwd: project,
+              home,
+              runId,
+              role: "fixer",
+              runDirectory,
+              courtAttemptId: "foreign-court-other-public-call",
+              toolCallId: "call_fixer_foreign_court",
+              details: { ...FIXER_DONE, report: "foreign-court-volume" },
+            });
+          }
           return { code: 0, stderr: "", timedOut: false };
         }
         // Audit-continue ordinary turn: spent budget blocks a second soft reask.
@@ -1163,7 +1180,7 @@ test("#1171 F2 reask report-only keeps original accepted and reaches audit", asy
   });
 });
 
-test("#1171 F2 reask silence keeps original accepted and records no_receipt history", async () => {
+test("#1171 F2 / F2-R7 reask silence keeps original; foreign-court seal does not steal", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
       home,
@@ -1172,68 +1189,6 @@ test("#1171 F2 reask silence keeps original accepted and records no_receipt hist
       runId: "01a011710-0000-7000-8000-0000000f2siln",
       reask: "silence",
     });
-  });
-});
-
-test("#1171 F2-R7 silence soft reask; foreign-court seal does not steal original", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000f2r7own";
-    const roles: string[] = [];
-    const parent = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = args[args.indexOf("--ak-role") + 1]!;
-        roles.push(role);
-        if (role === "fixer") {
-          const turn = roles.filter((r) => r === "fixer").length;
-          if (turn === 1) {
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: { ...FIXER_DONE, report: "original-volume" },
-            })(args, options);
-          }
-          // Soft reask silence while another lawful court on the same leg seals
-          // (same-parent inspector reuse). Full-leg sealed delta must not invent
-          // a substitute for this call.
-          const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
-          await sealAcceptedSubmission({
-            cwd: project,
-            home,
-            runId,
-            role: "fixer",
-            runDirectory,
-            courtAttemptId: "foreign-court-other-public-call",
-            toolCallId: "call_fixer_foreign_court",
-            details: { ...FIXER_DONE, report: "foreign-court-volume" },
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        }
-        return scriptedTerminatingToolSession({
-          role: role as "inspector",
-          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
-          toolCallId: "call_inspector_f2r7",
-        })(args, options);
-      },
-    });
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair without ticket; foreign court seals during soft reask."],
-      seatEnv(home, project, runId, "pi", parent),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(roles.filter((r) => r === "fixer").length, 2, "must soft-reask once");
-    assert.ok(roles.includes("inspector"), "kept original must still enter audit");
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "original-volume"),
-      true,
-      "foreign-court seal must not wash this call into nested no_receipt ownership",
-    );
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
   });
 });
 
