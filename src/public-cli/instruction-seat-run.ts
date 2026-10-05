@@ -277,8 +277,9 @@ async function reaskUnreadablePostSubmissionStatus(
 }
 
 /**
- * Soft-reask call outcome at the missing-ticket seam (#1171 F2-R6).
- * Ownership is decided here once from this-call ledger delta / sealed terminal;
+ * Soft-reask call outcome at the missing-ticket seam (#1171 F2-R6 / F2-R7).
+ * Ownership is decided here once from this nested chain's settlement evidence
+ * (soft-reask turn sealed → ownership cell; or returned terminal still carries volume);
  * callers must not re-judge the same criterion.
  */
 type SoftTicketReaskOutcome =
@@ -290,9 +291,9 @@ type SoftTicketReaskOutcome =
  * #1171: sealed submission still leaves the leg unbound → soft reask once.
  * Does not reject the sealed receipt; exhaustion leaves unbound as filed.
  * Reask copy lives in package resources (ADR 0073).
- * #1171 F2-R6: before/after sealed count across this nested resume decides
- * whether the substitute chain owns the public result (including later
- * ordinary no_receipt). Not a full-run sealed.count > 1 threshold.
+ * #1171 F2-R7: ownership comes from this nested resume's settlement seam
+ * (softTicketReaskOwnership.sealedSubstitute set when the soft-reask turn itself seals),
+ * not full-leg sealed count / time-window deltas that can absorb another court's seal.
  */
 async function reaskMissingTicketOnce(
   admitted: AdmittedRoleInvocation,
@@ -312,22 +313,31 @@ async function reaskMissingTicketOnce(
   // (post-admission). Do not re-parse payload.ticketNumber here — that would
   // duplicate the existing ticket seam (#1171 notary: no rule copy).
   const instruction = (await readPackageMaterial(MISSING_TICKET_REASK_MATERIAL)).trim();
-  const sealedBefore = await sealedSubmissionCount(admitted, env);
   // Spend budget and mark this turn as the soft reask (settlement identity).
-  // Audit continue keeps the budget only — see envForCourtContinue (#1171 F2-R5).
+  // Ownership cell is set at that turn's settlement; env spreads keep the same
+  // ref through audit continue — see envForCourtContinue (#1171 F2-R5 / F2-R7).
+  const softTicketReaskOwnership = { sealedSubstitute: false };
+  const softReaskEnv: InstructionSeatRunEnv = {
+    ...env,
+    ticketReasksSpent: 1,
+    softTicketReaskTurn: true,
+    softTicketReaskOwnership,
+  };
   const result = await runPublicInstructionSeatResume(
     { runId: admitted.runId, summons: { instruction } },
-    { ...env, ticketReasksSpent: 1, softTicketReaskTurn: true },
+    softReaskEnv,
     io,
   );
-  const sealedAfter = await sealedSubmissionCount(result.admitted ?? admitted, env);
-  if (softReaskSealedSubstituteThisCall(result, sealedBefore, sealedAfter)) {
+  if (
+    softTicketReaskOwnership.sealedSubstitute
+    || terminalCarriesSealedSubmission(result.terminal)
+  ) {
     return { kind: "nested_owns", result };
   }
   return { kind: "no_substitute", result };
 }
 
-/** Court continue: keep cross-turn budgets; drop turn-scoped soft-reask identity. */
+/** Court continue: keep cross-turn budgets + ownership cell; drop turn-scoped soft-reask identity. */
 function envForCourtContinue(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
   const { softTicketReaskTurn: _softTicketReaskTurn, ...rest } = env;
   return { ...rest, unreadableReasksSpent: 0 };
@@ -338,42 +348,6 @@ function terminalCarriesSealedSubmission(terminal: TerminalResult | undefined): 
   const kind = terminal?.roleOutcome.kind;
   if (kind !== "accepted" && kind !== "audit_escalation") return false;
   return (terminal?.roleOutcome.payloads ?? []).length > 0;
-}
-
-/**
- * #1171 F2-R6: sealed submission count for this seat from the existing ledger.
- * Used only for before/after delta across one soft-reask call — not a full-run
- * threshold. Count (not toolCallId set) because distinct seals may share a
- * scripted/host toolCallId across court attempts.
- */
-async function sealedSubmissionCount(
-  admitted: AdmittedRoleInvocation,
-  env: InstructionSeatRunEnv,
-): Promise<number> {
-  const rows = await readRecordedSubmissionRows(
-    admitted.projectRoot,
-    admitted.runId,
-    env.home,
-  );
-  return rows.filter((row) =>
-    row.role === admitted.role
-    && (row.kind === "accepted" || row.kind === "audit-escalation")
-  ).length;
-}
-
-/**
- * #1171 F2-R6: this soft-reask call owns the nested chain when it sealed a
- * substitute (terminal still carries volume, or this-call sealed count advanced).
- * Full-run sealed.count thresholds are not a substitute signal — prior history
- * may already exceed 1 while this reask was silence / report-only.
- */
-function softReaskSealedSubstituteThisCall(
-  reask: SeatRunResult,
-  beforeCount: number,
-  afterCount: number,
-): boolean {
-  if (terminalCarriesSealedSubmission(reask.terminal)) return true;
-  return afterCount > beforeCount;
 }
 
 /**

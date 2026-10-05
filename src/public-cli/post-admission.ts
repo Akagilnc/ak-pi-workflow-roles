@@ -462,6 +462,12 @@ export type PostAdmissionEnv = {
    * when it ends without a substitute seal. Not carried into audit continue.
    */
   softTicketReaskTurn?: true;
+  /**
+   * #1171 F2-R7: live ownership cell for this soft-reask nested chain.
+   * Created at soft-reask dispatch; settlement of that turn sets sealedSubstitute.
+   * Shared ref survives env spreads — not a second ledger.
+   */
+  softTicketReaskOwnership?: { sealedSubstitute: boolean };
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -1249,6 +1255,12 @@ export async function dispatchPostAdmissionTurn<
               noSealScope);
         if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
         result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
+        // #1171 F2-R7: ownership evidence at this soft-reask turn's seal —
+        // mutate the live ownership cell carried on env (survives spreads).
+        if (pendingSettlement === "sealed" && env.softTicketReaskTurn === true
+          && env.softTicketReaskOwnership !== undefined) {
+          env.softTicketReaskOwnership.sealedSubstitute = true;
+        }
         if (pendingSettlement === "sealed" && terminal.roleOutcome.kind === "accepted"
           && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
           try {
