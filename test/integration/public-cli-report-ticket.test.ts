@@ -17,6 +17,7 @@ import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
   runPublicInstructionSeat,
@@ -32,7 +33,12 @@ import { formatRunLeaf, sessionDirectoryOf, sessionFileOf } from "../../src/role
 import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
-import { historyPayloads, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import {
+  historyPayloads,
+  lockCurrentJson,
+  readCurrentSection,
+  seedCurrentSection,
+} from "../helpers/run-dossier-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -303,6 +309,96 @@ test("#1171 pi SessionManager: report relocates; post-relocate append stays unde
   });
 });
 
+test("#1171 F4-R2 derived render refuse after rename keeps live handles on ticket path", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000f4r2eis";
+    const unbound = unboundLeaf(home, bookKey, runId, "fixer");
+    const ticket = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
+    let observed: {
+      threw: boolean;
+      code?: string | undefined;
+      contextRunDirectory?: string | undefined;
+      sessionFile?: string | undefined;
+      appendOk?: boolean | undefined;
+    } = { threw: false };
+    const roleTurnHost = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const oldSession = argvFlagValue(args, "--session");
+        const oldSessionDir = argvFlagValue(args, "--session-dir");
+        assert.ok(oldSession && oldSessionDir);
+        const runDirectory = dirname(oldSessionDir);
+        await mkdir(oldSessionDir, { recursive: true });
+        if (!existsSync(oldSession)) await writeFile(oldSession, "", "utf8");
+        const sessionManager = SessionManager.open(oldSession, oldSessionDir, options.cwd);
+        const context: HostContext = {
+          cwd: options.cwd,
+          mode: "rpc",
+          model: undefined,
+          runDirectory,
+          sessionManager: {
+            getLeafEntry: () => sessionManager.getLeafEntry(),
+            getLeafId: () => sessionManager.getLeafId(),
+            getEntries: () => sessionManager.getEntries(),
+            getSessionDir: () => sessionManager.getSessionDir(),
+            getSessionFile: () => sessionManager.getSessionFile(),
+            getHeader: () => sessionManager.getHeader(),
+            setSessionFile: (path) => {
+              sessionManager.setSessionFile(path);
+              // Ownership window after rename, before derived render (#1171 F4-R2):
+              // plant EISDIR on the committed ticket leaf so render refuses there.
+              lockCurrentJson(dirname(dirname(path)));
+            },
+            appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
+          },
+          abort() {},
+        };
+        process.env.AK_ROLE_RUN_DIR = runDirectory;
+        try {
+          await reportTicketFromHostContext(context, TICKET);
+          observed = { threw: false, contextRunDirectory: context.runDirectory };
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          let appendOk = false;
+          try {
+            sessionManager.appendCustomEntry("ak_1171_f4r2_after_render_refuse", { ok: true });
+            appendOk = true;
+          } catch {
+            appendOk = false;
+          }
+          observed = {
+            threw: true,
+            code,
+            contextRunDirectory: context.runDirectory,
+            sessionFile: sessionManager.getSessionFile(),
+            appendOk,
+          };
+          throw error;
+        } finally {
+          delete process.env.AK_ROLE_RUN_DIR;
+        }
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    }));
+    const result = await runPublicInstructionSeat(
+      ["apply", "Report then derived render refuses."],
+      seatEnv(home, project, runId, "pi", roleTurnHost, { autoResumeLimit: 0 }),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(observed.threw, true, "derived render must keep the original I/O refuse");
+    assert.equal(observed.code, "EISDIR");
+    assert.equal(existsSync(unbound), false);
+    assert.equal(existsSync(ticket), true);
+    assert.equal(observed.contextRunDirectory, ticket);
+    assert.ok(observed.sessionFile?.startsWith(join(ticket, "session")));
+    assert.equal(observed.appendOk, true, "native SessionManager must follow setSessionFile after rename");
+    assert.notEqual(result.exitCode, 0, "real render refuse must not wash to exit 0");
+  });
+});
+
 function fixerTurnHost(detailsForTurn: (turn: number) => Record<string, unknown>) {
   let turns = 0;
   return {
@@ -454,6 +550,7 @@ test("#1171 submit without ticket soft-reasks once; second reply with ticket rel
     assert.equal(scripted.turns, 2, "exactly one soft reask turn");
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
+    // F2-R4b duplicate full present is human-observed on mutation (no stdout count lock).
   });
 });
 
@@ -743,9 +840,12 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   readonly bookKey: string;
   readonly runId: string;
   readonly reask: "report-only" | "silence";
+  /** #1171 F2-R4a: inspector continue must not spend a second missing-ticket reask. */
+  readonly inspectorContinuesOnce?: boolean;
 }): Promise<void> {
   const { home, project, bookKey, runId, reask } = input;
   const roles: string[] = [];
+  let inspectorTurns = 0;
   const parent = roleTurnHostFromLegacyPiRunner({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
@@ -761,34 +861,54 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
             details: { ...FIXER_DONE },
           })(args, options);
         }
-        if (reask === "report-only") {
-          // Soft reask: report ticket only — no substitute sealed submission.
-          const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
-          await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
-          const context: HostContext = {
-            cwd: options.cwd,
-            mode: "rpc",
-            model: undefined,
-            runDirectory,
-            sessionManager: {
-              getLeafEntry: () => undefined,
-              getLeafId: () => runId,
-              getEntries: () => [],
-              getSessionDir: () => sessionDirectoryOf(runDirectory),
-              getSessionFile: () => sessionFileOf(runDirectory),
-              setSessionFile() {},
-              appendCustomEntry() {},
-            },
-            abort() {},
-          };
-          await reportTicketFromHostContext(context, TICKET);
+        if (turn === 2) {
+          if (reask === "report-only") {
+            // Soft reask: report ticket only — no substitute sealed submission.
+            const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
+            await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
+            const context: HostContext = {
+              cwd: options.cwd,
+              mode: "rpc",
+              model: undefined,
+              runDirectory,
+              sessionManager: {
+                getLeafEntry: () => undefined,
+                getLeafId: () => runId,
+                getEntries: () => [],
+                getSessionDir: () => sessionDirectoryOf(runDirectory),
+                getSessionFile: () => sessionFileOf(runDirectory),
+                setSessionFile() {},
+                appendCustomEntry() {},
+              },
+              abort() {},
+            };
+            await reportTicketFromHostContext(context, TICKET);
+          }
+          // silence: exit cleanly with neither report nor sealed substitute.
+          return { code: 0, stderr: "", timedOut: false };
         }
-        // silence: exit cleanly with neither report nor sealed substitute.
-        return { code: 0, stderr: "", timedOut: false };
+        // Audit-continue still has no ticket: spent budget must block a second soft reask.
+        return scriptedTerminatingToolSession({
+          role: "fixer",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          details: { ...FIXER_DONE, report: "after audit continue still unbound" },
+          sessionWriteMode: "append",
+        })(args, options);
+      }
+      if (role === "inspector") {
+        inspectorTurns += 1;
+        const status = input.inspectorContinuesOnce === true && inspectorTurns === 1
+          ? "continue"
+          : "converged";
+        return scriptedTerminatingToolSession({
+          role: "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status, findings: [], reason: "ok", ticketNumber: TICKET },
+        })(args, options);
       }
       return scriptedTerminatingToolSession({
-        role: role as "inspector",
-        toolName: "ak_inspector_output",
+        role: role as "notary",
+        toolName: "ak_notary_output",
         details: { status: "converged", findings: [], reason: "ok" },
       })(args, options);
     },
@@ -800,7 +920,26 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     "fixer",
     (args) => parsePublicSeatArgv("fixer", args),
   );
-  assert.equal(roles.filter((r) => r === "fixer").length, 2, `${reask}: must soft-reask once`);
+  const fixerTurns = roles.filter((r) => r === "fixer").length;
+  if (input.inspectorContinuesOnce === true) {
+    assert.equal(fixerTurns, 3, `${reask}: one soft reask then one audit-continue turn`);
+    assert.equal(inspectorTurns, 2, `${reask}: continue then converge`);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const live = result.admitted?.runDirectory;
+    assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
+    // Silence path never reported a ticket — must remain unbound after the single spent reask.
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
+    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
+      .map((row) => row.outcome?.kind);
+    assert.ok(
+      attemptKinds.includes("accepted") && attemptKinds.includes("no_receipt"),
+      `${reask}: attempt history keeps sealed accepted and soft-reask no_receipt`,
+    );
+    return;
+  }
+  assert.equal(fixerTurns, 2, `${reask}: must soft-reask once`);
   assert.ok(roles.includes("inspector"), `${reask}: original sealed submission must still enter audit`);
   assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${reask}: keep original accepted`);
   const live = result.admitted?.runDirectory;
@@ -816,9 +955,8 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
   const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
     .map((row) => row.outcome?.kind);
-  assert.deepEqual(
-    attemptKinds,
-    ["accepted", "no_receipt"],
+  assert.ok(
+    attemptKinds[0] === "accepted" && attemptKinds.includes("no_receipt"),
     `${reask}: attempt history must keep original accepted and append reask no_receipt`,
   );
   const durable = readCurrentSection(live!, "terminal") as {
@@ -849,6 +987,19 @@ test("#1171 F2 reask silence keeps original accepted and records no_receipt hist
       bookKey,
       runId: "01a011710-0000-7000-8000-0000000f2siln",
       reask: "silence",
+    });
+  });
+});
+
+test("#1171 F2-R4a silence then inspector continue spends missing-ticket reask only once", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r4a",
+      reask: "silence",
+      inspectorContinuesOnce: true,
     });
   });
 });

@@ -121,20 +121,24 @@ export async function reportTicketFromHostContext(
   const admitted = admittedForLiveTicketReport(runDirectory, authority);
   const alreadyPlaced = !isUnboundRunDirectory(runDirectory);
   await bindAdmittedTicketNumber(admitted, ticketNumber);
+  // Live handles belong with rename ownership — before derived renderCurrentSync
+  // (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
+  const applyLiveHandles = (nextDirectory: string): void => {
+    (context as { runDirectory?: string }).runDirectory = nextDirectory;
+    // Same-leg spawn env only (#1171 F1): never overwrite another leg's ambient
+    // AK_ROLE_RUN_DIR in a shared process. HostContext is the per-turn authority
+    // (host-contracts); Pi dedicated children still refresh when env === old path.
+    if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
+      process.env.AK_ROLE_RUN_DIR = nextDirectory;
+    }
+    // Native host rebind only — SessionManager has no setSessionDir; appends follow sessionFile.
+    context.sessionManager.setSessionFile?.(sessionFileOf(nextDirectory));
+  };
   const relocation = alreadyPlaced
     ? undefined
-    : await relocateAdmittedRunToTicket(admitted, authority);
+    : await relocateAdmittedRunToTicket(admitted, authority, { relocate: applyLiveHandles });
   const nextDirectory = relocation?.newRunDirectory ?? admitted.runDirectory;
-
-  (context as { runDirectory?: string }).runDirectory = nextDirectory;
-  // Same-leg spawn env only (#1171 F1): never overwrite another leg's ambient
-  // AK_ROLE_RUN_DIR in a shared process. HostContext is the per-turn authority
-  // (host-contracts); Pi dedicated children still refresh when env === old path.
-  if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
-    process.env.AK_ROLE_RUN_DIR = nextDirectory;
-  }
-  // Native host rebind only — SessionManager has no setSessionDir; appends follow sessionFile.
-  context.sessionManager.setSessionFile?.(sessionFileOf(nextDirectory));
+  if (relocation === undefined) applyLiveHandles(nextDirectory);
 
   return {
     ticketNumber,

@@ -407,12 +407,21 @@ async function continueAfterPostSubmissionGuards(
     env,
     io,
   );
+  // Nested resume already finished guards + audit/present for a sealed substitute.
+  // Do not run a second outer settlement of the same public call (#1171 F2-R4b).
+  if (ticketReask !== undefined && reaskSealedSubstituteSubmission(ticketReask)) {
+    return ticketReask;
+  }
   const continued = mergeMissingTicketReask(afterStatus, ticketReask);
   const continuedAdmitted = continued.admitted ?? live;
+  // Spent budget must ride the remaining outer audit/continue chain (#1171 F2-R4a).
+  const continuedEnv = ticketReask !== undefined
+    ? { ...env, ticketReasksSpent: 1 }
+    : env;
   if (AUDITED_ROLES.has(admittedRole) && continued.terminal?.roleOutcome.kind === "accepted") {
     return auditSubmittedRole(
       { ...continued, admitted: continuedAdmitted },
-      env,
+      continuedEnv,
       io,
     );
   }
