@@ -704,6 +704,9 @@ async function runCountersignBody(
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
         instructionEmpty: resumeInstruction.length === 0,
+        // #1166 J11: same-parent resume delivers this call's file-flag paths
+        // through the shared summons → appendCallerFileFlagPaths rule.
+        attachmentPaths: parsed.attachmentPaths ?? [],
       },
     });
     if (resumed != null) return resumed;
@@ -738,10 +741,14 @@ async function runCountersignBody(
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
+      // #1166 J11: review-body branch must merge the same file-flag delivery as
+      // resolveInitialPrompt / resumeTurnRequestProjectionOptions — never body alone.
+      const reviewBody = env.reviewReask ?? env.gateReviewInstruction;
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
-        prompt: (env.reviewReask ?? env.gateReviewInstruction)
-          ?? buildInstructionTransportPrompt(admitted),
+        prompt: reviewBody !== undefined
+          ? appendCallerFileFlagPaths(reviewBody, admitted.attachments)
+          : buildInstructionTransportPrompt(admitted),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({

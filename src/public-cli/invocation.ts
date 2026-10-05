@@ -1836,7 +1836,9 @@ export function appendCallerFileFlagPaths(
       : [`--prerequisites ${prerequisitesPath}`]),
   ];
   if (flaggedPaths.length === 0) return body;
-  return [body, "", "已受理附件：", ...flaggedPaths.map((entry) => `- ${entry}`)].join("\n");
+  // ADR 0087 / #1165 / #1166 J13: after caller words, only necessary file flags
+  // and original paths — no package-authored title or list wrapper.
+  return [body, "", ...flaggedPaths].join("\n");
 }
 
 /**
