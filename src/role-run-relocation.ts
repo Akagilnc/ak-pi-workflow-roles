@@ -26,7 +26,7 @@ const ADMITTED_PAGE_FIELDS = [
   "taskPath",
   "packetPath",
   "prerequisitesPath",
-  "requestManifestPath",
+  // #1165: requestManifestPath is a caller path — never rewrite.
   "mergerInputPath",
   "sourceRunPath",
 ] as const;
@@ -202,7 +202,7 @@ function rewriteSourceRunLocator(
   );
 }
 
-/** Same-ticket summons materials: typed source-run + frozen attachment pointers. */
+/** Same-ticket summons materials: typed source-run; caller attach paths stay as-is (#1165). */
 function rewriteSummonsMaterials(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
@@ -214,12 +214,7 @@ function rewriteSummonsMaterials(
     rewrites,
   );
   rewriteSourceRunLocator(value.sourceRun, rewrites);
-  // Bare-resume frozen attachment pointers (string[]), not free text / bytes.
-  if (Array.isArray(value.attachmentPaths)) {
-    value.attachmentPaths = value.attachmentPaths.map((path) =>
-      rewriteRunDirectoryPathValueAgainstRewrites(path, rewrites),
-    );
-  }
+  // #1165: summons.attachmentPaths are caller paths — do not rewrite.
 }
 
 /** Project one admitted page in memory after its containing run moved. */
@@ -426,12 +421,13 @@ async function rewriteNestedMachinePathPages(
 }
 
 /**
- * Rewrite the admitted / invocation / runState fact rows (path fields: attachment
- * summons.attachmentPaths pointers only), then nested package-owned
- * session seams. Callers may rewrite before or after the filesystem move/copy:
- * `pagesDirectory` is where the pages currently live on disk; path strings that
- * still name `oldRunDirectory` become `newRunDirectory`. `crossRunRewrites`
- * covers officer/parent pointers that landed under a different final placement.
+ * Rewrite the admitted / invocation / runState fact rows (typed run placement
+ * paths only; caller --attach / --request-manifest paths stay as-is, #1165),
+ * then nested package-owned session seams. Callers may rewrite before or after
+ * the filesystem move/copy: `pagesDirectory` is where the pages currently live
+ * on disk; path strings that still name `oldRunDirectory` become
+ * `newRunDirectory`. `crossRunRewrites` covers officer/parent pointers that
+ * landed under a different final placement.
  */
 export async function rewriteRoleRunDurablePages(input: {
   readonly pagesDirectory: string;
@@ -456,7 +452,7 @@ export async function rewriteRoleRunDurablePages(input: {
           rewrites,
         );
       }
-      // Open court summons: source-run locators + frozen attachment path pointers.
+      // Open court summons: source-run locators only; caller attach paths stay (#1165).
       if (isRecord(page.currentCourt)) {
         rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
       }

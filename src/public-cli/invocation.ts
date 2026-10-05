@@ -113,14 +113,12 @@ export type FrozenAttachment = {
   readonly path: string;
 };
 
-/** Normalize admitted attachment records (path-only; legacy freeze fields → path). */
+/** Normalize admitted attachment records (caller path only; #1165). */
 export function normalizeAdmittedAttachment(raw: unknown): FrozenAttachment | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const record = raw as Record<string, unknown>;
-  for (const key of ["path", "frozenPath", "provenancePath"] as const) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0) return { path: value };
-  }
+  const path = record.path;
+  if (typeof path === "string" && path.length > 0) return { path };
   return undefined;
 }
 
@@ -632,13 +630,12 @@ export async function relocateAdmittedRunToTicket(
       "taskPath",
       "packetPath",
       "prerequisitesPath",
-      "requestManifestPath",
       "mergerInputPath",
     ],
     oldRunDirectory,
     target.runDirectory,
   );
-  // Caller attachment paths are external to the run directory; do not rewrite.
+  // #1165: caller --attach / --request-manifest paths stay as given; do not rewrite.
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is
