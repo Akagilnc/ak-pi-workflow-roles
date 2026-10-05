@@ -10,10 +10,12 @@ import {
   externalHostFailure as failure,
   raceAgainstHostAbort,
   recordTurnDelivery,
+  retainPackageFaultBesideLivePlacement,
   syncTurnRequestLivePlacement,
+  trySyncTurnRequestLivePlacement,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
-import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
+import { projectThrownFailureLeaf } from "../public-cli/settlement.ts";
 
 import {
   copyAndRecordHostDossier,
@@ -443,8 +445,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       const native = connection?.result?.();
       reportedFailure = native?.knownFailure;
       outcome = native ?? { code: null, stderr: connection?.stderr?.() ?? "", timedOut: false };
-      await retainPackageFault({
-        runDirectory: await syncTurnRequestLivePlacement(request),
+      await retainPackageFaultBesideLivePlacement(request, {
         diagnostic: `ACP turn exception beside native host facts: ${describeErrorIdentity(error)}`,
         error,
       });
@@ -461,8 +462,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         if (sessionId !== undefined && !accepted) {
           try { connection.notify("session/cancel", { sessionId }); }
           catch (error) {
-            await retainPackageFault({
-              runDirectory: await syncTurnRequestLivePlacement(request),
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `session cancel failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -470,8 +470,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         }
         try { naturalTermination = await connection.close(); }
         catch (error) {
-          await retainPackageFault({
-            runDirectory: await syncTurnRequestLivePlacement(request),
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `connection close failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });
@@ -492,32 +491,39 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           || (naturalTermination !== undefined && (native.timedOut || native.signal !== undefined));
         let knownFailure = outcome.knownFailure;
         if (nativeFailed && knownFailure !== undefined && knownFailure !== reportedFailure) {
-          if (knownFailure !== packageFailure) await retainPackageFault({
-            runDirectory: await syncTurnRequestLivePlacement(request),
-            diagnostic: knownFailure.diagnostic ?? "ACP package failure beside late native termination",
-            error: knownFailure,
-          });
+          if (knownFailure !== packageFailure) {
+            await retainPackageFaultBesideLivePlacement(request, {
+              diagnostic: knownFailure.diagnostic ?? "ACP package failure beside late native termination",
+              error: knownFailure,
+            });
+          }
           knownFailure = reportedFailure;
         }
         const { knownFailure: _nativeFailure, ...facts } = native;
         outcome = { ...facts, ...(knownFailure === undefined ? {} : { knownFailure }) };
       }
       if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
-        try {
-          const liveRunDirectory = await syncTurnRequestLivePlacement(request);
-          copyAndRecordHostDossier({
-            host: config.hostName,
-            sessionId,
-            cwd: request.cwd,
-            sessionDirectory: sessionDirectoryOf(liveRunDirectory),
-            sessionParent: sessionFileOf(liveRunDirectory),
-            ...(request.home !== undefined ? { home: request.home } : {}),
-          });
-        } catch (error) {
-          await retainPackageFault({
-            runDirectory: await syncTurnRequestLivePlacement(request),
-            diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
-            error,
+        const live = await trySyncTurnRequestLivePlacement(request);
+        if ("runDirectory" in live) {
+          try {
+            copyAndRecordHostDossier({
+              host: config.hostName,
+              sessionId,
+              cwd: request.cwd,
+              sessionDirectory: sessionDirectoryOf(live.runDirectory),
+              sessionParent: sessionFileOf(live.runDirectory),
+              ...(request.home !== undefined ? { home: request.home } : {}),
+            });
+          } catch (error) {
+            await retainPackageFaultBesideLivePlacement(request, {
+              diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
+              error,
+            });
+          }
+        } else {
+          await retainPackageFaultBesideLivePlacement(request, {
+            diagnostic: `host dossier copy skipped: live run path resolve failed beside host terminal: ${describeErrorIdentity(live.resolveError)}`,
+            error: live.resolveError,
           });
         }
       }

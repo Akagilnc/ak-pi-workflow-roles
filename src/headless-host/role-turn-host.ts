@@ -20,10 +20,12 @@ import {
   hostAbortedError,
   isHostAbortedError,
   recordTurnDelivery,
+  retainPackageFaultBesideLivePlacement,
   syncTurnRequestLivePlacement,
+  trySyncTurnRequestLivePlacement,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
-import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
+import { projectThrownFailureLeaf } from "../public-cli/settlement.ts";
 import {
   renderSystemPromptOverride,
   resolveBoundHostSessionId,
@@ -503,8 +505,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         try {
           await rm(inputsDirectory, { recursive: true, force: true });
         } catch (cleanupError) {
-          await retainPackageFault({
-            runDirectory: await syncTurnRequestLivePlacement(request),
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `headless turn inputs cleanup failed beside setup failure: ${describeErrorIdentity(cleanupError)}`,
             error: cleanupError,
           });
@@ -629,8 +630,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           for (const error of spawned.packageErrors) {
-            await retainPackageFault({
-              runDirectory: await syncTurnRequestLivePlacement(request),
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `headless transport handling failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -638,8 +638,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           try {
           const noteBeside = async (error: unknown, what: string): Promise<void> => {
-            await retainPackageFault({
-              runDirectory: await syncTurnRequestLivePlacement(request),
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `${what}: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -732,8 +731,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
           return deliveredFromSpawned(spawned);
           } catch (error) {
-            await retainPackageFault({
-              runDirectory: await syncTurnRequestLivePlacement(request),
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `required turn handling failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -745,26 +743,39 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         },
       });
       } finally {
-        const liveRunDirectory = await syncTurnRequestLivePlacement(request);
+        // Cleanup must not depend on live-path sync: lookup failure stays beside
+        // the original cleanup/copy work and never skips rm(inputsDirectory).
+        const live = await trySyncTurnRequestLivePlacement(request);
+        const liveRunDirectory = "runDirectory" in live ? live.runDirectory : undefined;
+        if (liveRunDirectory === undefined && "resolveError" in live) {
+          await retainPackageFaultBesideLivePlacement(request, {
+            diagnostic: `headless cleanup live path resolve failed beside host terminal: ${describeErrorIdentity(live.resolveError)}`,
+            error: live.resolveError,
+          });
+        }
         try {
           await rm(inputsDirectory, { recursive: true, force: true });
         } catch (error) {
-          await retainPackageFault({
-            runDirectory: liveRunDirectory,
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `headless turn inputs cleanup failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });
         }
         try {
-          if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
-            host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
-            sessionDirectory: sessionDirectoryOf(liveRunDirectory),
-            sessionParent: sessionFileOf(liveRunDirectory),
-            ...(request.home !== undefined ? { home: request.home } : {}),
-          });
+          if (
+            exitedSessionId !== undefined
+            && exitedSessionId !== ""
+            && liveRunDirectory !== undefined
+          ) {
+            copyAndRecordHostDossier({
+              host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
+              sessionDirectory: sessionDirectoryOf(liveRunDirectory),
+              sessionParent: sessionFileOf(liveRunDirectory),
+              ...(request.home !== undefined ? { home: request.home } : {}),
+            });
+          }
         } catch (error) {
-          await retainPackageFault({
-            runDirectory: liveRunDirectory,
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });

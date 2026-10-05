@@ -120,7 +120,11 @@ export async function reportTicketFromHostContext(
 
   const admitted = admittedForLiveTicketReport(runDirectory, authority);
   const alreadyPlaced = !isUnboundRunDirectory(runDirectory);
-  await bindAdmittedTicketNumber(admitted, ticketNumber);
+  // #1171 B2 / #1025: already under a ticket leaf — do not rewrite durable identity.
+  // Placement stays put; no heterogenous-ticket refuse policy (#1171 judge).
+  if (!alreadyPlaced) {
+    await bindAdmittedTicketNumber(admitted, ticketNumber);
+  }
   // Live handles belong with rename ownership — before derived renderCurrentSync
   // (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
   const applyLiveHandles = (nextDirectory: string): void => {
@@ -141,7 +145,9 @@ export async function reportTicketFromHostContext(
   if (relocation === undefined) applyLiveHandles(nextDirectory);
 
   return {
-    ticketNumber,
+    ticketNumber: alreadyPlaced
+      ? (admitted.ticketNumber ?? ticketNumber)
+      : ticketNumber,
     relocated: relocation !== undefined,
   };
 }

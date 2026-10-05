@@ -30,6 +30,7 @@ import { readLedgerSessionJsonlLines, readStrictPiSessionJsonl } from "../ledger
 import { copyAndRecordHostDossier } from "../host-session-record.ts";
 import {
   resolveLiveRunDirectoryPath,
+  retainPackageFaultBesideLivePlacement,
   syncTurnRequestLivePlacement,
 } from "../external-host-turn-loop.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
@@ -525,8 +526,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
           });
         }
       } catch (error) {
-        await retainPackageFault({
-          runDirectory: await syncTurnRequestLivePlacement(request),
+        await retainPackageFaultBesideLivePlacement(request, {
           diagnostic: `pi host dossier record failed beside host terminal: ${describeErrorIdentity(error)}`,
           error,
         });

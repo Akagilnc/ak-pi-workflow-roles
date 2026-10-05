@@ -177,7 +177,10 @@ function extensionHarness(
   const tools = new Map<string, Tool>();
   const flags = new Map<string, unknown>();
   const allToolNames = new Set(registeredToolNames);
-  const activeToolSets: string[][] = [];
+  // Pi: already-registered default tools start active; registerTool refreshes into that set.
+  const activeToolSets: string[][] = registeredToolNames.length > 0
+    ? [[...registeredToolNames]]
+    : [];
   const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
   const pi = {
     registerFlag(name: string, options: unknown) {
@@ -193,6 +196,11 @@ function extensionHarness(
     registerTool(tool: Tool) {
       tools.set(tool.name, tool);
       allToolNames.add(tool.name);
+      // Pi 0.99.1: default direct tools refresh into the active set on register.
+      const prior = activeToolSets.at(-1) ?? [];
+      if (!prior.includes(tool.name)) {
+        activeToolSets.push([...prior, tool.name]);
+      }
     },
     getAllTools() {
       return [...allToolNames].map((name) => ({ name }));
@@ -475,7 +483,12 @@ test("focused Judge controller registers output without narrowing host tools", a
   await runtime.activate();
 
   assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]);
-  assert.deepEqual(harness.activeToolSets, []);
+  // Activate registers the seat tool without setActiveTools-narrowing away the host surface.
+  const active = harness.activeToolSets.at(-1) ?? [];
+  assert.ok(active.includes(JUDGE_OUTPUT_TOOL_NAME));
+  for (const name of ["read", "grep", "find", "ls", "bash", "write", "edit", "arbitrary_sibling"]) {
+    assert.ok(active.includes(name), `host tool ${name} must remain active`);
+  }
   assertDelivers(
     (await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE" },
@@ -1051,9 +1064,8 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  // #1171: ak_report_ticket shares the submission registration mouth; activation
-  // must expose it beside the seat's terminating tool (not a silent surface change).
-  assert.deepEqual(harness.activeToolSets, [["ak_report_ticket"]]);
+  // #1171: registration mouth exposes report-ticket beside the seat tool.
+  // F6-R7: do not lock host-internal active-set history shapes.
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
   assert.equal(harness.tools.has("ak_report_ticket"), true);
 });

@@ -87,13 +87,16 @@ function nestAdaptersFor(
 function envelopeHostThatReportsThen(input: {
   readonly hostName: "codex" | "grok-build";
   readonly ticketNumber: number;
+  /** When set, each entry is one report call (overrides reportCount + ticketNumber). */
+  readonly ticketNumbers?: readonly number[];
   readonly submit?: Record<string, unknown>;
   readonly reportCount?: number;
   readonly beforeReport?: (request: RoleTurnRequest) => void | Promise<void>;
   readonly onAfterReport?: () => void;
   readonly afterReportOnly?: boolean;
 }) {
-  const reportCount = input.reportCount ?? 1;
+  const tickets = input.ticketNumbers
+    ?? Array.from({ length: input.reportCount ?? 1 }, () => input.ticketNumber);
   return {
     async executeTurn(request: RoleTurnRequest) {
       const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-sock-")), "mcp.sock");
@@ -108,12 +111,12 @@ function envelopeHostThatReportsThen(input: {
         const token = mcpTokenFromPrepared(prepared);
         process.env.AK_ROLE_RUN_DIR = request.runDirectory;
         await input.beforeReport?.(request);
-        for (let i = 0; i < reportCount; i += 1) {
+        for (const ticketNumber of tickets) {
           await callMcpTool({
             socketPath,
             token,
             name: REPORT_TICKET_TOOL_NAME,
-            args: { ticketNumber: input.ticketNumber },
+            args: { ticketNumber },
           });
         }
         input.onAfterReport?.();
@@ -505,6 +508,40 @@ for (const caseRow of [
     });
   });
 }
+
+test("#1171 already-placed re-report keeps placement ticket identity (B2)", async () => {
+  const OTHER = 1172;
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-b2ident";
+    const roleTurnHost = withPassingReviewHost(
+      envelopeHostThatReportsThen({
+        hostName: "codex",
+        ticketNumber: TICKET,
+        ticketNumbers: [TICKET, OTHER],
+        submit: { ...FIXER_DONE },
+      }),
+    );
+    const result = await runPublicInstructionSeat(
+      ["apply", "Repair #1171 B2 identity."],
+      seatEnv(home, project, runId, "codex", roleTurnHost),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    const placement = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
+    const foreign = ticketLeaf(home, bookKey, OTHER, runId, "fixer");
+    assert.equal(result.exitCode, 0, String(result.terminal?.roleOutcome.kind));
+    assert.equal(existsSync(placement), true);
+    assert.equal(existsSync(foreign), false, "must not migrate or invent a foreign ticket leaf");
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
+    assert.equal(result.admitted?.ticketNumber, TICKET);
+    assert.equal(result.admitted?.runDirectory, placement);
+    const admitted = readCurrentSection(placement, "admitted") as { ticketNumber?: number };
+    const invocation = readCurrentSection(placement, "invocation") as { ticketNumber?: number };
+    assert.equal(admitted.ticketNumber, TICKET);
+    assert.equal(invocation.ticketNumber, TICKET);
+  });
+});
 
 test("#1171 delivery throw after mid-turn report does not revive unbound", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {

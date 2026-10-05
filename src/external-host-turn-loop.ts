@@ -71,6 +71,48 @@ export async function syncTurnRequestLivePlacement(
 }
 
 /**
+ * Soft live-path sync for cleanup / dossier work: lookup failure stays beside the
+ * caller and never revives a vanished leaf. Same authority as syncTurnRequestLivePlacement.
+ */
+export async function trySyncTurnRequestLivePlacement(
+  request: RoleTurnRequest,
+): Promise<{ readonly runDirectory: string } | { readonly resolveError: unknown }> {
+  try {
+    return { runDirectory: await syncTurnRequestLivePlacement(request) };
+  } catch (resolveError) {
+    return { resolveError };
+  }
+}
+
+/**
+ * Retain a package fault on the live leaf when locatable. Lookup failure must not
+ * replace the original fault or block later cleanup — reuse retainPackageFault when
+ * the leaf exists; otherwise present both causes on stderr (Pi transport path shape).
+ */
+export async function retainPackageFaultBesideLivePlacement(
+  request: RoleTurnRequest,
+  input: { readonly diagnostic: string; readonly error?: unknown },
+): Promise<void> {
+  const live = await trySyncTurnRequestLivePlacement(request);
+  if ("resolveError" in live) {
+    const resolveDiagnostic =
+      `live run path resolve failed beside fault: ${describeErrorIdentity(live.resolveError)}`;
+    try {
+      process.stderr.write(`${input.diagnostic}\n`);
+      process.stderr.write(`${resolveDiagnostic}\n`);
+    } catch {
+      // Best-effort presentation beside an already-chosen terminal.
+    }
+    return;
+  }
+  await retainPackageFault({
+    runDirectory: live.runDirectory,
+    diagnostic: input.diagnostic,
+    ...(Object.hasOwn(input, "error") ? { error: input.error } : {}),
+  });
+}
+
+/**
  * What one host start was given: one `turn-delivery` row of history.jsonl per start. History is
  * the volume whose write failure does not stop a run (#833), so a row that cannot be
  * written is noted and the host still starts.
@@ -241,8 +283,7 @@ export async function driveExternalRoleTurnRounds(
     try {
       closure = await prepared.closeRound();
     } catch (error) {
-      await retainPackageFault({
-        runDirectory: await syncTurnRequestLivePlacement(request),
+      await retainPackageFaultBesideLivePlacement(request, {
         diagnostic: `round closure failed beside host terminal: ${describeErrorIdentity(error)}`,
         error,
       });
@@ -253,8 +294,7 @@ export async function driveExternalRoleTurnRounds(
     if (closure.accepted) {
       try { await driver.afterAccepted?.(); }
       catch (error) {
-        await retainPackageFault({
-          runDirectory: await syncTurnRequestLivePlacement(request),
+        await retainPackageFaultBesideLivePlacement(request, {
           diagnostic: `post-acceptance close failed beside host terminal: ${describeErrorIdentity(error)}`,
           error,
         });
@@ -262,8 +302,7 @@ export async function driveExternalRoleTurnRounds(
       return result;
     }
     if ("failure" in closure) {
-      await retainPackageFault({
-        runDirectory: await syncTurnRequestLivePlacement(request),
+      await retainPackageFaultBesideLivePlacement(request, {
         diagnostic: `round closure failed beside host terminal: ${JSON.stringify(closure.failure)}`,
       });
       // This is an explicit envelope failure (e.g. required audit/ledger failure),
@@ -279,8 +318,7 @@ export async function driveExternalRoleTurnRounds(
     else {
       countedReasks += 1;
       if (countedReasks > countedReaskLimit) {
-        await retainPackageFault({
-          runDirectory: await syncTurnRequestLivePlacement(request),
+        await retainPackageFaultBesideLivePlacement(request, {
           diagnostic: `${driver.roundLimitName}: round-retry-limit`,
         });
         return result;
@@ -302,8 +340,7 @@ export async function disposeExternalRoleTurn(
   try {
     await prepared.dispose?.();
   } catch (error) {
-    await retainPackageFault({
-      runDirectory: await syncTurnRequestLivePlacement(request),
+    await retainPackageFaultBesideLivePlacement(request, {
       diagnostic: `required envelope shutdown failed beside host terminal: ${describeErrorIdentity(error)}`,
       error,
     });
