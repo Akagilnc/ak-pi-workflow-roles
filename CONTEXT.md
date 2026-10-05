@@ -43,7 +43,11 @@
 - **路书(Route playbook)**：见 [ADR 0061](docs/adr/0061-navigator-routebook-is-free-form-advisory-material.md)、[路书](resources/navigator-route-playbook.md)。_Avoid_：默认工作流、路由表、自动编排规则。
 - **角色调用(Role invocation)／编排器(Orchestrator)**：见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)。
 - **公开角色 CLI(Public role CLI)／内部角色入口(Internal role entrypoint)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)。_Avoid_：把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
-- **调用请求(Invocation request)／附件(Attachment)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、`ak-role help <command>`。
+- **调用请求(Invocation request)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、`ak-role help <command>`。
+- **派单文(Dispatch text)**：调用方写给衙门的那段话；见 [ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)。_Avoid_：任务单、修理包(fix packet)、task 文件。
+- **附件(Attachment)**：调用方用文件旗给出的路径；见 [ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)。_Avoid_：冻结快照、抄件。
+- **启动材料(Startup material)**：衙门启动即带、与派单无关的部分（Soul、法典、输出手册、外包手册）；见 [ADR 0005](docs/adr/0005-soul-layering-generic-law-plus-host-overlay.md)、[ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)。
+- **被审腿身份(Audited-run identity)**：`<runId>@<席>`；见 [ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)。_Avoid_：卷宗指针、源 run 路径。
 - **终局结果(Terminal result)／角色运行(Role run)／Artifact reference**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
 - **候簿(Ledger book)**：见 [ADR 0048](docs/adr/0048-ledger-one-home-many-books-dirname-key-git-only.md)、[ADR 0049](docs/adr/0049-ledger-is-index-zero-content-bytes.md)。_Avoid_：家册、账本目录、工作区记录。
 - **司天台(Archivist)**：见 [ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)、[ADR 0065](docs/adr/0065-sitian-phase-two-records-have-one-entry.md)、[ADR 0086](docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。_Avoid_：Recorder、Docket、遥测。
