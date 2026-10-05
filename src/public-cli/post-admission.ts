@@ -168,23 +168,28 @@ export async function refreshAdmittedPlacementAfterHostTurn(
       `admitted run ${admitted.runId} missing after host turn; not found under ${home}`,
     );
   }
+  // Live identity first: later board-ticket read must not leave settlement on the
+  // pre-relocate path when facts are damaged (#1171 F4-R1).
+  let relocation: RunDirectoryRelocation | undefined;
+  if (found !== undefined && found !== admitted.runDirectory) {
+    const oldRunDirectory = admitted.runDirectory;
+    const coords = { ...authority.decode(admitted.principal) };
+    rewritePrincipalSessionPaths(
+      coords as Record<string, unknown>,
+      oldRunDirectory,
+      found,
+    );
+    const principal = authority.seal(coords);
+    projectLiveAdmittedRunPaths(admitted, oldRunDirectory, found);
+    (admitted as { principal: typeof principal }).principal = principal;
+    heldLease?.relocate(found);
+    relocation = { oldRunDirectory, newRunDirectory: found };
+  }
   const boardTicket = await readBoardTicketNumber(found ?? admitted.runDirectory);
   if (boardTicket !== undefined) {
     (admitted as { ticketNumber?: number }).ticketNumber = boardTicket;
   }
-  if (found === undefined || found === admitted.runDirectory) return undefined;
-  const oldRunDirectory = admitted.runDirectory;
-  const coords = { ...authority.decode(admitted.principal) };
-  rewritePrincipalSessionPaths(
-    coords as Record<string, unknown>,
-    oldRunDirectory,
-    found,
-  );
-  const principal = authority.seal(coords);
-  projectLiveAdmittedRunPaths(admitted, oldRunDirectory, found);
-  (admitted as { principal: typeof principal }).principal = principal;
-  heldLease?.relocate(found);
-  return { oldRunDirectory, newRunDirectory: found };
+  return relocation;
 }
 
 /** Apply a successful post-host placement refresh onto the live turn request. */
@@ -213,6 +218,8 @@ async function settleHostThrowAfterLivePlacementRefresh<
 >(input: {
   admitted: A;
   hostError: unknown;
+  /** False only when executeTurn itself threw; post-success refresh share this catch. */
+  hostTurnCompleted: boolean;
   request: RoleTurnRequest;
   turnRequest: RoleTurnRequest;
   lease: RunWriterLease | undefined;
@@ -246,6 +253,12 @@ async function settleHostThrowAfterLivePlacementRefresh<
     refreshError = err;
   }
   const processCancelName = processCancelSignalName(input.env.signal);
+  // Secondary hostThrow only when the host actually threw and refresh also failed.
+  // Package-side refresh failure must not borrow that label (#1171 F10).
+  const hostThrowSecondary =
+    refreshError !== undefined && input.hostTurnCompleted === false
+      ? { knownDetails: { hostThrow: describeCaughtError(input.hostError) } }
+      : {};
   const settled = await settleAfterTurnStarted(
     input.admitted,
     withEngineDetourInvocationScope({
@@ -256,9 +269,7 @@ async function settleHostThrowAfterLivePlacementRefresh<
       // host throw remains the cause (失败诚实：不在旧 unbound 上结算写回).
       ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
       thrown: refreshError ?? input.hostError,
-      ...(refreshError === undefined
-        ? {}
-        : { knownDetails: { hostThrow: describeCaughtError(input.hostError) } }),
+      ...hostThrowSecondary,
     }, input.request.invocationScopeId),
     input.adapters,
     input.env.principalAuthority,
@@ -1350,6 +1361,7 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
+    let hostTurnCompleted = false;
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
       // host CLI's native resume. Nothing here may gate, redirect or reshape
@@ -1357,6 +1369,7 @@ export async function dispatchPostAdmissionTurn<
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
+      hostTurnCompleted = true;
       // #1171: one placement refresh before settlement, same try as executeTurn.
       // Failure shares the catch below (refresh-then-settle + #855 cancel wrap).
       const refreshed = await refreshAdmittedPlacementAfterHostTurn(
@@ -1374,6 +1387,7 @@ export async function dispatchPostAdmissionTurn<
       const thrown = await settleHostThrowAfterLivePlacementRefresh({
         admitted,
         hostError: error,
+        hostTurnCompleted,
         request,
         turnRequest,
         lease,
@@ -1426,6 +1440,7 @@ export async function dispatchPostAdmissionTurn<
       // that never reached the host.
       let deliveryResult: RoleTurnResult;
       let deliveryTurnRequest: RoleTurnRequest;
+      let deliveryHostTurnCompleted = false;
       try {
         // Host and the other axes already selected on this turn ride the
         // shared projection. The pre-projection request does not have them.
@@ -1443,6 +1458,7 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
+        deliveryHostTurnCompleted = true;
         // Same single refresh-before-settle rule as the first turn (#1171):
         // stay inside this try so cancel wrap is not dropped (#1171 F9 / #855).
         const refreshed = await refreshAdmittedPlacementAfterHostTurn(
@@ -1466,6 +1482,7 @@ export async function dispatchPostAdmissionTurn<
         const thrown = await settleHostThrowAfterLivePlacementRefresh({
           admitted,
           hostError: error,
+          hostTurnCompleted: deliveryHostTurnCompleted,
           request,
           turnRequest,
           lease,

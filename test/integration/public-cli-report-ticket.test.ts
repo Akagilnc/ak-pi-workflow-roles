@@ -401,6 +401,13 @@ test("#1171 delivery throw after mid-turn report does not revive unbound", async
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-delivthrow";
     let turns = 0;
+    const deliveryHost = envelopeHostThatReportsThen({
+      hostName: "codex",
+      ticketNumber: TICKET,
+      onAfterReport: () => {
+        throw new Error("injected delivery host throw after report");
+      },
+    });
     const host = withPassingReviewHost({
       async executeTurn(request: RoleTurnRequest) {
         turns += 1;
@@ -408,27 +415,7 @@ test("#1171 delivery throw after mid-turn report does not revive unbound", async
           // First turn: host ends without a receipt so AK seam 催交一次.
           return { timedOut: false, code: 0, stderr: "" };
         }
-        const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-deliv-")), "mcp.sock");
-        const prepared = await prepareRoleEnvelope({
-          request: { ...request, host: "codex" },
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          listTerminatingToolOnMcp: false,
-          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-        });
-        try {
-          process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-          await callMcpTool({
-            socketPath,
-            token: mcpTokenFromPrepared(prepared),
-            name: REPORT_TICKET_TOOL_NAME,
-            args: { ticketNumber: TICKET },
-          });
-          throw new Error("injected delivery host throw after report");
-        } finally {
-          delete process.env.AK_ROLE_RUN_DIR;
-          await prepared.dispose?.();
-        }
+        return deliveryHost.executeTurn(request);
       },
     });
     const result = await runPublicInstructionSeat(
