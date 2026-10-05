@@ -322,8 +322,12 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       );
       assert.ok(autoResumePrompts.length >= 1, `${seat}: auto-resume must supply continuation.prompt`);
       assert.ok(
+        autoResumePrompts.every((prompt) => prompt.trim() !== ""),
+        `${seat}: auto-resume continuation.prompt must stay non-empty`,
+      );
+      assert.ok(
         autoResumePrompts.every((prompt) => prompt === RESUME_TRANSPORT_ENVELOPE),
-        `${seat}: auto-resume continuation must stay envelope-only (non-empty, no outsourcing append)`,
+        `${seat}: auto-resume continuation must stay envelope-only (no outsourcing append)`,
       );
       assert.ok(
         materialNamesPerTurn.length >= 2
