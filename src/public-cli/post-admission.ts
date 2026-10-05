@@ -1653,7 +1653,7 @@ export async function prepareSummonsResumeMaterials(
   }
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
-    summons.instructionEmpty ?? instruction.trim() === "";
+    summons.instructionEmpty ?? instruction.length === 0;
   const attachments = (summons.attachmentPaths ?? []).map((path) => ({ path }));
   return { instruction, instructionEmpty, attachments };
 }

@@ -198,7 +198,7 @@ function parseSameTicketSummonsMaterials(
   const instructionEmpty =
     typeof record.instructionEmpty === "boolean" ? record.instructionEmpty : undefined;
   const attachmentPaths = Array.isArray(record.attachmentPaths)
-    ? record.attachmentPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+    ? record.attachmentPaths.filter((p): p is string => typeof p === "string")
     : undefined;
   const sourceRunPath =
     typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
@@ -1176,7 +1176,8 @@ async function loadResumableRunRecord(
       if (typeof record.repositoryDisplay === "string" && record.repositoryDisplay.trim() !== "") {
         repositoryDisplay = record.repositoryDisplay;
       }
-      if (typeof record.requestManifestPath === "string" && record.requestManifestPath.trim() !== "") {
+      // #1165: opaque caller path on resume — do not trim-filter provided values.
+      if (typeof record.requestManifestPath === "string") {
         requestManifestPath = record.requestManifestPath;
       }
       if (typeof record.waitWindowMs === "number" && Number.isSafeInteger(record.waitWindowMs) && record.waitWindowMs >= 1) {

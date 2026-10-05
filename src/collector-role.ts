@@ -113,10 +113,9 @@ export function createCollectorRoleRuntime(
       } else if (typeof prFlag === "number") {
         prNumber = parseCollectorPrNumber(prFlag);
       }
+      // #1165: opaque caller path — keep spaces/"" when the flag was provided.
       const requestManifestPath =
-        typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
-          ? requestManifestFlag
-          : undefined;
+        typeof requestManifestFlag === "string" ? requestManifestFlag : undefined;
 
       return {
         soul,

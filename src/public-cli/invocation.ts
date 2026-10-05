@@ -841,7 +841,8 @@ function assignPublicSeatOption(
   const value = taken.value;
   switch (taken.def.id) {
     case "attach":
-      fields.attachmentPaths.push(requireOptionPath(taken.def.canonical, value));
+      // #1165: file-flag values are opaque; only a missing argument is a usage error.
+      fields.attachmentPaths.push(requireProvidedOptionValue(taken.def.canonical, value));
       return;
     case "project":
       fields.project = requireOptionPath(taken.def.canonical, value);
@@ -887,7 +888,8 @@ function assignPublicSeatOption(
       fields.repo = parseRepoOption(value);
       return;
     case "request-manifest":
-      fields.requestManifestPath = requireOptionPath(taken.def.canonical, value);
+      // #1165: file-flag values are opaque; only a missing argument is a usage error.
+      fields.requestManifestPath = requireProvidedOptionValue(taken.def.canonical, value);
       return;
     case "issue": {
       if (value === undefined || value.trim() === "") {
@@ -1067,6 +1069,20 @@ function requireOptionPath(
         ? `${flag} requires a nonempty revision`
         : `${flag} requires a path`,
     );
+  }
+  return value;
+}
+
+/**
+ * #1165 file flags (--attach / --request-manifest): keep the provided string
+ * opaque (including spaces and ""). Only a missing argument is a usage error.
+ */
+function requireProvidedOptionValue(
+  flag: string,
+  value: string | undefined,
+): string {
+  if (value === undefined) {
+    throw new CliUsageError(`${flag} requires a path`);
   }
   return value;
 }
@@ -1793,7 +1809,8 @@ async function admitStandardMaterialInvocation<
       ? {}
       : { correlationId: options.correlationId };
   const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
+  // Admitted emptiness is literal absence, not whitespace-only (#1165 J3).
+  const instructionEmpty = instruction.length === 0;
   const placedExtra = options.placedFields === undefined ? undefined : await options.placedFields(placed);
   const admittedFields = {
     ...(options.admittedFields ?? ({} as Extra)),
@@ -1892,23 +1909,24 @@ export function buildInstructionTransportPrompt(
       lens: admitted.lens,
       authorityRefs: admitted.authorityRefs,
     })];
-    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+    if (!admitted.instructionEmpty) {
       lines.push("", admitted.instruction);
     }
     return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
   }
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  const paths = [
-    ...admitted.attachments.map((attachment) => attachment.path),
-    ...(admitted.requestManifestPath === undefined || admitted.requestManifestPath.length === 0
+  // #1164/#1165: each caller path keeps its file-flag provenance.
+  const flaggedPaths: string[] = [
+    ...admitted.attachments.map((attachment) => `--attach ${attachment.path}`),
+    ...(admitted.requestManifestPath === undefined
       ? []
-      : [admitted.requestManifestPath]),
+      : [`--request-manifest ${admitted.requestManifestPath}`]),
   ];
-  if (paths.length > 0) {
+  if (flaggedPaths.length > 0) {
     lines.push("");
     lines.push("已受理附件：");
-    for (const path of paths) {
-      lines.push(`- ${path}`);
+    for (const entry of flaggedPaths) {
+      lines.push(`- ${entry}`);
     }
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
@@ -2387,7 +2405,7 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
-          requireOptionPath(taken.def.canonical, taken.value),
+          requireProvidedOptionValue(taken.def.canonical, taken.value),
         );
         return;
       }

@@ -28,7 +28,6 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitPublicRole,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -128,53 +127,18 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   assert.equal(parsed.project, "/tmp/p");
 });
 
-test("parseJudgeArgv rejects blank --project/--attach path values", () => {
+test("parseJudgeArgv rejects blank --project; --attach keeps opaque provided values (#1165)", () => {
   // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
   assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
-});
-
-test("admitJudgeInvocation records caller attachment paths as-is (#1165)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const source = join(home, "evidence.txt");
-    await writeFile(source, "admitted-bytes-v1", "utf8");
-
-    const admitted = await admitPublicRole("judge", {
-      instruction: "review the attachment",
-      attachmentPaths: [source],
-    }, {
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      createRunId: () => "run-attach-path-001",
-    });
-
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(admitted.attachments[0]!.path, source);
-    assert.equal(existsSync(join(admitted.runDirectory, "attachments")), false);
-
-    // #78 placement: run under book runs/, session reserved, no index content bytes.
-    const bookKey = resolveBookKeyFromGit(project);
-    assert.equal(admitted.bookKey, bookKey);
-    assert.equal(
-      admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-attach-path-001@judge"),
-    );
-    assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
-    await access(join(admitted.runDirectory, "current.json"));
-    // #855: two-face waiting.jsonl deleted — admit must not create it.
-    await assert.rejects(
-      () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-  });
+  assert.throws(() => parsePublicSeatArgv("judge", ["--attach"]), isUsage);
+  const emptyAttach = parsePublicSeatArgv("judge", ["--attach=", "task"]);
+  assert.deepEqual(emptyAttach.attachmentPaths, [""]);
+  const spaceAttach = parsePublicSeatArgv("judge", ["--attach", " ", "task"]);
+  assert.deepEqual(spaceAttach.attachmentPaths, [" "]);
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {

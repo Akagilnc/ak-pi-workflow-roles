@@ -627,7 +627,7 @@ async function runCountersignBody(
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.trim() === "",
+        instructionEmpty: resumeInstruction.length === 0,
       },
     });
     if (resumed != null) return resumed;
@@ -764,7 +764,7 @@ export async function runPublicInstructionSeat(
     const summons: SameTicketSummonsMaterials = {
       ...sameParentInstruction(env, {
         instruction: parsed.instruction ?? "",
-        instructionEmpty: (parsed.instruction ?? "").trim() === "",
+        instructionEmpty: (parsed.instruction ?? "").length === 0,
       }),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
@@ -790,7 +790,7 @@ export async function runPublicInstructionSeat(
         sourceRunPath: parentRunPath,
         ...sameParentInstruction(env, {
           instruction: parsed.instruction ?? "",
-          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+          instructionEmpty: (parsed.instruction ?? "").length === 0,
         }),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };

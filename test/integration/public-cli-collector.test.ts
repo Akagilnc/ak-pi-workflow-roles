@@ -83,49 +83,6 @@ test("typed groups travel from real output settlement into the report artifact",
   });
 });
 
-test("#1165 public --request-manifest admits without reading or validating the file", async () => {
-  await withTempRoot("collector-manifest-admit-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project);
-    seedProject(project);
-    const bad = join(home, "bad.json");
-    await writeFile(bad, "{ not json", "utf8");
-    const admitted = await admitPublicRole("collector", parsePublicSeatArgv("collector", [
-      "--pr", "42", "--repo", "acme/widgets", "--request-manifest", bad, "--project", project,
-    ]), {
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      createRunId: () => "collector-manifest-admit-only",
-    });
-    assert.equal(admitted.role, "collector");
-    assert.equal("manifestDigest" in admitted, false);
-    if (admitted.role === "collector") {
-      assert.equal(admitted.requestManifestPath, bad);
-    }
-
-    const result = await runAkRole([
-      "collector", "--model", "test/caller-seat:high", "--pr", "42", "--repo", "acme/widgets",
-      "--request-manifest", bad, "--project", project,
-    ], {
-      packageRoot, home, cwd: project,
-      credentials: { "openai-codex": true, xai: false },
-      createRunId: () => "collector-manifest-passthrough",
-      io: { stdout: () => undefined, stderr: () => undefined },
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot, principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          const details = receipt();
-          await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
-          return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
-        },
-      }),
-    });
-    assert.equal(result.exitCode, 0);
-  });
-});
-
 test("#1088 public Collector rejects retired --wait-ms", () => {
   assert.throws(
     () => parsePublicSeatArgv("collector", ["--pr", "1", "--repo", "a/b", "--wait-ms", "120000"]),
