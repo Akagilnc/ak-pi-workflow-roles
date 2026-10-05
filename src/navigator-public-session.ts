@@ -26,7 +26,6 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
 import {
-  attachWorkContextPointer,
   navigatorWorkContextFile,
 } from "./navigator-work-base.ts";
 
@@ -157,19 +156,24 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // (ADR 0018 / #959 — legal HostContext may omit signal).
           if (disposed) return;
           const resumeRunId = hostRunId;
+          // Prompt stays caller/summoner bytes (#1166). Nest work-context path is an
+          // internal locator for startup materials only — never folded into argv,
+          // never written onto shared parent process.env across await.
           const workContextPath = navigatorWorkContextFile(sessionManager.getSessionDir());
-          const argvText = existsSync(workContextPath)
-            ? attachWorkContextPointer(text, workContextPath)
-            : text;
+          const workContextLocator =
+            existsSync(workContextPath) ? workContextPath : undefined;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
           const baseSummon = {
             role: "navigator" as const,
-            argv: [argvText] as const,
+            argv: [text] as const,
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
+            ...(workContextLocator === undefined
+              ? {}
+              : { navigatorWorkContextPath: workContextLocator }),
           };
 
           // Prefer host CLI resume so prior advice stays on the host session.

@@ -1,6 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
-import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./role-run-placement.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
@@ -40,8 +40,6 @@ export type ComplianceDecision =
   | ComplianceReceived
   | ComplianceTransportFailure;
 /** Source-run pointer remains the binding locator; parent body rides the separate instruction. */
-export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
-
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
 export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure" as const;
@@ -215,7 +213,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
           auditSubject,
           "--source-run",
           sourceRunDirectory,
-          `${AUDITOR_DOSSIER_PROMPT}${sourceRunDirectory}`,
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,

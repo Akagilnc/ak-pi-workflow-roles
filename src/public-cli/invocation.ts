@@ -183,6 +183,8 @@ export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "auditor";
+  /** Audited source-run directory (#1166 identity / ADR 0085 peer-body load). */
+  readonly sourceRunPath?: string;
 };
 
 export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
@@ -1817,10 +1819,32 @@ function admittedTransportPromptKind(
   return "instruction";
 }
 
+/** Append opaque caller file-flag paths after dialogue (#1165 / #1166 J11 / #1168). */
+export function appendCallerFileFlagPaths(
+  body: string,
+  attachments: readonly { readonly path: string }[],
+  requestManifestPath?: string,
+  prerequisitesPath?: string,
+): string {
+  const flaggedPaths = [
+    ...attachments.map((attachment) => `--attach ${attachment.path}`),
+    ...(requestManifestPath === undefined
+      ? []
+      : [`--request-manifest ${requestManifestPath}`]),
+    ...(prerequisitesPath === undefined
+      ? []
+      : [`--prerequisites ${prerequisitesPath}`]),
+  ];
+  if (flaggedPaths.length === 0) return body;
+  // ADR 0087 / #1165 / #1166 J13: after caller words, only necessary file flags
+  // and original paths — no package-authored title or list wrapper.
+  return [body, "", ...flaggedPaths].join("\n");
+}
+
 /**
  * One initial prompt transport. The registry `transportPrompt` leaf selects
- * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
- * caller instruction plus caller attachment paths as-is (#1165).
+ * a fixed kickoff, a bound baseline, or skill args. Absent means the caller
+ * instruction plus caller file-flag paths (ADR 0087).
  * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(
@@ -1828,10 +1852,9 @@ export function buildInstructionTransportPrompt(
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
-    if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
-      throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
-    }
-    return admitted.sourceRunPath;
+    // #1166 / ADR 0087: audited-run identity rides startup materials; dialogue
+    // prompt is peer body / reask only — never a package-computed directory path.
+    return "";
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
@@ -1863,26 +1886,12 @@ export function buildInstructionTransportPrompt(
     }
     return lines.join("\n");
   }
-  // #1165 J3 / #1168: assemble from the admitted instruction bytes themselves.
-  const lines: string[] = [admitted.instruction];
-  // #1164/#1165/#1168: each caller path keeps its file-flag provenance.
-  const flaggedPaths: string[] = [
-    ...admitted.attachments.map((attachment) => `--attach ${attachment.path}`),
-    ...(admitted.requestManifestPath === undefined
-      ? []
-      : [`--request-manifest ${admitted.requestManifestPath}`]),
-    ...(admitted.prerequisitesPath === undefined
-      ? []
-      : [`--prerequisites ${admitted.prerequisitesPath}`]),
-  ];
-  if (flaggedPaths.length > 0) {
-    lines.push("");
-    lines.push("已受理附件：");
-    for (const entry of flaggedPaths) {
-      lines.push(`- ${entry}`);
-    }
-  }
-  return lines.join("\n");
+  return appendCallerFileFlagPaths(
+    admitted.instruction,
+    admitted.attachments,
+    admitted.requestManifestPath,
+    admitted.prerequisitesPath,
+  );
 }
 
 export type AdmitCountersignInvocationOptions = {

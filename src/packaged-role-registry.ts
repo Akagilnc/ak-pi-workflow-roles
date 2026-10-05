@@ -390,7 +390,8 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "gate-pointer",
+    /** Structured --source-run only; instruction stays opaque caller/peer bytes (#1166). */
+    sameParent: "source-run",
     /** Resume restores an optional source-run path onto the admitted face. */
     resumeSourcePath: true,
     /** 台院 is a review officer and inherits the gatekeeper model. */
@@ -403,11 +404,12 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     gateStageLabel: "台院",
+    /** Gate summon binds --source-run; identity is startup material (#1166). */
+    gateSummon: "source-run",
     activationFlags: [
       {
         field: "sourceRun",
         from: "sourceRunPath",
-        fallback: "gate-pointer",
         flag: "ak-inspector-source-run",
         binds: "input",
       },
@@ -554,7 +556,6 @@ export function packagedModelParent(role: string): PackagedRole | undefined {
  * One seat's admitted → activation copy.
  * `field` is the activation key. `from` is the admitted path when it differs.
  * `text` writes a number as decimal text on the activation object.
- * `fallback: "gate-pointer"` is the inspector instruction pointer when sourceRunPath is blank.
  * `flag` omitted: the value stays on the activation object and is not a host flag
  * (secretariat and countersign ticketNumber).
  */
@@ -562,7 +563,6 @@ export type PackagedActivationFlag = {
   readonly field: string;
   readonly from?: string;
   readonly text?: true;
-  readonly fallback?: "gate-pointer";
   readonly flag?: string;
   readonly binds?: "input" | "phase";
 };

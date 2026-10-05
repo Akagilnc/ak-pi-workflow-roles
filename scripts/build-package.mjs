@@ -32,9 +32,8 @@ const entries = [
   "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
-  // Value-import closure of published non-bundle roots (build-package-only loadable).
-  "auditor-dossier-tool",
-  // Static import of auditor-dossier-tool / placement path authority (#859).
+  // Value-import closure of published non-bundle roots (build-package-only loadable);
+  // placement path authority (#859).
   "role-run-placement",
   // Static import of role-run-placement (safe-positive ticket invariant).
   "run-ticket-number",

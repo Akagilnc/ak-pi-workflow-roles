@@ -4,8 +4,8 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
+import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { projectNotarySessionBound } from "../../src/notary-role.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
@@ -49,17 +49,19 @@ function piCapture() {
 }
 
 test("Pi adapter folds readingMaterial into provider systemPrompt and strips the typed field", async () => {
-  const bound = projectNotarySessionBound({
+  const bound = projectNotaryAuditedRunIdentity({
     sourceRun: {
       runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
       runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
       role: "judge",
     },
-    ticketNumber: 582,
   });
-  const otherBound = projectNotarySessionBound({
-    sourceRun: bound.sourceRun,
-    ticketNumber: 999,
+  const otherBound = projectNotaryAuditedRunIdentity({
+    sourceRun: {
+      runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@coder",
+      runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
+      role: "coder",
+    },
   });
 
   async function providerVisible(returnValue: {
