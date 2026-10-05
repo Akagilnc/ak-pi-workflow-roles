@@ -7,7 +7,6 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
   run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
-  pointer.md     optional historical case-dossier pointer when stock still has one (#1092 / #1169: new runs omit attachments/)
   sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
   schema.json    headless output schema when turn-delivery recorded one; omitted on gap
   instr.txt      the instruction the run was admitted with
@@ -272,15 +271,7 @@ def main():
                 if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
                     f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
 
-    pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
-    pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
-    if records_src in pointer:
-        pointer = pointer.replace(records_src, f"{kit}/records.jsonl")
-    elif pointer.strip():
-        # runs admitted before the ticket was bound carry a template pointer; name the frozen copy
-        pointer = pointer.rstrip("\n") + f"\n冻结副本：{kit}/records.jsonl\n"
-    with open(f"{kit}/pointer.md", "w") as f:
-        f.write(pointer)
+    # #1169: do not mint kit/pointer.md from stock attachments/ copies.
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
     # Prompt and schema come only from turn-delivery rows at or before the cut (#1161).
