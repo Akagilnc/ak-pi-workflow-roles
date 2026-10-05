@@ -21,6 +21,7 @@ function materialText(input: MergerInput, key: keyof MergerInput["materials"]): 
  * Merger (校书郎) role runtime.
  * Submission tool records every call (#836); host end is the final.
  * Git state / completion verification are not attendance or rejection gates (#827).
+ * #1168: dispatch text is the first message; assignment carries git facts only.
  */
 export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDependencies) {
   let activation: { soul: string; input: Readonly<MergerInput> } | undefined;
@@ -41,7 +42,16 @@ export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDe
         });
         pi.on("before_agent_start", (event) => {
           if (!activation) throw new Error("校书郎未激活");
-          const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks };
+          const admitted = {
+            attemptId: activation.input.attemptId,
+            targetObjectId: activation.input.targetObjectId,
+            sourceObjectId: activation.input.sourceObjectId,
+            targetIntent: materialText(activation.input, "targetIntent"),
+            sourceIntent: materialText(activation.input, "sourceIntent"),
+            expectedConflictPaths: activation.input.expectedConflictPaths,
+            resolutionScope: activation.input.resolutionScope,
+            authorizedChecks: activation.input.authorizedChecks,
+          };
           return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` };
         });
       }

@@ -11,11 +11,6 @@ import { validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
-  FixerPacketValidationError,
-  parseFixerPrerequisites,
-  type FixerInvocationInput,
-} from "./package-contracts/fixer-packet.ts";
-import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
@@ -37,21 +32,8 @@ export {
   validateAcceptedWorkerDetails,
 } from "./package-contracts/worker-output.ts";
 export type { WorkerOutput, FixerOutput, CoderOutput };
+/** #1168: phase only — dispatch text is the first message, not a packet flag. */
 export const FIXER_FLAG_DEFINITIONS = {
-  packet: {
-    name: "ak-fix-packet",
-    definition: {
-      description: "Path to opaque prose instructions for the Fixer",
-      type: "string" as const,
-    },
-  },
-  prerequisites: {
-    name: "ak-fixer-prerequisites",
-    definition: {
-      description: "Optional path to a JSON array of typed Fixer prerequisites",
-      type: "string" as const,
-    },
-  },
   phase: {
     name: "ak-fixer-phase",
     definition: {
@@ -73,12 +55,10 @@ export type WorkerRoleHostActions = HostGatekeeperActions;
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadPacket(path: string): Promise<string>;
 };
 
 export type CoderRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadTask(path: string): Promise<string>;
 };
 
 export type WorkerRoleRuntime = {
@@ -178,9 +158,6 @@ export function createFixerRoleRuntime(
   options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
-  let packet: FixerInvocationInput | undefined;
-  let packetPath: string | undefined;
-  let prerequisitesPath: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
   // #1132: ADR 0050 缺理由催全次数. The in-process seam passes the value it
@@ -190,14 +167,6 @@ export function createFixerRoleRuntime(
       ?? deliveryLimitFromEnv(process.env),
   });
 
-  pi.registerFlag(
-    FIXER_FLAG_DEFINITIONS.packet.name,
-    FIXER_FLAG_DEFINITIONS.packet.definition,
-  );
-  pi.registerFlag(
-    FIXER_FLAG_DEFINITIONS.prerequisites.name,
-    FIXER_FLAG_DEFINITIONS.prerequisites.definition,
-  );
   pi.registerFlag(
     FIXER_FLAG_DEFINITIONS.phase.name,
     FIXER_FLAG_DEFINITIONS.phase.definition,
@@ -214,33 +183,12 @@ export function createFixerRoleRuntime(
         );
       }
       phase = selectedPhase;
-      const resolvedPacketPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.packet.name);
-      if (typeof resolvedPacketPath !== "string" || resolvedPacketPath.trim().length === 0) {
-        throw new Error("Fixer role requires --ak-fix-packet");
-      }
-      packetPath = resolvedPacketPath;
-      const instructions = await dependencies.loadPacket(packetPath);
-      if (instructions.trim().length === 0) {
-        throw new FixerPacketValidationError(
-          new Error("Fixer instructions must be nonblank"),
-        );
-      }
-      const resolvedPrerequisitesPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.prerequisites.name);
-      if (resolvedPrerequisitesPath !== undefined && (typeof resolvedPrerequisitesPath !== "string" || resolvedPrerequisitesPath.trim().length === 0)) {
-        throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
-      }
-      prerequisitesPath =
-        typeof resolvedPrerequisitesPath === "string" ? resolvedPrerequisitesPath : undefined;
-      const prerequisites = prerequisitesPath !== undefined
-        ? parseFixerPrerequisites(await dependencies.loadPacket(prerequisitesPath))
-        : Object.freeze([]);
-      packet = Object.freeze({ instructions, prerequisites });
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
         registerWorkerSubmission(pi, "fixer", {
-          notReady: "修内司修理包与阶段未装载",
-          ready: () => packet !== undefined && phase !== undefined,
+          notReady: "修内司阶段未装载",
+          ready: () => phase !== undefined,
           phase: () => phase,
           project: (parameters, current) => deepFreeze(validateFixerOutput(parameters, current)),
           submissionGate,
@@ -257,17 +205,12 @@ export function createFixerRoleRuntime(
             reason: fixerBashSeatbeltDenyReason(matched),
           };
         });
+        // #1168: soul + phase only; dispatch text is the first message.
         pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("修内司职分未装载");
-          if (packetPath === undefined) throw new Error("修内司修理包路径未装载");
-          // Path delivery only — body is self-fetched; no inline duplicate of flag bytes (#632).
-          const prerequisitesBlock =
-            prerequisitesPath === undefined
-              ? ""
-              : `\n\n<fixer_prerequisites_path>\n${prerequisitesPath}\n</fixer_prerequisites_path>`;
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet_path>\n${packetPath}\n</fix_packet_path>${prerequisitesBlock}`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>`,
           };
         });
       }
@@ -285,7 +228,6 @@ export function createCoderRoleRuntime(
   options?: { readonly unfinishedReasonBounceLimit?: number },
 ): WorkerRoleRuntime {
   let soul: string | undefined;
-  let task: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
   // #1132: same resolved ceiling as the fixer gate. Absent = Pi child env.
@@ -294,10 +236,6 @@ export function createCoderRoleRuntime(
       ?? deliveryLimitFromEnv(process.env),
   });
 
-  pi.registerFlag("ak-coder-task", {
-    description: "Markdown task assigned to the coder role",
-    type: "string",
-  });
   pi.registerFlag("ak-coder-phase", {
     description:
       "Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
@@ -305,7 +243,7 @@ export function createCoderRoleRuntime(
   });
 
   return {
-    async activate(ctx) {
+    async activate() {
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
@@ -315,28 +253,23 @@ export function createCoderRoleRuntime(
         );
       }
       phase = selectedPhase;
-      const taskPath = pi.getFlag("ak-coder-task");
-      if (typeof taskPath !== "string" || taskPath.trim().length === 0) {
-        throw new Error("Coder role requires --ak-coder-task");
-      }
-      task = (await dependencies.loadTask(taskPath)).trim();
-      if (task.length === 0) throw new Error("Coder task is empty");
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
         registerWorkerSubmission(pi, "coder", {
-          notReady: "将作监任务与阶段未装载",
-          ready: () => task !== undefined && phase !== undefined,
+          notReady: "将作监阶段未装载",
+          ready: () => phase !== undefined,
           phase: () => phase,
           project: (parameters, current) => validateWorkerOutput(parameters, current, "Coder"),
           submissionGate,
           hostActions,
         });
-        pi.on("before_agent_start", (event, ctx) => {
+        // #1168: soul + phase only; dispatch text is the first message.
+        pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<coder_soul>\n${soul}\n</coder_soul>\n\n<coder_phase>\n${phase ?? ""}\n</coder_phase>\n\n<coder_task>\n${task ?? ""}\n</coder_task>`,
+              `${event.systemPrompt}\n\n<coder_soul>\n${soul}\n</coder_soul>\n\n<coder_phase>\n${phase ?? ""}\n</coder_phase>`,
           };
         });
       }

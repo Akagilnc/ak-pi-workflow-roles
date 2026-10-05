@@ -208,7 +208,7 @@ def main():
             if live.startswith(home):  # historical command text often spells the home as ~
                 text = text.replace("~" + live[len(home):], frozen)
         return text
-    for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
+    for name in sorted(os.listdir(run)):  # role inputs too: merger-input.json, legacy copies…
         src_path = f"{run}/{name}"
         if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "state.jsonl", "log.jsonl"):
             continue  # dossier files are rebuilt truncated below

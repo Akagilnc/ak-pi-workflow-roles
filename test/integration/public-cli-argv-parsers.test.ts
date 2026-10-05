@@ -3,7 +3,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #672 按文件真实资源归 integration（含 Git 子进程与临时目录），非快档。
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -95,7 +95,11 @@ test("admitCoderInvocation rejects blank task and freezes plan phase", async () 
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.instruction, "Plan the first vertical slice.");
-    assert.equal(await readFile(admitted.taskPath, "utf8"), "Plan the first vertical slice.");
+    assert.equal("taskPath" in admitted, false);
+    await assert.rejects(
+      () => access(join(admitted.runDirectory, "task.md")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -201,8 +205,18 @@ test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus pr
       project: "/tmp/p",
     },
   );
+  // #1168: empty prerequisites path is opaque (same as --attach), only missing arg is usage.
+  assert.deepEqual(
+    parsePublicSeatArgv("fixer", ["--prerequisites", "", "Repair."]),
+    {
+      phase: "apply",
+      instruction: "Repair.",
+      attachmentPaths: [],
+      prerequisitesPath: "",
+    },
+  );
   assert.throws(() => parsePublicSeatArgv("fixer", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites", ""]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("fixer", ["--project", "", "task"]), isUsage);
 });
 
