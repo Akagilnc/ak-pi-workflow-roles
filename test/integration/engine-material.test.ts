@@ -52,12 +52,20 @@ test("packaged notes directory is discovery-only; missing notes is not an error"
     assert.equal(withNotes?.dispatchHandbook, "dispatch\n");
     assert.equal(withNotes !== undefined && "materialPath" in withNotes, false);
 
-    // Without notes → name only, no handbook, no throw.
+    // Without notes → name only; with model → name/model only (#1167).
     const bare = engineSessionMaterialFromOptions({
       engine: "opus",
       packageRoot: root,
     });
     assert.deepEqual(bare, { name: "opus" });
     assert.equal(bare && "handbook" in bare && bare.handbook !== undefined, false);
+    assert.deepEqual(
+      engineSessionMaterialFromOptions({
+        engine: "opus",
+        engineModel: "ghost-model-x",
+        packageRoot: root,
+      }),
+      { name: "opus", model: "ghost-model-x" },
+    );
   });
 });

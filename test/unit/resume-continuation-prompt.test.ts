@@ -1,6 +1,7 @@
 /**
  * #959 / ADR 0080: auto-resume and manual bare resume stay separate entries.
  * Auto-resume keeps a non-empty prompt; manual bare stays empty-capable.
+ * #1167: continuation is envelope-only — engine rides startup materials.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -10,21 +11,7 @@ import {
   buildAutoResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 
-test("auto-resume without engine material keeps the non-empty transport envelope", () => {
-  assert.equal(
-    buildAutoResumeContinuationPrompt({ packageRoot: "/unused-when-no-engine" }),
-    RESUME_TRANSPORT_ENVELOPE,
-  );
+test("auto-resume continuation is the non-empty transport envelope", () => {
+  assert.equal(buildAutoResumeContinuationPrompt(), RESUME_TRANSPORT_ENVELOPE);
   assert.notEqual(RESUME_TRANSPORT_ENVELOPE.trim(), "");
-});
-
-test("#1167 auto-resume with engine still keeps envelope-only continuation", () => {
-  assert.equal(
-    buildAutoResumeContinuationPrompt({
-      packageRoot: process.cwd(),
-      engine: "cursor",
-      engineModel: "cursor-grok-4.6-high",
-    }),
-    RESUME_TRANSPORT_ENVELOPE,
-  );
 });

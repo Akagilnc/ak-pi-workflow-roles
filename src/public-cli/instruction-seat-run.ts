@@ -30,7 +30,6 @@ import {
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
-import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
@@ -433,10 +432,7 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt({
-              packageRoot: activeEnv.packageRoot,
-              ...pickEngineAxis(activeEnv),
-            }),
+            prompt: buildAutoResumeContinuationPrompt(),
           }),
         ),
         adapters,

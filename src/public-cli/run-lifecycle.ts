@@ -136,11 +136,7 @@ export type SameTicketSummonsMaterials = {
  * rides startup readingMaterial (#1167), never this continuation.
  * Never call this from manual `ak-role resume`.
  */
-export function buildAutoResumeContinuationPrompt(_options?: {
-  packageRoot?: string;
-  engine?: string;
-  engineModel?: string;
-}): string {
+export function buildAutoResumeContinuationPrompt(): string {
   return RESUME_TRANSPORT_ENVELOPE;
 }
 
