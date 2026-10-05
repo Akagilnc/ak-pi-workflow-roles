@@ -121,6 +121,11 @@ export type PublicSummonRequest = {
    * (#946 / ADR 0082).
    */
   readonly stationChild?: boolean;
+  /**
+   * Navigator nest work-context locator (#1166). Request-scoped internal path —
+   * never dialogue content; never shared parent process.env across await.
+   */
+  readonly navigatorWorkContextPath?: string;
 };
 
 const execFileAsync = promisify(execFile);
@@ -421,6 +426,10 @@ export async function summonPublicRole(
             ? {}
             : { correlationId: options.correlationId }),
           ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+          ...(options.navigatorWorkContextPath === undefined
+            || options.navigatorWorkContextPath.trim() === ""
+            ? {}
+            : { navigatorWorkContextPath: options.navigatorWorkContextPath }),
         },
       };
     } catch (error) {

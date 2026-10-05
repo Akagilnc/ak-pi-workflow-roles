@@ -505,9 +505,12 @@ function admittedInspector(instruction: string, runDirectory: string): AdmittedI
   };
 }
 
-test("#879 inspector first mint: parent path on activation, payload stays dialogue", () => {
+test("#879/#1166 inspector first mint: sourceRunPath on activation, payload stays dialogue", () => {
   const request = buildInstructionSeatTurnRequest(
-    admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, "/tmp/ak-879-inspector-run"),
+    {
+      ...admittedInspector("", "/tmp/ak-879-inspector-run"),
+      sourceRunPath: INSPECTOR_PARENT,
+    },
     {
       packageRoot,
       home: "/tmp/home",

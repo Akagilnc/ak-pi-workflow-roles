@@ -899,21 +899,9 @@ export async function findRunDirectoryById(
   );
 }
 
-/** Code-owned gate inspector summons prefix (public-role-summons / #747). */
-export const GATE_DOSSIER_POINTER_PREFIX = "卷宗指针：" as const;
-
-/** Parent path from a code-owned inspector 卷宗指针 instruction; else undefined. */
-export function parentRunPathFromGatePointerInstruction(
-  instruction: string,
-): string | undefined {
-  if (!instruction.startsWith(GATE_DOSSIER_POINTER_PREFIX)) return undefined;
-  const path = instruction.slice(GATE_DOSSIER_POINTER_PREFIX.length).trim();
-  return path === "" ? undefined : path;
-}
-
 /**
- * Parent-run binding on a retained officer run (#747).
- * Notary/auditor: typed sourceRunPath. Inspector: exact code-owned 卷宗指针 instruction.
+ * Parent-run binding on a retained officer run (#747 / #1166).
+ * Typed sourceRunPath only — instruction bytes are never a path protocol.
  * Missing page → undefined; damage / non-ENOENT IO propagates.
  */
 export async function readRunParentPath(
@@ -923,9 +911,6 @@ export async function readRunParentPath(
   if (record === undefined) return undefined;
   if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
     return record.sourceRunPath;
-  }
-  if (typeof record.instruction === "string") {
-    return parentRunPathFromGatePointerInstruction(record.instruction);
   }
   return undefined;
 }

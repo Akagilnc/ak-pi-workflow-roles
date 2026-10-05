@@ -703,7 +703,10 @@ export function createNavigatorRoleRuntime(
             parts.push(message);
           }
         }
-        const work = await loadNavigatorWorkBaseSuffix(ctx.sessionManager?.getSessionDir?.());
+        const work = await loadNavigatorWorkBaseSuffix(
+          ctx.sessionManager?.getSessionDir?.(),
+          ctx.navigatorWorkContextPath,
+        );
         if (work !== undefined && work.trim() !== "") parts.push(work);
         if (parts.length === 0) return;
         const text = parts.join("\n\n");
@@ -735,25 +738,31 @@ function isAuditedIdentitySeat(role: string): boolean {
   return role === "notary" || role === "inspector" || role === "auditor" || role === "countersign";
 }
 
-/** Resolve audited-run directory for identity material — flags / env / admitted page. */
+/** Resolve audited-run directory for identity material — this-leg flags / admitted page first. */
 function resolveAuditedSourceRunDirectory(
   roleHost: RoleHost,
   ctx: HostContext,
+  role: string,
 ): string | undefined {
   const notary = roleHost.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
   if (typeof notary === "string" && notary.trim() !== "") return notary.trim();
   const inspector = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
   if (typeof inspector === "string" && inspector.trim() !== "") return inspector.trim();
-  const auditor =
-    typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
-      ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
-      : "";
-  if (auditor !== "") return auditor;
+  // This-leg admitted binding wins over shared auditor env (#1166 J3).
   const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory === undefined) return undefined;
-  const admitted = readPageSync(runDirectory, "admitted");
-  if (typeof admitted?.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
-    return admitted.sourceRunPath.trim();
+  if (runDirectory !== undefined) {
+    const admitted = readPageSync(runDirectory, "admitted");
+    if (typeof admitted?.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+      return admitted.sourceRunPath.trim();
+    }
+  }
+  // Auditor env is request-scoped soul binding for the auditor seat only.
+  if (role === "auditor") {
+    const auditor =
+      typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+        ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
+        : "";
+    if (auditor !== "") return auditor;
   }
   return undefined;
 }
@@ -1240,7 +1249,7 @@ export function createRoleRuntimeExtension(
     roleHost.on("before_agent_start", (_event, ctx) => {
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
       if (typeof role !== "string" || !isAuditedIdentitySeat(role) || role === "notary") return;
-      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, ctx);
+      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, ctx, role);
       if (sourceDirectory === undefined) return;
       const identity = auditedRunIdentityFromDirectory(sourceDirectory);
       if (identity === undefined) return;

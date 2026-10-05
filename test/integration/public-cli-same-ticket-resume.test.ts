@@ -541,7 +541,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     await mkdir(binDir, { recursive: true });
     // Worktree-owned home walks up to package.json type:module; force CJS for fixture bins.
     await writeFile(join(binDir, "package.json"), '{"type":"commonjs"}\n', "utf8");
-    // Gate inspector instruction is 卷宗指针 only (#747); no seat ticket recognizer.
+    // Gate inspector binds via structured --source-run (#1166); instruction is opaque.
     await installGhFixture(binDir, {
       issues: { 637: { body: "#637 materials court", comments: [] } },
     });
@@ -550,8 +550,6 @@ test("#637/#987 public inspector: resume continues open-court settlement without
 
     const external = join(home, "external-attachment.md");
     await writeFile(external, "court-material-v1\n", "utf8");
-    const instruction = `卷宗指针：${parentRunPath}`;
-    const otherInstruction = `卷宗指针：${otherParentRunPath}`;
     const io = { stdout: (_t: string) => {}, stderr: (_t: string) => {} };
     const credentials = { "openai-codex": true, xai: true } as const;
 
@@ -595,7 +593,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     const host = observingSealHost(inner, seen);
 
     // 1) First inspector summons seals (birth freeze under admitted attachments).
-    const first = await runAkRole(["inspector", instruction, "--attach", external],
+    const first = await runAkRole(["inspector", "--source-run", parentRunPath, "--attach", external],
       {
         home,
         packageRoot,
@@ -612,8 +610,8 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
 
-    // 2) Same-ticket distinct parent 卷宗指针 must mint (#747).
-    const crossParent = await runAkRole(["inspector", otherInstruction, "--attach", external],
+    // 2) Same-ticket distinct parent --source-run must mint (#747 / #1166).
+    const crossParent = await runAkRole(["inspector", "--source-run", otherParentRunPath, "--attach", external],
       {
         home,
         packageRoot,
@@ -636,8 +634,8 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       "same-ticket distinct parent must leave two inspector run directories",
     );
 
-    // 3) Same-parent (卷宗指针) re-summons opens a new court with attachment materials (no seal).
-    const second = await runAkRole(["inspector", instruction, "--attach", external],
+    // 3) Same-parent --source-run re-summons opens a new court with attachment materials (no seal).
+    const second = await runAkRole(["inspector", "--source-run", parentRunPath, "--attach", external],
       {
         home,
         packageRoot,
@@ -1085,9 +1083,7 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
       }),
     });
     const host = observingSealHost(inner, seen);
-    const instruction = `卷宗指针：${firstSourcePath}`;
-
-    const priorChild = await runAkRole(["inspector", instruction], {
+    const priorChild = await runAkRole(["inspector", "--source-run", firstSourcePath], {
       home,
       packageRoot,
       cwd: project,
@@ -1104,7 +1100,7 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     const priorChildRunId = seen[0]!.runId;
     assert.equal(priorChild.terminal.runId, priorChildRunId);
 
-    const freshChild = await runAkRole(["new", "inspector", instruction], {
+    const freshChild = await runAkRole(["new", "inspector", "--source-run", firstSourcePath], {
       home,
       packageRoot,
       cwd: project,

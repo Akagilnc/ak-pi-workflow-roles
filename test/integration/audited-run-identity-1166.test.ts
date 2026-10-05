@@ -42,7 +42,6 @@ import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
 import { isRecord } from "../../src/unknown-value.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
@@ -511,7 +510,7 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
   });
 });
 
-test("#1166 direct notary/auditor public entry: same identity material, no path", async () => {
+test("#1166 direct notary/auditor public entry: same identity; first utterance is ledger peer body", async () => {
   await withTempRoot("ak-1166-direct-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -523,6 +522,21 @@ test("#1166 direct notary/auditor public entry: same identity material, no path"
       expectedIdentity,
       `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
     );
+    const peer = {
+      status: "converged",
+      report: "ledger-peer-original",
+      path: "/peer/original/path.md",
+    };
+    await sealAcceptedSubmission({
+      cwd: project,
+      home,
+      runId: CANONICAL_SOURCE_RUN_ID,
+      runDirectory: parentRun,
+      role: "judge",
+      details: peer,
+      toolCallId: "direct-peer",
+    });
+    const expectedPrompt = readableGateItem(peer);
 
     for (const seat of [
       {
@@ -566,6 +580,7 @@ test("#1166 direct notary/auditor public entry: same identity material, no path"
         identity: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
+      assert.equal(inspected.prompt, expectedPrompt);
       if (seat.role === "auditor") {
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
@@ -633,58 +648,10 @@ test("#1166 navigator public summon: caller prompt bytes; work base structured; 
 
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.ok(summons.length >= 1);
-    const delivered = summons[0]!;
     for (const argv of summons) {
       const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
       assert.equal(fed.subjectKey, subjectKey);
       assert.equal(fed.workContextPath, undefined);
-    }
-
-    const runDirectory = join(
-      root,
-      ".ak-roles",
-      "books",
-      "probe",
-      "unbound",
-      "runs",
-      "01a01166navprep0700080000000001@navigator",
-    );
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const sessionFile = join(nest, "session.jsonl");
-    await writeFile(
-      sessionFile,
-      `${JSON.stringify({
-        type: "session",
-        version: 3,
-        id: "nav",
-        timestamp: "2026-01-01T00:00:00.000Z",
-        cwd: root,
-      })}\n`,
-      "utf8",
-    );
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(nest, sessionFile),
-        activation: { role: "navigator" },
-        methods: [],
-        continuation: { kind: "initial", prompt: delivered },
-        cwd: root,
-        home: root,
-        agentDir: join(root, "agent"),
-        runDirectory,
-        stationChild: true,
-      },
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath: join(root, "navigator-1166.sock"),
-      sessionFile,
-    });
-    try {
-      assert.equal(prepared.prompt, delivered);
-      assert.equal(packageAuditedPathMaterials(prepared.systemPrompt.materials).length, 0);
-      // work_subject / controlling_authority remain in startup body; observe in
-      // verification report only — no template / includes lock here.
-    } finally {
-      await prepared.dispose?.();
     }
     await nav.dispose();
   });

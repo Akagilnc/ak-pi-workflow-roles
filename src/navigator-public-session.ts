@@ -26,7 +26,6 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
 import {
-  AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV,
   navigatorWorkContextFile,
 } from "./navigator-work-base.ts";
 
@@ -158,12 +157,11 @@ export function createNativeNavigatorSessionFactory(deps?: {
           if (disposed) return;
           const resumeRunId = hostRunId;
           // Prompt stays caller/summoner bytes (#1166). Nest work-context path is an
-          // internal locator for startup materials only — never folded into argv.
+          // internal locator for startup materials only — never folded into argv,
+          // never written onto shared parent process.env across await.
           const workContextPath = navigatorWorkContextFile(sessionManager.getSessionDir());
-          const priorWorkContext = process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV];
-          if (existsSync(workContextPath)) {
-            process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV] = workContextPath;
-          }
+          const workContextLocator =
+            existsSync(workContextPath) ? workContextPath : undefined;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
@@ -173,31 +171,26 @@ export function createNativeNavigatorSessionFactory(deps?: {
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
+            ...(workContextLocator === undefined
+              ? {}
+              : { navigatorWorkContextPath: workContextLocator }),
           };
 
           // Prefer host CLI resume so prior advice stays on the host session.
           // Fresh mint only when typed load says the principal cannot reopen.
           const resumable = deps?.hostRunResumable ?? navigatorHostRunResumable;
           let summoned: PublicSummonResult;
-          try {
-            if (resumeRunId === undefined || summonHome === undefined) {
-              if (disposed) return;
+          if (resumeRunId === undefined || summonHome === undefined) {
+            if (disposed) return;
+            summoned = await summon(baseSummon);
+          } else {
+            const canResume = await resumable(summonHome, resumeRunId);
+            if (disposed) return;
+            if (canResume) {
+              summoned = await summon({ ...baseSummon, resumeRunId });
+            } else {
+              hostRunId = undefined;
               summoned = await summon(baseSummon);
-            } else {
-              const canResume = await resumable(summonHome, resumeRunId);
-              if (disposed) return;
-              if (canResume) {
-                summoned = await summon({ ...baseSummon, resumeRunId });
-              } else {
-                hostRunId = undefined;
-                summoned = await summon(baseSummon);
-              }
-            }
-          } finally {
-            if (priorWorkContext === undefined) {
-              delete process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV];
-            } else {
-              process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV] = priorWorkContext;
             }
           }
 

@@ -260,7 +260,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "gate-pointer",
+    sameParent: "source-run",
     resumeSourcePath: true,
     reviewOfficer: true,
     provinceConfig: true,
@@ -275,7 +275,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       {
         field: "sourceRun",
         from: "sourceRunPath",
-        fallback: "gate-pointer",
         flag: "ak-inspector-source-run",
         binds: "input",
       },

@@ -73,7 +73,6 @@ import {
   buildAutoResumeContinuationPrompt,
   loadResumablePublicRole,
   markRunAdmitted,
-  parentRunPathFromGatePointerInstruction,
   readCurrentCourt,
   type PublicResumeRequest,
   type RunWriterLease,
@@ -292,14 +291,48 @@ export function buildInstructionSeatTurnRequest(
   );
 }
 
-function initialPrompt(
+/**
+ * Direct review-seat call: reconnect ledger peer-body delivery (ADR 0085 / #1166).
+ * Gate summons already ride gateReviewInstruction; direct --source-run must not
+ * leave a blank fixed-kickoff.
+ */
+async function loadLedgerPeerBody(
+  sourceRunDirectory: string,
+  projectRoot: string,
+  home: string,
+): Promise<string | undefined> {
+  const runId = runIdFromRunDirectory(sourceRunDirectory);
+  if (runId === undefined) return undefined;
+  const rows = await readRecordedSubmissionRows(projectRoot, runId, home);
+  const latest = [...rows].reverse().find((row) => row.kind === "accepted");
+  if (latest === undefined) return undefined;
+  return readableGateItem(latest.accepted);
+}
+
+async function resolveInitialPrompt(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
-): string {
+): Promise<string> {
   const record = roleRecord(admitted.role);
   const reask = env.reviewReask ?? env.gateReviewInstruction;
   if (reask !== undefined && "reaskPrompt" in record && record.reaskPrompt === true) {
     return reask;
+  }
+  const sourceRunPath =
+    "sourceRunPath" in admitted && typeof (admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
+      ? (admitted as { sourceRunPath: string }).sourceRunPath.trim()
+      : "";
+  if (
+    "reaskPrompt" in record
+    && record.reaskPrompt === true
+    && sourceRunPath !== ""
+  ) {
+    const peer = await loadLedgerPeerBody(
+      sourceRunPath,
+      admitted.projectRoot,
+      env.home,
+    );
+    if (peer !== undefined) return peer;
   }
   return buildInstructionTransportPrompt(
     admitted,
@@ -424,6 +457,7 @@ async function dispatchAdmitted(
     if (activeEnv.correlationId !== undefined && activeEnv.correlationId.trim() !== "") {
       await recordAdmittedCorrelation(admitted, activeEnv.correlationId);
     }
+    const initialPromptText = await resolveInitialPrompt(admitted, activeEnv);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
       return await runPostAdmissionResumable({
@@ -432,7 +466,10 @@ async function dispatchAdmitted(
         io: turnIo,
         buildInitialRequest: () => buildInstructionSeatTurnRequest(
           admitted,
-          roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }),
+          roleTurnOptions(activeEnv, admitted, {
+            kind: "initial",
+            prompt: initialPromptText,
+          }),
         ),
         buildResumeRequest: () => buildInstructionSeatTurnRequest(
           admitted,
@@ -454,7 +491,10 @@ async function dispatchAdmitted(
       io: turnIo,
       request: buildInstructionSeatTurnRequest(
         admitted,
-        roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }),
+        roleTurnOptions(activeEnv, admitted, {
+          kind: "initial",
+          prompt: initialPromptText,
+        }),
       ),
       adapters,
       ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
@@ -783,9 +823,10 @@ export async function runPublicInstructionSeat(
     if (resumed != null) return resumed;
   }
 
-  if (record.sameParent === "gate-pointer") {
-    let parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
-    if (parentRunPath === undefined && parsed.sourceRun !== undefined) {
+  if (record.sameParent === "source-run") {
+    // #1166: structured --source-run only. Instruction bytes stay opaque caller/peer text.
+    if (parsed.sourceRun !== undefined) {
+      let parentRunPath: string;
       try {
         parentRunPath = (await resolveNotarySourceRunLocator({
           projectRoot,
@@ -799,8 +840,6 @@ export async function runPublicInstructionSeat(
         }
         throw error;
       }
-    }
-    if (parentRunPath !== undefined) {
       const summons: SameTicketSummonsMaterials = {
         sourceRunPath: parentRunPath,
         ...sameParentInstruction(env, {
@@ -874,23 +913,18 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  if (record.sameParent === "gate-pointer") {
-    let parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
-    if (parentRunPath === undefined && parsed.sourceRun !== undefined) {
-      parentRunPath = (await resolveNotarySourceRunLocator({
-        projectRoot,
-        sourceRun: parsed.sourceRun,
-        home: env.home,
-      })).runDirectory;
-    }
-    if (parentRunPath !== undefined) {
-      await persistAdmittedSourceRunPath(admitted, parentRunPath);
-      const sourcePatch = { sourceRunPath: parentRunPath };
-      admitted = { ...admitted, ...sourcePatch };
-    }
+  if (record.sameParent === "source-run" && parsed.sourceRun !== undefined) {
+    const parentRunPath = (await resolveNotarySourceRunLocator({
+      projectRoot,
+      sourceRun: parsed.sourceRun,
+      home: env.home,
+    })).runDirectory;
+    await persistAdmittedSourceRunPath(admitted, parentRunPath);
+    admitted = { ...admitted, sourceRunPath: parentRunPath } as AdmittedRoleInvocation;
   }
   if (record.sameParent === "subject-source" && auditorSource !== undefined) {
     await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
+    admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
   }
 
   const runAdmitted = async (): Promise<SeatRunResult> => {

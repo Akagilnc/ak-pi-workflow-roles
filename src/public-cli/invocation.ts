@@ -188,6 +188,8 @@ export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "auditor";
+  /** Audited source-run directory (#1166 identity / ADR 0085 peer-body load). */
+  readonly sourceRunPath?: string;
 };
 
 export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {

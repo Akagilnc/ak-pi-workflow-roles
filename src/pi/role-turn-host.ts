@@ -443,12 +443,15 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       ) {
         env.AK_ROLE_AUDITOR_SUBJECT = process.env.AK_ROLE_AUDITOR_SUBJECT;
       }
-      // Navigator nest work-context locator for startup materials (#1166) — not prompt.
+      // Navigator nest work-context locator for startup materials (#1166) —
+      // child-process scoped only from this turn request; never parent process.env.
       if (
-        typeof process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT === "string"
-        && process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT.trim() !== ""
+        typeof request.navigatorWorkContextPath === "string"
+        && request.navigatorWorkContextPath.trim() !== ""
       ) {
-        env.AK_ROLE_NAVIGATOR_WORK_CONTEXT = process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT;
+        env.AK_ROLE_NAVIGATOR_WORK_CONTEXT = request.navigatorWorkContextPath.trim();
+      } else {
+        delete env.AK_ROLE_NAVIGATOR_WORK_CONTEXT;
       }
       if (
         config.recordLaunchedRolePackageIdentity !== undefined &&

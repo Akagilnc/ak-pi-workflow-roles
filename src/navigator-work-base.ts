@@ -84,17 +84,20 @@ export async function readNavigatorWorkBase(path: string): Promise<NavigatorWork
   return { subject: record.subject, authority: record.authority };
 }
 
-/** System-prompt base for one agent start. Prefer internal env locator, else nest session dir. */
+/** System-prompt base for one agent start. Prefer request locator, else nest session dir. */
 export async function loadNavigatorWorkBaseSuffix(
   sessionDir: string | undefined,
+  locatorPath?: string,
 ): Promise<string | undefined> {
-  const fromEnv = process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV];
   const path =
-    typeof fromEnv === "string" && fromEnv.trim() !== ""
-      ? fromEnv.trim()
-      : sessionDir !== undefined && sessionDir.trim() !== ""
-        ? navigatorWorkContextFile(sessionDir)
-        : undefined;
+    typeof locatorPath === "string" && locatorPath.trim() !== ""
+      ? locatorPath.trim()
+      : typeof process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV] === "string"
+        && process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV].trim() !== ""
+        ? process.env[AK_ROLE_NAVIGATOR_WORK_CONTEXT_ENV].trim()
+        : sessionDir !== undefined && sessionDir.trim() !== ""
+          ? navigatorWorkContextFile(sessionDir)
+          : undefined;
   if (path === undefined) return undefined;
   const body = await readNavigatorWorkBase(path);
   if (body === undefined) return undefined;

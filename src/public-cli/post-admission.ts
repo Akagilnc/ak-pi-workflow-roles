@@ -329,6 +329,11 @@ export type PostAdmissionEnv = {
   boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
+  /**
+   * Navigator nest work-context locator (#1166). Request-scoped; never folded
+   * into dialogue. Child spawn may mirror onto child env only.
+   */
+  navigatorWorkContextPath?: string;
 };
 
 /**
@@ -1528,6 +1533,10 @@ export function resumeTurnRequestProjectionOptions(
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+    ...(env.navigatorWorkContextPath === undefined
+      || env.navigatorWorkContextPath.trim() === ""
+      ? {}
+      : { navigatorWorkContextPath: env.navigatorWorkContextPath }),
   };
 }
 
@@ -1548,6 +1557,10 @@ export function roleTurnOptions(
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
+    ...(env.navigatorWorkContextPath === undefined
+      || env.navigatorWorkContextPath.trim() === ""
+      ? {}
+      : { navigatorWorkContextPath: env.navigatorWorkContextPath }),
   };
 }
 
