@@ -402,6 +402,8 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     gateStageLabel: "台院",
+    /** Gate summon binds --source-run; identity is startup material (#1166). */
+    gateSummon: "source-run",
     activationFlags: [
       {
         field: "sourceRun",

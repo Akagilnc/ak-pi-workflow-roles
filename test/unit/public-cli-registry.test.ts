@@ -270,6 +270,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "accepted",
     reaskPrompt: true,
     gateStageLabel: "台院",
+    gateSummon: "source-run",
     activationFlags: [
       {
         field: "sourceRun",

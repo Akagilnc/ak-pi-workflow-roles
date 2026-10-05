@@ -429,7 +429,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       if (request.deliveryRequestLimit === undefined) delete env[RECEIPT_DELIVERY_LIMIT_ENV];
       else env[RECEIPT_DELIVERY_LIMIT_ENV] = String(request.deliveryRequestLimit);
       applyEngineChildEnv(env, request.engine);
-      // Nested auditor dossier tool binds the parent run pointer when published.
+      // Nested auditor binds the audited source-run for identity / soul selection.
       if (
         typeof process.env.AK_ROLE_AUDITOR_SOURCE_RUN === "string"
         && process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim() !== ""
@@ -442,6 +442,13 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         && process.env.AK_ROLE_AUDITOR_SUBJECT.trim() !== ""
       ) {
         env.AK_ROLE_AUDITOR_SUBJECT = process.env.AK_ROLE_AUDITOR_SUBJECT;
+      }
+      // Navigator nest work-context locator for startup materials (#1166) — not prompt.
+      if (
+        typeof process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT === "string"
+        && process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT.trim() !== ""
+      ) {
+        env.AK_ROLE_NAVIGATOR_WORK_CONTEXT = process.env.AK_ROLE_NAVIGATOR_WORK_CONTEXT;
       }
       if (
         config.recordLaunchedRolePackageIdentity !== undefined &&

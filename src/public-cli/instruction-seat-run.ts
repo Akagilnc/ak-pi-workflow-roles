@@ -5,7 +5,6 @@
  */
 import { dirname, resolve } from "node:path";
 import { isUnboundRunDirectory } from "../role-run-placement.ts";
-import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
@@ -785,7 +784,22 @@ export async function runPublicInstructionSeat(
   }
 
   if (record.sameParent === "gate-pointer") {
-    const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
+    let parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
+    if (parentRunPath === undefined && parsed.sourceRun !== undefined) {
+      try {
+        parentRunPath = (await resolveNotarySourceRunLocator({
+          projectRoot,
+          sourceRun: parsed.sourceRun,
+          home: env.home,
+        })).runDirectory;
+      } catch (error) {
+        if (error instanceof NotarySourceRunError) {
+          presentStructuralRejection(new CliUsageError(error.message, { cause: error }), io);
+          return { exitCode: 2 };
+        }
+        throw error;
+      }
+    }
     if (parentRunPath !== undefined) {
       const summons: SameTicketSummonsMaterials = {
         sourceRunPath: parentRunPath,
@@ -861,7 +875,14 @@ export async function runPublicInstructionSeat(
   }
 
   if (record.sameParent === "gate-pointer") {
-    const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
+    let parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
+    if (parentRunPath === undefined && parsed.sourceRun !== undefined) {
+      parentRunPath = (await resolveNotarySourceRunLocator({
+        projectRoot,
+        sourceRun: parsed.sourceRun,
+        home: env.home,
+      })).runDirectory;
+    }
     if (parentRunPath !== undefined) {
       await persistAdmittedSourceRunPath(admitted, parentRunPath);
       const sourcePatch = { sourceRunPath: parentRunPath };
@@ -1264,8 +1285,7 @@ async function auditSubmittedRole(
         summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
           const summoned = await summonPublicRole({
             role: "auditor",
-            argv: ["--subject", subject, "--source-run", sourceRunDirectory,
-              `${AUDITOR_DOSSIER_PROMPT}${sourceRunDirectory}`],
+            argv: ["--subject", subject, "--source-run", sourceRunDirectory],
             cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
             principalAuthority: env.principalAuthority,
             correlationId: admitted.runId,

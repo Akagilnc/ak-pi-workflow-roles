@@ -612,6 +612,25 @@ const NOTARY_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
+/** 台院: optional --source-run binds the audited leg; gate summons always pass it (#1166). */
+const INSPECTOR_OPTIONS = [
+  ...projectAndAttach("inspector"),
+  {
+    id: "source-run",
+    owner: "inspector",
+    canonical: "--source-run",
+    aliases: [],
+    valueMetavar: "runId@role|path",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional audited source-run locator (runId@role or path). Gate summons always supply it; identity rides startup materials.",
+      zh: "可选被审腿定位符（runId@role 或路径）。闸传召必带；身份在启动材料里。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
 const MERGER_OPTIONS = [
   // Merger project face: worktree whose Git materials are handed to the role.
   {
@@ -779,6 +798,7 @@ const SEAT_OPTION_ROWS: Partial<
   merger: MERGER_OPTIONS,
   notary: NOTARY_OPTIONS,
   auditor: AUDITOR_OPTIONS,
+  inspector: INSPECTOR_OPTIONS,
 };
 
 function seatOptionRows(role: PublicCallableRole): readonly PublicOptionDefinition[] {

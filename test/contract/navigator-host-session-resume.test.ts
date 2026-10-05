@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
@@ -15,13 +15,9 @@ import {
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
-import { renderSystemPromptOverride } from "../../src/prepared-role-turn.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
@@ -419,41 +415,11 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
     for (const argv of summons) {
       assert.equal(argv.includes(authority), false);
       assert.equal(argv.includes(subject), false);
+      // #1166: package must not inject a work-context path into the summon prompt.
+      assert.equal(argv.includes("workContextPath"), false);
       const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
       assert.equal(fed.subjectKey, subjectKey);
-      assert.equal(typeof fed.workContextPath, "string");
-      const stored = JSON.parse(await readFile(fed.workContextPath ?? "", "utf8")) as {
-        subject: string;
-        authority: string;
-      };
-      assert.equal(stored.subject, subject);
-      assert.equal(stored.authority, authority);
-    }
-
-    const delivered = summons[0] ?? "";
-    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navdeliver@navigator");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(join(runDirectory, "session")),
-        activation: { role: "navigator" },
-        methods: [],
-        continuation: { kind: "initial", prompt: delivered },
-        cwd: root,
-        home: root,
-        agentDir: join(root, "agent"),
-        runDirectory,
-      },
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath: join(root, "mcp.sock"),
-    });
-    try {
-      assert.equal(prepared.prompt, delivered);
-      const modelInput = renderSystemPromptOverride(prepared.systemPrompt);
-      assert.equal(modelInput.includes(subject), true);
-      assert.equal(modelInput.includes(authority), true);
-    } finally {
-      await prepared.dispose?.();
+      assert.equal(fed.workContextPath, undefined);
     }
     await nav.dispose();
   });

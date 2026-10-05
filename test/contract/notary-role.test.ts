@@ -8,6 +8,7 @@ import {
 } from "../../src/notary-contracts.ts";
 import {
   createNotaryRoleRuntime,
+  projectNotaryAuditedRunIdentity,
   projectNotaryBoundFromFlags,
   projectNotarySessionBound,
   readNotaryTicketFlag,
@@ -89,7 +90,7 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   assert.ok(h.beforeStart());
 });
 
-test("Notary agent-start projects envelope-admitted ticket into readingMaterial", async () => {
+test("Notary agent-start projects audited-run identity into readingMaterial", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -101,16 +102,17 @@ test("Notary agent-start projects envelope-admitted ticket into readingMaterial"
   await runtime.activate({ ticketNumber: 582 });
   const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
     systemPrompt?: string;
-    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
+    readingMaterial?: ReturnType<typeof projectNotaryAuditedRunIdentity>;
   };
   assert.equal(typeof result.systemPrompt, "string");
   assert.deepEqual(
     result.readingMaterial,
-    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
+    projectNotaryAuditedRunIdentity({ sourceRun: LOCATOR }),
   );
+  assert.equal(result.readingMaterial?.identity, `${LOCATOR.runId}@${LOCATOR.role}`);
 });
 
-test("Notary agent-start omits ticket when envelope admits none", async () => {
+test("Notary agent-start identity omits directory path", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -120,11 +122,11 @@ test("Notary agent-start omits ticket when envelope admits none", async () => {
   h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
   await runtime.activate();
   const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
+    readingMaterial?: ReturnType<typeof projectNotaryAuditedRunIdentity>;
   };
   assert.deepEqual(
     result.readingMaterial,
-    projectNotarySessionBound({ sourceRun: LOCATOR }),
+    projectNotaryAuditedRunIdentity({ sourceRun: LOCATOR }),
   );
-  assert.equal(result.readingMaterial?.ticketNumber, undefined);
+  assert.equal(JSON.stringify(result.readingMaterial).includes(LOCATOR.runDirectory), false);
 });

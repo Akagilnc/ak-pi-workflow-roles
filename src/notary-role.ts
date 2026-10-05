@@ -10,6 +10,10 @@ import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
  */
 
 import {
+  auditedRunIdentityFromParts,
+  auditedRunIdentityMaterial,
+} from "./audited-run-identity.ts";
+import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
@@ -54,8 +58,8 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
 }
 
 /**
- * Typed session bound (locator + optional ticket).
- * Sole production projection for agent-start material + session custom entry.
+ * Typed session bound kept for session custom-entry / internal locator use.
+ * Startup materials for the LLM carry only audited-run identity (#1166 / ADR 0087).
  */
 export function projectNotarySessionBound(input: {
   readonly sourceRun: NotarySourceRunLocator;
@@ -71,6 +75,15 @@ export function projectNotarySessionBound(input: {
 }
 
 export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
+
+/** Agent-start reading material: identity `<runId>@<席>` only — no directory path. */
+export function projectNotaryAuditedRunIdentity(input: {
+  readonly sourceRun: NotarySourceRunLocator;
+}) {
+  return auditedRunIdentityMaterial(
+    auditedRunIdentityFromParts(input.sourceRun.runId, input.sourceRun.role),
+  );
+}
 
 /**
  * Session custom-entry type for typed notary bound (written by shared envelope).
@@ -172,11 +185,8 @@ export function createNotaryRoleRuntime(
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
             }),
-            readingMaterial: projectNotarySessionBound({
+            readingMaterial: projectNotaryAuditedRunIdentity({
               sourceRun: activation.sourceRun,
-              ...(activation.ticketNumber === undefined
-                ? {}
-                : { ticketNumber: activation.ticketNumber }),
             }),
           };
         });

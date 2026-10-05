@@ -103,8 +103,13 @@ import {
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 
+import {
+  auditedRunIdentityFromDirectory,
+  auditedRunIdentityMaterial,
+} from "./audited-run-identity.ts";
 import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
+import { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } from "./auditor-soul.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -683,7 +688,7 @@ export function createNavigatorRoleRuntime(
       const loadRoutePlaybook = dependencies.loadRoutePlaybook
         ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
       let playbookRead: Promise<string> | undefined;
-      roleHost.on("before_agent_start", async (event) => {
+      roleHost.on("before_agent_start", async (event, ctx) => {
         const basePrompt = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
         const parts: string[] = [];
         try {
@@ -698,8 +703,7 @@ export function createNavigatorRoleRuntime(
             parts.push(message);
           }
         }
-        const prompt = typeof event.prompt === "string" ? event.prompt : "";
-        const work = await loadNavigatorWorkBaseSuffix(prompt);
+        const work = await loadNavigatorWorkBaseSuffix(ctx.sessionManager?.getSessionDir?.());
         if (work !== undefined && work.trim() !== "") parts.push(work);
         if (parts.length === 0) return;
         const text = parts.join("\n\n");
@@ -716,7 +720,7 @@ export function createAuditorRoleRuntime(
   roleHost: RoleHost,
   dependencies: AuditorRuntimeDependencies,
 ) {
-  const base = createFiledOfficerRuntime(
+  return createFiledOfficerRuntime(
     roleHost,
     {
       role: "auditor",
@@ -725,24 +729,33 @@ export function createAuditorRoleRuntime(
     },
     dependencies,
   );
-  return {
-    async activate() {
-      await base.activate();
-      // Same tools whether nested or direct (#675): dossier tool always registered.
-      // Source run: only the shared --source-run input face (never own-run fallback).
-      const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
-        await import("./auditor-dossier-tool.ts");
-      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("./auditor-soul.ts");
-      const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
-      if (already) return;
-      const sourceRun =
-        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
-        && process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
-          ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
-          : undefined;
-      roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
-    },
-  };
+}
+
+function isAuditedIdentitySeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor" || role === "countersign";
+}
+
+/** Resolve audited-run directory for identity material — flags / env / admitted page. */
+function resolveAuditedSourceRunDirectory(
+  roleHost: RoleHost,
+  ctx: HostContext,
+): string | undefined {
+  const notary = roleHost.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
+  if (typeof notary === "string" && notary.trim() !== "") return notary.trim();
+  const inspector = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
+  if (typeof inspector === "string" && inspector.trim() !== "") return inspector.trim();
+  const auditor =
+    typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+      ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
+      : "";
+  if (auditor !== "") return auditor;
+  const runDirectory = runDirectoryFromHostContext(ctx);
+  if (runDirectory === undefined) return undefined;
+  const admitted = readPageSync(runDirectory, "admitted");
+  if (typeof admitted?.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+    return admitted.sourceRunPath.trim();
+  }
+  return undefined;
 }
 
 /**
@@ -1222,15 +1235,16 @@ export function createRoleRuntimeExtension(
         },
       };
     });
-    roleHost.on("before_agent_start", () => {
-      const path = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
-      if (typeof path !== "string" || path.trim() === "") return;
-      return {
-        readingMaterial: {
-          kind: "inspector-parent-binding" as const,
-          sourceRunPath: path,
-        },
-      };
+    // #1166 / ADR 0087: four audit seats share one audited-run identity material.
+    // Notary also emits identity from its own before_agent_start; skip double fold.
+    roleHost.on("before_agent_start", (_event, ctx) => {
+      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
+      if (typeof role !== "string" || !isAuditedIdentitySeat(role) || role === "notary") return;
+      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, ctx);
+      if (sourceDirectory === undefined) return;
+      const identity = auditedRunIdentityFromDirectory(sourceDirectory);
+      if (identity === undefined) return;
+      return { readingMaterial: auditedRunIdentityMaterial(identity) };
     });
     roleHost.on("tool_result", async (event, ctx) => {
       const role = selectedRole;

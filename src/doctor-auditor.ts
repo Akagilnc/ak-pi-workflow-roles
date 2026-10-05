@@ -1,4 +1,4 @@
-import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./role-run-placement.ts";
 import {
   runComplianceAudit,
   type AuditorSummon,

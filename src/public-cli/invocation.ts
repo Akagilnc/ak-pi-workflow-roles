@@ -2081,10 +2081,9 @@ export function buildInstructionTransportPrompt(
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
-    if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
-      throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
-    }
-    return appendEngineSessionMaterial([admitted.sourceRunPath], engineMaterial).join("\n");
+    // #1166 / ADR 0087: audited-run identity rides startup materials; dialogue
+    // prompt is peer body / reask only — never a package-computed directory path.
+    return appendEngineSessionMaterial([""], engineMaterial).join("\n");
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {

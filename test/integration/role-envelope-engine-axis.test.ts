@@ -31,7 +31,11 @@ import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
+import {
+  CANONICAL_SOURCE_ROLE,
+  CANONICAL_SOURCE_RUN_ID,
+  seedCanonicalSourceRun,
+} from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 function mcpRelayToken(prepared: {
@@ -516,13 +520,15 @@ test("#879 inspector first mint: parent path on activation, payload stays dialog
   assert.equal(projectActivationFlags(request).get("ak-inspector-source-run"), INSPECTOR_PARENT);
 });
 
-test("#879 inspector parent binding rides readingMaterial, not prompt", async () => {
+test("#879/#1166 inspector audited-run identity rides readingMaterial, not prompt", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-879-inspector-bind-"));
+  const parentRun = await seedCanonicalSourceRun(home, packageRoot);
   const runDirectory = join(home, "run");
   await mkdir(join(runDirectory, "session"), { recursive: true });
   const request = buildInstructionSeatTurnRequest(
     {
-      ...admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, runDirectory),
+      ...admittedInspector("", runDirectory),
+      sourceRunPath: parentRun,
       projectRoot: packageRoot,
       principal: fixturePrincipal(join(runDirectory, "session")),
     },
@@ -544,13 +550,14 @@ test("#879 inspector parent binding rides readingMaterial, not prompt", async ()
       (material) =>
         typeof material === "object"
         && material !== null
-        && (material as { kind?: unknown }).kind === "inspector-parent-binding",
+        && (material as { kind?: unknown }).kind === "audited-run-identity",
     );
     assert.equal(bindings.length, 1);
     assert.deepEqual(bindings[0], {
-      kind: "inspector-parent-binding",
-      sourceRunPath: INSPECTOR_PARENT,
+      kind: "audited-run-identity",
+      identity: `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
     });
+    assert.equal(JSON.stringify(bindings[0]).includes(parentRun), false);
   } finally {
     await prepared.dispose?.();
     await rm(home, { recursive: true, force: true });
