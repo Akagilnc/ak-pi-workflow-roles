@@ -215,11 +215,15 @@ test("packed artifact ships the release inventory without bundled method Skills"
     assert.ok(extracted.paths.includes(path), `${path} must be present in the npm tarball`);
   }
 
-  // Packets: repair doc + prerequisites example ship; the closed repair.json
-  // shell must never come back into the tarball. #1168: package no longer
-  // ships/validates fixer-packet.ts — --prerequisites is opaque path-only.
+  // Packets: repair doc ships; closed repair.json shell and deleted typed
+  // prerequisites example must not return. #1168: --prerequisites is opaque
+  // path-only — no packaged schema/example for package-side validation.
   assert.ok(extracted.paths.includes("packets/fixer-repair.md"), "packets/fixer-repair.md must be present in the npm tarball");
-  assert.ok(extracted.paths.includes("packets/fixer-prerequisites.json"), "packets/fixer-prerequisites.json must be present in the npm tarball");
+  assert.equal(
+    extracted.paths.includes("packets/fixer-prerequisites.json"),
+    false,
+    "deleted typed prerequisites example must not be packed",
+  );
   assert.equal(
     extracted.paths.includes("packets/fixer-repair.json"),
     false,
