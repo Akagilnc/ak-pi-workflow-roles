@@ -1,6 +1,7 @@
 /**
  * #1167 — outsourcing rides startup materials (handbook bodies), never the
- * transport prompt / auto-resume continuation.
+ * transport prompt. Auto-resume envelope-only + material retention lives on the
+ * existing public-cli-engine-resume-detour seam (no parallel resume fixture).
  * Seam: public `ak-role` + fake host that records prepareRoleEnvelope output.
  * Gate-summoned review reuses withPassingReviewHost + sealAcceptedSubmission
  * (#1132 public-entry gate observability), not a direct officer public call.
@@ -15,7 +16,6 @@ import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts"
 import { packagedExternalHostNames } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
@@ -195,44 +195,6 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
       ]);
       assert.equal(probe.get().prompt, DISPATCH);
       assert.equal(engineMaterials(probe.get().materials).length, 0);
-    }
-  });
-});
-
-test("#1167 auto-resume: continuation envelope-only; startup still carries engine", async () => {
-  await withHermeticHome({ prefix: "ak-1167-auto-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    await seedSeat(home, "fixer");
-    await runAkRole(["config", "set-auto-resume-limit", "2"], {
-      packageRoot, home, io: captureIo().io,
-    });
-    const handbook = await readFile(join(packageRoot, "resources/engines/cursor.md"), "utf8");
-    const turns: Captured[] = [];
-    let first = true;
-    const host = withPassingReviewHost(createMinimalHost(async (request) => {
-      turns.push(await captureTurn(request));
-      if (first) {
-        first = false;
-        const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(sessionDirectory, { recursive: true });
-        await writeFile(sessionFile, "", "utf8");
-        return { code: 1, stderr: "quota", timedOut: false };
-      }
-      return { code: 1, stderr: "stop after auto-resume capture", timedOut: false };
-    }));
-    await runFixer(home, project, host, "run-1167-auto-resume", [
-      "fixer", "--model", SEAT, "--project", project, "--engine", ENGINE, DISPATCH,
-    ]);
-    assert.ok(turns.length >= 2, "auto-resume must re-dispatch");
-    assert.equal(turns[0]?.prompt, DISPATCH);
-    assert.equal(turns[1]?.prompt, RESUME_TRANSPORT_ENVELOPE);
-    for (const turn of turns) {
-      const engines = engineMaterials(turn.materials);
-      assert.equal(engines.length, 1);
-      assert.equal(engines[0]?.name, ENGINE);
-      assert.equal(engines[0]?.handbook, handbook);
     }
   });
 });

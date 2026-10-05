@@ -40,32 +40,7 @@ test("packaged notes directory is discovery-only; missing notes is not an error"
     await mkdir(join(root, "resources", "engines"), { recursive: true });
     await writeFile(join(root, "resources", "engines", "only.md"), "x\n", "utf8");
     assert.deepEqual(listEngineMaterialNames(root), ["only"]);
-
-    // With notes → name + handbook bodies (no path delivery).
-    await writeFile(join(root, "resources", "engine-dispatch.md"), "dispatch\n", "utf8");
-    const withNotes = engineSessionMaterialFromOptions({
-      engine: "only",
-      packageRoot: root,
-    });
-    assert.equal(withNotes?.name, "only");
-    assert.equal(withNotes?.handbook, "x\n");
-    assert.equal(withNotes?.dispatchHandbook, "dispatch\n");
-    assert.equal(withNotes !== undefined && "materialPath" in withNotes, false);
-
-    // Without notes → name only; with model → name/model only (#1167).
-    const bare = engineSessionMaterialFromOptions({
-      engine: "opus",
-      packageRoot: root,
-    });
-    assert.deepEqual(bare, { name: "opus" });
-    assert.equal(bare && "handbook" in bare && bare.handbook !== undefined, false);
-    assert.deepEqual(
-      engineSessionMaterialFromOptions({
-        engine: "opus",
-        engineModel: "ghost-model-x",
-        packageRoot: root,
-      }),
-      { name: "opus", model: "ghost-model-x" },
-    );
+    // Handbook / bare-name delivery is asserted at the public ak-role seam
+    // (public-cli-engine-startup-material.test.ts); keep discovery-only here.
   });
 });
