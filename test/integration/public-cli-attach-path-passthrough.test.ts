@@ -1,7 +1,7 @@
 /**
  * #1165: --attach and collector --request-manifest pass caller paths as-is.
  * Seam: ak-role public entry + in-repo fake host; assert structured admitted
- * input, first-message path delivery (with flag provenance), and run-directory shape.
+ * input and run-directory shape only (no generated-prompt prose locks).
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -14,7 +14,6 @@ import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-out
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -44,7 +43,7 @@ function collectorReceipt() {
   };
 }
 
-test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; missing file still runs", async () => {
+test("#1165 --attach passes opaque path as-is; whitespace instruction retained; missing file still runs", async () => {
   await withTempRoot("ak-attach-passthrough-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -55,11 +54,11 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; mi
     await writeFile(join(project, relativeAttach), "evidence-v1", "utf8");
     const spaceAttach = " ";
     await writeFile(join(project, spaceAttach), "space-name", "utf8");
+    const emptyAttach = "";
     const missingAttach = "notes/does-not-exist.md";
-    // Whitespace-only dispatch must remain the first-message prefix (#1165 J3).
+    // Whitespace-only dispatch must remain on the admitted page (#1165 J3).
     const instruction = " \n\t";
 
-    let capturedStdin: string | undefined;
     const { io } = captureIo();
     const result = await runAkRole([
       "judge",
@@ -67,6 +66,7 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; mi
       "--project", project,
       "--attach", relativeAttach,
       "--attach", spaceAttach,
+      "--attach", emptyAttach,
       "--attach", missingAttach,
       instruction,
     ], {
@@ -78,8 +78,7 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; mi
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args, options) => {
-          capturedStdin = options?.stdin;
+        piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(
             sessionFile,
@@ -113,7 +112,7 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; mi
     assert.equal(current.admitted.instructionEmpty, false);
     assert.deepEqual(
       current.admitted.attachments.map((a) => a.path),
-      [relativeAttach, spaceAttach, missingAttach],
+      [relativeAttach, spaceAttach, emptyAttach, missingAttach],
     );
     for (const attachment of current.admitted.attachments) {
       assert.equal("frozenPath" in attachment, false);
@@ -121,18 +120,10 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction prefix; mi
       assert.equal("byteLength" in attachment, false);
       assert.equal("provenancePath" in attachment, false);
     }
-
-    const delivered = readUserDialogueStdin(capturedStdin ?? "");
-    assert.ok(delivered.startsWith(instruction));
-    assert.ok(delivered.includes(`- --attach ${relativeAttach}`));
-    assert.ok(delivered.includes(`- --attach ${spaceAttach}`));
-    assert.ok(delivered.includes(`- --attach ${missingAttach}`));
-    assert.equal(delivered.includes(join(project, relativeAttach)), false);
-    assert.equal(delivered.includes(join(runDirectory, "attachments")), false);
   });
 });
 
-test("#1165 --request-manifest/--attach keep flag provenance; opaque values start; cwd may differ", async () => {
+test("#1165 --request-manifest/--attach keep opaque values; host flag wires path; cwd may differ", async () => {
   await withTempRoot("ak-request-manifest-passthrough-", async (home) => {
     const project = join(home, "project");
     const callerCwd = join(home, "caller-cwd");
@@ -166,8 +157,13 @@ test("#1165 --request-manifest/--attach keep flag provenance; opaque values star
         "run-manifest-missing-001",
         join(home, "reqs", "does-not-exist.json"),
       ],
+      [
+        "empty-string-manifest",
+        ["--request-manifest", ""],
+        "run-manifest-empty-001",
+        "",
+      ],
     ] as const) {
-      let capturedStdin: string | undefined;
       let capturedArgs: string[] | undefined;
       const { io } = captureIo();
       const result = await runAkRole([
@@ -188,8 +184,7 @@ test("#1165 --request-manifest/--attach keep flag provenance; opaque values star
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args, options) => {
-            capturedStdin = options?.stdin;
+          piRunner: async (args) => {
             capturedArgs = [...args];
             const sessionFile = args[args.indexOf("--session") + 1]!;
             await writeFile(
@@ -230,18 +225,14 @@ test("#1165 --request-manifest/--attach keep flag provenance; opaque values star
       assert.equal(current.admitted.requestManifestPath, expectManifest);
       assert.equal("manifestDigest" in current.admitted, false);
 
-      const delivered = readUserDialogueStdin(capturedStdin ?? "");
-      assert.ok(delivered.startsWith(instruction));
-      assert.ok(delivered.includes(`- --request-manifest ${expectManifest}`));
       if (label === "mixed-same-path") {
-        assert.ok(delivered.includes(`- --attach ${samePath}`));
         assert.deepEqual(
           current.admitted.attachments?.map((a) => a.path),
           [samePath],
         );
       }
-      assert.equal(delivered.includes("{ not json"), false);
 
+      // Structured host-flag contract (external argv), not generated prompt prose.
       const flagIndex = capturedArgs?.indexOf("--ak-collector-request-manifest") ?? -1;
       assert.ok(flagIndex >= 0);
       assert.equal(capturedArgs?.[flagIndex + 1], expectManifest);

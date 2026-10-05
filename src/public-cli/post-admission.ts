@@ -1503,8 +1503,10 @@ export function resumeTurnRequestProjectionOptions(
   } else if (summonsPrepared !== undefined) {
     // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
     // Other seats keep #755 instruction + optional attachment path listing.
+    // #1165 J3: officer dialogue is raw instruction bytes; do not gate on
+    // instructionEmpty metadata (resume of older admitted pages).
     prompt = officerDialogue
-      ? (summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction)
+      ? summonsPrepared.instruction
       : buildInstructionTransportPrompt(summonsPrepared);
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding

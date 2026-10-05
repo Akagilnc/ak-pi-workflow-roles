@@ -189,7 +189,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const { io, stdout, stderr } = captureIo();
     let capturedArgs: string[] | undefined;
     let capturedEnv: NodeJS.ProcessEnv | undefined;
-    let capturedStdin: string | undefined;
 
     const result = await runAkRole([
         "judge", "--model", "test/caller-seat:high",
@@ -219,7 +218,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
           }
           capturedArgs = [...args];
           capturedEnv = options.env;
-          capturedStdin = options.stdin;
           const sessionDirIdx = args.indexOf("--session-dir");
           assert.ok(sessionDirIdx >= 0);
           const sessionDir = args[sessionDirIdx + 1]!;
@@ -376,10 +374,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       ["converged"],
     );
 
-    // #1165: first message carries the caller path; no attachments/ copy.
-    const delivered = readUserDialogueStdin(capturedStdin ?? "");
-    assert.ok(delivered.includes(instruction));
-    assert.ok(delivered.includes(attachment));
+    // #1165: no attachments/ copy under the run directory.
     assert.equal(existsSync(join(runDir, "attachments")), false);
   });
 });

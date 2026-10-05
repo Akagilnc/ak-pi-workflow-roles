@@ -117,7 +117,8 @@ export function normalizeAdmittedAttachment(raw: unknown): FrozenAttachment | un
   if (typeof raw !== "object" || raw === null) return undefined;
   const record = raw as Record<string, unknown>;
   const path = record.path;
-  if (typeof path === "string" && path.length > 0) return { path };
+  // Opaque caller path — keep "" / whitespace; only a non-string is absent.
+  if (typeof path === "string") return { path };
   return undefined;
 }
 
@@ -134,7 +135,7 @@ export type AdmittedRoleInvocationBase = {
   readonly projectRoot: string;
   /** Opaque instruction bytes as submitted. */
   readonly instruction: string;
-  /** True when the caller supplied no nonblank instruction. */
+  /** True when the caller supplied a literally empty instruction (length 0). */
   readonly instructionEmpty: boolean;
   readonly attachments: readonly FrozenAttachment[];
   readonly runDirectory: string;
@@ -1891,7 +1892,9 @@ export function buildInstructionTransportPrompt(
       throw new Error("baseline transport prompt is missing the bound revision");
     }
     const lines = [admitted.baseRevision];
-    if (!admitted.instructionEmpty) {
+    // Use raw admitted.instruction — do not gate on instructionEmpty metadata
+    // (old pages may set that flag wrong while still holding whitespace text).
+    if (admitted.instruction.length > 0) {
       lines.push("", admitted.instruction);
     }
     return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
@@ -1909,12 +1912,13 @@ export function buildInstructionTransportPrompt(
       lens: admitted.lens,
       authorityRefs: admitted.authorityRefs,
     })];
-    if (!admitted.instructionEmpty) {
+    if (admitted.instruction.length > 0) {
       lines.push("", admitted.instruction);
     }
     return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
   }
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
+  // #1165 J3: assemble from the admitted instruction bytes themselves.
+  const lines: string[] = [admitted.instruction];
   // #1164/#1165: each caller path keeps its file-flag provenance.
   const flaggedPaths: string[] = [
     ...admitted.attachments.map((attachment) => `--attach ${attachment.path}`),

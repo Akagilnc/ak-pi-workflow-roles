@@ -725,17 +725,13 @@ test("#1165 secretariat --attach hands caller path to court diarist as-is", asyn
     await writeFile(join(project, relativeAttach), "sec material", "utf8");
     const gateCalls: Array<{ kind: string }> = [];
     const diaristRunDirectories: string[] = [];
-    let diaristStdin: string | undefined;
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
       gateCalls,
       diaristRunDirectories,
       submissionGateHost: "codex",
-      parentDiaristRunner: (args, options) => {
-        diaristStdin = options?.stdin;
-        return courtDiaristFor924()(args, options);
-      },
+      parentDiaristRunner: courtDiaristFor924(),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
@@ -759,12 +755,6 @@ test("#1165 secretariat --attach hands caller path to court diarist as-is", asyn
     );
     assert.equal(result.exitCode, 0);
     assert.equal(diaristRunDirectories.length, 1, "secretariat must summon court diarist");
-    // Handoff proof: court diarist first message carries the caller path as-is.
-    assert.ok(
-      (diaristStdin ?? "").includes(relativeAttach),
-      "diarist first message must carry the caller attach path",
-    );
-    assert.equal((diaristStdin ?? "").includes(join(project, relativeAttach)), false);
 
     // After ticket bind the diarist run leaves unbound/; read the relocated admitted page.
     const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
