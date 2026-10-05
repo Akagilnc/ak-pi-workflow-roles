@@ -112,7 +112,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           dispatchedPrompt = readUserDialogueStdin(String(options.stdin ?? ""));
@@ -126,14 +126,14 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { status: "converged", note: "domain remains role-owned" },
+                details: { status: "converged", note: "domain remains role-owned", ticketNumber: 1171},
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
-            sealedAcceptance: { role: "judge" as const, details: { status: "converged", note: "domain remains role-owned" } },
+            sealedAcceptance: { role: "judge" as const, details: { status: "converged", note: "domain remains role-owned", ticketNumber: 1171} },
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -274,6 +274,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
                 isError: false,
                 details: {
                   status: "escalate",
+                  ticketNumber: 1171,
                   decisionGate: {
                     question: "Ship or hold?",
                     options: ["ship", "hold"],
@@ -289,6 +290,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
               role: "judge" as const,
               details: {
                 status: "escalate",
+                ticketNumber: 1171,
                 decisionGate: {
                   question: "Ship or hold?",
                   options: ["ship", "hold"],
@@ -473,7 +475,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           calls += 1;
@@ -485,7 +487,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
             return { code: 1, stderr: "fail\n", timedOut: false, args: [...args] };
           }
           const prior = await readFile(sessionFile, "utf8");
-          const details = { status: "converged", note: "resumed ok" };
+          const details = { status: "converged", note: "resumed ok", ticketNumber: 1171};
           await writeFile(
             sessionFile,
             `${prior}${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } })}\n`,
@@ -510,9 +512,13 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
 
     // Settlement must not append to the host's native session; both attempts
     // remain readable in the run's append-only history.jsonl after resume.
-    const hostRows = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const runDirectory =
+      (await findRunDirectoryById(home, "run-419-pointer-overwrite-001"))
+      ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
+    const liveSessionFile = join(runDirectory, "session", "session.jsonl");
+    const hostRows = (await readFile(liveSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
     assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
     const history = historyPayloads<{
       type?: string; outcome?: { kind?: string; diagnostic?: string };
     }>(runDirectory, "attempt-history");
@@ -537,8 +543,8 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const bounceParams = { status: "converged", report: "bounce-verdict" };
-    const infraParams = { status: "converged", report: "infra-verdict" };
+    const bounceParams = { status: "converged", report: "bounce-verdict", ticketNumber: 1171};
+    const infraParams = { status: "converged", report: "infra-verdict", ticketNumber: 1171};
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "host aborts after non-sealed submissions"],
       {

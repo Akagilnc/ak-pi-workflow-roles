@@ -16,7 +16,6 @@ import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
@@ -63,7 +62,7 @@ function admitFixerInvocation(options: AdmitFixerInvocationOptions) {
 }
 
 
-test("admitFixerInvocation freezes prerequisites and rejects malformed grammar structurally", async () => {
+test("admitFixerInvocation keeps opaque --prerequisites path; rejects blank instruction only", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -83,22 +82,22 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
 
+    // #1168: malformed grammar is not a package admission reject.
     const badPrereq = join(home, "bad-prereq.json");
     await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
-    await assert.rejects(
-      () =>
-        admitFixerInvocation({
+    const badAdmitted = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: project,
-          phase: "apply",
-          instruction: "Repair with bad prereq grammar.",
-          attachmentPaths: [],
-          prerequisitesPath: badPrereq,
-        }),
-      (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE" &&
-        error.cause instanceof FixerPacketValidationError,
-    );
+      home,
+      cwd: project,
+      phase: "apply",
+      instruction: "Repair with bad prereq grammar.",
+      attachmentPaths: [],
+      prerequisitesPath: badPrereq,
+      createRunId: () => "run-fixer-bad-prereq-admit",
+    });
+    assert.equal(badAdmitted.prerequisitesPath, badPrereq);
+    assert.equal("packetPath" in badAdmitted, false);
+    assert.equal("prerequisites" in badAdmitted, false);
 
     const goodPrereq = join(home, "good-prereq.json");
     await writeFile(
@@ -108,15 +107,13 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       ]),
       "utf8",
     );
-    const source = join(home, "notes.txt");
-    await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
       instruction: "Plan the class repair.",
-      attachmentPaths: [source],
+      attachmentPaths: [],
       prerequisitesPath: goodPrereq,
       createRunId: () => "run-fixer-plan-001",
     });
@@ -124,16 +121,16 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.instruction, "Plan the class repair.");
-    assert.equal(await readFile(admitted.packetPath, "utf8"), "Plan the class repair.");
-    assert.equal(admitted.prerequisites.length, 1);
-    assert.equal(admitted.prerequisites[0]!.id, "owner.choice");
-    assert.equal(typeof admitted.prerequisitesPath, "string");
-    assert.equal(
-      JSON.parse(await readFile(admitted.prerequisitesPath!, "utf8"))[0].id,
-      "owner.choice",
+    assert.equal(admitted.prerequisitesPath, goodPrereq);
+    assert.equal("packetPath" in admitted, false);
+    await assert.rejects(
+      () => access(join(admitted.runDirectory, "fix-packet.md")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
     );
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(await readFile(admitted.attachments[0]!.frozenPath, "utf8"), "attachment-v1");
+    await assert.rejects(
+      () => access(join(admitted.runDirectory, "prerequisites.json")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
@@ -141,16 +138,17 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-fixer-plan-001@fixer"),
     );
     const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
-      phase: string; role: string; prerequisites: unknown[];
+      phase: string; role: string; prerequisitesPath?: string; prerequisites?: unknown;
     };
     assert.equal(persisted.role, "fixer");
     assert.equal(persisted.phase, "plan");
-    assert.equal(persisted.prerequisites.length, 1);
+    assert.equal(persisted.prerequisitesPath, goodPrereq);
+    assert.equal("prerequisites" in persisted, false);
   });
 });
 
 
-test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prerequisites", async () => {
+test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisites still start", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -175,26 +173,70 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       assert.equal(stderr.join("").length > 0, true);
     }
 
-    {
-      const bad = join(home, "bad.json");
-      await writeFile(bad, "{", "utf8");
+    // #1168: opaque --prerequisites — missing / non-JSON still admit+start; path only.
+    for (const [label, prereqPath, runId] of [
+      ["non-json", join(home, "bad.json"), "run-cli-fixer-opaque-bad-prereq"],
+      ["missing", join(home, "missing-prereqs.json"), "run-cli-fixer-opaque-missing-prereq"],
+    ] as const) {
+      if (label === "non-json") await writeFile(prereqPath, "{", "utf8");
       const { io } = captureIo();
-      const result = await runAkRole(["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", bad, "Repair."],
+      const result = await runAkRole(
+        ["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", prereqPath, "Repair."],
         {
           packageRoot,
           home,
           cwd: project,
+          createRunId: () => runId,
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async () => {
-            throw new Error("must not dispatch malformed prereq");
-          },
+            piRunner: async (args) => {
+              assert.equal(args.includes("--ak-fix-packet"), false);
+              const sessionFile = args[args.indexOf("--session") + 1]!;
+              await writeFile(
+                sessionFile,
+                fixerSessionLine({ status: "planned", report: `started despite ${label} prereq` }),
+              );
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                sealedAcceptance: {
+                  role: "fixer" as const,
+                  details: { status: "planned", report: `started despite ${label} prereq` , ticketNumber: 1171},
+                },
+              };
+            },
           }),
         },
       );
-      assert.equal(result.exitCode, 2);
+      assert.equal(result.exitCode, 0, `${label} must still start`);
+      const bookKey = resolveBookKeyFromGit(project);
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const runDirectory =
+        (await findRunDirectoryById(home, runId))
+        ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`);
+      await assert.rejects(
+        () => access(join(runDirectory, "fix-packet.md")),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+      await assert.rejects(
+        () => access(join(runDirectory, "prerequisites.json")),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+      const admitted = readCurrentSection(runDirectory, "admitted") as {
+        instruction: string;
+        prerequisitesPath?: string;
+        prerequisites?: unknown;
+        packetPath?: string;
+      };
+      assert.equal(admitted.instruction, "Repair.");
+      assert.equal(admitted.prerequisitesPath, prereqPath);
+      assert.equal("prerequisites" in admitted, false);
+      assert.equal("packetPath" in admitted, false);
     }
 
     {
@@ -203,6 +245,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       const receipt = {
         status: "planned" as const,
         report: "Plan: inspect root cause; diagnosis available if needed.",
+        ticketNumber: 1171,
       };
       const result = await runAkRole([
           "fixer", "--model", "test/caller-seat:high",
@@ -271,17 +314,11 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       // The submitted words live in history.jsonl; the terminal carries only the verdict.
       assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
       assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
-      await access(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          resolveBookKeyFromGit(project),
-          "unbound", "runs",
-          "run-cli-fixer-plan@fixer",
-          "current.json",
-        ),
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const planRunDirectory =
+        (await findRunDirectoryById(home, "run-cli-fixer-plan"))
+        ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-cli-fixer-plan@fixer");
+      await access(join(planRunDirectory, "current.json"));
     }
 
     {
@@ -366,11 +403,12 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     );
     const sessionDirectory = join(runDirectory, "session");
     const admitted = readCurrentSection(runDirectory, "admitted") as {
-      phase: string; role: string; packetPath: string; ticketNumber?: number;
+      phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, undefined);
+    assert.equal("packetPath" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -387,7 +425,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
-        assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
+        assert.equal(args.includes("--ak-fix-packet"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
@@ -624,7 +662,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
           if (args[args.indexOf("--ak-role") + 1] === "inspector") {
             return scriptedTerminatingToolSession({
               role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           const sessionFile = args[args.indexOf("--session") + 1]!;

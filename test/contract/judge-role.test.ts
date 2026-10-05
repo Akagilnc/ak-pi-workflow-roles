@@ -21,7 +21,6 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
-import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -143,9 +142,6 @@ type Tool = {
   parameters?: any;
   execute: (...args: any[]) => Promise<any>;
 };
-
-const emptyFixPacket = "Repair the assigned findings.";
-const declaredFixPrerequisites = JSON.stringify([{ id: "owner.choice", requirement: "Owner selects the contract." }]);
 
 /**
  * Prompt delivery contract: the base system prompt survives and every declared
@@ -492,8 +488,6 @@ test("focused Judge controller registers output without narrowing host tools", a
 
 test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and prompt envelopes", async () => {
   const fixer = extensionHarness(undefined, {
-    "ak-fix-packet": "/packet.md",
-    "ak-fixer-prerequisites": "/prereqs.json",
     "ak-fixer-phase": "plan",
   });
   const fixerAdapterHost = createPiRoleHostAdapter(fixer.pi as unknown as ExtensionAPI).host;
@@ -511,14 +505,10 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     fixerHost,
     {
       loadSoul: async () => "\n FIXER LAW \n",
-      loadPacket: async (path) =>
-        path.endsWith("prereqs.json")
-          ? JSON.stringify([{ id: "owner.choice", requirement: "choose" }])
-          : emptyFixPacket,
     },
     testHostActions(),
   );
-  assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
+  assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fixer-phase"]));
   await fixerRuntime.activate();
   assert.deepEqual([...fixer.tools.keys()], [FIXER_OUTPUT_TOOL_NAME]);
   assert.ok(fixer.handlers.has("before_agent_start"));
@@ -528,14 +518,11 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     { systemPrompt: "BASE" },
     {},
   ) as { systemPrompt: string }).systemPrompt;
+  // #1168: soul + phase only; dispatch text is not copied into startup materials.
   assertDelivers(fixerPrompt, "BASE", [
     "FIXER LAW",
     "plan",
-    "/packet.md",
-    "/prereqs.json",
   ]);
-  assert.equal(fixerPrompt.includes(emptyFixPacket), false);
-  assert.equal(fixerPrompt.includes("owner.choice"), false);
   const fixerTool = fixer.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(fixerTool);
   assert.deepEqual(
@@ -549,30 +536,25 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     { status: "planned", report: "Plan the smallest repair." },
   );
   const coder = extensionHarness(undefined, {
-    "ak-coder-task": "/task.md",
     "ak-coder-phase": "plan",
   });
   const coderRuntime = createCoderRoleRuntime(
     createPiRoleHostAdapter(coder.pi as unknown as ExtensionAPI).host,
     {
       loadSoul: async () => "\n CODER LAW \n",
-      loadTask: async () => "\n TASK BODY \n",
     },
     testHostActions(),
   );
-  assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-task", "ak-coder-phase"]));
+  assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-phase"]));
   await coderRuntime.activate();
   assert.deepEqual([...coder.tools.keys()], [CODER_OUTPUT_TOOL_NAME]);
   assert.ok(coder.handlers.has("before_agent_start"));
   assert.ok(coder.handlers.has("input"));
-  assertDelivers(
-    (await coder.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE" },
-      {},
-    ) as { systemPrompt: string }).systemPrompt,
-    "BASE",
-    ["CODER LAW", "plan", "TASK BODY"],
-  );
+  const coderPrompt = (await coder.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  ) as { systemPrompt: string }).systemPrompt;
+  assertDelivers(coderPrompt, "BASE", ["CODER LAW", "plan"]);
 });
 
 test("named Judge and worker tools preserve schema leaves and receipts", async () => {
@@ -599,7 +581,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       name: FIXER_OUTPUT_TOOL_NAME,
       activate: async () => {
         const harness = extensionHarness(undefined, {
-          "ak-fix-packet": "/packet",
           "ak-fixer-phase": "apply",
         });
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
@@ -607,7 +588,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           piHostAdapter.host,
           {
             loadSoul: async () => "fixer",
-            loadPacket: async () => emptyFixPacket,
           },
           testHostActions(),
         );
@@ -621,7 +601,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       name: CODER_OUTPUT_TOOL_NAME,
       activate: async () => {
         const harness = extensionHarness(undefined, {
-          "ak-coder-task": "/task",
           "ak-coder-phase": "plan",
         });
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
@@ -629,7 +608,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           piHostAdapter.host,
           {
             loadSoul: async () => "coder",
-            loadTask: async () => "task",
           },
           testHostActions(),
         );
@@ -756,18 +734,12 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 });
 
-test("coder plan loads its task without construction skill and returns planned", async () => {
-  const loadedTasks: string[] = [];
+test("coder plan activates without task copy and returns planned", async () => {
   const harness = extensionHarness("coder", {
-    "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
   });
   installRoleRuntime(harness.pi, {
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
-    loadCoderTask: async (path) => {
-      loadedTasks.push(path);
-      return "IMPLEMENT THE VERTICAL SLICE";
-    },
   });
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -778,7 +750,6 @@ test("coder plan loads its task without construction skill and returns planned",
     {},
   );
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-  assert.deepEqual(loadedTasks, ["/materials/task.md"]);
   assert.deepEqual(
     await harness.handlers.get("input")?.(
       { text: "Plan the approved seam.", source: "interactive" },
@@ -789,7 +760,6 @@ test("coder plan loads its task without construction skill and returns planned",
   assertDelivers(prompt, "BASE", [
     "CODER LAW",
     "plan",
-    "IMPLEMENT THE VERTICAL SLICE",
   ]);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
@@ -810,12 +780,10 @@ test("coder plan loads its task without construction skill and returns planned",
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", () => withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
   const harness = extensionHarness("coder", {
-    "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
-    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
   await harness.handlers.get("session_start")?.({}, activationCtx(home));
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
@@ -854,12 +822,10 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
   // Fresh admitted run — prior seal must not cross run boundaries.
   const harness2 = extensionHarness("coder", {
-    "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
   installRoleRuntime(harness2.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
-    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
   });
   await harness2.handlers.get("session_start")?.({}, activationCtx(home));
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
@@ -918,33 +884,11 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   });
 }));
 
-test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
-  const rows = [
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: "{" }, { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: JSON.stringify([{ id: "bad/id", requirement: "x" }]) },
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: "" },
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: " \t\n" },
-  ] as const;
-  for (const row of rows) {
-    const harness = extensionHarness("fixer", row.flags);
-    installRoleRuntime(harness.pi, {
-      loadRoleSoul: async (role) => role,
-      loadFixPacket: async () => row.packet,
-    });
-    await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-      await assert.rejects(
-        Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))),
-        (error: unknown) => error instanceof FixerPacketValidationError,
-      );
-    });
-    assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
-    assert.equal(harness.handlers.has("before_agent_start"), true);
-  }
-});
-
 test("undeclared prerequisite ids are recorded as-is; declared references still pass Gatekeeper", async () => {
-  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
+  // #1168: activation no longer loads packet/prerequisites; phase is enough.
+  const harness = extensionHarness("fixer", { "ak-fixer-phase": "apply" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadRoleSoul: async (role) => role, loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
+    loadRoleSoul: async (role) => role,
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1027,10 +971,9 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
   });
 });
 test("declared plan refusal passes structure then Gatekeeper", async () => {
-  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
+  const harness = extensionHarness("fixer", { "ak-fixer-phase": "plan" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role,
-    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1049,19 +992,12 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
     assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   });
 });
-test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
-  const loadedPaths: string[] = [];
-  const instructionBytes = "  REPAIR INSTRUCTIONS\nFix the live findings.\n\n";
+test("fixer role startup materials carry soul and phase only; returns a thin report envelope", async () => {
   const harness = extensionHarness("fixer", {
-    "ak-fix-packet": "/materials/fix.md",
     "ak-fixer-phase": "apply",
   });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role === "fixer" ? "FIXER LAW\nCreate one forward commit." : "JUDGE LAW",
-    loadFixPacket: async (path) => {
-      loadedPaths.push(path);
-      return instructionBytes;
-    },
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1070,14 +1006,11 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     { systemPrompt: "BASE SYSTEM PROMPT" }, {},
   );
 
-  assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assertDelivers(prompt, "BASE SYSTEM PROMPT", [
     "FIXER LAW\nCreate one forward commit.",
     "apply",
-    "/materials/fix.md",
   ]);
-  assert.equal(prompt.includes(instructionBytes), false);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
@@ -1107,21 +1040,22 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   const harness = extensionHarness(
     "fixer",
     {
-      "ak-fix-packet": "/materials/fix.md",
       "ak-fixer-phase": "apply",
     },
     ["read", "bash", "write", "edit", "arbitrary_sibling"],
   );
   installRoleRuntime(harness.pi, {
     loadRoleSoul: async (role) => role === "fixer" ? "FIXER LAW" : "JUDGE LAW",
-    loadFixPacket: async () => emptyFixPacket,
   });
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  assert.deepEqual(harness.activeToolSets, []);
+  // #1171: ak_report_ticket shares the submission registration mouth; activation
+  // must expose it beside the seat's terminating tool (not a silent surface change).
+  assert.deepEqual(harness.activeToolSets, [["ak_report_ticket"]]);
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
+  assert.equal(harness.tools.has("ak_report_ticket"), true);
 });
 
 

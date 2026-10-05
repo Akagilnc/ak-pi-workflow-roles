@@ -1,20 +1,16 @@
 /**
- * Public Invocation request admission: optional opaque instruction, frozen
- * Attachments, project default/override (ADR 0052 / #106).
+ * Public Invocation request admission: optional opaque instruction, caller
+ * attachment paths as-is, project default/override (ADR 0052 / #106 / #1165).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
-  lstat,
-  mkdtemp,
   readFile,
   realpath,
   rename,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
   activationBookDirectory,
@@ -56,7 +52,7 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  projectLiveAdmittedRunPaths,
+  rewriteAdmittedRoleRunPage,
 } from "../role-run-relocation.ts";
 import { readPageSync, renderCurrentSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
@@ -64,18 +60,11 @@ import {
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
-  emptyCollectorManifest,
-  loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
   type CollectorRepository,
 } from "../collector-config.ts";
 import { ownerRepoFromGitHubRemoteUrl } from "./github-remote.ts";
-import {
-  FixerPacketValidationError,
-  parseFixerPrerequisites,
-  type FixerPrerequisite,
-} from "../package-contracts/fixer-packet.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
 import type { MergerGitState } from "../merger-git-state.ts";
@@ -93,10 +82,6 @@ import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
-import {
-  appendEngineSessionMaterial,
-  type EngineSessionMaterial,
-} from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
@@ -113,15 +98,26 @@ import type { PublicThinkingLevel } from "./registry.ts";
 
 import { errorText, isRecord } from "../unknown-value.ts";
 
+/** Caller-supplied attachment path recorded as-is (#1165). */
 export type FrozenAttachment = {
-  /** Original caller path retained only as provenance. */
-  readonly provenancePath: string;
-  /** Absolute path of the admitted frozen snapshot bytes. */
-  readonly frozenPath: string;
-  readonly byteLength: number;
-  readonly sha256: string;
-  readonly mediaKind: "regular-file";
+  readonly path: string;
 };
+
+/** Normalize admitted attachment records (caller path only; #1165). */
+export function normalizeAdmittedAttachment(raw: unknown): FrozenAttachment | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const record = raw as Record<string, unknown>;
+  const path = record.path;
+  // Opaque caller path — keep "" / whitespace; only a non-string is absent.
+  if (typeof path === "string") return { path };
+  return undefined;
+}
+
+function admitCallerAttachments(
+  attachmentPaths: readonly string[],
+): readonly FrozenAttachment[] {
+  return attachmentPaths.map((path) => ({ path }));
+}
 
 /** Shared admitted Role run identity (#106 common Invocation + #109 Coder). */
 export type AdmittedRoleInvocationBase = {
@@ -130,7 +126,7 @@ export type AdmittedRoleInvocationBase = {
   readonly projectRoot: string;
   /** Opaque instruction bytes as submitted. */
   readonly instruction: string;
-  /** True when the caller supplied no nonblank instruction. */
+  /** True when the caller supplied a literally empty instruction (length 0). */
   readonly instructionEmpty: boolean;
   readonly attachments: readonly FrozenAttachment[];
   readonly runDirectory: string;
@@ -203,20 +199,14 @@ export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
   readonly role: "coder";
   /** Explicit plan or default apply — preserved through admission and continuation. */
   readonly phase: CoderPhase;
-  /** Durable task file path consumed by internal --ak-coder-task. */
-  readonly taskPath: string;
 };
 
 export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "fixer";
   /** Explicit plan or default apply — preserved through admission and continuation. */
   readonly phase: FixerPhase;
-  /** Durable opaque instruction path consumed by internal --ak-fix-packet. */
-  readonly packetPath: string;
-  /** Optional durable prerequisites JSON path for --ak-fixer-prerequisites. */
+  /** Optional caller --prerequisites path as-is (#1168; package does not read it). */
   readonly prerequisitesPath?: string;
-  /** Structurally validated prerequisite declarations frozen at admission. */
-  readonly prerequisites: readonly FixerPrerequisite[];
 };
 
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
@@ -225,7 +215,6 @@ export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly prNumber?: number;
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
-  readonly manifestDigest: string;
 };
 
 export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
@@ -617,7 +606,10 @@ export async function relocateAdmittedRunToTicket(
   // render that may refuse (#1161 L1 / BASE order).
   heldLease?.relocate(target.runDirectory);
 
-  projectLiveAdmittedRunPaths(admitted, oldRunDirectory, target.runDirectory);
+  rewriteAdmittedRoleRunPage(
+    admitted as unknown as Record<string, unknown>,
+    [{ oldRunDirectory, newRunDirectory: target.runDirectory }],
+  );
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is
@@ -825,7 +817,8 @@ function assignPublicSeatOption(
   const value = taken.value;
   switch (taken.def.id) {
     case "attach":
-      fields.attachmentPaths.push(requireOptionPath(taken.def.canonical, value));
+      // #1165: file-flag values are opaque; only a missing argument is a usage error.
+      fields.attachmentPaths.push(requireProvidedOptionValue(taken.def.canonical, value));
       return;
     case "project":
       fields.project = requireOptionPath(taken.def.canonical, value);
@@ -862,7 +855,8 @@ function assignPublicSeatOption(
       fields.authorityRefs.push(requireAuthorityRef(value));
       return;
     case "prerequisites":
-      fields.prerequisitesPath = requireOptionPath(taken.def.canonical, value);
+      // #1168: same opaque file-flag rule as --attach.
+      fields.prerequisitesPath = requireProvidedOptionValue(taken.def.canonical, value);
       return;
     case "pr":
       fields.prNumber = parsePositivePrOption(value);
@@ -871,7 +865,8 @@ function assignPublicSeatOption(
       fields.repo = parseRepoOption(value);
       return;
     case "request-manifest":
-      fields.requestManifestPath = requireOptionPath(taken.def.canonical, value);
+      // #1165: file-flag values are opaque; only a missing argument is a usage error.
+      fields.requestManifestPath = requireProvidedOptionValue(taken.def.canonical, value);
       return;
     case "issue": {
       if (value === undefined || value.trim() === "") {
@@ -1056,6 +1051,20 @@ function requireOptionPath(
 }
 
 /**
+ * #1165 file flags (--attach / --request-manifest): keep the provided string
+ * opaque (including spaces and ""). Only a missing argument is a usage error.
+ */
+function requireProvidedOptionValue(
+  flag: string,
+  value: string | undefined,
+): string {
+  if (value === undefined) {
+    throw new CliUsageError(`${flag} requires a path`);
+  }
+  return value;
+}
+
+/**
  * Shared Skill-arg token rule for caller-controlled values projected into the
  * space-joined Skill invocation line. Rejects blank, whitespace (smuggles the
  * next option), and a leading `-` (read as the next Skill option). Not a
@@ -1147,184 +1156,6 @@ export function requireAuthorityRef(value: string | undefined): string {
     whitespace: "--authority-ref requires a durable reference, not inline Spec prose",
     optionLike: "--authority-ref requires a durable reference, not inline Spec prose",
   });
-}
-
-async function readRegularFileAttachment(
-  sourcePath: string,
-): Promise<{ absolute: string; bytes: Buffer }> {
-  const absolute = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
-  let st;
-  try {
-    st = await lstat(absolute);
-  } catch (error) {
-    throw new CliUsageError(
-      `attachment is not a readable regular file: ${sourcePath}`,
-      { cause: error },
-    );
-  }
-  if (!st.isFile() || st.isSymbolicLink()) {
-    throw new CliUsageError(
-      `attachment must be a regular file (not a directory or symlink): ${sourcePath}`,
-    );
-  }
-  try {
-    return { absolute, bytes: await readFile(absolute) };
-  } catch (error) {
-    throw new CliUsageError(
-      `attachment is not a readable regular file: ${sourcePath}`,
-      { cause: error },
-    );
-  }
-}
-
-export type PreparedAttachment = {
-  readonly absolute: string;
-  readonly snapshotPath: string;
-};
-
-/**
- * Snapshot deferred inputs sequentially before identity side effects. The staging
- * files keep aggregate attachment bytes off heap until their final run is known.
- */
-async function removePreparedAttachmentDirectory(stagingDirectory: string): Promise<void> {
-  await rm(stagingDirectory, { recursive: true, force: true });
-}
-
-/** Own the complete deferred-snapshot lifetime without masking either failure. */
-export async function withPreparedAttachments<T>(
-  attachmentPaths: readonly string[],
-  use: (prepared: readonly PreparedAttachment[]) => Promise<T>,
-): Promise<T> {
-  if (attachmentPaths.length === 0) return await use([]);
-  const stagingDirectory = await mkdtemp(join(tmpdir(), "ak-role-attachments-"));
-  const prepared: PreparedAttachment[] = [];
-  let result: T;
-  try {
-    for (let index = 0; index < attachmentPaths.length; index += 1) {
-      const { absolute, bytes } = await readRegularFileAttachment(attachmentPaths[index]!);
-      const snapshotPath = join(stagingDirectory, String(index).padStart(6, "0"));
-      await writeFile(snapshotPath, bytes);
-      prepared.push({ absolute, snapshotPath });
-    }
-    result = await use(prepared);
-  } catch (primary) {
-    try {
-      await removePreparedAttachmentDirectory(stagingDirectory);
-    } catch (cleanup) {
-      throw new AggregateError(
-        [primary, cleanup],
-        "attachment snapshot operation failed and cleanup also failed",
-        { cause: primary },
-      );
-    }
-    throw primary;
-  }
-  await removePreparedAttachmentDirectory(stagingDirectory);
-  return result;
-}
-
-async function freezeAttachmentBytes(
-  provenancePath: string,
-  bytes: Buffer,
-  destinationDir: string,
-  index: number,
-): Promise<FrozenAttachment> {
-  const frozenPath = join(
-    destinationDir,
-    `${String(index).padStart(2, "0")}-${basename(provenancePath)}`,
-  );
-  await writeFile(frozenPath, bytes);
-  return {
-    provenancePath,
-    frozenPath,
-    byteLength: bytes.byteLength,
-    sha256: sha256Hex(bytes),
-    mediaKind: "regular-file",
-  };
-}
-
-async function freezePreparedAttachment(
-  prepared: PreparedAttachment,
-  destinationDir: string,
-  index: number,
-): Promise<FrozenAttachment> {
-  return freezeAttachmentBytes(
-    prepared.absolute,
-    await readFile(prepared.snapshotPath),
-    destinationDir,
-    index,
-  );
-}
-
-async function freezeRegularFileAttachment(
-  sourcePath: string,
-  destinationDir: string,
-  index: number,
-): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
-  const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
-  return {
-    attachment: await freezeAttachmentBytes(absolute, bytes, destinationDir, index),
-    body: bytes,
-  };
-}
-
-/** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
-async function freezeAttachments(
-  ledgerHome: string,
-  attachmentPaths: readonly string[],
-  attachmentsDirectory: string,
-): Promise<readonly FrozenAttachment[]> {
-  const attachments: FrozenAttachment[] = [];
-  // attachments/ appears only when something is frozen; created through the
-  // ledger's symlink-rejecting tree walk, never a plain mkdir.
-  if (attachmentPaths.length > 0) {
-    ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  }
-  for (let i = 0; i < attachmentPaths.length; i += 1) {
-    const frozen = await freezeRegularFileAttachment(
-      attachmentPaths[i]!,
-      attachmentsDirectory,
-      i,
-    );
-    attachments.push(frozen.attachment);
-  }
-  return attachments;
-}
-
-/**
- * Freeze summons attachments into an already-retained run (#637 same-ticket resume).
- * Writes under attachments/summons-<key>/ so prior freeze names stay intact.
- * Manual resume never calls this — birth attachments keep their original semantics.
- */
-export async function freezeAttachmentsIntoRun(
-  attachmentPaths: readonly string[],
-  runDirectory: string,
-  summonsKey: string = `s-${Date.now().toString(36)}`,
-): Promise<readonly FrozenAttachment[]> {
-  if (attachmentPaths.length === 0) return [];
-  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
-  const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  return freezeAttachments(ledgerHome, attachmentPaths, attachmentsDirectory);
-}
-
-/** Freeze prepared bytes and metadata through one path for birth or retained runs. */
-export async function freezePreparedAttachmentsIntoRun(
-  prepared: readonly PreparedAttachment[],
-  runDirectory: string,
-  summonsKey?: string,
-): Promise<readonly FrozenAttachment[]> {
-  if (prepared.length === 0) return [];
-  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
-  const attachmentsDirectory = summonsKey === undefined
-    ? join(runDirectory, "attachments")
-    : join(runDirectory, "attachments", summonsKey);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const attachments: FrozenAttachment[] = [];
-  for (let index = 0; index < prepared.length; index += 1) {
-    attachments.push(await freezePreparedAttachment(prepared[index]!, attachmentsDirectory, index));
-  }
-  return attachments;
 }
 
 function ticketAdmissionFields(
@@ -1473,16 +1304,13 @@ export async function admitPublicRole(
       if (!record.phases.some((item) => item === phase)) {
         throw new CliUsageError("coder phase must be plan or apply");
       }
+      // #1168: dispatch text is the first message only — no task.md copy.
       return admitStandardMaterialInvocation("coder", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
-        placedFields: async (placed) => {
-          const taskPath = join(placed.runDirectory, "task.md");
-          await writeFile(taskPath, instruction, "utf8");
-          return { phase, taskPath };
-        },
+        placedFields: async () => ({ phase }),
       });
     }
     case "worker-packet": {
@@ -1493,53 +1321,18 @@ export async function admitPublicRole(
       if (!record.phases.some((item) => item === phase)) {
         throw new CliUsageError("fixer phase must be plan or apply");
       }
-      let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
-      let prerequisitesSource: string | undefined;
-      if (parsed.prerequisitesPath !== undefined) {
-        const absolutePrereq = isAbsolute(parsed.prerequisitesPath)
-          ? parsed.prerequisitesPath
-          : resolve(parsed.prerequisitesPath);
-        try {
-          prerequisitesSource = await readFile(absolutePrereq, "utf8");
-        } catch (error) {
-          throw new CliUsageError(
-            `fixer prerequisites path is unreadable: ${parsed.prerequisitesPath}`,
-            { cause: error },
-          );
-        }
-        try {
-          prerequisites = parseFixerPrerequisites(prerequisitesSource);
-        } catch (error) {
-          if (error instanceof FixerPacketValidationError) {
-            throw new CliUsageError(error.message, { cause: error });
-          }
-          throw error;
-        }
-      }
+      // #1168: dispatch once as first message; --prerequisites path as-is.
       return admitStandardMaterialInvocation("fixer", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
-        placedFields: async (placed) => {
-          let prerequisitesPath: string | undefined;
-          if (prerequisitesSource !== undefined) {
-            prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
-            await writeFile(
-              prerequisitesPath,
-              `${JSON.stringify(prerequisites, null, 2)}\n`,
-              "utf8",
-            );
-          }
-          const packetPath = join(placed.runDirectory, "fix-packet.md");
-          await writeFile(packetPath, instruction, "utf8");
-          return {
-            phase,
-            packetPath,
-            prerequisites,
-            ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-          };
-        },
+        placedFields: async () => ({
+          phase,
+          ...(parsed.prerequisitesPath === undefined
+            ? {}
+            : { prerequisitesPath: parsed.prerequisitesPath }),
+        }),
       });
     }
     case "collect-target": {
@@ -1556,38 +1349,21 @@ export async function admitPublicRole(
       } else {
         repository = resolveGitHubRemoteRepository(projectRoot);
       }
-      let manifest = emptyCollectorManifest();
-      let manifestCanonicalJson: string | undefined;
-      if (parsed.requestManifestPath !== undefined) {
-        try {
-          manifest = await loadCollectorManifest(parsed.requestManifestPath);
-          manifestCanonicalJson = manifest.canonicalJson;
-        } catch (error) {
-          throw new CliUsageError(
-            errorText(error),
-            { cause: error },
-          );
-        }
-      }
-      const manifestDigest = manifest.digest;
+      // #1165: pass caller path as-is; package does not read, validate, or rewrite.
       const admittedCollector = await admitStandardMaterialInvocation("collector", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
-        placedFields: async (placed) => {
+        placedFields: async () => {
           // #1088: explicit --pr only. Unbound PR is located by the LLM via host CLI.
-          let requestManifestPath: string | undefined;
-          if (manifestCanonicalJson !== undefined) {
-            requestManifestPath = join(placed.runDirectory, "request-manifest.json");
-            await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
-          }
           return {
             ...(explicitPrNumber === undefined ? {} : { prNumber: explicitPrNumber }),
             repository: repository.canonical,
             repositoryDisplay: repository.display,
-            ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-            manifestDigest,
+            ...(parsed.requestManifestPath === undefined
+              ? {}
+              : { requestManifestPath: parsed.requestManifestPath }),
           };
         },
       });
@@ -1600,12 +1376,10 @@ export async function admitPublicRole(
         );
       }
       const issueNumber = parsed.issueNumber;
-      let frozenAttachments: readonly FrozenAttachment[] = [];
-      const admittedDoctor = await admitStandardMaterialInvocation("doctor", {
+      return admitStandardMaterialInvocation("doctor", {
         ...shared,
         instruction,
-        attachmentPaths: [],
-        freezeAttachments: false,
+        attachmentPaths,
         ...project,
         placedFields: async (placed) => {
           let caseRunsPath: string;
@@ -1646,16 +1420,13 @@ export async function admitPublicRole(
               { cause: error },
             );
           }
-          frozenAttachments = await freezeAttachments(placed.ledgerHome, attachmentPaths, placed.attachmentsDirectory);
           return {
             issueNumber,
             caseRunsPath,
             caseIdentity,
-            attachments: persistedAttachmentRefs(frozenAttachments),
           };
         },
       });
-      return { ...admittedDoctor, attachments: frozenAttachments };
     }
     case "source-locator": {
       const projectRoot = resolve(parsed.project ?? shared.cwd);
@@ -1685,7 +1456,7 @@ export async function admitPublicRole(
         instruction: "",
         attachmentPaths: [],
         ...project,
-        freezeAttachments: false,
+        recordAttachments: false,
         admittedFields: {
           sourceRunPath: sourceRun.runDirectory,
           sourceRun,
@@ -1702,7 +1473,7 @@ export async function admitPublicRole(
         instruction,
         attachmentPaths: [],
         ...project,
-        freezeAttachments: false,
+        recordAttachments: false,
         admittedFields: { baseRevision },
       });
     }
@@ -1750,13 +1521,12 @@ export async function admitPublicRole(
         placedFields: async (placed) => {
           const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
           const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
+          // #1168: git facts stay; do not encode dispatch text as task/authority copies.
           const mergerInput = validateMergerInput({
             attemptId: placed.runId,
             targetObjectId: derived.targetObjectId,
             sourceObjectId: derived.sourceObjectId,
             materials: {
-              task: mergerMaterialFromUtf8(instruction),
-              authority: mergerMaterialFromUtf8(instruction),
               targetIntent: mergerMaterialFromUtf8(
                 `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
               ),
@@ -1851,8 +1621,8 @@ async function placeRoleAdmission(options: {
   readonly runId?: string;
   readonly assertedTicketNumber?: number;
   readonly attachmentPaths: readonly string[];
-  /** Gleaner-left admits no caller attachments. */
-  readonly freezeAttachments?: boolean;
+  /** When false, leave attachments empty (deferred countersign / seats without attach). */
+  readonly recordAttachments?: boolean;
   /** Countersign reserves coordinates, then materializes after identity lookup. */
   readonly materialize?: boolean;
 }): Promise<PlacedRoleAdmission> {
@@ -1875,9 +1645,9 @@ async function placeRoleAdmission(options: {
     home: options.home,
     ...(options.materialize === undefined ? {} : { materialize: options.materialize }),
   });
-  const attachments = options.freezeAttachments === false
+  const attachments = options.recordAttachments === false
     ? []
-    : await freezeAttachments(ledgerHome, options.attachmentPaths, attachmentsDirectory);
+    : admitCallerAttachments(options.attachmentPaths);
   return {
     runId,
     bookKey,
@@ -1895,20 +1665,8 @@ async function placeRoleAdmission(options: {
 
 function persistedAttachmentRefs(
   attachments: readonly FrozenAttachment[],
-): ReadonlyArray<{
-  provenancePath: string;
-  frozenPath: string;
-  byteLength: number;
-  sha256: string;
-  mediaKind: FrozenAttachment["mediaKind"];
-}> {
-  return attachments.map((attachment) => ({
-    provenancePath: attachment.provenancePath,
-    frozenPath: attachment.frozenPath,
-    byteLength: attachment.byteLength,
-    sha256: attachment.sha256,
-    mediaKind: attachment.mediaKind,
-  }));
+): ReadonlyArray<{ path: string }> {
+  return attachments.map((attachment) => ({ path: attachment.path }));
 }
 
 async function persistPlacedAdmission(
@@ -1950,8 +1708,7 @@ async function persistPlacedAdmission(
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
  * Seats whose extra facts depend on the placed run pass placedFields
- * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json;
- * doctor resolves the case, then freezes attachments; merger writes merger-input.json).
+ * (merger writes merger-input.json with git facts; coder/fixer dispatch is first-message only, #1168).
  */
 async function admitStandardMaterialInvocation<
   R extends PackagedRole,
@@ -1959,10 +1716,10 @@ async function admitStandardMaterialInvocation<
 >(
   role: R,
   options: AdmitInspectorInvocationOptions & {
-    /** Reserve coordinates; skip freeze, placement disk, and admitted section write. */
+    /** Reserve coordinates; skip placement disk and admitted section write. */
     readonly deferPersistence?: boolean;
-    /** Skip attachment freeze. Gleaner-left admits no caller attachments. */
-    readonly freezeAttachments?: boolean;
+    /** Leave attachments empty (gleaner-left / notary / deferred countersign). */
+    readonly recordAttachments?: boolean;
     /** Seat facts already validated by admitPublicRole. */
     readonly admittedFields?: Extra;
     /** Seat facts that exist only after placement. Written before the admitted page. */
@@ -1970,14 +1727,14 @@ async function admitStandardMaterialInvocation<
   },
 ): Promise<AdmittedRoleInvocationBase & { readonly role: R } & Extra> {
   const defer = options.deferPersistence === true;
-  const skipFreeze = defer || options.freezeAttachments === false;
+  const skipAttachments = defer || options.recordAttachments === false;
   const placed = await placeRoleAdmission({
     role,
     home: options.home,
     principalAuthority: options.principalAuthority,
     cwd: options.cwd,
     attachmentPaths: options.attachmentPaths,
-    ...(skipFreeze ? { freezeAttachments: false } : {}),
+    ...(skipAttachments ? { recordAttachments: false } : {}),
     ...(defer ? { materialize: false } : {}),
     ...(options.project === undefined ? {} : { project: options.project }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -1990,7 +1747,8 @@ async function admitStandardMaterialInvocation<
       ? {}
       : { correlationId: options.correlationId };
   const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
+  // Admitted emptiness is literal absence, not whitespace-only (#1165 J3).
+  const instructionEmpty = instruction.length === 0;
   const placedExtra = options.placedFields === undefined ? undefined : await options.placedFields(placed);
   const admittedFields = {
     ...(options.admittedFields ?? ({} as Extra)),
@@ -2032,8 +1790,10 @@ export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
 type InstructionTransportSource = {
   readonly role?: string;
   readonly instruction: string;
-  readonly instructionEmpty: boolean;
-  readonly attachments: readonly { readonly frozenPath: string }[];
+  readonly instructionEmpty?: boolean;
+  readonly attachments: readonly { readonly path: string }[];
+  readonly requestManifestPath?: string;
+  readonly prerequisitesPath?: string;
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
@@ -2052,28 +1812,30 @@ function admittedTransportPromptKind(
 /**
  * One initial prompt transport. The registry `transportPrompt` leaf selects
  * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
- * caller instruction plus frozen attachment paths.
+ * caller instruction plus caller attachment paths as-is (#1165).
+ * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(
   admitted: InstructionTransportSource,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
     if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
       throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
     }
-    return appendEngineSessionMaterial([admitted.sourceRunPath], engineMaterial).join("\n");
+    return admitted.sourceRunPath;
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
       throw new Error("baseline transport prompt is missing the bound revision");
     }
     const lines = [admitted.baseRevision];
-    if (!admitted.instructionEmpty) {
+    // Use raw admitted.instruction — do not gate on instructionEmpty metadata
+    // (old pages may set that flag wrong while still holding whitespace text).
+    if (admitted.instruction.length > 0) {
       lines.push("", admitted.instruction);
     }
-    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+    return lines.join("\n");
   }
   if (kind === "skill-args") {
     if (
@@ -2088,20 +1850,31 @@ export function buildInstructionTransportPrompt(
       lens: admitted.lens,
       authorityRefs: admitted.authorityRefs,
     })];
-    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+    if (admitted.instruction.length > 0) {
       lines.push("", admitted.instruction);
     }
-    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+    return lines.join("\n");
   }
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
+  // #1165 J3 / #1168: assemble from the admitted instruction bytes themselves.
+  const lines: string[] = [admitted.instruction];
+  // #1164/#1165/#1168: each caller path keeps its file-flag provenance.
+  const flaggedPaths: string[] = [
+    ...admitted.attachments.map((attachment) => `--attach ${attachment.path}`),
+    ...(admitted.requestManifestPath === undefined
+      ? []
+      : [`--request-manifest ${admitted.requestManifestPath}`]),
+    ...(admitted.prerequisitesPath === undefined
+      ? []
+      : [`--prerequisites ${admitted.prerequisitesPath}`]),
+  ];
+  if (flaggedPaths.length > 0) {
     lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
+    lines.push("已受理附件：");
+    for (const entry of flaggedPaths) {
+      lines.push(`- ${entry}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 export type AdmitCountersignInvocationOptions = {
@@ -2126,7 +1899,7 @@ export type AdmitCountersignInvocationOptions = {
 export async function materializeCountersignInvocation(
   admitted: AdmittedCountersignInvocation,
   options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "model"> & {
-    preparedAttachments: readonly PreparedAttachment[];
+    attachmentPaths: readonly string[];
     /** Typed ticket known before the deferred run is written. */
     ticketNumber?: number;
   },
@@ -2136,8 +1909,7 @@ export async function materializeCountersignInvocation(
     home: options.home,
     principalAuthority: options.principalAuthority,
     cwd: admitted.projectRoot,
-    attachmentPaths: [],
-    freezeAttachments: false,
+    attachmentPaths: options.attachmentPaths,
     runId: admitted.runId,
     ...(options.ticketNumber === undefined ? {} : { assertedTicketNumber: options.ticketNumber }),
   });
@@ -2148,11 +1920,7 @@ export async function materializeCountersignInvocation(
   if (ticketFields.ticketNumber !== undefined) {
     (admitted as { ticketNumber?: number }).ticketNumber = ticketFields.ticketNumber;
   }
-  const attachments = await freezePreparedAttachmentsIntoRun(
-    options.preparedAttachments,
-    admitted.runDirectory,
-  );
-  (admitted as { attachments: readonly FrozenAttachment[] }).attachments = attachments;
+  (admitted as { attachments: readonly FrozenAttachment[] }).attachments = placement.attachments;
   writeAdmittedRequestPersistence(admitted.runDirectory, admitted, {
     sessionDirectory: placement.sessionDirectory,
     sessionFile: placement.sessionFile,
@@ -2179,10 +1947,13 @@ export async function loadAdmittedJudgeRequest(
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;
     if (!Array.isArray(record.attachments)) return undefined;
+    const attachments = record.attachments
+      .map((item) => normalizeAdmittedAttachment(item))
+      .filter((item): item is FrozenAttachment => item !== undefined);
     return {
       instruction: record.instruction,
       instructionEmpty: record.instructionEmpty,
-      attachments: record.attachments as FrozenAttachment[],
+      attachments,
     };
   } catch {
     return undefined;
@@ -2196,7 +1967,7 @@ export type AdmitFixerInvocationOptions = {
   phase: FixerPhase;
   instruction: string;
   attachmentPaths: readonly string[];
-  /** Optional caller path to prerequisite JSON array; malformed grammar rejects here. */
+  /** Optional caller --prerequisites path as-is (#1168). */
   prerequisitesPath?: string;
   project?: string;
   createRunId?: () => string;
@@ -2372,7 +2143,7 @@ export function buildReviewerSkillArgProjection(
   ].join(" ");
 }
 
-function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {
+function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["targetIntent"] {
   const bytes = Buffer.from(text, "utf8");
   return Object.freeze({
     bytesBase64: bytes.toString("base64"),
@@ -2579,7 +2350,7 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
-          requireOptionPath(taken.def.canonical, taken.value),
+          requireProvidedOptionValue(taken.def.canonical, taken.value),
         );
         return;
       }

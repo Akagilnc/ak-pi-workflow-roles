@@ -30,7 +30,12 @@ export function withPassingReviewHost(parent: RoleTurnHost): RoleTurnHost {
       const role = args[args.indexOf("--ak-role") + 1] as keyof typeof officers;
       const toolName = officers[role];
       if (toolName === undefined) throw new Error(`unexpected reviewer role: ${role}`);
-      return scriptedTerminatingToolSession({ role, toolName, details: { status: "converged" } })(args, options);
+      // #1171: ordinary passing-review tracers are not the missing-ticket soft reask case.
+      return scriptedTerminatingToolSession({
+        role,
+        toolName,
+        details: { status: "converged", ticketNumber: 1171 },
+      })(args, options);
     },
   });
   return {

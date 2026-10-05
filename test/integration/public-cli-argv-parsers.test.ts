@@ -3,7 +3,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #672 按文件真实资源归 integration（含 Git 子进程与临时目录），非快档。
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -61,7 +61,7 @@ test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () =>
   assert.throws(() => parsePublicSeatArgv("coder", ["--project", "", "task"]), isUsage);
 });
 
-test("admitCoderInvocation rejects blank task and freezes phase + attachments", async () => {
+test("admitCoderInvocation rejects blank task and freezes plan phase", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -82,12 +82,10 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
 
-    const source = join(home, "notes.txt");
-    await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitPublicRole("coder", {
       phase: "plan",
       instruction: "Plan the first vertical slice.",
-      attachmentPaths: [source],
+      attachmentPaths: [],
     }, {
       principalAuthority: piDurablePrincipalAuthority,
       home,
@@ -97,18 +95,26 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.instruction, "Plan the first vertical slice.");
-    assert.equal(await readFile(admitted.taskPath, "utf8"), "Plan the first vertical slice.");
-    assert.equal(admitted.attachments.length, 1);
-    assert.equal(await readFile(admitted.attachments[0]!.frozenPath, "utf8"), "attachment-v1");
+    assert.equal("taskPath" in admitted, false);
+    await assert.rejects(
+      () => access(join(admitted.runDirectory, "task.md")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-coder-plan-001@coder"),
     );
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as { phase: string; role: string };
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+      phase: string;
+      role: string;
+      instruction: string;
+    };
     assert.equal(persisted.role, "coder");
     assert.equal(persisted.phase, "plan");
+    // freeze.py instr.txt reads admitted.instruction (#1168).
+    assert.equal(persisted.instruction, "Plan the first vertical slice.");
   });
 });
 
@@ -205,8 +211,18 @@ test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus pr
       project: "/tmp/p",
     },
   );
+  // #1168: empty prerequisites path is opaque (same as --attach), only missing arg is usage.
+  assert.deepEqual(
+    parsePublicSeatArgv("fixer", ["--prerequisites", "", "Repair."]),
+    {
+      phase: "apply",
+      instruction: "Repair.",
+      attachmentPaths: [],
+      prerequisitesPath: "",
+    },
+  );
   assert.throws(() => parsePublicSeatArgv("fixer", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites", ""]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("fixer", ["--project", "", "task"]), isUsage);
 });
 

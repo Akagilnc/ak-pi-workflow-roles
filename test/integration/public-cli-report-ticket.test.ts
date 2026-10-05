@@ -32,7 +32,7 @@ import { formatRunLeaf, sessionDirectoryOf, sessionFileOf } from "../../src/role
 import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -737,25 +737,31 @@ test("#1171 F2-R1 reask host failure keeps original volume but delivers nonzero 
   });
 });
 
-test("#1171 F2 reask report-only keeps original accepted and reaches audit", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f2keep";
-    const roles: string[] = [];
-    const parent = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = args[args.indexOf("--ak-role") + 1]!;
-        roles.push(role);
-        if (role === "fixer") {
-          const turn = roles.filter((r) => r === "fixer").length;
-          if (turn === 1) {
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: { ...FIXER_DONE },
-            })(args, options);
-          }
+async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
+  readonly home: string;
+  readonly project: string;
+  readonly bookKey: string;
+  readonly runId: string;
+  readonly reask: "report-only" | "silence";
+}): Promise<void> {
+  const { home, project, bookKey, runId, reask } = input;
+  const roles: string[] = [];
+  const parent = roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: async (args, options) => {
+      const role = args[args.indexOf("--ak-role") + 1]!;
+      roles.push(role);
+      if (role === "fixer") {
+        const turn = roles.filter((r) => r === "fixer").length;
+        if (turn === 1) {
+          return scriptedTerminatingToolSession({
+            role: "fixer",
+            toolName: FIXER_OUTPUT_TOOL_NAME,
+            details: { ...FIXER_DONE },
+          })(args, options);
+        }
+        if (reask === "report-only") {
           // Soft reask: report ticket only — no substitute sealed submission.
           const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
           await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
@@ -776,31 +782,74 @@ test("#1171 F2 reask report-only keeps original accepted and reaches audit", asy
             abort() {},
           };
           await reportTicketFromHostContext(context, TICKET);
-          return { code: 0, stderr: "", timedOut: false };
         }
-        return scriptedTerminatingToolSession({
-          role: role as "inspector",
-          toolName: "ak_inspector_output",
-          details: { status: "converged", findings: [], reason: "ok" },
-        })(args, options);
-      },
-    });
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair without ticket on first seal."],
-      seatEnv(home, project, runId, "pi", parent),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(roles.filter((r) => r === "fixer").length, 2);
-    assert.ok(roles.includes("inspector"), "original sealed submission must still enter audit");
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+        // silence: exit cleanly with neither report nor sealed substitute.
+        return { code: 0, stderr: "", timedOut: false };
+      }
+      return scriptedTerminatingToolSession({
+        role: role as "inspector",
+        toolName: "ak_inspector_output",
+        details: { status: "converged", findings: [], reason: "ok" },
+      })(args, options);
+    },
+  });
+  const result = await runPublicInstructionSeat(
+    ["apply", "Repair without ticket on first seal."],
+    seatEnv(home, project, runId, "pi", parent),
+    captureIo().io,
+    "fixer",
+    (args) => parsePublicSeatArgv("fixer", args),
+  );
+  assert.equal(roles.filter((r) => r === "fixer").length, 2, `${reask}: must soft-reask once`);
+  assert.ok(roles.includes("inspector"), `${reask}: original sealed submission must still enter audit`);
+  assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${reask}: keep original accepted`);
+  const live = result.admitted?.runDirectory;
+  assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
+  if (reask === "report-only") {
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "done"),
-      true,
-      "original sealed payload must remain the presented volume",
-    );
+  }
+  assert.equal(
+    objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "done"),
+    true,
+    `${reask}: original sealed payload must remain the presented volume`,
+  );
+  // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
+  const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
+    .map((row) => row.outcome?.kind);
+  assert.deepEqual(
+    attemptKinds,
+    ["accepted", "no_receipt"],
+    `${reask}: attempt history must keep original accepted and append reask no_receipt`,
+  );
+  const durable = readCurrentSection(live!, "terminal") as {
+    face?: string;
+    body?: { outcome?: { kind?: string } };
+  } | undefined;
+  assert.equal(durable?.face, "report", `${reask}: durable face stays report`);
+  assert.equal(durable?.body?.outcome?.kind, "accepted", `${reask}: durable outcome stays accepted`);
+}
+
+test("#1171 F2 reask report-only keeps original accepted and reaches audit", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000000f2keep",
+      reask: "report-only",
+    });
+  });
+});
+
+test("#1171 F2 reask silence keeps original accepted and records no_receipt history", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000000f2siln",
+      reask: "silence",
+    });
   });
 });
 

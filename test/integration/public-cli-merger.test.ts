@@ -142,7 +142,13 @@ test("admitMergerInvocation derives envelope into internal input without public 
     ]);
     assert.deepEqual(admitted.derived.resolutionScope, [fixture.conflictPath]);
 
-    const raw = JSON.parse(await readFile(admitted.mergerInputPath, "utf8"));
+    const raw = JSON.parse(await readFile(admitted.mergerInputPath, "utf8")) as {
+      materials?: Record<string, unknown>;
+    };
+    // #1168: dispatch copies gone; only git-fact intents remain as materials keys.
+    assert.deepEqual(Object.keys(raw.materials ?? {}).sort(), ["sourceIntent", "targetIntent"]);
+    assert.equal("task" in (raw.materials ?? {}), false);
+    assert.equal("authority" in (raw.materials ?? {}), false);
     const input = validateMergerInput(raw);
     assert.equal(input.targetObjectId, fixture.target);
     assert.equal(input.sourceObjectId, fixture.source);
@@ -150,7 +156,11 @@ test("admitMergerInvocation derives envelope into internal input without public 
     assert.deepEqual([...input.resolutionScope], [fixture.conflictPath]);
     assert.equal(input.attemptId, "run-merger-admit-001");
     // Durable admitted identity retains adapter-derived envelope facts (not caller packet fields).
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as { derived: { targetObjectId: string } };
+    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+      instruction: string;
+      derived: { targetObjectId: string };
+    };
+    assert.equal(persisted.instruction, "Reconcile the conflicted merge.");
     assert.equal(persisted.derived.targetObjectId, fixture.target);
     assert.equal(Array.isArray(input.authorizedChecks), true);
 
@@ -393,6 +403,8 @@ test("ak-role resume continues merger with exact session", async () => {
           attemptId: runId,
           diagnosis: "Authority choice required after resume.",
           report: "Resumed merge still needs a decision.",
+          // #1171: resume tracer is ordinary continuation, not missing-ticket reask.
+          ticketNumber: 1171,
         };
         await writeFile(
           join(sessionDirectory, "session.jsonl"),

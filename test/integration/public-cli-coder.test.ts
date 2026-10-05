@@ -28,6 +28,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   createWorkerSubmissionGate,
@@ -50,7 +51,7 @@ test("public coder accepts an unreadable status before routing it back for re-su
     seedGitProject(project);
 
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
-    const corrected = { status: "planned", report: { unvalidated: true } };
+    const corrected = { status: "planned", report: { unvalidated: true }, ticketNumber: 1171 };
     const structuredHost = roleTurnHostFromStructuredOutputRounds({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -79,7 +80,10 @@ test("public coder accepts an unreadable status before routing it back for re-su
 
     assert.equal(result.exitCode, 0);
     // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
-    assertRunDirectoryHoldsOnlyDossier(runDirectory);
+    // #1171: corrected seal carries ticketNumber → live path may leave the first-seen unbound dir.
+    const liveDirectory =
+      (await findRunDirectoryById(home, "run-cli-coder-status-reask")) ?? runDirectory;
+    assertRunDirectoryHoldsOnlyDossier(liveDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
@@ -210,12 +214,13 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
       packageRoot, principalAuthority: piDurablePrincipalAuthority,
       piRunner: scriptedTerminatingToolSession({
         role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "converged" },
+        details: { status: "converged", ticketNumber: 1171},
       }),
     });
     const receipt = {
       status: "completed" as const,
       report: "Alternate host sealed through production ledger producer.",
+      ticketNumber: 1171,
     };
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Finish without a Pi session leaf."],
@@ -273,7 +278,7 @@ test("Coder submission remains recorded when the later Inspector transport fails
     await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
       packageRoot, home, io: captureIo().io,
     });
-    const receipt = { status: "completed" as const, report: "submitted before review" };
+    const receipt = { status: "completed" as const, report: "submitted before review", ticketNumber: 1171};
     const runId = "run-coder-inspector-transport-failure";
     const { io } = captureIo();
     const result = await runAkRole(
@@ -477,7 +482,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
             if (args[args.indexOf("--ak-role") + 1] === "inspector") {
               return scriptedTerminatingToolSession({
                 role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-                details: { status: "converged" },
+                details: { status: "converged", ticketNumber: 1171},
               })(args, options);
             }
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
@@ -543,11 +548,12 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     );
     const sessionDirectory = join(runDirectory, "session");
     const admitted = readCurrentSection(runDirectory, "admitted") as {
-      phase: string; role: string; taskPath: string; ticketNumber?: number;
+      phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
+    assert.equal("taskPath" in admitted, false);
 
     const gateDirectory = join(sessionDirectory, "worker-submission-gate");
     const stalePointer = join(gateDirectory, "current-session.json");
@@ -572,7 +578,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
-        assert.equal(args[args.indexOf("--ak-coder-task") + 1], join(runDirectory, "task.md"));
+        assert.equal(args.includes("--ak-coder-task"), false);
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);

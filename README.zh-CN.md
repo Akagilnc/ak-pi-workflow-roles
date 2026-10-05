@@ -23,6 +23,8 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
+`--attach`、修内司 `--prerequisites` 与通进司 `--request-manifest` 把调用方路径原样写进衙门第一句话。包不读、不复制、不校验；调用方当前目录与 `--project` 不同时请给绝对路径（[ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)）。
+
 退出码与 Terminal 语义见 [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
 
 手动续跑用法与旗位见 `ak-role help resume`；model / host 解析见 `ak-role help`，engine 配置见 `ak-role help config`。审核续跑归属见 [ADR 0003](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0003-per-role-submission-tools.md)。换宿主与先前记录递送见 [ADR 0086](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0086-host-dossier-is-native-file-copy-sitian-append-only.md)。续跑失败处置见 [公开执行接缝](src/public-cli/post-admission.ts)。headless 回合启动材料目录在宿主终局之后（或 setup 失败已抛出之旁）清理失败时，经 package-fault 保留真因后继续，不另造宿主失败、也不改写已形成的终局（见 [headless 宿主](src/headless-host/role-turn-host.ts)）。

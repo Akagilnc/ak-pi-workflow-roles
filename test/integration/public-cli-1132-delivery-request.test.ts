@@ -27,7 +27,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBoundHostSessionId } from "../../src/prepared-role-turn.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
-import { loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
+import { findRunDirectoryById, loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
@@ -153,7 +153,8 @@ async function runExternalJudge(
           runId: runIdFromRunDirectory(request.runDirectory)!,
           runDirectory: request.runDirectory,
           role: "judge",
-          details: { status: "converged" },
+          // #1171: 催交/得卷 tracers are not the missing-ticket soft reask case.
+          details: { status: "converged", ticketNumber: 1171 },
           toolCallId: `judge-call-${call}`,
           home: request.home,
         });
@@ -185,10 +186,13 @@ async function runExternalJudge(
         .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
     },
   );
+  // #1171: a sealed ticketNumber may relocate the leg off the first-seen path.
+  const liveDirectory =
+    (await findRunDirectoryById(home, options.runId)) ?? runDirectorySeen;
   return {
     turns,
     seatsDispatched,
-    runDirectory: runDirectorySeen,
+    runDirectory: liveDirectory,
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
   };
@@ -243,12 +247,12 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.deepEqual(
       sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
-      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ type: "sealed", accepted: { status: "converged", ticketNumber: 1171 }, toolCallId: "judge-call-2", role: "judge" }],
     );
     assert.deepEqual(
       (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
         .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
-      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ kind: "accepted", accepted: { status: "converged", ticketNumber: 1171 }, toolCallId: "judge-call-2", role: "judge" }],
     );
   });
 });
@@ -283,7 +287,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
             runId: runIdFromRunDirectory(request.runDirectory)!,
             runDirectory: request.runDirectory,
             role: "countersign",
-            details: { status: "converged" },
+            details: { status: "converged", ticketNumber: 1171 },
             toolCallId: "countersign-call-2",
             home: request.home,
           });
@@ -322,7 +326,9 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
       `催交得卷必须继续；seats=${JSON.stringify(seatsDispatched)}`,
     );
     assert.ok(runDirectorySeen !== undefined);
-    const runState = readCurrentSection(runDirectorySeen, "runState") as { state: string };
+    const liveDirectory =
+      (await findRunDirectoryById(home, "1132-countersign-seal")) ?? runDirectorySeen!;
+    const runState = readCurrentSection(liveDirectory, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
@@ -408,7 +414,9 @@ async function driveFixerCloseRound(
       async runRound() {
         rounds.count += 1;
         if (rounds.count === 1) {
-          await prepared.ingestStructuredOutput({ status: "unfinished" });
+          // #1171: unfinished still seals accepted; carry ticket so soft reask
+          // does not steal a second round from the delivery-count tracer.
+          await prepared.ingestStructuredOutput({ status: "unfinished", ticketNumber: 1171 });
         }
         return { status: "delivered" };
       },
@@ -565,7 +573,7 @@ test("#1132: an unreadable gate-child conclusion reasks only up to the configure
   const sideways = {
     role: "notary" as const,
     toolName: NOTARY_OUTPUT_TOOL_NAME,
-    details: { status: "sideways" },
+    details: { status: "sideways", ticketNumber: 1171},
     seal: true,
   };
   const openNotary = (home: string, project: string, sourceRunPath: string, runId: string) =>
@@ -660,7 +668,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
               runId: runIdFromRunDirectory(request.runDirectory)!,
               runDirectory: request.runDirectory,
               role: "judge",
-              details: { status: "continue" },
+              details: { status: "continue", ticketNumber: 1171},
               toolCallId: "judge-continue",
               home: request.home,
             });
@@ -673,7 +681,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
             runId: runIdFromRunDirectory(request.runDirectory)!,
             runDirectory: request.runDirectory,
             role: "notary",
-            details: { status: "continue" },
+            details: { status: "continue", ticketNumber: 1171},
             toolCallId: "notary-continue",
             home: request.home,
           });
@@ -731,7 +739,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
                 runId: runIdFromRunDirectory(request.runDirectory)!,
                 runDirectory: request.runDirectory,
                 role: "judge",
-                details: { status: "continue" },
+                details: { status: "continue", ticketNumber: 1171},
                 toolCallId: "judge-continue",
                 home: request.home,
               });
@@ -745,7 +753,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
               runId: runIdFromRunDirectory(request.runDirectory)!,
               runDirectory: request.runDirectory,
               role: "notary",
-              details: { status: "sideways", revision: notaryCalls },
+              details: { status: "sideways", revision: notaryCalls, ticketNumber: 1171},
               toolCallId: `notary-sideways-${notaryCalls}`,
               home: request.home,
               ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
@@ -902,6 +910,11 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
         return { code: 0, stderr: "", timedOut: false };
       },
     };
+    // #1171: this case injects control-plane damage to exercise resume binding
+    // fail-closed — not missing-ticket discovery. Bind the ticket up front so
+    // post-host board re-read is not owed; damage still fails closed on the
+    // resume adapter load (original failure path below). Do not wash unbound
+    // board-read damage into "no ticket".
     const result = await runAkRole(
       ["judge", "--host", "grok-build", "--project", project, "go"],
       {
@@ -910,6 +923,7 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "1132-delivery-assembly-failure",
+        boundTicketNumber: 1171,
         io: captureIo().io,
         roleTurnHost: host,
         hostAdapters: packagedExternalHostNames()

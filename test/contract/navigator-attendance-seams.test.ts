@@ -139,36 +139,37 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
 
     const workRoot = resolve(root, ".ak/work/issues/91");
     await mkdir(workRoot, { recursive: true });
-    const packetPath = resolve(workRoot, "fix-packet.md");
-    const packetBytes = "# Fix packet\n\nCourt-binding authority for issue 91.\n";
-    await writeFile(packetPath, packetBytes, "utf8");
+    // #1168: fixer no longer has a packet input flag; use merger's remaining input path.
+    const inputPath = resolve(workRoot, "merger-input.json");
+    const inputBytes = "# Merger materials\n\nCourt-binding authority for issue 91.\n";
+    await writeFile(inputPath, inputBytes, "utf8");
 
     const sessionCtx = (cwd: string, sessionDir: string) => ({
       cwd,
       sessionManager: { getSessionDir: () => sessionDir } }) as never;
-    const fixerPi = { getFlag: (name: string) => name === "ak-fix-packet" ? packetPath : undefined };
+    const mergerPi = { getFlag: (name: string) => name === "ak-merger-input" ? inputPath : undefined };
     const noInputPi = { getFlag: () => undefined };
-    const fixerCtx = sessionCtx(workRoot, resolve(workRoot, "runs/fixer/session"));
+    const mergerCtx = sessionCtx(workRoot, resolve(workRoot, "runs/merger/session"));
     const judgeCtx = sessionCtx(workRoot, resolve(workRoot, "runs/judge/session"));
 
-    // 1) packet input, no work-root files → authority = input bytes
-    const inputOnly = await loadNavigatorWorkContext(fixerPi, { context: fixerCtx, role: "fixer" });
-    assert.equal(inputOnly.authority, packetBytes);
-    assert.equal(inputOnly.subject, packetBytes);
+    // 1) role input, no work-root files → authority = input bytes
+    const inputOnly = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
+    assert.equal(inputOnly.authority, inputBytes);
+    assert.equal(inputOnly.subject, inputBytes);
     assert.equal(inputOnly.subjectProvenance, "role_input");
 
     // 2) both present → input wins
     await writeFile(resolve(workRoot, "authority.md"), "work-root file authority\n", "utf8");
-    const both = await loadNavigatorWorkContext(fixerPi, { context: fixerCtx, role: "fixer" });
-    assert.equal(both.authority, packetBytes);
+    const both = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
+    assert.equal(both.authority, inputBytes);
     assert.notEqual(both.authority, "work-root file authority\n");
 
     // 3) valid input + unreadable/directory authority.md still succeeds verbatim (true short-circuit)
     await rm(resolve(workRoot, "authority.md"));
     await mkdir(resolve(workRoot, "authority.md"), { recursive: true });
-    const withDirectoryAuthority = await loadNavigatorWorkContext(fixerPi, { context: fixerCtx, role: "fixer" });
-    assert.equal(withDirectoryAuthority.authority, packetBytes);
-    assert.equal(withDirectoryAuthority.subject, packetBytes);
+    const withDirectoryAuthority = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
+    assert.equal(withDirectoryAuthority.authority, inputBytes);
+    assert.equal(withDirectoryAuthority.subject, inputBytes);
     assert.equal(withDirectoryAuthority.subjectProvenance, "role_input");
 
     // 4) no input (judge with only -p) + files present → files still used (主刀 flow)
@@ -566,11 +567,11 @@ test("public admitted section projects typed subject/authority; missing/malforme
         error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
     );
 
-    // Structurally invalid admitted request (wrong role) → context unavailable.
+    // Structurally invalid admitted request (role without public-instruction subject) → context unavailable.
     const wrongRoleRun = join(root, "wrong-role-run");
     await mkdir(wrongRoleRun, { recursive: true });
     seedCurrentSection(wrongRoleRun, "admitted", {
-      role: "fixer",
+      role: "merger",
       instruction: prose,
       instructionEmpty: false,
       attachments: [] });
@@ -914,6 +915,9 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
       },
       registerTool() {},
       getAllTools() {
+        return [];
+      },
+      getActiveTools() {
         return [];
       },
       setActiveTools() {},

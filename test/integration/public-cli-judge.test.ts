@@ -4,7 +4,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 /**
- * #106 public Judge path — admission, freeze, terminal settlement.
+ * #106 public Judge path — admission and terminal settlement.
  * Seams: public argument validation / admission / Terminal /
  * runAkRole(judge) with injectable Pi runner.
  */
@@ -13,14 +13,11 @@ import { existsSync } from "node:fs";
 import {
   access,
   mkdir,
-  readFile,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
@@ -29,7 +26,6 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitPublicRole,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -129,61 +125,16 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   assert.equal(parsed.project, "/tmp/p");
 });
 
-test("parseJudgeArgv rejects blank --project/--attach path values", () => {
+test("parseJudgeArgv rejects blank --project and missing --attach argument", () => {
   // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
+  // Opaque empty/space --attach positives live on the public runAkRole seam
+  // (public-cli-attach-path-passthrough); do not duplicate them here.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
   assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
-});
-
-test("admitJudgeInvocation freezes regular-file attachments against later mutation", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const source = join(home, "evidence.txt");
-    await writeFile(source, "admitted-bytes-v1", "utf8");
-
-    const admitted = await admitPublicRole("judge", {
-      instruction: "review the attachment",
-      attachmentPaths: [source],
-    }, {
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      createRunId: () => "run-freeze-001",
-    });
-
-    assert.equal(admitted.attachments.length, 1);
-    const frozen = admitted.attachments[0]!;
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
-    const frozenSha = frozen.sha256;
-
-    await writeFile(source, "mutated-after-admission", "utf8");
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
-    assert.equal(frozen.sha256, frozenSha);
-
-    await unlink(source);
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
-
-    // #78 placement: run under book runs/, session reserved, no index content bytes.
-    const bookKey = resolveBookKeyFromGit(project);
-    assert.equal(admitted.bookKey, bookKey);
-    assert.equal(
-      admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-freeze-001@judge"),
-    );
-    assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
-    await access(join(admitted.runDirectory, "current.json"));
-    // #855: two-face waiting.jsonl deleted — admit must not create it.
-    await assert.rejects(
-      () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-  });
+  assert.throws(() => parsePublicSeatArgv("judge", ["--attach"]), isUsage);
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
@@ -227,19 +178,14 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
     await savePublicCliConfig(config, home);
     // ADR 0049 host correlation channel remains optional env; no lease mint.
-    const attachment = join(home, "note.txt");
-    const instruction = "Decide whether the attachment is sufficient.";
-    await writeFile(attachment, "freeze-me", "utf8");
+    const instruction = "Decide whether the case is sufficient.";
 
     const { io, stdout, stderr } = captureIo();
     let capturedArgs: string[] | undefined;
     let capturedEnv: NodeJS.ProcessEnv | undefined;
-    let capturedStdin: string | undefined;
 
     const result = await runAkRole([
         "judge", "--model", "test/caller-seat:high",
-        "--attach",
-        attachment,
         "--project",
         project,
         instruction,
@@ -259,12 +205,11 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           capturedArgs = [...args];
           capturedEnv = options.env;
-          capturedStdin = options.stdin;
           const sessionDirIdx = args.indexOf("--session-dir");
           assert.ok(sessionDirIdx >= 0);
           const sessionDir = args[sessionDirIdx + 1]!;
@@ -291,6 +236,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
                 details: {
                   status: "converged",
                   note: "ok",
+                  ticketNumber: 1171,
                   auditNoReceipt: {
                     status: "no-receipt",
                     terminalToolCalled: false,
@@ -307,7 +253,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: { disposition: "advice", prose: "review next → reviewer" } },
+              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged", ticketNumber: 1171}, navigator: { disposition: "advice", prose: "review next → reviewer" } },
             },
             {
               type: "custom_message",
@@ -342,6 +288,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
               details: {
                 status: "converged",
                 note: "ok",
+                ticketNumber: 1171,
                 auditNoReceipt: {
                   status: "no-receipt",
                   terminalToolCalled: false,
@@ -377,15 +324,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       true,
     );
 
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      "run-cli-judge-001@judge",
-    );
     assert.ok(result.terminal);
     const terminal = result.terminal;
     assert.equal(stdout.length, 1);
@@ -420,15 +358,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       submittedParams(dirname(reportRef.path)).map((params) => (params as { status?: string }).status),
       ["converged"],
     );
-
-    // Source mutation after admission does not affect frozen snapshot.
-    await writeFile(attachment, "changed", "utf8");
-    const frozenPath = join(runDir, "attachments", "00-note.txt");
-    const delivered = readUserDialogueStdin(capturedStdin ?? "");
-    assert.ok(delivered.includes(instruction));
-    assert.ok(delivered.includes(frozenPath));
-    assert.equal(delivered.includes(attachment), false);
-    assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
   });
 });
 
@@ -458,13 +387,13 @@ test("runAkRole judge empty request does not invent semantic task content on the
         if (role === "notary" || role === "auditor") {
           return scriptedTerminatingToolSession({
             role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-            details: { status: "converged" },
+            details: { status: "converged", ticketNumber: 1171},
           })(args, options);
         }
         prompt = readUserDialogueStdin(String(options.stdin ?? ""));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
-        const details = { status: "converged" };
+        const details = { status: "converged", ticketNumber: 1171};
         await writeFile(
           join(sessionDir, "session.jsonl"),
           `${JSON.stringify({

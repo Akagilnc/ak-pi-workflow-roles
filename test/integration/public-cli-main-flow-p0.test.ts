@@ -76,15 +76,17 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     const ruling = "owner ruling: accept the plan";
     const escalateDetails = {
       status: "escalate" as const,
+      ticketNumber: 1171,
       decisionGate: {
         question: "Ship or hold?",
         options: ["ship", "hold"],
       },
     };
-    const unreadableDetails = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const unreadableDetails = { status: { value: "unknown" }, report: { unvalidated: true }, ticketNumber: 1171 };
     const convergedDetails = {
       status: "converged" as const,
       note: "owner ruling applied on same session",
+      ticketNumber: 1171,
     };
 
     const firstIo = captureIo();
@@ -126,7 +128,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
         if (role !== "notary" && role !== "auditor") throw new Error("unexpected reviewer role");
         return scriptedTerminatingToolSession({
           role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-          details: { status: "converged" },
+          details: { status: "converged", ticketNumber: 1171},
         })(args, options);
       },
     });

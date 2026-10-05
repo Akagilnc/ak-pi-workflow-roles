@@ -34,7 +34,10 @@ import {
   resolveEngineModel,
   resolveEngineName,
 } from "./engine-detour.ts";
-import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
+import {
+  engineSessionMaterialFromOptions,
+  engineSessionReadingMaterial,
+} from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import {
   createReceiptDeliveryPolicy,
@@ -115,7 +118,15 @@ import {
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import {
+  PACKAGED_ROLE_REGISTRY,
+  packagedRoleActivationFlags,
+  packagedRoleInputFlag,
+  packagedRoleMetadata,
+  packagedRoleOutputTool,
+  packagedRolePhaseFlag,
+  type PackagedRole,
+} from "./packaged-role-registry.ts";
 import {
   createJudgeRoleRuntime,
 } from "./judge-role.ts";
@@ -336,8 +347,6 @@ export {
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
-export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
-export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export {
   AUDITOR_SOUL_ROLES,
   AK_ROLE_AUDITOR_SUBJECT_ENV,
@@ -450,8 +459,6 @@ export type RoleRuntimeDependencies = {
   loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   /** One soul loader. The role argument selects the registry record. */
   loadRoleSoul(role: PackagedRole): Promise<string>;
-  loadFixPacket?(path: string): Promise<string>;
-  loadCoderTask?(path: string): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -1199,12 +1206,9 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    // #879: engine coordinates ride readingMaterial only when station-child
-    // officer dialogue replaced the ordinary transport prompt (no double fold).
+    // #1167: engine / outsourcing coordinates ride startup readingMaterial for
+    // every seat (handbook bodies). Transport prompt stays dispatch-only.
     roleHost.on("before_agent_start", () => {
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
-      if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
       if (engine === undefined || dependencies.packageRoot === undefined) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
@@ -1213,15 +1217,9 @@ export function createRoleRuntimeExtension(
         ...(engineModel === undefined ? {} : { engineModel }),
         packageRoot: dependencies.packageRoot,
       });
-      if (material === undefined) return;
-      return {
-        readingMaterial: {
-          kind: "engine-session-material" as const,
-          name: material.name,
-          ...(material.model === undefined ? {} : { model: material.model }),
-          ...(material.materialPath === undefined ? {} : { materialPath: material.materialPath }),
-        },
-      };
+      const reading = engineSessionReadingMaterial(material);
+      if (reading === undefined) return;
+      return { readingMaterial: reading };
     });
     roleHost.on("before_agent_start", () => {
       const path = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
@@ -1458,12 +1456,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("fixer"),
-        async loadPacket(path) {
-          if (dependencies.loadFixPacket === undefined) {
-            throw new Error("Fixer packet loader is not configured");
-          }
-          return dependencies.loadFixPacket(path);
-        },
       },
       hostActions,
       { unfinishedReasonBounceLimit: deliveryLimit },
@@ -1472,12 +1464,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("coder"),
-        async loadTask(path) {
-          if (dependencies.loadCoderTask === undefined) {
-            throw new Error("Coder task loader is not configured");
-          }
-          return dependencies.loadCoderTask(path);
-        },
       },
       hostActions,
       { unfinishedReasonBounceLimit: deliveryLimit },

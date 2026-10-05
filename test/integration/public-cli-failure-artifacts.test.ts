@@ -253,7 +253,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout } = captureIo();
-    const acceptedDetails = { status: "converged", note: "ok" };
+    const acceptedDetails = { status: "converged", note: "ok", ticketNumber: 1171};
     await configurePassingReviewSeats(home);
     let sealedSessionFile = "";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then log.jsonl blocked"],
@@ -311,7 +311,10 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     );
     assert.equal(stdout.length, 1);
     // One sealed attempt: one accepted attempt-history row, and the accepted terminal stands.
-    const sealedRunDirectory = join(sealedSessionFile, "..", "..");
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const sealedRunDirectory =
+      (await findRunDirectoryById(home, "run-stderr-log-eisdir-accepted-001"))
+      ?? join(sealedSessionFile, "..", "..");
     const outcomes = readHistoryRows(sealedRunDirectory)
       .filter((row) => row.kind === "attempt-history")
       .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
@@ -319,7 +322,8 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     const sealedTerminal = readRunTerminal(sealedRunDirectory);
     assert.equal(sealedTerminal.status, "present");
     if (sealedTerminal.status === "present") assert.equal(sealedTerminal.face, "report");
-    const noteText = (await readFile(sealedSessionFile, "utf8"))
+    const liveSessionFile = join(sealedRunDirectory, "session", "session.jsonl");
+    const noteText = (await readFile(liveSessionFile, "utf8"))
       .trim()
       .split("\n")
       .filter(Boolean)

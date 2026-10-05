@@ -7,7 +7,6 @@ import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
@@ -51,9 +50,10 @@ test("public report publication failure stays beside the accepted terminal", asy
       repository: "acme/widgets",
       prNumber: 1168,
       prState: "OPEN",
-      manifestDigest: emptyCollectorManifest().digest,
+      manifestDigest: "role-submitted-optional",
       groups: [],
       unfinishedReasons: [],
+      ticketNumber: 1171,
     };
     try {
       const inner = roleTurnHostFromLegacyPiRunner({
@@ -83,6 +83,10 @@ test("public report publication failure stays beside the accepted terminal", asy
           cwd: project,
           credentials: { "openai-codex": true, xai: false },
           createRunId: () => runId,
+          // #1171: publication-lock injects after seal; bind up front so board
+          // discovery / soft-reask are not owed and relocate does not race the
+          // locked current.json plant. Intended seam stays terminal render EACCES.
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: {
             executeTurn: async (request) => {
@@ -98,15 +102,18 @@ test("public report publication failure stays beside the accepted terminal", asy
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.runId, runId);
-      const runDirectory = join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "unbound",
-        "runs",
-        `${runId}@collector`,
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const runDirectory =
+        (await findRunDirectoryById(home, runId))
+        ?? join(
+          home,
+          ".ak-roles",
+          "books",
+          resolveBookKeyFromGit(project),
+          "unbound",
+          "runs",
+          `${runId}@collector`,
+        );
       const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
         .trim()
         .split("\n")
@@ -641,7 +648,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
@@ -654,7 +661,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { status: "converged" },
+                details: { status: "converged", ticketNumber: 1171},
               },
             })}\n`,
             "utf8",
@@ -666,7 +673,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
             args: [...args],
             sealedAcceptance: {
               role: "judge" as const,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             },
           };
         },
@@ -685,7 +692,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     }
     assert.deepEqual(
       (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)),
-      [`{"status":"converged"}`],
+      [`{"status":"converged","ticketNumber":1171}`],
       "the sealed receipt stays recorded on the run-scoped carrier",
     );
   });

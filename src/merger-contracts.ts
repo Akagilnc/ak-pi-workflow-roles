@@ -11,7 +11,8 @@ export const mergerInputSchema = Type.Object({
   attemptId: Type.String({ minLength: 1, description: "对账 attempt 身份（transport）" }),
   targetObjectId: Type.String({ description: "材料：target parent OID；可空" }),
   sourceObjectId: Type.String({ description: "材料：source parent OID；可空" }),
-  materials: Type.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }),
+  // #1168: task/authority dispatch copies removed; git-fact intents remain.
+  materials: Type.Object({ targetIntent: materialSchema, sourceIntent: materialSchema }),
   expectedConflictPaths: Type.Array(Type.String(), { description: "材料：当前未合并路径；可空" }),
   resolutionScope: Type.Array(Type.String(), { description: "材料：解析范围提示；可空" }),
   authorizedChecks: Type.Array(checkSchema),
@@ -62,7 +63,10 @@ function readMaterial(value: unknown, label: string): MergerMaterial {
 export function validateMergerInput(value: unknown): MergerInput {
   if (!isRecord(value) || blank(value.attemptId)) fail("Merger input requires a non-empty attemptId for accounting");
   if (!isRecord(value.materials)) fail("Merger materials are missing");
-  const materials = { task: readMaterial(value.materials.task, "task"), authority: readMaterial(value.materials.authority, "authority"), targetIntent: readMaterial(value.materials.targetIntent, "targetIntent"), sourceIntent: readMaterial(value.materials.sourceIntent, "sourceIntent") };
+  const materials = {
+    targetIntent: readMaterial(value.materials.targetIntent, "targetIntent"),
+    sourceIntent: readMaterial(value.materials.sourceIntent, "sourceIntent"),
+  };
   const authorizedChecks = Array.isArray(value.authorizedChecks) ? value.authorizedChecks.filter((check): check is Record<string, unknown> => isRecord(check)).map(c => ({ name: asString(c.name), argv: asStringArray(c.argv).filter(a => a.trim().length > 0) })).filter(c => c.name.trim().length > 0 && c.argv.length > 0) : [];
   return deepFreeze(structuredClone({ attemptId: (value.attemptId as string).trim(), targetObjectId: asString(value.targetObjectId), sourceObjectId: asString(value.sourceObjectId), materials, expectedConflictPaths: asStringArray(value.expectedConflictPaths), resolutionScope: asStringArray(value.resolutionScope), authorizedChecks }) as MergerInput);
 }

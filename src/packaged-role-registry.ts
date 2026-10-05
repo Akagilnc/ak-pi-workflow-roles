@@ -115,10 +115,10 @@ export const PUBLIC_ROLE_RECORDS = [
       reportPhase: true,
     },
     boardPlacement: "marshal",
+    /** #1168: dispatch is first message; navigator reads admitted instruction. */
+    navigatorSubject: "public-instruction",
     activationFlags: [
-      { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
-      { field: "prerequisitesPath", flag: "ak-fixer-prerequisites" },
     ],
     activationStage: "load-and-install",
     sessionMaterials: [
@@ -145,8 +145,9 @@ export const PUBLIC_ROLE_RECORDS = [
     artifactFace: {
       reportPhase: true,
     },
+    /** #1168: dispatch is first message; navigator reads admitted instruction. */
+    navigatorSubject: "public-instruction",
     activationFlags: [
-      { field: "taskPath", flag: "ak-coder-task", binds: "input" },
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
     ],
     activationStage: "load-and-install",

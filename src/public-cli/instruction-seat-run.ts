@@ -6,6 +6,7 @@
 import { dirname, resolve } from "node:path";
 import { MISSING_TICKET_REASK_MATERIAL } from "../report-ticket-tool.ts";
 import { isUnboundRunDirectory } from "../role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import { readPackageMaterial } from "../session-opening-materials.ts";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
@@ -29,10 +30,12 @@ import {
   latestQueuePayload,
   latestQueueStatus,
 } from "../submission-gate.ts";
-import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
+import {
+  isSafePositiveTicketNumber,
+  readBoardTicketNumber,
+} from "../run-ticket-number.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
-import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
@@ -51,7 +54,6 @@ import {
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
-  withPreparedAttachments,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
@@ -294,6 +296,9 @@ async function reaskMissingTicketOnce(
   }
   const payloads = terminal.roleOutcome.payloads ?? [];
   if (payloads.length === 0) return undefined;
+  // Sealed-with-ticket skips via admitted.ticketNumber after bindSealedTicketNumber
+  // (post-admission). Do not re-parse payload.ticketNumber here — that would
+  // duplicate the existing ticket seam (#1171 notary: no rule copy).
   const instruction = (await readPackageMaterial(MISSING_TICKET_REASK_MATERIAL)).trim();
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, summons: { instruction } },
@@ -310,12 +315,42 @@ function reaskSealedSubstituteSubmission(reask: SeatRunResult): boolean {
 }
 
 /**
+ * #1171 F2-R2: kept original terminal may still name pre-relocate artifact
+ * paths after a report-only reask moved the leg. Project onto live admitted
+ * via the same rewrite seam post-admission uses after relocate.
+ */
+function projectKeptOriginalArtifactsOntoLiveAdmitted(
+  original: SeatRunResult,
+  kept: SeatRunResult,
+): void {
+  const oldRunDirectory = original.admitted?.runDirectory;
+  const newRunDirectory = kept.admitted?.runDirectory;
+  if (
+    oldRunDirectory === undefined
+    || newRunDirectory === undefined
+    || oldRunDirectory === newRunDirectory
+    || kept.terminal === undefined
+  ) {
+    return;
+  }
+  for (const artifact of kept.terminal.artifacts) {
+    artifact.path = rewriteRunDirectoryPathValue(
+      artifact.path,
+      oldRunDirectory,
+      newRunDirectory,
+    ) as string;
+  }
+}
+
+/**
  * #1171 F2: missing-ticket reask must not replace the original sealed submission
  * unless the reask itself sealed a new one. Keep original terminal; take live
  * placement from the reask when it relocated.
  * #1171 F2-R1: silence / report-only stays on the original chain; a real host
  * failure (nonzero exit) must be delivered honestly — do not wash it into the
  * original accepted result. Sealed original volume remains on disk either way.
+ * #1171 F2-R2: after keep, project report artifact paths onto the live
+ * admitted directory so public result, durable face, and artifact refs agree.
  */
 function mergeMissingTicketReask(
   original: SeatRunResult,
@@ -325,7 +360,10 @@ function mergeMissingTicketReask(
   if (reaskSealedSubstituteSubmission(ticketReask)) return ticketReask;
   if (ticketReask.exitCode !== 0) return ticketReask;
   const admitted = ticketReask.admitted ?? original.admitted;
-  return admitted === undefined ? { ...original } : { ...original, admitted };
+  if (admitted === undefined) return { ...original };
+  const kept = { ...original, admitted };
+  projectKeptOriginalArtifactsOntoLiveAdmitted(original, kept);
+  return kept;
 }
 
 /**
@@ -417,13 +455,7 @@ function initialPrompt(
   if (reask !== undefined && "reaskPrompt" in record && record.reaskPrompt === true) {
     return reask;
   }
-  return buildInstructionTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions({
-      ...pickEngineAxis(env),
-      packageRoot: env.packageRoot,
-    }),
-  );
+  return buildInstructionTransportPrompt(admitted);
 }
 
 function isBoardTicketSeat(
@@ -554,10 +586,7 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt({
-              packageRoot: activeEnv.packageRoot,
-              ...pickEngineAxis(activeEnv),
-            }),
+            prompt: buildAutoResumeContinuationPrompt(),
           }),
         ),
         adapters,
@@ -733,7 +762,7 @@ async function runCountersignBody(
       summons: {
         sourceRunPath: gateParentRunPath,
         instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.trim() === "",
+        instructionEmpty: resumeInstruction.length === 0,
       },
     });
     if (resumed != null) return resumed;
@@ -749,12 +778,12 @@ async function runCountersignBody(
   }
 
   try {
-    return await withPreparedAttachments(parsed.attachmentPaths ?? [], async (preparedAttachments) => {
+    {
       const materializeAdmission = async (ticketNumber?: number): Promise<void> => {
         await materializeCountersignInvocation(admitted, {
           home: env.home,
           principalAuthority: env.principalAuthority,
-          preparedAttachments,
+          attachmentPaths: parsed.attachmentPaths ?? [],
           ...(env.model === undefined ? {} : { model: env.model }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         });
@@ -771,13 +800,7 @@ async function runCountersignBody(
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
         prompt: (env.reviewReask ?? env.gateReviewInstruction)
-          ?? buildInstructionTransportPrompt(
-            admitted,
-            engineSessionMaterialFromOptions({
-              ...pickEngineAxis(env),
-              packageRoot: env.packageRoot,
-            }),
-          ),
+          ?? buildInstructionTransportPrompt(admitted),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
@@ -797,7 +820,7 @@ async function runCountersignBody(
       });
       await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
       return result;
-    });
+    }
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -870,7 +893,7 @@ export async function runPublicInstructionSeat(
     const summons: SameTicketSummonsMaterials = {
       ...sameParentInstruction(env, {
         instruction: parsed.instruction ?? "",
-        instructionEmpty: (parsed.instruction ?? "").trim() === "",
+        instructionEmpty: (parsed.instruction ?? "").length === 0,
       }),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
@@ -896,7 +919,7 @@ export async function runPublicInstructionSeat(
         sourceRunPath: parentRunPath,
         ...sameParentInstruction(env, {
           instruction: parsed.instruction ?? "",
-          instructionEmpty: (parsed.instruction ?? "").trim() === "",
+          instructionEmpty: (parsed.instruction ?? "").length === 0,
         }),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };
@@ -986,7 +1009,7 @@ export async function runPublicInstructionSeat(
           instruction: parsed.instruction ?? "",
           projectRoot: admitted.projectRoot,
           failureLabel: "secretariat unbound summons",
-          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.path),
           correlationId: admitted.runId,
         }, env, io);
       } catch (error) {
