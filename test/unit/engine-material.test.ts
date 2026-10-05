@@ -2,8 +2,9 @@
  * #356 T1 / #376 — engine material is optional notes, not a closed name catalog.
  * Entry-reachable delivery is covered by public-cli-engine-axis tracer.
  * This file keeps pure helper seams: path-safety syntax + session-line attach.
- * FS discovery (listEngineMaterialNames / engineSessionMaterialFromOptions) lives
- * under test/integration/engine-material.test.ts (#631 unit-tier honesty).
+ * FS discovery (listEngineMaterialNames) lives under
+ * test/integration/engine-material.test.ts (#631 unit-tier honesty).
+ * Optional model / handbook delivery is covered at the public ak-role seam.
  * Tests never treat material body CLI text as a contract.
  */
 import assert from "node:assert/strict";

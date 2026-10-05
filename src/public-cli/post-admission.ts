@@ -25,7 +25,6 @@ import {
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
-import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 import {
@@ -2014,13 +2013,7 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
-        prompt: buildAutoResumeContinuationPrompt({
-          packageRoot: input.env.packageRoot,
-          ...pickEngineAxis({
-            engine: input.effectiveEngine ?? input.env.engine,
-            engineModel: input.env.engineModel,
-          }),
-        }),
+        prompt: buildAutoResumeContinuationPrompt(),
       },
     }),
     adapters: input.adapters,

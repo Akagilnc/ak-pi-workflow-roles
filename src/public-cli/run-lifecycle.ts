@@ -29,11 +29,6 @@ import {
   rewriteAdmittedRoleRunPage,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
-import {
-  appendEngineSessionMaterial,
-  engineSessionMaterialFromOptions,
-  pickEngineAxis,
-} from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
   packagedResumeSourcePath,
@@ -138,21 +133,12 @@ export type SameTicketSummonsMaterials = {
 
 /**
  * Auto-resume continuation only (#959 / ADR 0080).
- * Always non-empty: Chinese neutral envelope plus optional engine pointers.
+ * Always non-empty Chinese neutral envelope. Engine / outsourcing material
+ * rides startup readingMaterial (#1167), never this continuation.
  * Never call this from manual `ak-role resume`.
  */
-export function buildAutoResumeContinuationPrompt(options: {
-  packageRoot: string;
-  engine?: string;
-  engineModel?: string;
-}): string {
-  return appendEngineSessionMaterial(
-    [RESUME_TRANSPORT_ENVELOPE],
-    engineSessionMaterialFromOptions({
-      packageRoot: options.packageRoot,
-      ...pickEngineAxis(options),
-    }),
-  ).join("\n");
+export function buildAutoResumeContinuationPrompt(): string {
+  return RESUME_TRANSPORT_ENVELOPE;
 }
 
 const WRITER_LOCK_FILE = "writer.lock";
