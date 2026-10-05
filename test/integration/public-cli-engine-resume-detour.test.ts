@@ -4,6 +4,9 @@
  * projects engine onto current.json invocation section. Engine present→absent resume clears
  * invocation.engine (authoritative seat axis).
  *
+ * #1167: auto-resume continuation stays the package envelope (no outsourcing append);
+ * startup materials still carry the engine segment on every turn of that loop.
+ *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
  * (`createMinimalHost`) so the proof exercises the production composition root.
  *
@@ -11,13 +14,13 @@
  * - Explicit: all seven resumable seats (+ countersign / gleaner-left).
  * - Unset: engine-bearing run → unset-engine → resume clears invocation.engine.
  *
- * Contract surface is typed only: `request.engine` and `invocation.engine`.
- * Zero free-text / continuation-prompt oracle (anchoring constitution).
+ * Contract surface: `request.engine`, `invocation.engine`, envelope-only continuation,
+ * and engine-session-material presence via the same prepareRoleEnvelope path production uses.
  */
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -33,6 +36,10 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import {
@@ -203,6 +210,27 @@ async function readInvocationEngineModel(runDirectory: string): Promise<unknown>
   return invocation.engineModel;
 }
 
+/** Observe production startup materials for one turn (dispose immediately). */
+async function engineMaterialNames(request: RoleTurnRequest): Promise<readonly string[]> {
+  const prepared = await prepareRoleEnvelope({
+    request: { ...request, host: request.host ?? "codex" },
+    dependencies: createRoleRuntimeDependencies(packageRoot),
+    socketPath: `/tmp/ak-engine-resume-${randomUUID()}.sock`,
+    sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+  });
+  try {
+    return prepared.systemPrompt.materials
+      .filter((material): material is Record<string, unknown> =>
+        typeof material === "object"
+        && material !== null
+        && (material as { kind?: unknown }).kind === "engine-session-material",
+      )
+      .map((material) => String(material.name));
+  } finally {
+    await prepared.dispose?.();
+  }
+}
+
 test("engine stays effective on the initial typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-init-" }, async ({ home }) => {
     const project = join(home, "work");
@@ -247,6 +275,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       if (seat === "merger") await seedMergeProject(project);
       const captured: Array<string | undefined> = [];
       const autoResumePrompts: string[] = [];
+      const materialNamesPerTurn: string[][] = [];
       let first = true;
       const { io } = captureIo();
       await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
@@ -259,6 +288,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
         principalAuthority: piDurablePrincipalAuthority,
         roleTurnHost: createMinimalHost(async (request) => {
           captured.push(request.engine);
+          materialNamesPerTurn.push([...await engineMaterialNames(request)]);
           if (first) {
             first = false;
             // Resumability gates (loop + resume load) require the principal session
@@ -267,7 +297,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
             // Unclassified nonzero host exit: the auto-resume loop retries once.
             return { code: 1, stderr: "quota", timedOut: false };
           }
-          // #959 怎么验#3: real-entry auto-resume continuation.prompt must be non-empty.
+          // #959 / #1167: real-entry auto-resume stays the non-empty transport envelope.
           autoResumePrompts.push(request.continuation.prompt);
           // Second (auto-resume) dispatch: lawful accepted terminal.
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
@@ -294,6 +324,15 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       assert.ok(
         autoResumePrompts.every((prompt) => prompt.trim() !== ""),
         `${seat}: auto-resume continuation.prompt must stay non-empty`,
+      );
+      assert.ok(
+        autoResumePrompts.every((prompt) => prompt === RESUME_TRANSPORT_ENVELOPE),
+        `${seat}: auto-resume continuation must stay envelope-only (no outsourcing append)`,
+      );
+      assert.ok(
+        materialNamesPerTurn.length >= 2
+        && materialNamesPerTurn.every((names) => names.length === 1 && names[0] === ENGINE),
+        `${seat}: every auto-resume turn keeps engine startup material`,
       );
     }
   });
