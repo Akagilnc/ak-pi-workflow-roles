@@ -1357,9 +1357,20 @@ export async function dispatchPostAdmissionTurn<
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
+      // #1171: one placement refresh before settlement, same try as executeTurn.
+      // Failure shares the catch below (refresh-then-settle + #855 cancel wrap).
+      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+        admitted,
+        env.principalAuthority,
+        lease,
+      );
+      if (refreshed !== undefined) {
+        turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
+      }
     } catch (error) {
       // #1171: one placement refresh before settlement — failure is a real cause,
       // never catch-and-continue onto a vanished unbound leaf.
+      // Host throw and post-success refresh throw share this catch (#1171 F9).
       const thrown = await settleHostThrowAfterLivePlacementRefresh({
         admitted,
         hostError: error,
@@ -1382,39 +1393,6 @@ export async function dispatchPostAdmissionTurn<
           env.signal,
         ),
       );
-    }
-
-    // #1171: one placement refresh before settlement. Failure settles through the
-    // existing authority — never catch-and-continue onto a vanished unbound leaf.
-    try {
-      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
-        admitted,
-        env.principalAuthority,
-        lease,
-      );
-      if (refreshed !== undefined) {
-        turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
-      }
-    } catch (error) {
-      return await finishAfterTurn({
-        ...(await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-          courtScope.notePackageFault,
-          courtScope.courtAttemptId,
-        )),
-        turnDispatched: true as const,
-        ...deferredPersist,
-      });
     }
 
     // #1132: settle this turn through the ONE post-turn settlement authority,
@@ -1465,10 +1443,26 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
+        // Same single refresh-before-settle rule as the first turn (#1171):
+        // stay inside this try so cancel wrap is not dropped (#1171 F9 / #855).
+        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+          admitted,
+          env.principalAuthority,
+          lease,
+        );
+        if (refreshed !== undefined) {
+          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
+          deliveryTurnRequest = {
+            ...deliveryTurnRequest,
+            runDirectory: admitted.runDirectory,
+            principal: admitted.principal,
+          };
+        }
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
         // its true cause, through the one settlement authority (ADR 0080).
         // Same refresh-before-settle seam as the first turn (#1171 F4-R1).
+        // Host throw and post-success refresh throw share this catch (#1171 F9).
         const thrown = await settleHostThrowAfterLivePlacementRefresh({
           admitted,
           hostError: error,
@@ -1495,42 +1489,6 @@ export async function dispatchPostAdmissionTurn<
             env.signal,
           ),
         );
-      }
-      // Same single refresh-before-settle rule as the first turn (#1171).
-      try {
-        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
-          admitted,
-          env.principalAuthority,
-          lease,
-        );
-        if (refreshed !== undefined) {
-          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
-          deliveryTurnRequest = {
-            ...deliveryTurnRequest,
-            runDirectory: admitted.runDirectory,
-            principal: admitted.principal,
-          };
-        }
-      } catch (error) {
-        return await finishAfterTurn({
-          ...(await settleAfterTurnStarted(
-            admitted,
-            withEngineDetourInvocationScope({
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: error,
-            }, request.invocationScopeId),
-            adapters,
-            env.principalAuthority,
-            io,
-            persistRunState,
-            courtScope.notePackageFault,
-            courtScope.courtAttemptId,
-          )),
-          turnDispatched: true as const,
-          ...deferredPersist,
-        });
       }
       const deliveryTurn = await settleCompletedHostTurn({
         admitted,
