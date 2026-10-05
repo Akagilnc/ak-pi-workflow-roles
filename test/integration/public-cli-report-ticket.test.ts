@@ -33,22 +33,23 @@ import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
-import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { installGhFixture } from "../helpers/hermes-fixture.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
-import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
-import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withPassingReviewHost } from "../helpers/passing-review-host.ts";
+import {
+  reportTicketSeatEnv as seatEnv,
+  ticketLeaf,
+  unboundLeaf,
+  withReportTicketSeatProject as withSeatProject,
+} from "../helpers/report-ticket-seat-project.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
-import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
-import { loadPublicCliConfig, savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 
 const TICKET = 1171;
@@ -64,73 +65,6 @@ const FIXER_DONE = {
     commitSha: "abc1234",
   }],
 } as const;
-
-async function withSeatProject(
-  run: (ctx: { home: string; project: string; bookKey: string }) => Promise<void>,
-): Promise<void> {
-  await withTempRoot("ak-report-ticket-", async (home) => {
-    const binDir = join(home, "bin");
-    const priorPath = process.env.PATH;
-    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-    await withPrimaryAwareCleanup(
-      async () => {
-        const project = join(home, "project");
-        await mkdir(project, { recursive: true });
-        seedGitProject(project);
-        addRoleRepoOrigin(project);
-        await installGhFixture(binDir, {
-          issues: { [TICKET]: { body: "issue body", comments: [] } },
-        });
-        await configurePassingReviewSeats(home);
-        let config = await loadPublicCliConfig(home);
-        const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
-        for (const role of ["fixer", "secretariat", "diarist", "countersign"] as const) {
-          config = setPersistentSeatConfig(config, role, seat);
-        }
-        await savePublicCliConfig(config, home);
-        await run({ home, project, bookKey: resolveBookKeyFromGit(project) });
-      },
-      async () => {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      },
-    );
-  });
-}
-
-function unboundLeaf(home: string, bookKey: string, runId: string, role: string): string {
-  return join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@${role}`);
-}
-
-function ticketLeaf(home: string, bookKey: string, ticket: number, runId: string, role: string): string {
-  return join(home, ".ak-roles", "books", bookKey, String(ticket), "runs", `${runId}@${role}`);
-}
-
-function seatEnv(
-  home: string,
-  project: string,
-  runId: string,
-  host: string,
-  roleTurnHost: NonNullable<Parameters<typeof runPublicInstructionSeat>[1]["roleTurnHost"]>,
-  extra?: {
-    readonly autoResumeLimit?: number;
-    readonly hostAdapters?: Parameters<typeof runPublicInstructionSeat>[1]["hostAdapters"];
-  },
-) {
-  return {
-    home,
-    agentDir: join(home, ".pi"),
-    packageRoot,
-    cwd: project,
-    principalAuthority: piDurablePrincipalAuthority,
-    sessionAppender: appendPiSessionCustomEntry,
-    roleTurnHost,
-    createRunId: () => runId,
-    host,
-    ...(extra?.autoResumeLimit === undefined ? {} : { autoResumeLimit: extra.autoResumeLimit }),
-    ...(extra?.hostAdapters === undefined ? {} : { hostAdapters: extra.hostAdapters }),
-  };
-}
 
 function nestAdaptersFor(
   host: NonNullable<Parameters<typeof runPublicInstructionSeat>[1]["roleTurnHost"]>,
@@ -462,6 +396,57 @@ for (const caseRow of [
     });
   });
 }
+
+test("#1171 delivery throw after mid-turn report does not revive unbound", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-delivthrow";
+    let turns = 0;
+    const host = withPassingReviewHost({
+      async executeTurn(request: RoleTurnRequest) {
+        turns += 1;
+        if (turns === 1) {
+          // First turn: host ends without a receipt so AK seam 催交一次.
+          return { timedOut: false, code: 0, stderr: "" };
+        }
+        const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-deliv-")), "mcp.sock");
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath,
+          listTerminatingToolOnMcp: false,
+          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        });
+        try {
+          process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+          await callMcpTool({
+            socketPath,
+            token: mcpTokenFromPrepared(prepared),
+            name: REPORT_TICKET_TOOL_NAME,
+            args: { ticketNumber: TICKET },
+          });
+          throw new Error("injected delivery host throw after report");
+        } finally {
+          delete process.env.AK_ROLE_RUN_DIR;
+          await prepared.dispose?.();
+        }
+      },
+    });
+    const result = await runPublicInstructionSeat(
+      ["apply", "Repair #1171; delivery throws after report."],
+      seatEnv(home, project, runId, "codex", host),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.ok(turns >= 2, `delivery turn must run after silent first turn; turns=${turns}`);
+    assert.notEqual(result.exitCode, 0, "delivery throw must keep true failure");
+    const unbound = unboundLeaf(home, bookKey, runId, "fixer");
+    const ticket = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
+    assert.equal(existsSync(unbound), false, "unbound must not revive after delivery throw settle");
+    assert.equal(existsSync(ticket), true);
+    assert.equal(result.admitted?.runDirectory, ticket);
+  });
+});
 
 test("#1171 submit without ticket soft-reasks once; second reply with ticket relocates", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {

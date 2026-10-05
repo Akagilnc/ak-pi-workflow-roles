@@ -12,29 +12,31 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
-import { loadPublicCliConfig, savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { REPORT_TICKET_TOOL_NAME } from "../../src/report-ticket-tool.ts";
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { resolveHostDossierLandingPath } from "../../src/host-session-record.ts";
-import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { installGhFixture } from "../helpers/hermes-fixture.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
-import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
-import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withPassingReviewHost } from "../helpers/passing-review-host.ts";
+import {
+  reportTicketSeatEnv as seatEnv,
+  ticketLeaf,
+  unboundLeaf,
+  withReportTicketSeatProject as withSeatProject,
+} from "../helpers/report-ticket-seat-project.ts";
 
 const TICKET = 1171;
 const SESSION_ID = "ak-1171-adapter-sid";
+const MCP_HELPER = join(packageRoot, "test/helpers/mcp-tool-call.ts");
 
 const claudeDescription: HeadlessHostDescription = Object.freeze({
   protocol: "claude-print",
@@ -50,109 +52,38 @@ const claudeDescription: HeadlessHostDescription = Object.freeze({
   resumeFlag: "--resume",
 });
 
-async function withSeatProject(
+async function withAdapterSeatProject(
   run: (ctx: { home: string; project: string; bookKey: string }) => Promise<void>,
 ): Promise<void> {
-  await withTempRoot("ak-1171-adapter-", async (home) => {
-    const binDir = join(home, "bin");
-    const priorPath = process.env.PATH;
-    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-    await withPrimaryAwareCleanup(
-      async () => {
-        const project = join(home, "project");
-        await mkdir(project, { recursive: true });
-        seedGitProject(project);
-        addRoleRepoOrigin(project);
-        await installGhFixture(binDir, {
-          issues: { [TICKET]: { body: "issue body", comments: [] } },
-        });
-        await configurePassingReviewSeats(home);
-        let config = await loadPublicCliConfig(home);
-        for (const role of ["fixer", "judge"] as const) {
-          config = setPersistentSeatConfig(config, role, {
-            provider: "test", model: "caller-seat", thinking: "high",
-          });
-        }
-        await savePublicCliConfig(config, home);
-        await run({ home, project, bookKey: resolveBookKeyFromGit(project) });
-      },
-      async () => {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      },
-    );
+  await withSeatProject(run, {
+    prefix: "ak-1171-adapter-",
+    seatRoles: ["fixer", "judge"],
   });
 }
 
-function seatEnv(
-  home: string,
-  project: string,
-  runId: string,
-  host: string,
-  roleTurnHost: NonNullable<Parameters<typeof runPublicInstructionSeat>[1]["roleTurnHost"]>,
-) {
-  return {
-    home,
-    agentDir: join(home, ".pi"),
-    packageRoot,
-    cwd: project,
-    principalAuthority: piDurablePrincipalAuthority,
-    sessionAppender: appendPiSessionCustomEntry,
-    roleTurnHost,
-    createRunId: () => runId,
-    host,
-  };
-}
-
-function unboundLeaf(home: string, bookKey: string, runId: string, role: string): string {
-  return join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@${role}`);
-}
-
-function ticketLeaf(home: string, bookKey: string, ticket: number, runId: string, role: string): string {
-  return join(home, ".ak-roles", "books", bookKey, String(ticket), "runs", `${runId}@${role}`);
-}
-
 test("#1171 headless true adapter via public entry: mid-turn report → exit-copy under ticket", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
+  await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-adapter01";
     const binDir = join(home, "bin");
     await mkdir(binDir, { recursive: true });
     const fakeBin = join(binDir, "fake-claude");
     await writeFile(
       fakeBin,
-      `#!/usr/bin/env node
+      `#!/usr/bin/env -S node --import tsx
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { connect } from "node:net";
 import { join } from "node:path";
+import { callMcpTool } from ${JSON.stringify(MCP_HELPER)};
 
 const mcpIdx = process.argv.indexOf("--mcp-config");
 if (mcpIdx < 0) throw new Error("missing --mcp-config");
 const cfg = JSON.parse(readFileSync(process.argv[mcpIdx + 1], "utf8"));
 const server = Object.values(cfg.mcpServers)[0];
-const socketPath = server.env.AK_ACP_MCP_SOCKET;
-const token = server.env.AK_ACP_MCP_TOKEN;
 
-await new Promise((resolve, reject) => {
-  const sock = connect(socketPath);
-  let buf = "";
-  sock.setEncoding("utf8");
-  sock.on("data", (chunk) => {
-    buf += chunk;
-    if (!buf.includes("\\n")) return;
-    sock.destroy();
-    const reply = JSON.parse(buf.split("\\n")[0]);
-    if (reply.error) reject(new Error(JSON.stringify(reply.error)));
-    else resolve();
-  });
-  sock.on("error", reject);
-  sock.on("connect", () => {
-    sock.write(JSON.stringify({
-      id: 1,
-      token,
-      method: "tools/call",
-      params: { name: "${REPORT_TICKET_TOOL_NAME}", arguments: { ticketNumber: ${TICKET} } },
-    }) + "\\n");
-  });
+await callMcpTool({
+  socketPath: server.env.AK_ACP_MCP_SOCKET,
+  token: server.env.AK_ACP_MCP_TOKEN,
+  name: ${JSON.stringify(REPORT_TICKET_TOOL_NAME)},
+  args: { ticketNumber: ${TICKET} },
 });
 
 const homeEnv = process.env.HOME;
@@ -211,7 +142,7 @@ process.stdout.write(JSON.stringify({
 });
 
 test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy under ticket", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
+  await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-adapter02";
     const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-acp-")), "mcp.sock");
     const grokNative = join(

@@ -202,6 +202,74 @@ function applyRefreshedPlacementToTurn(
   };
 }
 
+/**
+ * #1171: host throw after a started turn — one live placement refresh, then the
+ * one settlement authority (ADR 0080). Shared by first turn and 催交; never
+ * settle under a vanished unbound leaf.
+ */
+async function settleHostThrowAfterLivePlacementRefresh<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  admitted: A;
+  hostError: unknown;
+  request: RoleTurnRequest;
+  turnRequest: RoleTurnRequest;
+  lease: RunWriterLease | undefined;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  persistRunState: boolean;
+  notePackageFault?: (diagnostic: string) => void | Promise<void>;
+  courtAttemptId?: string;
+}): Promise<{
+  settled: { exitCode: number; admitted: A; terminal: T };
+  turnRequest: RoleTurnRequest;
+}> {
+  let refreshError: unknown;
+  let turnRequest = input.turnRequest;
+  try {
+    const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+      input.admitted,
+      input.env.principalAuthority,
+      input.lease,
+    );
+    if (refreshed !== undefined) {
+      turnRequest = applyRefreshedPlacementToTurn(
+        input.request,
+        turnRequest,
+        input.admitted,
+        refreshed,
+      );
+    }
+  } catch (err) {
+    refreshError = err;
+  }
+  const processCancelName = processCancelSignalName(input.env.signal);
+  const settled = await settleAfterTurnStarted(
+    input.admitted,
+    withEngineDetourInvocationScope({
+      timedOut: false,
+      code: null,
+      stderr: "",
+      // Prefer the refresh failure when the live path is gone; otherwise the
+      // host throw remains the cause (失败诚实：不在旧 unbound 上结算写回).
+      ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
+      thrown: refreshError ?? input.hostError,
+      ...(refreshError === undefined
+        ? {}
+        : { knownDetails: { hostThrow: describeCaughtError(input.hostError) } }),
+    }, input.request.invocationScopeId),
+    input.adapters,
+    input.env.principalAuthority,
+    input.io,
+    input.persistRunState,
+    input.notePackageFault,
+    input.courtAttemptId,
+  );
+  return { settled, turnRequest };
+}
+
 /** #855: process-cancel settlement never re-enters auto-resume. */
 function withProcessCancelSkipAutoResume<T extends object>(
   result: T,
@@ -1292,44 +1360,25 @@ export async function dispatchPostAdmissionTurn<
     } catch (error) {
       // #1171: one placement refresh before settlement — failure is a real cause,
       // never catch-and-continue onto a vanished unbound leaf.
-      let refreshError: unknown;
-      try {
-        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
-          admitted,
-          env.principalAuthority,
-          lease,
-        );
-        if (refreshed !== undefined) {
-          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
-        }
-      } catch (err) {
-        refreshError = err;
-      }
-      const processCancelName = processCancelSignalName(env.signal);
-      const settled = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-          timedOut: false,
-          code: null,
-          stderr: "",
-          // Prefer the refresh failure when the live path is gone; otherwise the
-          // host throw remains the cause (失败诚实：不在旧 unbound 上结算写回).
-          ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
-          thrown: refreshError ?? error,
-          ...(refreshError === undefined
-            ? {}
-            : { knownDetails: { hostThrow: describeCaughtError(error) } }),
-        }, request.invocationScopeId),
+      const thrown = await settleHostThrowAfterLivePlacementRefresh({
+        admitted,
+        hostError: error,
+        request,
+        turnRequest,
+        lease,
         adapters,
-        env.principalAuthority,
+        env,
         io,
         persistRunState,
-        courtScope.notePackageFault,
-        courtScope.courtAttemptId,
-      );
+        notePackageFault: courtScope.notePackageFault,
+        ...(courtScope.courtAttemptId === undefined
+          ? {}
+          : { courtAttemptId: courtScope.courtAttemptId }),
+      });
+      turnRequest = thrown.turnRequest;
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
-          { ...settled, turnDispatched: true as const, ...deferredPersist },
+          { ...thrown.settled, turnDispatched: true as const, ...deferredPersist },
           env.signal,
         ),
       );
@@ -1416,7 +1465,39 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
-        // Same single refresh-before-settle rule as the first turn (#1171).
+      } catch (error) {
+        // 催交 cannot substitute for host failure recovery: a real failure with
+        // its true cause, through the one settlement authority (ADR 0080).
+        // Same refresh-before-settle seam as the first turn (#1171 F4-R1).
+        const thrown = await settleHostThrowAfterLivePlacementRefresh({
+          admitted,
+          hostError: error,
+          request,
+          turnRequest,
+          lease,
+          adapters,
+          env,
+          io,
+          persistRunState,
+          notePackageFault: courtScope.notePackageFault,
+          ...(courtScope.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: courtScope.courtAttemptId }),
+        });
+        turnRequest = thrown.turnRequest;
+        return await finishAfterTurn(
+          withProcessCancelSkipAutoResume(
+            {
+              ...thrown.settled,
+              turnDispatched: true as const,
+              ...deferredPersist,
+            },
+            env.signal,
+          ),
+        );
+      }
+      // Same single refresh-before-settle rule as the first turn (#1171).
+      try {
         const refreshed = await refreshAdmittedPlacementAfterHostTurn(
           admitted,
           env.principalAuthority,
@@ -1431,33 +1512,25 @@ export async function dispatchPostAdmissionTurn<
           };
         }
       } catch (error) {
-        // 催交 cannot substitute for host failure recovery: a real failure with
-        // its true cause, through the one settlement authority (ADR 0080).
-        // The turn started, so the caller's loop resumes instead of replaying
-        // the initial payload. The issued count survives that re-entry.
-        const settled = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope(
-            { timedOut: false, code: null, stderr: "", thrown: error },
-            request.invocationScopeId,
-          ),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-          courtScope.notePackageFault,
-          courtScope.courtAttemptId,
-        );
-        return await finishAfterTurn(
-          withProcessCancelSkipAutoResume(
-            {
-              ...settled,
-              turnDispatched: true as const,
-              ...deferredPersist,
-            },
-            env.signal,
-          ),
-        );
+        return await finishAfterTurn({
+          ...(await settleAfterTurnStarted(
+            admitted,
+            withEngineDetourInvocationScope({
+              timedOut: false,
+              code: null,
+              stderr: "",
+              thrown: error,
+            }, request.invocationScopeId),
+            adapters,
+            env.principalAuthority,
+            io,
+            persistRunState,
+            courtScope.notePackageFault,
+            courtScope.courtAttemptId,
+          )),
+          turnDispatched: true as const,
+          ...deferredPersist,
+        });
       }
       const deliveryTurn = await settleCompletedHostTurn({
         admitted,
