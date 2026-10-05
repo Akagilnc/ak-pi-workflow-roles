@@ -851,11 +851,19 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   readonly project: string;
   readonly bookKey: string;
   readonly runId: string;
-  readonly reask: "report-only" | "silence";
-  /** #1171 F2-R4a: inspector continue must not spend a second missing-ticket reask. */
+  readonly reask: "report-only" | "silence" | "substitute" | "substitute-with-ticket";
+  /** #1171 F2-R4a / F2-R5 / F2-R6: inspector continue once after the first sealed chain. */
   readonly inspectorContinuesOnce?: boolean;
+  /**
+   * Ordinary turn after inspector continue.
+   * - reseal: F2-R4a — spent budget must block a second soft reask; reseal reaches audit
+   * - no-volume: F2-R5 / F2-R6 — honest no_receipt; no outer restore of a prior volume
+   */
+  readonly ordinaryContinue?: "reseal" | "no-volume";
 }): Promise<void> {
   const { home, project, bookKey, runId, reask } = input;
+  const ordinaryContinue = input.ordinaryContinue
+    ?? (input.inspectorContinuesOnce === true ? "no-volume" : undefined);
   const roles: string[] = [];
   let inspectorTurns = 0;
   const parent = roleTurnHostFromLegacyPiRunner({
@@ -870,7 +878,7 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
           return scriptedTerminatingToolSession({
             role: "fixer",
             toolName: FIXER_OUTPUT_TOOL_NAME,
-            details: { ...FIXER_DONE },
+            details: { ...FIXER_DONE, report: "original-volume" },
           })(args, options);
         }
         if (turn === 2) {
@@ -895,13 +903,25 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
               abort() {},
             };
             await reportTicketFromHostContext(context, TICKET);
+            return { code: 0, stderr: "", timedOut: false };
+          }
+          if (reask === "substitute" || reask === "substitute-with-ticket") {
+            return scriptedTerminatingToolSession({
+              role: "fixer",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              details: {
+                ...FIXER_DONE,
+                report: "substitute-volume",
+                ...(reask === "substitute-with-ticket" ? { ticketNumber: TICKET } : {}),
+              },
+              sessionWriteMode: "append",
+            })(args, options);
           }
           // silence: exit cleanly with neither report nor sealed substitute.
           return { code: 0, stderr: "", timedOut: false };
         }
         // Audit-continue ordinary turn: spent budget blocks a second soft reask.
-        // F2-R5 covers no-volume continue — silence again so durable no_receipt publishes.
-        if (input.inspectorContinuesOnce === true) {
+        if (ordinaryContinue === "no-volume") {
           return { code: 0, stderr: "", timedOut: false };
         }
         return scriptedTerminatingToolSession({
@@ -937,25 +957,73 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     (args) => parsePublicSeatArgv("fixer", args),
   );
   const fixerTurns = roles.filter((r) => r === "fixer").length;
-  if (input.inspectorContinuesOnce === true) {
+  if (input.inspectorContinuesOnce === true && ordinaryContinue === "reseal") {
+    // F2-R4a: silence soft reask, then reseal after continue — budget blocks second reask.
+    assert.equal(fixerTurns, 3, `${reask}: one soft reask then one reseal turn`);
+    assert.equal(inspectorTurns, 2, `${reask}: continue then converge on reseal`);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${reask}: reseal remains accepted`);
+    const live = result.admitted?.runDirectory;
+    assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
+    assert.equal(
+      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "after audit continue still unbound"),
+      true,
+      `${reask}: presented volume is the reseal, not a washed prior draft`,
+    );
+    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
+      .map((row) => row.outcome?.kind);
+    assert.deepEqual(
+      attemptKinds,
+      ["accepted", "no_receipt", "accepted"],
+      `${reask}: seal, soft reask, reseal — no second soft reask`,
+    );
+    return;
+  }
+  if (input.inspectorContinuesOnce === true && ordinaryContinue === "no-volume") {
     assert.equal(fixerTurns, 3, `${reask}: one soft reask then one audit-continue turn`);
     // Continue once; ordinary no-volume does not seal again, so no second inspector.
-    assert.equal(inspectorTurns, 1, `${reask}: inspector continue once`);
+    // After a sealed substitute, outer must not restore/re-audit the original volume (F2-R6).
+    assert.equal(inspectorTurns, 1, `${reask}: inspector continue once; no outer restore audit`);
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", `${reask}: ordinary continue no-volume publishes`);
     const live = result.admitted?.runDirectory;
     assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
-    // Silence path never reported a ticket — must remain unbound after the single spent reask.
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
-    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
-      .map((row) => row.outcome?.kind);
-    // Three dispatched fixer turns: seal, soft reask, ordinary continue.
+    if (reask === "substitute-with-ticket") {
+      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
+      assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
+    } else {
+      assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
+    }
+    const attemptRows = historyPayloads<{ outcome?: { kind?: string; payloads?: unknown[] } }>(
+      live!,
+      "attempt-history",
+    );
+    const attemptKinds = attemptRows.map((row) => row.outcome?.kind);
+    const expectedAttempts = reask === "substitute" || reask === "substitute-with-ticket"
+      ? ["accepted", "accepted", "no_receipt"]
+      : ["accepted", "no_receipt", "no_receipt"];
     assert.deepEqual(
       attemptKinds,
-      ["accepted", "no_receipt", "no_receipt"],
+      expectedAttempts,
       `${reask}: attempt history by real dispatch rounds`,
     );
+    if (reask === "substitute" || reask === "substitute-with-ticket") {
+      const sealedReports = attemptRows
+        .filter((row) => row.outcome?.kind === "accepted" || row.outcome?.kind === "audit_escalation")
+        .map((row) => {
+          const payload = row.outcome?.payloads?.at(-1);
+          return isRecord(payload) && typeof payload.report === "string" ? payload.report : undefined;
+        });
+      assert.deepEqual(
+        sealedReports,
+        ["original-volume", "substitute-volume"],
+        `${reask}: substitute sealed after original; chain must not wash ownership`,
+      );
+      // inspectorTurns===1 already proves original was not re-audited after ordinary no-volume.
+    }
     const durable = readCurrentSection(live!, "terminal") as {
       face?: string;
       body?: { outcome?: { kind?: string } };
@@ -973,7 +1041,7 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
   }
   assert.equal(
-    objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "done"),
+    objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "original-volume"),
     true,
     `${reask}: original sealed payload must remain the presented volume`,
   );
@@ -1017,7 +1085,7 @@ test("#1171 F2 reask silence keeps original accepted and records no_receipt hist
   });
 });
 
-test("#1171 F2-R4a/R5 silence then inspector continue spends reask once; ordinary no-volume persists", async () => {
+test("#1171 F2-R4a silence then inspector continue reseals once without second soft reask", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
       home,
@@ -1026,6 +1094,49 @@ test("#1171 F2-R4a/R5 silence then inspector continue spends reask once; ordinar
       runId: "01a011710-0000-7000-8000-0000f2r4a",
       reask: "silence",
       inspectorContinuesOnce: true,
+      ordinaryContinue: "reseal",
+    });
+  });
+});
+
+test("#1171 F2-R5 silence then inspector continue; ordinary no-volume persists", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r5",
+      reask: "silence",
+      inspectorContinuesOnce: true,
+      ordinaryContinue: "no-volume",
+    });
+  });
+});
+
+test("#1171 F2-R6 substitute then inspector continue; ordinary no-volume owns chain", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r6a",
+      reask: "substitute",
+      inspectorContinuesOnce: true,
+      ordinaryContinue: "no-volume",
+    });
+  });
+});
+
+test("#1171 F2-R6 substitute-with-ticket then continue; ordinary no-volume owns chain", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r6b",
+      reask: "substitute-with-ticket",
+      inspectorContinuesOnce: true,
+      ordinaryContinue: "no-volume",
     });
   });
 });

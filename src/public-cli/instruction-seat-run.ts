@@ -314,11 +314,37 @@ function envForCourtContinue(env: InstructionSeatRunEnv): InstructionSeatRunEnv 
   return { ...rest, unreadableReasksSpent: 0 };
 }
 
-/** True when a reask turn sealed a real substitute submission (not silence / report-only). */
-function reaskSealedSubstituteSubmission(reask: SeatRunResult): boolean {
-  const kind = reask.terminal?.roleOutcome.kind;
+/** True when a terminal still carries a sealed accepted / audit_escalation volume. */
+function terminalCarriesSealedSubmission(terminal: TerminalResult | undefined): boolean {
+  const kind = terminal?.roleOutcome.kind;
   if (kind !== "accepted" && kind !== "audit_escalation") return false;
-  return (reask.terminal?.roleOutcome.payloads ?? []).length > 0;
+  return (terminal?.roleOutcome.payloads ?? []).length > 0;
+}
+
+/**
+ * #1171 F2-R6: nested soft-reask may finish audit/continue and end no_receipt.
+ * Final kind alone cannot decide whether a substitute was sealed — look at the
+ * existing submission ledger for a later sealed row beyond the original volume.
+ * Silence / report-only leave a single sealed row; a substitute adds another.
+ */
+async function nestedSoftReaskSealedSubstitute(
+  original: SeatRunResult,
+  reask: SeatRunResult,
+  env: InstructionSeatRunEnv,
+): Promise<boolean> {
+  if (terminalCarriesSealedSubmission(reask.terminal)) return true;
+  const admitted = reask.admitted ?? original.admitted;
+  if (admitted === undefined) return false;
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    env.home,
+  );
+  const sealed = rows.filter((row) =>
+    row.role === admitted.role
+    && (row.kind === "accepted" || row.kind === "audit-escalation")
+  );
+  return sealed.length > 1;
 }
 
 /**
@@ -358,13 +384,16 @@ function projectKeptOriginalArtifactsOntoLiveAdmitted(
  * original accepted result. Sealed original volume remains on disk either way.
  * #1171 F2-R2: after keep, project report artifact paths onto the live
  * admitted directory so public result, durable face, and artifact refs agree.
+ * #1171 F2-R6: after a substitute was sealed, the whole nested chain owns the
+ * public result — including ordinary no_volume after audit continue.
  */
-function mergeMissingTicketReask(
+async function mergeMissingTicketReask(
   original: SeatRunResult,
   ticketReask: SeatRunResult | undefined,
-): SeatRunResult {
+  env: InstructionSeatRunEnv,
+): Promise<SeatRunResult> {
   if (ticketReask === undefined) return original;
-  if (reaskSealedSubstituteSubmission(ticketReask)) return ticketReask;
+  if (await nestedSoftReaskSealedSubstitute(original, ticketReask, env)) return ticketReask;
   if (ticketReask.exitCode !== 0) return ticketReask;
   const admitted = ticketReask.admitted ?? original.admitted;
   if (admitted === undefined) return { ...original };
@@ -416,11 +445,14 @@ async function continueAfterPostSubmissionGuards(
     io,
   );
   // Nested resume already finished guards + audit/present for a sealed substitute.
-  // Do not run a second outer settlement of the same public call (#1171 F2-R4b).
-  if (ticketReask !== undefined && reaskSealedSubstituteSubmission(ticketReask)) {
+  // Do not run a second outer settlement of the same public call (#1171 F2-R4b / F2-R6).
+  if (
+    ticketReask !== undefined
+    && await nestedSoftReaskSealedSubstitute(afterStatus, ticketReask, env)
+  ) {
     return ticketReask;
   }
-  const continued = mergeMissingTicketReask(afterStatus, ticketReask);
+  const continued = await mergeMissingTicketReask(afterStatus, ticketReask, env);
   const continuedAdmitted = continued.admitted ?? live;
   // Spent budget rides the outer audit/continue chain (#1171 F2-R4a). Soft-reask
   // settlement identity does not — ordinary continue turns publish no_receipt (#1171 F2-R5).
