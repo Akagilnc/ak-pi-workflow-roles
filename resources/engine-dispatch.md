@@ -10,11 +10,14 @@ Material is data for the model, not a code contract. Do not invent package flags
 
 ## What goes into the prompt
 
-The labor prompt carries **task + paths only**:
+The labor prompt carries **task + caller paths only**:
 
 - the task itself: goal, constraints, required output shape;
-- paths the engine reads itself: worktree root, ticket/issue number, frozen
-  attachment paths, run/dossier directory pointers (e.g. `AK_ROLE_RUN_DIR`).
+- paths the caller already named (file-flag paths or paths written in the
+  dispatch text). The seat finds dossier records itself under the ticket
+  directory, or under `unbound/` when there is no ticket. Do not hand the
+  engine attachment copies, run-directory pointers, or `AK_ROLE_RUN_DIR`
+  (that variable is for the package subprocess only — not a pointer to pass on).
 
 **Never paste material bodies into argv or the prompt** — no review bundles,
 no distilled-evidence dumps, no receipt JSON, no full briefs copied out of the

@@ -53,7 +53,7 @@ import {
   type CoderPhase,
   type DerivedMergerEnvelope,
   normalizeAdmittedAttachment,
-  type FrozenAttachment,
+  type AdmittedAttachment,
   type InvocationEffectiveModel,
   type ReviewerLens,
 } from "./invocation.ts";
@@ -118,7 +118,7 @@ export type CurrentCourtState = {
 
 /**
  * Materials delivered on same-ticket re-summons while reusing the same-run resume seam.
- * Instruction seats freeze new attachments into the retained run and ride the transport prompt;
+ * Instruction seats pass caller file-flag paths through the transport prompt (ADR 0087);
  * notary overrides the source-run activation pointer for this turn only.
  */
 export type SameTicketSummonsMaterials = {
@@ -974,7 +974,7 @@ export async function findLatestRunIdForSeatTicket(input: {
 type LoadedAdmittedRequestFields = {
   readonly instruction: string;
   readonly instructionEmpty: boolean;
-  readonly attachments: FrozenAttachment[];
+  readonly attachments: AdmittedAttachment[];
   readonly phase?: CoderPhase | FixerPhase;
   readonly prerequisitesPath?: string;
   readonly baseRevision?: string;
@@ -1060,7 +1060,7 @@ async function loadResumableRunRecord(
   // Reconstruct admitted identity from durable run record + the admitted section.
   let instruction = "";
   let instructionEmpty = true;
-  let attachments: FrozenAttachment[] = [];
+  let attachments: AdmittedAttachment[] = [];
   let phase: CoderPhase | FixerPhase | undefined;
   let prerequisitesPath: string | undefined;
   let baseRevision: string | undefined;
@@ -1101,7 +1101,7 @@ async function loadResumableRunRecord(
       if (Array.isArray(record.attachments)) {
         attachments = record.attachments
           .map((item) => normalizeAdmittedAttachment(item))
-          .filter((item): item is FrozenAttachment => item !== undefined);
+          .filter((item): item is AdmittedAttachment => item !== undefined);
       }
       if (record.phase === "plan" || record.phase === "apply") {
         phase = record.phase;

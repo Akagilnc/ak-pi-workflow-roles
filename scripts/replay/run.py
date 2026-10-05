@@ -26,7 +26,13 @@ def main():
     meta = json.load(open(f"{kit}/meta.json"))
     host = a.host or meta["host"]
     sysfile = os.path.abspath(a.sys) if a.sys else f"{kit}/sys.txt"
-    instr = a.instr if a.instr is not None else open(f"{kit}/instr.txt").read().strip()
+    # #1169 J1: deliver frozen dispatch/file-flag text as-is — no strip / empty default.
+    # Official open: newline='' keeps CR/LF untranslated; utf-8 matches freeze write.
+    instr = (
+        a.instr
+        if a.instr is not None
+        else open(f"{kit}/instr.txt", encoding="utf-8", newline="").read()
+    )
     tag = f"{a.arm}-{a.n}"
     if meta.get("sysKind") != "turn-delivery" and not a.sys:
         sys.exit("no recorded turn-delivery prompt in this kit (sysKind=%s); pass --sys with an experimental prompt." % meta.get("sysKind"))
@@ -57,7 +63,7 @@ def main():
                "-c", f'model_instructions_file="{sysfile}"']
         if os.path.exists(f"{kit}/schema.json"):
             cmd += ["--output-schema", f"{kit}/schema.json"]
-        cmd.append(instr or "审。")
+        cmd.append(instr)
         out = f"{kit}/out-{tag}.jsonl"
     else:
         sess = f"{kit}/pisess-{tag}"
@@ -68,7 +74,7 @@ def main():
             model += f":{thinking}"
         # Kit sys.txt / --sys is the full prompt (recorded turn-delivery or caller experiment).
         cmd = ["pi", "-p", "--no-extensions", "--no-skills", "--no-prompt-templates", "--session-dir", sess,
-               "--model", model, "--system-prompt", sysfile, instr or "审。"]
+               "--model", model, "--system-prompt", sysfile, instr]
         out = f"{kit}/out-{tag}.txt"
     err = f"{kit}/err-{tag}.txt"
     print(f"leg {tag}: host={host} cwd={wt}\n  {' '.join(cmd[:12])} ...\n  stdout -> {out}")

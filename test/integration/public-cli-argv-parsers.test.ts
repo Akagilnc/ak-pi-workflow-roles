@@ -113,7 +113,7 @@ test("admitCoderInvocation rejects blank task and freezes plan phase", async () 
     };
     assert.equal(persisted.role, "coder");
     assert.equal(persisted.phase, "plan");
-    // freeze.py instr.txt reads admitted.instruction (#1168).
+    // freeze.py projects instr.txt via appendCallerFileFlagPaths (#1169 J1).
     assert.equal(persisted.instruction, "Plan the first vertical slice.");
   });
 });

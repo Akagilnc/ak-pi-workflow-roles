@@ -15,7 +15,8 @@ scripts/replay/replay-run.sh clean  <kit>
 issue's edit history), diarist records up to the cut, the run's system prompt when a
 `turn-delivery` row recorded one (with the historical records pointer swapped to the
 frozen copy when present) and a `<frozen_replay_notice>` naming the frozen records,
-the admitted instruction, the output schema when recorded, and a detached worktree at
+the admitted transport prompt (instruction plus caller file-flag paths via the same
+projection production uses), the output schema when recorded, and a detached worktree at
 the judged HEAD. Missing turn-delivery prompt/schema is declared as a gap in `meta.json`
 and on stdout — freeze does not reconstruct them. `run` starts one leg in its own
 detached worktree (`wt-<arm>-<n>`): codex with `--sandbox read-only`; pi with

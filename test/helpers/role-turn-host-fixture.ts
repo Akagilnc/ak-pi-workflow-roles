@@ -27,10 +27,40 @@ import {
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { packageRoot } from "./pi-test-harness.ts";
 import {
   sealAcceptedSubmission,
   sealAcceptedSubmissionForSpawn,
 } from "./submission-ledger-fixture.ts";
+
+/** Capture prepareRoleEnvelope surfaces then dispose — shared public-entry probe. */
+export async function capturePreparedEnvelope(request: RoleTurnRequest): Promise<{
+  readonly prompt: string;
+  readonly materials: readonly unknown[];
+  readonly engine?: string;
+  readonly stationChild?: boolean;
+  readonly role: string;
+  readonly runDirectory: string;
+}> {
+  const prepared = await prepareRoleEnvelope({
+    request: { ...request, host: request.host ?? "codex" },
+    dependencies: createRoleRuntimeDependencies(packageRoot),
+    socketPath: `/tmp/ak-capture-${randomUUID()}.sock`,
+    sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+  });
+  try {
+    return {
+      prompt: prepared.prompt,
+      materials: prepared.systemPrompt.materials,
+      ...(request.engine === undefined ? {} : { engine: request.engine }),
+      ...(request.stationChild === undefined ? {} : { stationChild: request.stationChild }),
+      role: request.activation.role,
+      runDirectory: request.runDirectory,
+    };
+  } finally {
+    await prepared.dispose?.();
+  }
+}
 
 /** Lawful 起居郎 true-unbound face (null ticket → 无录). */
 export const TRUE_UNBOUND_DIARIST_DETAILS = {

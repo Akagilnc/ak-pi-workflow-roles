@@ -6,16 +6,41 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
-  pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
+  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
   sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
   schema.json    headless output schema when turn-delivery recorded one; omitted on gap
-  instr.txt      the instruction the run was admitted with
+  instr.txt      admitted transport prompt (instruction + caller file-flag paths)
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
 """
 import argparse, hashlib, json, os, shutil, subprocess, sys
 from datetime import datetime, timezone
+
+def project_admitted_instruction(adm, tool_dir):
+    """Reuse production appendCallerFileFlagPaths — no parallel join (#1169 J1)."""
+    repo_root = os.path.abspath(f"{tool_dir}/../..")
+    inv = os.path.abspath(f"{tool_dir}/../../src/public-cli/invocation.ts")
+    # Official: text/universal_newlines converts stdout CR/LF to \n; binary does not
+    # (docs.python.org/3/library/subprocess.html#frequently-used-arguments).
+    # stdin JSON + Node utf8 + binary capture keeps dispatch/file-flag bytes intact.
+    p = subprocess.run(
+        ["node", "--import", "tsx", "-e",
+         "import { readFileSync } from 'node:fs';"
+         "import('" + inv + "').then((m) => {"
+         "  const a = JSON.parse(readFileSync(0, 'utf8'));"
+         "  process.stdout.write(m.appendCallerFileFlagPaths("
+         "    a.instruction ?? '', a.attachments ?? [],"
+         "    a.requestManifestPath, a.prerequisitesPath));"
+         "})"],
+        cwd=repo_root, capture_output=True,
+        input=json.dumps(adm, ensure_ascii=False).encode("utf-8"),
+    )
+    if p.returncode != 0:
+        sys.exit(
+            "projecting admitted file-flag instruction failed:\n"
+            + p.stderr.decode("utf-8", errors="replace")
+        )
+    return p.stdout.decode("utf-8")
 
 SUPPORTED_HOSTS = ("codex", "pi")
 NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态，"
@@ -200,7 +225,6 @@ def main():
     # copy truncated at the cut and point every prompt reference at it.
     frozen_run = f"{kit}/run/{os.path.basename(run)}"
     os.makedirs(f"{frozen_run}/session", exist_ok=True)
-    cut_epoch = cut.timestamp()
     home = os.path.expanduser("~")
     def repoint(text):
         for live, frozen in ((records_src, f"{kit}/records.jsonl"), (run, frozen_run)):
@@ -225,22 +249,8 @@ def main():
                 f.write(repoint(text))
         except UnicodeDecodeError:
             shutil.copy(src_path, f"{frozen_run}/{name}")
-    if os.path.isdir(f"{run}/attachments"):  # only what the run held at the cut
-        for root, _dirs, files in os.walk(f"{run}/attachments"):
-            for name in files:
-                src_path = os.path.join(root, name)
-                st = os.stat(src_path)  # birth time: the run's own pointer files get rewritten on every resume
-                if getattr(st, "st_birthtime", st.st_mtime) > cut_epoch:
-                    continue
-                dest = os.path.join(frozen_run, os.path.relpath(src_path, run))
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                try:
-                    with open(src_path, encoding="utf-8") as f:
-                        text = f.read()
-                    with open(dest, "w", encoding="utf-8") as f:
-                        f.write(repoint(text))
-                except UnicodeDecodeError:
-                    shutil.copy(src_path, dest)
+    # #1169: do not carry attachments/ into a new replay kit (concept deleted;
+    # stock volumes may still have the directory — leave them in place).
     def kept_rows(rel):
         return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
     kept_history = kept_rows("history.jsonl")
@@ -287,15 +297,7 @@ def main():
                 if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
                     f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
 
-    pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
-    pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
-    if records_src in pointer:
-        pointer = pointer.replace(records_src, f"{kit}/records.jsonl")
-    elif pointer.strip():
-        # runs admitted before the ticket was bound carry a template pointer; name the frozen copy
-        pointer = pointer.rstrip("\n") + f"\n冻结副本：{kit}/records.jsonl\n"
-    with open(f"{kit}/pointer.md", "w") as f:
-        f.write(pointer)
+    # #1169: do not mint kit/pointer.md from stock attachments/ copies.
 
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
     # Prompt and schema come only from turn-delivery rows at or before the cut (#1161).
@@ -326,8 +328,14 @@ def main():
     if delivered is not None and delivered.get("outputSchema") is not None:
         with open(f"{kit}/schema.json", "w") as f:
             json.dump(delivered["outputSchema"], f, ensure_ascii=False, indent=2)
-    with open(f"{kit}/instr.txt", "w") as f:
-        f.write((adm.get("instruction") or "").replace(run, frozen_run))
+    # Official open: newline='' returns/writes line endings untranslated
+    # (docs.python.org/3/library/functions.html#open). Match production utf-8.
+    with open(f"{kit}/instr.txt", "w", encoding="utf-8", newline="") as f:
+        # Prior instruction remapping only; caller file-flag paths pass through as admitted.
+        f.write(project_admitted_instruction(
+            {**adm, "instruction": repoint(adm.get("instruction") or "")},
+            a.tool_dir,
+        ))
 
     meta = {"runId": inv["runId"], "runDir": run, "role": role, "host": host, "provider": inv.get("provider"),
             "model": inv.get("model"), "thinking": inv.get("thinking"), "ticket": num, "repoSlug": slug, "repo": repo,

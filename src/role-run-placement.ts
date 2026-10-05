@@ -17,7 +17,6 @@ export type RoleRunPlacement = {
   readonly runDirectory: string;
   readonly sessionDirectory: string;
   readonly sessionFile: string;
-  readonly attachmentsDirectory: string;
 };
 
 /** Writer leaf `<runId>@<role>`. Empty sides stay empty; this is not a validator. */
@@ -158,7 +157,6 @@ export function roleRunPlacement(
     runDirectory,
     sessionDirectory,
     sessionFile: sessionFileIn(sessionDirectory),
-    attachmentsDirectory: join(runDirectory, "attachments"),
   };
 }
 
