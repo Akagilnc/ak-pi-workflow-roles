@@ -29,7 +29,7 @@ import {
   REPORT_TICKET_TOOL_NAME,
   reportTicketFromHostContext,
 } from "../../src/report-ticket-tool.ts";
-import { formatRunLeaf, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
+import { formatRunLeaf, isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
@@ -152,10 +152,22 @@ function envelopeHostThatReportsThen(input: {
 /**
  * Pi seam: open native SessionManager, reportTicket → setSessionFile, later
  * appends land under ticket; submit writes the new session path (never revive unbound).
+ *
+ * `refuseDerivedRender`: plant EISDIR on the still-unbound leaf at seal (pre-rename
+ * commit). Rename carries the poison; post-rename render refuses at the same external
+ * fault regardless of when setSessionFile runs (#1171 F6-R3 / F4-R2).
  */
 function piHostThatReportsThenSubmits(input: {
   readonly ticketNumber: number;
   readonly onAfterReport?: (paths: { oldSession: string; newSession: string }) => void;
+  readonly refuseDerivedRender?: true;
+  readonly onReportOutcome?: (observed: {
+    threw: boolean;
+    code?: string | undefined;
+    contextRunDirectory?: string | undefined;
+    sessionFile?: string | undefined;
+    appendOk?: boolean | undefined;
+  }) => void;
 }) {
   return roleTurnHostFromLegacyPiRunner({
     packageRoot,
@@ -187,9 +199,62 @@ function piHostThatReportsThenSubmits(input: {
         },
         abort() {},
       };
-      const reported = await reportTicketFromHostContext(context, input.ticketNumber);
-      assert.equal(reported.relocated, true);
-      assert.equal("runDirectory" in reported, false);
+      const authority = input.refuseDerivedRender === true
+        ? {
+            ...piDurablePrincipalAuthority,
+            seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+              // Relocate seals the ticket target before rename; admitted construction
+              // seals the still-unbound path. Plant only on the relocate seal so bind
+              // can render, then rename carries the poison to post-rename render.
+              const live = context.runDirectory;
+              const targetRun = dirname(coordinates.sessionDirectory);
+              if (
+                live !== undefined
+                && isUnboundRunDirectory(live)
+                && !isUnboundRunDirectory(targetRun)
+              ) {
+                lockCurrentJson(live);
+              }
+              return piDurablePrincipalAuthority.seal(coordinates);
+            },
+          }
+        : piDurablePrincipalAuthority;
+      const priorAmbient = process.env.AK_ROLE_RUN_DIR;
+      if (input.refuseDerivedRender === true) {
+        process.env.AK_ROLE_RUN_DIR = runDirectory;
+      }
+      try {
+        const reported = await reportTicketFromHostContext(context, input.ticketNumber, authority);
+        assert.equal(reported.relocated, true);
+        assert.equal("runDirectory" in reported, false);
+        input.onReportOutcome?.({
+          threw: false,
+          contextRunDirectory: context.runDirectory,
+          sessionFile: sessionManager.getSessionFile(),
+        });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        let appendOk = false;
+        try {
+          sessionManager.appendCustomEntry("ak_1171_f4r2_after_render_refuse", { ok: true });
+          appendOk = true;
+        } catch {
+          appendOk = false;
+        }
+        input.onReportOutcome?.({
+          threw: true,
+          code,
+          contextRunDirectory: context.runDirectory,
+          sessionFile: sessionManager.getSessionFile(),
+          appendOk,
+        });
+        throw error;
+      } finally {
+        if (input.refuseDerivedRender === true) {
+          if (priorAmbient === undefined) delete process.env.AK_ROLE_RUN_DIR;
+          else process.env.AK_ROLE_RUN_DIR = priorAmbient;
+        }
+      }
       const nextRunDirectory = context.runDirectory;
       assert.ok(nextRunDirectory);
       // Host native: setSessionFile moves the file handle; getSessionDir stays the open dir.
@@ -321,66 +386,13 @@ test("#1171 F4-R2 derived render refuse after rename keeps live handles on ticke
       sessionFile?: string | undefined;
       appendOk?: boolean | undefined;
     } = { threw: false };
-    const roleTurnHost = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const oldSession = argvFlagValue(args, "--session");
-        const oldSessionDir = argvFlagValue(args, "--session-dir");
-        assert.ok(oldSession && oldSessionDir);
-        const runDirectory = dirname(oldSessionDir);
-        await mkdir(oldSessionDir, { recursive: true });
-        if (!existsSync(oldSession)) await writeFile(oldSession, "", "utf8");
-        const sessionManager = SessionManager.open(oldSession, oldSessionDir, options.cwd);
-        const context: HostContext = {
-          cwd: options.cwd,
-          mode: "rpc",
-          model: undefined,
-          runDirectory,
-          sessionManager: {
-            getLeafEntry: () => sessionManager.getLeafEntry(),
-            getLeafId: () => sessionManager.getLeafId(),
-            getEntries: () => sessionManager.getEntries(),
-            getSessionDir: () => sessionManager.getSessionDir(),
-            getSessionFile: () => sessionManager.getSessionFile(),
-            getHeader: () => sessionManager.getHeader(),
-            setSessionFile: (path) => {
-              sessionManager.setSessionFile(path);
-              // Ownership window after rename, before derived render (#1171 F4-R2):
-              // plant EISDIR on the committed ticket leaf so render refuses there.
-              lockCurrentJson(dirname(dirname(path)));
-            },
-            appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
-          },
-          abort() {},
-        };
-        process.env.AK_ROLE_RUN_DIR = runDirectory;
-        try {
-          await reportTicketFromHostContext(context, TICKET);
-          observed = { threw: false, contextRunDirectory: context.runDirectory };
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          let appendOk = false;
-          try {
-            sessionManager.appendCustomEntry("ak_1171_f4r2_after_render_refuse", { ok: true });
-            appendOk = true;
-          } catch {
-            appendOk = false;
-          }
-          observed = {
-            threw: true,
-            code,
-            contextRunDirectory: context.runDirectory,
-            sessionFile: sessionManager.getSessionFile(),
-            appendOk,
-          };
-          throw error;
-        } finally {
-          delete process.env.AK_ROLE_RUN_DIR;
-        }
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    }));
+    const roleTurnHost = withPassingReviewHost(
+      piHostThatReportsThenSubmits({
+        ticketNumber: TICKET,
+        refuseDerivedRender: true,
+        onReportOutcome: (outcome) => { observed = outcome; },
+      }),
+    );
     const result = await runPublicInstructionSeat(
       ["apply", "Report then derived render refuses."],
       seatEnv(home, project, runId, "pi", roleTurnHost, { autoResumeLimit: 0 }),
@@ -887,7 +899,11 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
           // silence: exit cleanly with neither report nor sealed substitute.
           return { code: 0, stderr: "", timedOut: false };
         }
-        // Audit-continue still has no ticket: spent budget must block a second soft reask.
+        // Audit-continue ordinary turn: spent budget blocks a second soft reask.
+        // F2-R5 covers no-volume continue — silence again so durable no_receipt publishes.
+        if (input.inspectorContinuesOnce === true) {
+          return { code: 0, stderr: "", timedOut: false };
+        }
         return scriptedTerminatingToolSession({
           role: "fixer",
           toolName: FIXER_OUTPUT_TOOL_NAME,
@@ -923,9 +939,10 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   const fixerTurns = roles.filter((r) => r === "fixer").length;
   if (input.inspectorContinuesOnce === true) {
     assert.equal(fixerTurns, 3, `${reask}: one soft reask then one audit-continue turn`);
-    assert.equal(inspectorTurns, 2, `${reask}: continue then converge`);
+    // Continue once; ordinary no-volume does not seal again, so no second inspector.
+    assert.equal(inspectorTurns, 1, `${reask}: inspector continue once`);
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", `${reask}: ordinary continue no-volume publishes`);
     const live = result.admitted?.runDirectory;
     assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
     // Silence path never reported a ticket — must remain unbound after the single spent reask.
@@ -933,10 +950,18 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
     const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
       .map((row) => row.outcome?.kind);
-    assert.ok(
-      attemptKinds.includes("accepted") && attemptKinds.includes("no_receipt"),
-      `${reask}: attempt history keeps sealed accepted and soft-reask no_receipt`,
+    // Three dispatched fixer turns: seal, soft reask, ordinary continue.
+    assert.deepEqual(
+      attemptKinds,
+      ["accepted", "no_receipt", "no_receipt"],
+      `${reask}: attempt history by real dispatch rounds`,
     );
+    const durable = readCurrentSection(live!, "terminal") as {
+      face?: string;
+      body?: { outcome?: { kind?: string } };
+    } | undefined;
+    assert.equal(durable?.face, "no_receipt", `${reask}: durable face follows ordinary continue`);
+    assert.equal(durable?.body?.outcome?.kind, "no_receipt", `${reask}: durable outcome is no_receipt`);
     return;
   }
   assert.equal(fixerTurns, 2, `${reask}: must soft-reask once`);
@@ -955,8 +980,9 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
   const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
     .map((row) => row.outcome?.kind);
-  assert.ok(
-    attemptKinds[0] === "accepted" && attemptKinds.includes("no_receipt"),
+  assert.deepEqual(
+    attemptKinds,
+    ["accepted", "no_receipt"],
     `${reask}: attempt history must keep original accepted and append reask no_receipt`,
   );
   const durable = readCurrentSection(live!, "terminal") as {
@@ -991,7 +1017,7 @@ test("#1171 F2 reask silence keeps original accepted and records no_receipt hist
   });
 });
 
-test("#1171 F2-R4a silence then inspector continue spends missing-ticket reask only once", async () => {
+test("#1171 F2-R4a/R5 silence then inspector continue spends reask once; ordinary no-volume persists", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
       home,

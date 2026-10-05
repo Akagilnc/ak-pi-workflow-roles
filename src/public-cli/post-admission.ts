@@ -454,8 +454,14 @@ export type PostAdmissionEnv = {
   /**
    * #1171: missing-ticket soft reasks already issued on this chain. Hard ceiling
    * is one — still no ticket after that stays unbound with the sealed receipt.
+   * Budget only across rounds; not the current turn's settlement identity.
    */
   ticketReasksSpent?: number;
+  /**
+   * #1171 F2-R5: this turn is the one soft reask. Keep the sealed terminal face
+   * when it ends without a substitute seal. Not carried into audit continue.
+   */
+  softTicketReaskTurn?: true;
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -1220,14 +1226,13 @@ export async function dispatchPostAdmissionTurn<
       result.terminal === pendingTerminal
     ) {
       try {
-        // #1171 F2-R2 / F2-R3 (#419): a missing-ticket soft reask that seals
-        // nothing must not overwrite the original durable accepted face with
-        // no_receipt — but the real reask attempt still appends its complete
-        // result to attempt history. Settlement keeps those two switches
-        // independent: previewOnly skips the terminal pointer; recordAttemptHistory
-        // still appends. Substitute seals and real host failures still settle.
+        // #1171 F2-R2 / F2-R3 (#419) / F2-R5: only the soft-reask turn itself
+        // preserves the sealed terminal face. ticketReasksSpent is budget across
+        // rounds — after audit continue, ordinary no-volume turns publish
+        // no_receipt honestly. previewOnly skips the terminal pointer;
+        // recordAttemptHistory still appends.
         const softTicketReaskNoSeal =
-          pendingSettlement !== "sealed" && (env.ticketReasksSpent ?? 0) >= 1;
+          pendingSettlement !== "sealed" && env.softTicketReaskTurn === true;
         const noSealScope = softTicketReaskNoSeal
           ? {
               ...courtScope,

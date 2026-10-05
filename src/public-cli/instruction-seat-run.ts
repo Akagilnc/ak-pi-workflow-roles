@@ -299,11 +299,19 @@ async function reaskMissingTicketOnce(
   // (post-admission). Do not re-parse payload.ticketNumber here — that would
   // duplicate the existing ticket seam (#1171 notary: no rule copy).
   const instruction = (await readPackageMaterial(MISSING_TICKET_REASK_MATERIAL)).trim();
+  // Spend budget and mark this turn as the soft reask (settlement identity).
+  // Audit continue keeps the budget only — see envForCourtContinue (#1171 F2-R5).
   return runPublicInstructionSeatResume(
     { runId: admitted.runId, summons: { instruction } },
-    { ...env, ticketReasksSpent: 1 },
+    { ...env, ticketReasksSpent: 1, softTicketReaskTurn: true },
     io,
   );
+}
+
+/** Court continue: keep cross-turn budgets; drop turn-scoped soft-reask identity. */
+function envForCourtContinue(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
+  const { softTicketReaskTurn: _softTicketReaskTurn, ...rest } = env;
+  return { ...rest, unreadableReasksSpent: 0 };
 }
 
 /** True when a reask turn sealed a real substitute submission (not silence / report-only). */
@@ -414,7 +422,8 @@ async function continueAfterPostSubmissionGuards(
   }
   const continued = mergeMissingTicketReask(afterStatus, ticketReask);
   const continuedAdmitted = continued.admitted ?? live;
-  // Spent budget must ride the remaining outer audit/continue chain (#1171 F2-R4a).
+  // Spent budget rides the outer audit/continue chain (#1171 F2-R4a). Soft-reask
+  // settlement identity does not — ordinary continue turns publish no_receipt (#1171 F2-R5).
   const continuedEnv = ticketReask !== undefined
     ? { ...env, ticketReasksSpent: 1 }
     : env;
@@ -1294,7 +1303,7 @@ async function queueConclusionFromChild(
   // Notary, auditor, and inspector have no seat-local status reask. This loop
   // is their one budget. The child resume keeps the caller's env so delivery,
   // failure recovery, and other reask loops stay separate.
-  let budgetEnv: InstructionSeatRunEnv = { ...env, unreadableReasksSpent: 0 };
+  let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
     const terminal = await trySettlePublicSeat(
       current,
@@ -1377,7 +1386,7 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume({
       runId: parentRunId,
       summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
-    }, { ...env, unreadableReasksSpent: 0 }, io);
+    }, envForCourtContinue(env), io);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1536,7 +1545,7 @@ async function auditSubmittedRole(
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
           runId: admitted.runId, summons: { instruction: readableGateItem(decision.receipt ?? decision.violations) },
-        }, { ...env, unreadableReasksSpent: 0 }, io);
+        }, envForCourtContinue(env), io);
       }
       if (decision.status === "received") {
         if (lastSummon?.terminal === undefined) {
@@ -1638,7 +1647,7 @@ async function auditSubmittedRole(
       return runPublicInstructionSeatResume({
         runId: admitted.runId,
         summons: { instruction: readableGateItem(chain.passes.at(-1)?.receipt) },
-      }, { ...env, unreadableReasksSpent: 0 }, io);
+      }, envForCourtContinue(env), io);
     }
     if (admitted.role === "secretariat") {
       const pass = chain.passes.at(-1);
