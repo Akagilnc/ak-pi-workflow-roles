@@ -84,21 +84,20 @@ test("typed groups travel from real output settlement into the report artifact",
   });
 });
 
-test("#1088 public --request-manifest accepts semantic requests and rejects invalid input", async () => {
+test("#1165 public --request-manifest admits without reading or validating the file", async () => {
   await withTempRoot("collector-manifest-admit-", async (home) => {
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
-    const good = join(home, "requests.json");
-    await writeFile(good, JSON.stringify({ requests: [{ id: "codex", body: "@codex review" }] }));
-    let invocation = 0;
-    const invoke = (path: string) => runAkRole([
+    const bad = join(home, "bad.json");
+    await writeFile(bad, "{ not json", "utf8");
+    const result = await runAkRole([
       "collector", "--model", "test/caller-seat:high", "--pr", "42", "--repo", "acme/widgets",
-      "--request-manifest", path, "--project", project,
+      "--request-manifest", bad, "--project", project,
     ], {
       packageRoot, home, cwd: project,
       credentials: { "openai-codex": true, xai: false },
-      createRunId: () => `collector-manifest-${++invocation}`,
+      createRunId: () => "collector-manifest-passthrough",
       io: { stdout: () => undefined, stderr: () => undefined },
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot, principalAuthority: piDurablePrincipalAuthority,
@@ -110,12 +109,7 @@ test("#1088 public --request-manifest accepts semantic requests and rejects inva
         },
       }),
     });
-    assert.equal((await invoke(good)).exitCode, 0);
-    const bad = join(home, "bad.json");
-    for (const bytes of ["{ not json", Buffer.from([0xff]), JSON.stringify({ requests: [{}] })]) {
-      await writeFile(bad, bytes);
-      assert.equal((await invoke(bad)).exitCode, 2);
-    }
+    assert.equal(result.exitCode, 0);
   });
 });
 

@@ -229,13 +229,7 @@ export function rewriteAdmittedRoleRunPage(
 ): void {
   rewriteRunDirectoryPathFieldsAgainstRewrites(page, ADMITTED_PAGE_FIELDS, rewrites);
   rewriteSourceRunLocator(page.sourceRun, rewrites);
-  if (Array.isArray(page.attachments)) {
-    for (const attachment of page.attachments) {
-      if (isRecord(attachment)) {
-        rewriteRunDirectoryPathFieldsAgainstRewrites(attachment, ["frozenPath"], rewrites);
-      }
-    }
-  }
+  // #1165: admitted attachments are caller paths outside the run directory — do not rewrite.
   if (isRecord(page.principal)) {
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page.principal,
@@ -433,7 +427,7 @@ async function rewriteNestedMachinePathPages(
 
 /**
  * Rewrite the admitted / invocation / runState fact rows (path fields: attachment
- * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
+ * summons.attachmentPaths pointers only), then nested package-owned
  * session seams. Callers may rewrite before or after the filesystem move/copy:
  * `pagesDirectory` is where the pages currently live on disk; path strings that
  * still name `oldRunDirectory` become `newRunDirectory`. `crossRunRewrites`

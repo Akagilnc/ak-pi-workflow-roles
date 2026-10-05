@@ -2,6 +2,7 @@
  * Collector business: soul/material assembly and sole submission tool.
  * #1088: code no longer observes/requests/merges GitHub findings — the LLM
  * uses host CLI tools. Envelope owns host-surface + construction seatbelt.
+ * #1165: --request-manifest is a caller path only; package does not load it.
  */
 import type { RoleHost, HostContext } from "./host-contracts.ts";
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
@@ -9,7 +10,6 @@ import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import {
   emptyCollectorManifest,
-  loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
   type CollectorManifest,
@@ -47,7 +47,7 @@ export const COLLECTOR_TRANSPORT_FLAGS = Object.freeze([
     name: "ak-collector-request-manifest",
     definition: Object.freeze({
       description:
-        "Path to the Collector v1 request manifest JSON file (caller guidance; not a machine collection directive).",
+        "Caller path to a request manifest JSON file (passed as-is; package does not read or validate).",
       type: "string" as const,
     }),
   }),
@@ -63,6 +63,7 @@ export type CollectorActivation = {
   repository: CollectorRepository;
   prNumber: number | undefined;
   manifest: CollectorManifest;
+  requestManifestPath?: string;
 };
 
 function buildMethodContext(activation: CollectorActivation): string {
@@ -71,19 +72,12 @@ function buildMethodContext(activation: CollectorActivation): string {
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
     `prNumber: ${activation.prNumber === undefined ? "未绑定" : String(activation.prNumber)}`,
-    `requests: ${JSON.stringify(activation.manifest.requests.map((request) => ({ id: request.id })))}`,
     `manifestDigest: ${activation.manifest.digest}`,
+    ...(activation.requestManifestPath === undefined
+      ? []
+      : [`requestManifestPath: ${activation.requestManifestPath}`]),
     "</collector_method>",
   ];
-  if (activation.manifest.requests.length > 0) {
-    const payload = JSON.stringify({
-      requests: activation.manifest.requests.map((request) => ({
-        id: request.id,
-        body: request.requestBody,
-      })),
-    }).replaceAll("<", "\\u003c");
-    lines.push("", "<collector_request_manifest>", payload, "</collector_request_manifest>");
-  }
   return lines.join("\n");
 }
 
@@ -123,15 +117,18 @@ export function createCollectorRoleRuntime(
       } else if (typeof prFlag === "number") {
         prNumber = parseCollectorPrNumber(prFlag);
       }
-      const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
-        ? await loadCollectorManifest(requestManifestFlag)
-        : emptyCollectorManifest();
+      const requestManifestPath =
+        typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
+          ? requestManifestFlag
+          : undefined;
 
       return {
         soul,
         repository,
         prNumber,
-        manifest,
+        // #1165: package does not read the caller file; empty digest records that fact.
+        manifest: emptyCollectorManifest(),
+        ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
       };
     },
 

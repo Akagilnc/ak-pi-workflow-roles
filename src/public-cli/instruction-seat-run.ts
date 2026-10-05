@@ -49,7 +49,6 @@ import {
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
-  withPreparedAttachments,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
@@ -644,12 +643,12 @@ async function runCountersignBody(
   }
 
   try {
-    return await withPreparedAttachments(parsed.attachmentPaths ?? [], async (preparedAttachments) => {
+    {
       const materializeAdmission = async (ticketNumber?: number): Promise<void> => {
         await materializeCountersignInvocation(admitted, {
           home: env.home,
           principalAuthority: env.principalAuthority,
-          preparedAttachments,
+          attachmentPaths: parsed.attachmentPaths ?? [],
           ...(env.model === undefined ? {} : { model: env.model }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
         });
@@ -692,7 +691,7 @@ async function runCountersignBody(
       });
       await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
       return result;
-    });
+    }
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -881,7 +880,7 @@ export async function runPublicInstructionSeat(
           instruction: parsed.instruction ?? "",
           projectRoot: admitted.projectRoot,
           failureLabel: "secretariat unbound summons",
-          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.path),
           correlationId: admitted.runId,
         }, env, io);
       } catch (error) {

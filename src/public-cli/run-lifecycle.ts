@@ -58,6 +58,7 @@ import {
   type AdmittedRoleInvocation,
   type CoderPhase,
   type DerivedMergerEnvelope,
+  normalizeAdmittedAttachment,
   type FrozenAttachment,
   type InvocationEffectiveModel,
   type ReviewerLens,
@@ -1136,7 +1137,9 @@ async function loadResumableRunRecord(
         instructionEmpty = record.instructionEmpty;
       }
       if (Array.isArray(record.attachments)) {
-        attachments = record.attachments as FrozenAttachment[];
+        attachments = record.attachments
+          .map((item) => normalizeAdmittedAttachment(item))
+          .filter((item): item is FrozenAttachment => item !== undefined);
       }
       if (record.phase === "plan" || record.phase === "apply") {
         phase = record.phase;

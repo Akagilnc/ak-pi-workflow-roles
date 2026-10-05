@@ -133,7 +133,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
       "owner.choice",
     );
     assert.equal(admitted.attachments.length, 1);
-    assert.equal(await readFile(admitted.attachments[0]!.frozenPath, "utf8"), "attachment-v1");
+    assert.equal(admitted.attachments[0]!.path, source);
 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(

@@ -14,7 +14,6 @@ import {
   access,
   mkdir,
   readFile,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -139,7 +138,7 @@ test("parseJudgeArgv rejects blank --project/--attach path values", () => {
   assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
 });
 
-test("admitJudgeInvocation freezes regular-file attachments against later mutation", async () => {
+test("admitJudgeInvocation records caller attachment paths as-is (#1165)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -154,27 +153,19 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
-      createRunId: () => "run-freeze-001",
+      createRunId: () => "run-attach-path-001",
     });
 
     assert.equal(admitted.attachments.length, 1);
-    const frozen = admitted.attachments[0]!;
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
-    const frozenSha = frozen.sha256;
-
-    await writeFile(source, "mutated-after-admission", "utf8");
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
-    assert.equal(frozen.sha256, frozenSha);
-
-    await unlink(source);
-    assert.equal(await readFile(frozen.frozenPath, "utf8"), "admitted-bytes-v1");
+    assert.equal(admitted.attachments[0]!.path, source);
+    assert.equal(existsSync(join(admitted.runDirectory, "attachments")), false);
 
     // #78 placement: run under book runs/, session reserved, no index content bytes.
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(admitted.bookKey, bookKey);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-freeze-001@judge"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-attach-path-001@judge"),
     );
     assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(join(admitted.runDirectory, "current.json"));
@@ -421,14 +412,11 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       ["converged"],
     );
 
-    // Source mutation after admission does not affect frozen snapshot.
-    await writeFile(attachment, "changed", "utf8");
-    const frozenPath = join(runDir, "attachments", "00-note.txt");
+    // #1165: first message carries the caller path; no attachments/ copy.
     const delivered = readUserDialogueStdin(capturedStdin ?? "");
     assert.ok(delivered.includes(instruction));
-    assert.ok(delivered.includes(frozenPath));
-    assert.equal(delivered.includes(attachment), false);
-    assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
+    assert.ok(delivered.includes(attachment));
+    assert.equal(existsSync(join(runDir, "attachments")), false);
   });
 });
 

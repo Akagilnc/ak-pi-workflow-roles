@@ -153,7 +153,7 @@ test("countersign admission freezes attachments and binds the countersign role",
       admitted.role, "countersign");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.attachments.length, 1);
-    assert.ok(admitted.attachments[0]?.frozenPath);
+    assert.equal(admitted.attachments[0]?.path, ticket);
 
     const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
@@ -1032,30 +1032,24 @@ function countersignPathEnv(input: {
   };
 }
 
-test("public countersign path: invalid attachment rejects before identity or run persistence", async () => {
+test("public countersign path: missing attach file still admits with caller path (#1165)", async () => {
   await withCountersignProject(async ({ home, project }) => {
     const runId = "01a0sign00-0000-7000-8000-000000000bad";
+    const missing = join(project, "missing.md");
     const result = await runPublicInstructionSeat(
-      ["--attach", join(project, "missing.md"), "裁：附件无效。"],
+      ["--attach", missing, "裁：附件路径原样传递。"],
       countersignPathEnv({
         home,
         project,
         runId,
-        blockTurn: true,
       }),
       captureIo().io,
       "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
 
-    assert.equal(result.exitCode, 2);
-    assert.equal(result.admitted, undefined);
-    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
-      bookKey: resolveBookKeyFromGit(project),
-      subject: { unbound: true },
-      runId,
-      role: "countersign",
-    });
-    await assert.rejects(readFile(join(placement.runDirectory, "current.json")));
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.admitted?.attachments[0]?.path, missing);
+    assert.equal(existsSync(join(result.admitted!.runDirectory, "attachments")), false);
   });
 });
 
@@ -1260,22 +1254,12 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "initial");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s002");
-    const secondAttachments = await readdir(
-      join(second.admitted!.runDirectory, "attachments"),
-      { recursive: true },
-    );
-    assert.ok(
-      secondAttachments.some((entry) => entry.endsWith("00-second-court.md")),
-      "new mint owns its own attachment snapshot",
-    );
-    const firstAttachments = await readdir(
-      join(first.admitted!.runDirectory, "attachments"),
-      { recursive: true },
-    ).catch(() => [] as string[]);
+    assert.equal(second.admitted?.attachments[0]?.path, secondAttachment);
+    assert.equal(existsSync(join(second.admitted!.runDirectory, "attachments")), false);
     assert.equal(
-      firstAttachments.some((entry) => entry.endsWith("00-second-court.md")),
+      first.admitted?.attachments.some((attachment) => attachment.path === secondAttachment),
       false,
-      "public re-summons must not freeze new attachments into the prior run",
+      "public re-summons must not rewrite the prior run's admitted attach paths",
     );
 
     const third = await runPublicInstructionSeatResume(

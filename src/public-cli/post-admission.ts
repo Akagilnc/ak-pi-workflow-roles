@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
@@ -22,12 +21,10 @@ import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./
 import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
-  freezeAttachmentsIntoRun,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
-import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
@@ -1477,7 +1474,7 @@ export function resumeTurnRequestProjectionOptions(
   summonsPrepared?: {
     readonly instruction: string;
     readonly instructionEmpty: boolean;
-    readonly attachments: readonly { frozenPath: string }[];
+    readonly attachments: readonly { path: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
   // #879: officer dialogue content is caller/peer words only — no「请重读」,
@@ -1488,7 +1485,7 @@ export function resumeTurnRequestProjectionOptions(
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words.
-      // #879 station-child officer: words only (attachments are independent freeze).
+      // #879 station-child officer: words only (paths remain on summons materials).
       prompt = officerDialogue
         ? request.message
         : buildInstructionTransportPrompt({
@@ -1635,31 +1632,17 @@ async function runSettledAutoResumeLoop<
   });
 }
 
-function isAlreadyFrozenSummonsAttachment(
-  runDirectory: string,
-  attachmentPath: string,
-): boolean {
-  const absolute = isAbsolute(attachmentPath)
-    ? attachmentPath
-    : resolve(attachmentPath);
-  return pathContainedIn(join(runDirectory, "attachments"), absolute);
-}
-
 /**
- * Freeze same-ticket summons attachments into the retained run directory (#637).
- * No-op materials (no paths / instruction-only) skip the freeze.
- * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them for the same internal re-summons flow.
- * Manual resume never calls this — old attachment semantics stay intact.
+ * Same-ticket summons materials: caller paths as-is (#1165). No copy or freeze.
  */
 export async function prepareSummonsResumeMaterials(
-  runDirectory: string,
+  _runDirectory: string,
   summons: SameTicketSummonsMaterials | undefined,
 ): Promise<
   | {
       readonly instruction: string;
       readonly instructionEmpty: boolean;
-      readonly attachments: readonly { frozenPath: string }[];
+      readonly attachments: readonly { path: string }[];
     }
   | undefined
 > {
@@ -1670,15 +1653,7 @@ export async function prepareSummonsResumeMaterials(
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
     summons.instructionEmpty ?? instruction.trim() === "";
-  let attachments: readonly { frozenPath: string }[] = [];
-  if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
-    const alreadyFrozen = summons.attachmentPaths.every((path) =>
-      isAlreadyFrozenSummonsAttachment(runDirectory, path),
-    );
-    attachments = alreadyFrozen
-      ? summons.attachmentPaths.map((frozenPath) => ({ frozenPath }))
-      : await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
-  }
+  const attachments = (summons.attachmentPaths ?? []).map((path) => ({ path }));
   return { instruction, instructionEmpty, attachments };
 }
 
@@ -1776,28 +1751,6 @@ export async function runPostAdmissionSeatResume<
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
             openCourtAttemptId = openCourt.courtAttemptId;
-          }
-        }
-
-        // Internal re-summons freezes external paths once and records that identity.
-        if (request.summons !== undefined) {
-          const prepared = await prepareSummonsResumeMaterials(
-            admittedForBuild.runDirectory,
-            request.summons,
-          );
-          if (
-            prepared !== undefined &&
-            (request.summons.attachmentPaths?.length ?? 0) > 0
-          ) {
-            request = {
-              ...request,
-              summons: {
-                ...request.summons,
-                attachmentPaths: prepared.attachments.map(
-                  (attachment) => attachment.frozenPath,
-                ),
-              },
-            };
           }
         }
 
