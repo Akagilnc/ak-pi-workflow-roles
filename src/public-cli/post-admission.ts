@@ -26,8 +26,8 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
-import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
-import { pathContainedIn } from "../activation-ledger-topology.ts";
+import { parseTicketNumber, readBoardTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
+import { pathContainedIn, homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
@@ -36,6 +36,7 @@ import {
   deliveryLimitFromConfig,
 } from "../receipt-delivery-policy.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../role-run-placement.ts";
 
 import type {
   ControlledFailureCause,
@@ -146,6 +147,57 @@ function projectRelocatedTurnIdentity(
       artifact.path = rewrite(artifact.path) as string;
     }
   }
+}
+
+/**
+ * #1171: after the host exits, re-locate the leg by run id (report-ticket may
+ * have moved it mid-turn in the tool process). Settlement and render use the
+ * live path; lease cleanup follows when the held path changed.
+ */
+export async function refreshAdmittedPlacementAfterHostTurn(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  heldLease?: { relocate(runDirectory: string): void },
+): Promise<RunDirectoryRelocation | undefined> {
+  const home = homeFromRunDirectory(admitted.runDirectory);
+  const found = await findRunDirectoryById(home, admitted.runId, admitted.bookKey, admitted.role);
+  const boardTicket = await readBoardTicketNumber(found ?? admitted.runDirectory);
+  if (boardTicket !== undefined) {
+    (admitted as { ticketNumber?: number }).ticketNumber = boardTicket;
+  }
+  if (found === undefined || found === admitted.runDirectory) return undefined;
+  const oldRunDirectory = admitted.runDirectory;
+  const sessionDirectory = sessionDirectoryOf(found);
+  const sessionFile = sessionFileOf(found);
+  const principal = authority.seal({ sessionDirectory, sessionFile });
+  const mutable = admitted as unknown as Record<string, unknown>;
+  for (const field of [
+    "runDirectory",
+    "taskPath",
+    "packetPath",
+    "prerequisitesPath",
+    "requestManifestPath",
+    "mergerInputPath",
+  ] as const) {
+    if (field in mutable) {
+      mutable[field] = rewriteRunDirectoryPathValue(
+        mutable[field],
+        oldRunDirectory,
+        found,
+      );
+    }
+  }
+  mutable.runDirectory = found;
+  mutable.principal = principal;
+  for (const attachment of admitted.attachments) {
+    (attachment as { frozenPath: string }).frozenPath = rewriteRunDirectoryPathValue(
+      attachment.frozenPath,
+      oldRunDirectory,
+      found,
+    ) as string;
+  }
+  heldLease?.relocate(found);
+  return { oldRunDirectory, newRunDirectory: found };
 }
 
 /** #855: process-cancel settlement never re-enters auto-resume. */
@@ -310,6 +362,11 @@ export type PostAdmissionEnv = {
    * keeps this env's autoResumeLimit; the counter is the only thing that moves.
    */
   unreadableReasksSpent?: number;
+  /**
+   * #1171: missing-ticket soft reasks already issued on this chain. Hard ceiling
+   * is one — still no ticket after that stays unbound with the sealed receipt.
+   */
+  ticketReasksSpent?: number;
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -1021,6 +1078,24 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcomeFor<A, T>): Promise<DispatchOutcomeFor<A, T>> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
+    // #1171: mid-turn report-ticket may have relocated the leg; settle on the live path.
+    try {
+      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+        admitted,
+        env.principalAuthority,
+        lease,
+      );
+      if (refreshed !== undefined) {
+        projectRelocatedTurnIdentity(request, result, admitted, refreshed);
+      }
+    } catch (error) {
+      await recordBestEffortPostDispatchDiagnostic(
+        admitted,
+        env,
+        `post-host placement refresh failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+        io,
+      );
+    }
     // #855: re-read cancel before committing the terminal and afterDispatch.
     // A signal after the history-first commit cannot retroactively erase it.
     // skipRunStateWrite: run-state
@@ -1229,6 +1304,18 @@ export async function dispatchPostAdmissionTurn<
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
+      try {
+        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+          admitted,
+          env.principalAuthority,
+          lease,
+        );
+        if (refreshed !== undefined) {
+          turnRequest = { ...turnRequest, runDirectory: admitted.runDirectory, principal: admitted.principal };
+        }
+      } catch {
+        // Placement refresh is best-effort beside the host throw; settlement keeps the true cause.
+      }
       const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
           admitted,
@@ -1253,6 +1340,26 @@ export async function dispatchPostAdmissionTurn<
           { ...settled, turnDispatched: true as const, ...deferredPersist },
           env.signal,
         ),
+      );
+    }
+
+    // #1171: relocate may have happened mid-turn; settlement must use the live path.
+    try {
+      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+        admitted,
+        env.principalAuthority,
+        lease,
+      );
+      if (refreshed !== undefined) {
+        turnRequest = { ...turnRequest, runDirectory: admitted.runDirectory, principal: admitted.principal };
+        projectRelocatedTurnIdentity(request, {}, admitted, refreshed);
+      }
+    } catch (error) {
+      await recordBestEffortPostDispatchDiagnostic(
+        admitted,
+        env,
+        `post-host placement refresh failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+        io,
       );
     }
 
@@ -1304,6 +1411,22 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
+        try {
+          const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+            admitted,
+            env.principalAuthority,
+            lease,
+          );
+          if (refreshed !== undefined) {
+            turnRequest = {
+              ...turnRequest,
+              runDirectory: admitted.runDirectory,
+              principal: admitted.principal,
+            };
+          }
+        } catch {
+          // Best-effort beside delivery settlement.
+        }
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
         // its true cause, through the one settlement authority (ADR 0080).

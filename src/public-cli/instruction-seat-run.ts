@@ -4,6 +4,7 @@
  * starts two ordinary single-axis runs here.
  */
 import { dirname, resolve } from "node:path";
+import { MISSING_TICKET_REASK } from "../report-ticket-tool.ts";
 import { isUnboundRunDirectory } from "../role-run-placement.ts";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
@@ -273,6 +274,31 @@ async function reaskUnreadablePostSubmissionStatus(
   );
 }
 
+/**
+ * #1171: sealed submission still leaves the leg unbound → soft reask once.
+ * Does not reject the sealed receipt; exhaustion leaves unbound as filed.
+ */
+async function reaskMissingTicketOnce(
+  admitted: AdmittedRoleInvocation,
+  terminal: TerminalResult | undefined,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  if ((env.ticketReasksSpent ?? 0) >= 1) return undefined;
+  if (admitted.ticketNumber !== undefined) return undefined;
+  if (!isUnboundRunDirectory(admitted.runDirectory)) return undefined;
+  if (terminal?.roleOutcome.kind !== "accepted" && terminal?.roleOutcome.kind !== "audit_escalation") {
+    return undefined;
+  }
+  const payloads = terminal.roleOutcome.payloads ?? [];
+  if (payloads.length === 0) return undefined;
+  return runPublicInstructionSeatResume(
+    { runId: admitted.runId, summons: { instruction: MISSING_TICKET_REASK } },
+    { ...env, ticketReasksSpent: 1 },
+    io,
+  );
+}
+
 function roleRecord(role: PackagedRole) {
   const record = packagedRoleMetadata(role);
   if (record === undefined) {
@@ -462,8 +488,10 @@ async function dispatchAdmitted(
     });
   };
   const result = await execute(env);
+  // Prefer the live admitted object returned from the turn (may have relocated).
+  const live = result.admitted ?? admitted;
   const unreadableReask = await reaskUnreadablePostSubmissionStatus(
-    admitted,
+    live,
     result.terminal,
     env,
     io,
@@ -472,15 +500,17 @@ async function dispatchAdmitted(
     const terminal = result.terminal === undefined
       ? undefined
       : withUnsettledDirection(result.terminal);
-    await presentOriginalVolume(held, terminal, io, admitted.runDirectory);
-    return terminal === undefined ? result : { ...result, terminal };
+    await presentOriginalVolume(held, terminal, io, live.runDirectory);
+    return terminal === undefined ? { ...result, admitted: live } : { ...result, admitted: live, terminal };
   }
   if (unreadableReask !== undefined) return unreadableReask;
+  const ticketReask = await reaskMissingTicketOnce(live, result.terminal, env, io);
+  if (ticketReask !== undefined) return ticketReask;
   if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
-    return auditSubmittedRole(result, env, io);
+    return auditSubmittedRole({ ...result, admitted: live }, env, io);
   }
-  await presentOriginalVolume(held, result.terminal, io, admitted.runDirectory);
-  return result;
+  await presentOriginalVolume(held, result.terminal, io, live.runDirectory);
+  return { ...result, admitted: live };
 }
 
 /**
