@@ -28,7 +28,7 @@ import {
 } from "./role-runtime.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectActivationFlags } from "./role-activation-flags.ts";
-import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
+import { projectTurnRequestLiveRunDirectory } from "./role-run-relocation.ts";
 import {
   isCorrectableExecuteError,
   projectCorrectableExecuteRejection,
@@ -212,26 +212,13 @@ export async function prepareRoleEnvelope(options: {
     },
     set(next: string) {
       if (typeof next !== "string" || next.trim() === "") return;
-      const old = mutableRequest.runDirectory;
-      if (old === next) return;
-      mutableRequest.runDirectory = next;
+      if (mutableRequest.runDirectory === next) return;
+      projectTurnRequestLiveRunDirectory(mutableRequest, next);
       sessionFile = sessionFileOf(next);
-      if (typeof mutableRequest.principal.sessionDirectory === "string") {
-        mutableRequest.principal.sessionDirectory = rewriteRunDirectoryPathValue(
-          mutableRequest.principal.sessionDirectory,
-          old,
-          next,
-        ) as string;
-      } else {
+      if (typeof mutableRequest.principal.sessionDirectory !== "string") {
         mutableRequest.principal.sessionDirectory = sessionDirectoryOf(next);
       }
-      if (typeof mutableRequest.principal.sessionFile === "string") {
-        mutableRequest.principal.sessionFile = rewriteRunDirectoryPathValue(
-          mutableRequest.principal.sessionFile,
-          old,
-          next,
-        ) as string;
-      } else {
+      if (typeof mutableRequest.principal.sessionFile !== "string") {
         mutableRequest.principal.sessionFile = sessionFile;
       }
     },

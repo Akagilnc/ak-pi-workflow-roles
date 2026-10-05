@@ -36,8 +36,7 @@ import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
 } from "../receipt-delivery-policy.ts";
-import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
-import { sessionDirectoryOf, sessionFileOf } from "../role-run-placement.ts";
+import { rewritePrincipalSessionPaths, rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
@@ -175,9 +174,13 @@ export async function refreshAdmittedPlacementAfterHostTurn(
   }
   if (found === undefined || found === admitted.runDirectory) return undefined;
   const oldRunDirectory = admitted.runDirectory;
-  const sessionDirectory = sessionDirectoryOf(found);
-  const sessionFile = sessionFileOf(found);
-  const principal = authority.seal({ sessionDirectory, sessionFile });
+  const coords = { ...authority.decode(admitted.principal) };
+  rewritePrincipalSessionPaths(
+    coords as Record<string, unknown>,
+    oldRunDirectory,
+    found,
+  );
+  const principal = authority.seal(coords);
   const mutable = admitted as unknown as Record<string, unknown>;
   for (const field of [
     "runDirectory",

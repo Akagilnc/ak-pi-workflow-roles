@@ -13,19 +13,22 @@ import type {
   RoleTurnResult,
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
+import { tryBookKeyFromAkRolesPath } from "./activation-ledger-topology.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
 import { describeErrorIdentity, findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
-import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
+import { projectTurnRequestLiveRunDirectory } from "./role-run-relocation.ts";
 import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 /**
  * #1171: mid-turn report-ticket may have moved the leg (envelope HostContext /
  * child process). Prefer the request path when it still exists; otherwise
- * re-locate by run id (same seam as post-admission refresh). Mutates the live
- * request so later turn-record / exit-copy / fault notes stay on the new leaf.
+ * re-locate by run id inside the original book (same seam as post-admission
+ * refresh). Mutates the live request so later turn-record / exit-copy / fault
+ * notes stay on the new leaf. A vanished path with no replacement must not
+ * keep writing under the dead unbound leaf.
  */
 export async function syncTurnRequestLivePlacement(
   request: RoleTurnRequest,
@@ -33,36 +36,30 @@ export async function syncTurnRequestLivePlacement(
   let live = request.runDirectory;
   if (!existsSync(live)) {
     const parsed = parseRunLeaf(basename(live));
-    if (parsed !== undefined) {
-      const found = await findRunDirectoryById(
+    const bookKey = tryBookKeyFromAkRolesPath(live);
+    const found = parsed === undefined || bookKey === undefined
+      ? undefined
+      : await findRunDirectoryById(
         request.home,
         parsed.runId,
-        undefined,
+        bookKey,
         parsed.role,
       );
-      if (found !== undefined) live = found;
+    if (found === undefined) {
+      throw new Error(
+        `admitted run ${parsed?.runId ?? "(unparseable)"} missing after host turn; not found under ${request.home}`,
+      );
     }
+    live = found;
   }
-  if (live === request.runDirectory) return live;
-  const mutable = request as {
-    runDirectory: string;
-    principal: { sessionDirectory?: string; sessionFile?: string };
-  };
-  const old = mutable.runDirectory;
-  mutable.runDirectory = live;
-  if (typeof mutable.principal.sessionDirectory === "string") {
-    mutable.principal.sessionDirectory = rewriteRunDirectoryPathValue(
-      mutable.principal.sessionDirectory,
-      old,
+  if (live !== request.runDirectory) {
+    projectTurnRequestLiveRunDirectory(
+      request as {
+        runDirectory: string;
+        principal: { sessionDirectory?: string; sessionFile?: string };
+      },
       live,
-    ) as string;
-  }
-  if (typeof mutable.principal.sessionFile === "string") {
-    mutable.principal.sessionFile = rewriteRunDirectoryPathValue(
-      mutable.principal.sessionFile,
-      old,
-      live,
-    ) as string;
+    );
   }
   return live;
 }

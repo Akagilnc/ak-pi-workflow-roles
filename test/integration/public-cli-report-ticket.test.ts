@@ -282,6 +282,8 @@ function piHostThatReportsThenSubmits(input: {
       assert.equal("runDirectory" in reported, false);
       const nextRunDirectory = context.runDirectory;
       assert.ok(nextRunDirectory);
+      // Host native: setSessionFile moves the file handle; getSessionDir stays the open dir.
+      assert.equal(sessionManager.getSessionDir(), oldSessionDir);
       // Spawn env still held the unbound path; seal/ledger must follow the live leaf.
       options.env.AK_ROLE_RUN_DIR = nextRunDirectory;
       sessionManager.appendCustomEntry("ak_1171_post_relocate", { ok: true });
@@ -695,26 +697,4 @@ test("#1171 public resume first sealed submit without ticket soft-reasks once", 
       "resume still no ticket",
     );
   });
-});
-
-test("#1171 pi SessionManager: setSessionFile moves file handle; getSessionDir stays native-old", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-1171-sm-dir-"));
-  const oldDir = join(root, "old");
-  const newDir = join(root, "new");
-  await mkdir(oldDir);
-  await mkdir(newDir);
-  const oldFile = join(oldDir, "session.jsonl");
-  const newFile = join(newDir, "session.jsonl");
-  await writeFile(oldFile, "");
-  await writeFile(newFile, "");
-  const sessionManager = SessionManager.open(oldFile, oldDir, root);
-  assert.equal(sessionManager.getSessionDir(), oldDir);
-  sessionManager.setSessionFile(newFile);
-  assert.equal(sessionManager.getSessionFile(), newFile);
-  // Host native: setSessionFile does not update getSessionDir; appends follow the file.
-  assert.equal(sessionManager.getSessionDir(), oldDir);
-  sessionManager.appendCustomEntry("ak_1171_dir_probe", { ok: true });
-  const newText = await readFile(newFile, "utf8");
-  assert.equal(newText.includes("ak_1171_dir_probe"), true);
-  assert.equal((await readFile(oldFile, "utf8")).includes("ak_1171_dir_probe"), false);
 });

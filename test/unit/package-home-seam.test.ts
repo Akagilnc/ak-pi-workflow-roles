@@ -12,6 +12,7 @@ import {
   homeFromRunDirectory,
   resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
+  tryBookKeyFromAkRolesPath,
   tryHomeFromAkRolesPath,
 } from "../../src/activation-ledger-topology.ts";
 
@@ -34,6 +35,7 @@ test("tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HO
 
     const normalRunDir = "/custom/home/path/.ak-roles/books/my-repo/runs/0123@coder";
     assert.equal(tryHomeFromAkRolesPath(normalRunDir), "/custom/home/path");
+    assert.equal(tryBookKeyFromAkRolesPath(normalRunDir), "my-repo");
     assert.equal(homeFromRunDirectory(normalRunDir), "/custom/home/path");
     assert.equal(
       resolveActivationLedgerHomeForPath(normalRunDir),
@@ -42,6 +44,7 @@ test("tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HO
 
     const nonAkRolesDir = "/some/random/dir/not/in/ledger";
     assert.equal(tryHomeFromAkRolesPath(nonAkRolesDir), undefined);
+    assert.equal(tryBookKeyFromAkRolesPath(nonAkRolesDir), undefined);
     assert.throws(
       () => homeFromRunDirectory(nonAkRolesDir),
       (error: unknown) =>
