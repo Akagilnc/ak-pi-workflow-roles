@@ -6,8 +6,8 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session.jsonl, attachments)
-  pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
+  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
+  pointer.md     optional historical case-dossier pointer when stock still has one (#1092 / #1169: new runs omit attachments/)
   sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
   schema.json    headless output schema when turn-delivery recorded one; omitted on gap
   instr.txt      the instruction the run was admitted with
@@ -200,7 +200,6 @@ def main():
     # copy truncated at the cut and point every prompt reference at it.
     frozen_run = f"{kit}/run/{os.path.basename(run)}"
     os.makedirs(f"{frozen_run}/session", exist_ok=True)
-    cut_epoch = cut.timestamp()
     home = os.path.expanduser("~")
     def repoint(text):
         for live, frozen in ((records_src, f"{kit}/records.jsonl"), (run, frozen_run)):
@@ -225,22 +224,8 @@ def main():
                 f.write(repoint(text))
         except UnicodeDecodeError:
             shutil.copy(src_path, f"{frozen_run}/{name}")
-    if os.path.isdir(f"{run}/attachments"):  # only what the run held at the cut
-        for root, _dirs, files in os.walk(f"{run}/attachments"):
-            for name in files:
-                src_path = os.path.join(root, name)
-                st = os.stat(src_path)  # birth time: the run's own pointer files get rewritten on every resume
-                if getattr(st, "st_birthtime", st.st_mtime) > cut_epoch:
-                    continue
-                dest = os.path.join(frozen_run, os.path.relpath(src_path, run))
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                try:
-                    with open(src_path, encoding="utf-8") as f:
-                        text = f.read()
-                    with open(dest, "w", encoding="utf-8") as f:
-                        f.write(repoint(text))
-                except UnicodeDecodeError:
-                    shutil.copy(src_path, dest)
+    # #1169: do not carry attachments/ into a new replay kit (concept deleted;
+    # stock volumes may still have the directory — leave them in place).
     def kept_rows(rel):
         return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
     kept_history = kept_rows("history.jsonl")

@@ -3,7 +3,7 @@
  * Live callers project typed fields; only historical migrators walk durable pages.
  *
  * Scope is typed machine-consumed path fields only — never free text, never
- * frozen attachment/artifact bytes. Nested walk is confined to package-owned
+ * caller file-flag path strings. Nested walk is confined to package-owned
  * `session/` seams.
  */
 import { readdir, readFile, writeFile } from "node:fs/promises";
@@ -385,7 +385,7 @@ async function rewriteSessionTranscriptBindings(
 /**
  * Package-owned nested seams under session/ only:
  * sitian records.jsonl,
- * session transcript typed parent bindings. Never walks attachments/.
+ * session transcript typed parent bindings. Never walks caller file paths.
  */
 async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
