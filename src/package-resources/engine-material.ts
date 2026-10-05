@@ -1,23 +1,27 @@
 /**
- * Packaged engine method-material seam (#356 T1 / ADR 0069 / #376).
+ * Packaged engine method-material seam (#356 T1 / ADR 0069 / #376 / #1167).
  * Engine names are owner pool-directive labels — not a closed material catalog.
  * Material body is optional data for the LLM, not a code contract.
  * Only path-safety syntax is checked at real I/O seams.
+ * Delivery is startup readingMaterial (handbook bodies), never the transport prompt.
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ENGINE_MATERIAL_RELATIVE_ROOT = "resources/engines" as const;
+const ENGINE_DISPATCH_RELATIVE_PATH = "resources/engine-dispatch.md" as const;
 
 export type EngineSessionMaterial = Readonly<{
   name: string;
-  /** Present only when a packaged notes file exists for this name. */
-  materialPath?: string;
   /**
    * Optional owner pool-directive model id for multi-model engines (#883).
    * Opaque pass-through coordinate for the seat — not validated against a catalog.
    */
   model?: string;
+  /** Packaged per-engine handbook body when notes exist. */
+  handbook?: string;
+  /** Shared engine-dispatch.md body when the per-engine handbook exists. */
+  dispatchHandbook?: string;
 }>;
 
 /** Project engine name + optional model for env / request / material spreads. */
@@ -55,6 +59,10 @@ export function engineMaterialRelativeDirectory(): string {
 
 export function resolveEngineMaterialDirectory(packageRoot: string): string {
   return join(packageRoot, ENGINE_MATERIAL_RELATIVE_ROOT);
+}
+
+export function resolveEngineDispatchMaterialPath(packageRoot: string): string {
+  return join(packageRoot, ENGINE_DISPATCH_RELATIVE_PATH);
 }
 
 /**
@@ -99,7 +107,7 @@ export function assertLegalEngineName(name: string): string {
 /**
  * Resolve optional engine options into session material coordinates.
  * No engine → undefined (caller keeps default prompt bytes).
- * Engine with packaged notes → name + absolute material path.
+ * Engine with packaged notes → name + handbook body + dispatch handbook body.
  * Engine without notes → name only (pass-through; no warning).
  */
 export function engineSessionMaterialFromOptions(options: {
@@ -119,41 +127,40 @@ export function engineSessionMaterialFromOptions(options: {
       : assertLegalEngineModel(options.engineModel);
   const materialPath = resolveEngineMaterialPath(options.packageRoot, name);
   const modelField = model === undefined ? {} : { model };
-  if (existsSync(materialPath)) {
-    return Object.freeze({ name, materialPath, ...modelField });
+  if (!existsSync(materialPath)) {
+    return Object.freeze({ name, ...modelField });
   }
-  return Object.freeze({ name, ...modelField });
+  const handbook = readFileSync(materialPath, "utf8");
+  const dispatchPath = resolveEngineDispatchMaterialPath(options.packageRoot);
+  const dispatchField = existsSync(dispatchPath)
+    ? { dispatchHandbook: readFileSync(dispatchPath, "utf8") }
+    : {};
+  return Object.freeze({ name, handbook, ...dispatchField, ...modelField });
 }
 
 /**
- * Append engine method-material delivery to session initial material lines.
- * No engine → identity copy (byte-stable when joined the same way).
- * With notes → Chinese neutral handbook header + engine name + absolute material path.
- * Name only → engine name coordinate only (no handbook header, no path, no warning).
- * Never delivers material body.
+ * Typed startup readingMaterial for a resolved engine session material.
+ * Undefined engine → undefined (no outsourcing segment).
  */
-export function appendEngineSessionMaterial(
-  lines: readonly string[],
+export function engineSessionReadingMaterial(
   engineMaterial?: EngineSessionMaterial,
-): string[] {
-  if (engineMaterial === undefined) {
-    return [...lines];
-  }
-  const out = [...lines];
-  out.push("");
-  if (engineMaterial.materialPath !== undefined) {
-    out.push("本次配置的劳务引擎及其手册：");
-    out.push(`- engine: ${engineMaterial.name}`);
-    if (engineMaterial.model !== undefined) {
-      out.push(`- engineModel: ${engineMaterial.model}`);
+):
+  | {
+      readonly kind: "engine-session-material";
+      readonly name: string;
+      readonly model?: string;
+      readonly handbook?: string;
+      readonly dispatchHandbook?: string;
     }
-    out.push(`- ${engineMaterial.materialPath}`);
-  } else {
-    // Name-only pass-through: no packaged bytes to claim as handbook.
-    out.push(`- engine: ${engineMaterial.name}`);
-    if (engineMaterial.model !== undefined) {
-      out.push(`- engineModel: ${engineMaterial.model}`);
-    }
-  }
-  return out;
+  | undefined {
+  if (engineMaterial === undefined) return undefined;
+  return {
+    kind: "engine-session-material" as const,
+    name: engineMaterial.name,
+    ...(engineMaterial.model === undefined ? {} : { model: engineMaterial.model }),
+    ...(engineMaterial.handbook === undefined ? {} : { handbook: engineMaterial.handbook }),
+    ...(engineMaterial.dispatchHandbook === undefined
+      ? {}
+      : { dispatchHandbook: engineMaterial.dispatchHandbook }),
+  };
 }

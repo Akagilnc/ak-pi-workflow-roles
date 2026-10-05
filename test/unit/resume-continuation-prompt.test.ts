@@ -17,3 +17,14 @@ test("auto-resume without engine material keeps the non-empty transport envelope
   );
   assert.notEqual(RESUME_TRANSPORT_ENVELOPE.trim(), "");
 });
+
+test("#1167 auto-resume with engine still keeps envelope-only continuation", () => {
+  assert.equal(
+    buildAutoResumeContinuationPrompt({
+      packageRoot: process.cwd(),
+      engine: "cursor",
+      engineModel: "cursor-grok-4.6-high",
+    }),
+    RESUME_TRANSPORT_ENVELOPE,
+  );
+});

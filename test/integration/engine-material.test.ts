@@ -41,23 +41,23 @@ test("packaged notes directory is discovery-only; missing notes is not an error"
     await writeFile(join(root, "resources", "engines", "only.md"), "x\n", "utf8");
     assert.deepEqual(listEngineMaterialNames(root), ["only"]);
 
-    // With notes → name + path.
+    // With notes → name + handbook bodies (no path delivery).
+    await writeFile(join(root, "resources", "engine-dispatch.md"), "dispatch\n", "utf8");
     const withNotes = engineSessionMaterialFromOptions({
       engine: "only",
       packageRoot: root,
     });
     assert.equal(withNotes?.name, "only");
-    assert.equal(
-      withNotes?.materialPath,
-      join(root, "resources", "engines", "only.md"),
-    );
+    assert.equal(withNotes?.handbook, "x\n");
+    assert.equal(withNotes?.dispatchHandbook, "dispatch\n");
+    assert.equal(withNotes !== undefined && "materialPath" in withNotes, false);
 
-    // Without notes → name only, no path, no throw.
+    // Without notes → name only, no handbook, no throw.
     const bare = engineSessionMaterialFromOptions({
       engine: "opus",
       packageRoot: root,
     });
     assert.deepEqual(bare, { name: "opus" });
-    assert.equal(bare && "materialPath" in bare && bare.materialPath !== undefined, false);
+    assert.equal(bare && "handbook" in bare && bare.handbook !== undefined, false);
   });
 });

@@ -33,7 +33,10 @@ import {
   resolveEngineModel,
   resolveEngineName,
 } from "./engine-detour.ts";
-import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
+import {
+  engineSessionMaterialFromOptions,
+  engineSessionReadingMaterial,
+} from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import {
   createReceiptDeliveryPolicy,
@@ -114,7 +117,15 @@ import {
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import {
+  PACKAGED_ROLE_REGISTRY,
+  packagedRoleActivationFlags,
+  packagedRoleInputFlag,
+  packagedRoleMetadata,
+  packagedRoleOutputTool,
+  packagedRolePhaseFlag,
+  type PackagedRole,
+} from "./packaged-role-registry.ts";
 import {
   createJudgeRoleRuntime,
 } from "./judge-role.ts";
@@ -1198,12 +1209,9 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    // #879: engine coordinates ride readingMaterial only when station-child
-    // officer dialogue replaced the ordinary transport prompt (no double fold).
+    // #1167: engine / outsourcing coordinates ride startup readingMaterial for
+    // every seat (handbook bodies). Transport prompt stays dispatch-only.
     roleHost.on("before_agent_start", () => {
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
-      if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
       if (engine === undefined || dependencies.packageRoot === undefined) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
@@ -1212,15 +1220,9 @@ export function createRoleRuntimeExtension(
         ...(engineModel === undefined ? {} : { engineModel }),
         packageRoot: dependencies.packageRoot,
       });
-      if (material === undefined) return;
-      return {
-        readingMaterial: {
-          kind: "engine-session-material" as const,
-          name: material.name,
-          ...(material.model === undefined ? {} : { model: material.model }),
-          ...(material.materialPath === undefined ? {} : { materialPath: material.materialPath }),
-        },
-      };
+      const reading = engineSessionReadingMaterial(material);
+      if (reading === undefined) return;
+      return { readingMaterial: reading };
     });
     roleHost.on("before_agent_start", () => {
       const path = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);

@@ -94,10 +94,6 @@ import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
-import {
-  appendEngineSessionMaterial,
-  type EngineSessionMaterial,
-} from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
@@ -2074,17 +2070,17 @@ function admittedTransportPromptKind(
  * One initial prompt transport. The registry `transportPrompt` leaf selects
  * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
  * caller instruction plus frozen attachment paths.
+ * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(
   admitted: InstructionTransportSource,
-  engineMaterial?: EngineSessionMaterial,
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
     if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
       throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
     }
-    return appendEngineSessionMaterial([admitted.sourceRunPath], engineMaterial).join("\n");
+    return admitted.sourceRunPath;
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
@@ -2094,7 +2090,7 @@ export function buildInstructionTransportPrompt(
     if (!admitted.instructionEmpty) {
       lines.push("", admitted.instruction);
     }
-    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+    return lines.join("\n");
   }
   if (kind === "skill-args") {
     if (
@@ -2112,7 +2108,7 @@ export function buildInstructionTransportPrompt(
     if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
       lines.push("", admitted.instruction);
     }
-    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+    return lines.join("\n");
   }
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
@@ -2122,7 +2118,7 @@ export function buildInstructionTransportPrompt(
       lines.push(`- ${attachment.frozenPath}`);
     }
   }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return lines.join("\n");
 }
 
 export type AdmitCountersignInvocationOptions = {
