@@ -8,7 +8,6 @@
  * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
-import { createConnection } from "node:net";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -36,6 +35,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
   CANONICAL_SOURCE_ROLE,
@@ -84,58 +84,6 @@ function packageAuditedPathMaterials(materials: readonly unknown[]): unknown[] {
     return typeof material.sourceRunPath === "string"
       || typeof material.runDirectory === "string";
   });
-}
-
-async function listMcpToolNames(socketPath: string, token: string): Promise<string[]> {
-  const result = await new Promise<{ tools?: Array<{ name?: string }> }>((resolve, reject) => {
-    const conn = createConnection(socketPath);
-    let buffer = "";
-    conn.setEncoding("utf8");
-    conn.on("error", reject);
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end < 0) return;
-      try {
-        const message = JSON.parse(buffer.slice(0, end)) as {
-          result?: { tools?: Array<{ name?: string }> };
-          error?: unknown;
-        };
-        if (message.error !== undefined) {
-          reject(new Error(JSON.stringify(message.error)));
-          return;
-        }
-        resolve(message.result ?? {});
-      } catch (error) {
-        reject(error);
-      } finally {
-        conn.end();
-      }
-    });
-    conn.write(`${JSON.stringify({ id: 1, token, method: "tools/list" })}\n`);
-  });
-  return (result.tools ?? [])
-    .map((tool) => tool.name)
-    .filter((name): name is string => typeof name === "string");
-}
-
-function mcpRelayToken(prepared: {
-  readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
-}): string {
-  const server = prepared.mcpServers[0];
-  assert.ok(server !== undefined, "prepared turn must expose MCP server");
-  const env = server.env;
-  assert.ok(Array.isArray(env), "mcp server env must be an array");
-  for (const entry of env) {
-    if (
-      isRecord(entry)
-      && entry.name === "AK_ACP_MCP_TOKEN"
-      && typeof entry.value === "string"
-    ) {
-      return entry.value;
-    }
-  }
-  assert.fail("AK_ACP_MCP_TOKEN missing from prepared MCP env");
 }
 
 /** Prepare from a live public-entry RoleTurnRequest — prompt already set by gate/direct. */

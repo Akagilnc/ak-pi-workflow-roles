@@ -451,9 +451,8 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
     assert.equal(summons.length, 2);
     assert.equal(liveRequests.length, 2);
     for (const argv of summons) {
-      assert.equal(argv.includes(authority), false);
-      assert.equal(argv.includes(subject), false);
       // #1166: package must not inject a work-context path — structured field only.
+      // Do not zero-hit-scan prompt/argv prose for subject/authority tokens (J6).
       const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
       assert.equal(fed.subjectKey, subjectKey);
       assert.equal(fed.workContextPath, undefined);

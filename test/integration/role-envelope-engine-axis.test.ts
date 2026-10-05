@@ -6,7 +6,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,68 +30,13 @@ import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-function mcpRelayToken(prepared: {
-  readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
-}): string {
-  const server = prepared.mcpServers[0];
-  assert.ok(server !== undefined, "prepared turn must expose MCP server");
-  const env = server.env;
-  assert.ok(Array.isArray(env), "mcp server env must be an array");
-  for (const entry of env) {
-    if (
-      typeof entry === "object"
-      && entry !== null
-      && (entry as { name?: unknown }).name === "AK_ACP_MCP_TOKEN"
-      && typeof (entry as { value?: unknown }).value === "string"
-    ) {
-      return (entry as { value: string }).value;
-    }
-  }
-  assert.fail("AK_ACP_MCP_TOKEN missing from prepared MCP env");
-}
-
-async function listMcpToolNames(
-  socketPath: string,
-  token: string,
-): Promise<string[]> {
-  const result = await new Promise<{ tools?: Array<{ name?: string }> }>((resolve, reject) => {
-    const conn = createConnection(socketPath);
-    let buffer = "";
-    conn.setEncoding("utf8");
-    conn.on("error", reject);
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end < 0) return;
-      try {
-        const message = JSON.parse(buffer.slice(0, end)) as {
-          result?: { tools?: Array<{ name?: string }> };
-          error?: unknown;
-        };
-        if (message.error !== undefined) {
-          reject(new Error(JSON.stringify(message.error)));
-          return;
-        }
-        resolve(message.result ?? {});
-      } catch (error) {
-        reject(error);
-      } finally {
-        conn.end();
-      }
-    });
-    conn.write(`${JSON.stringify({ id: 1, token, method: "tools/list" })}\n`);
-  });
-  return (result.tools ?? [])
-    .map((tool) => tool.name)
-    .filter((name): name is string => typeof name === "string");
-}
 
 /** Same ledger-local run leaf as createTempPackageHomeLedger / #818 withEnvelopeHome. */
 function ledgerProbeRun(home: string, leaf: string): string {
@@ -523,8 +467,8 @@ test("#879/#1166 inspector first mint: sourceRunPath on activation, payload stay
     request.activation.role === "inspector" ? request.activation.sourceRun : undefined,
     INSPECTOR_PARENT,
   );
+  // Dialogue stays the peer payload bytes; binding pointer is activation only (J6).
   assert.equal(request.continuation.prompt, JSON.stringify(OFFICER_PAYLOAD));
-  assert.equal(request.continuation.prompt.includes(INSPECTOR_PARENT), false);
   assert.equal(projectActivationFlags(request).get("ak-inspector-source-run"), INSPECTOR_PARENT);
 });
 
@@ -614,9 +558,8 @@ test("#879 station-child officer engine material stays off dialogue", async () =
         }
       }
       try {
+        // Dialogue equality + structured engine material; no prompt model/name zero-hit (J6).
         assert.equal(prepared.prompt, JSON.stringify(OFFICER_PAYLOAD));
-        assert.equal(prepared.prompt.includes(ENGINE), false);
-        assert.equal(prepared.prompt.includes(ENGINE_MODEL), false);
         const engines = prepared.systemPrompt.materials.filter(
           (material) =>
             typeof material === "object"
