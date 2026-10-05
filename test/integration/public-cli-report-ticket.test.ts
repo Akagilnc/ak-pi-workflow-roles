@@ -38,6 +38,7 @@ import {
   lockCurrentJson,
   readCurrentSection,
   seedCurrentSection,
+  seedTerminal,
 } from "../helpers/run-dossier-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
@@ -56,6 +57,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { bookDirectOfficerRunPointer } from "../../src/archivist-record-pointer.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 
@@ -941,21 +943,34 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
   readonly project: string;
   readonly bookKey: string;
   readonly runId: string;
-  readonly reask: "report-only" | "silence" | "substitute" | "substitute-with-ticket";
+  readonly reask:
+    | "report-only"
+    | "silence"
+    | "substitute"
+    | "substitute-with-ticket"
+    /** #1171 F2-R9: soft reask seals unreadable status + ticket; status reask is ordinary. */
+    | "bad-status-with-ticket";
   /** #1171 F2-R4a / F2-R5 / F2-R6: inspector continue once after the first sealed chain. */
   readonly inspectorContinuesOnce?: boolean;
   /**
    * Ordinary turn after inspector continue.
    * - reseal: F2-R4a — spent budget must block a second soft reask; reseal reaches audit
-   * - no-volume: F2-R5 / F2-R6 — honest no_receipt; no outer restore of a prior volume
+   * - no-volume: F2-R5 / F2-R6 / F2-R9 — honest no_receipt; no outer restore of a prior volume
    */
   readonly ordinaryContinue?: "reseal" | "no-volume";
+  /**
+   * #1171 F2-R8: during plain soft-reask silence, another public resume seals
+   * foreign-volume and passes台院 — original must not borrow that pass.
+   */
+  readonly foreignCourtPassesAudit?: boolean;
 }): Promise<void> {
   const { home, project, bookKey, runId, reask } = input;
   const ordinaryContinue = input.ordinaryContinue
     ?? (input.inspectorContinuesOnce === true ? "no-volume" : undefined);
   const roles: string[] = [];
   let inspectorTurns = 0;
+  /** Structured report field from parent-host inspector summons (F2-R8). */
+  const parentInspectorReports: string[] = [];
   const parent = roleTurnHostFromLegacyPiRunner({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
@@ -969,6 +984,7 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
             role: "fixer",
             toolName: FIXER_OUTPUT_TOOL_NAME,
             details: { ...FIXER_DONE, report: "original-volume" },
+            toolCallId: "call_fixer_original",
           })(args, options);
         }
         if (turn === 2) {
@@ -1007,11 +1023,28 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
               sessionWriteMode: "append",
             })(args, options);
           }
+          if (reask === "bad-status-with-ticket") {
+            // Soft reask seals unreadable status + ticket; nested status reask is ordinary.
+            return scriptedTerminatingToolSession({
+              role: "fixer",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              details: {
+                status: "not-a-lawful-status",
+                report: "bad-status-volume",
+                ticketNumber: TICKET,
+                classResults: FIXER_DONE.classResults,
+              },
+              sessionWriteMode: "append",
+            })(args, options);
+          }
           // silence: exit cleanly with neither report nor sealed substitute.
           // F2-R7: on the plain soft-reask silence line, another lawful court
           // on the same leg may seal meanwhile — ownership must not invent a
           // substitute from that foreign seal. Audit-continue silence paths
           // (R4a/R5) keep plain silence; their necessary inputs stay separate.
+          // F2-R8: same foreign-court seal plus a台院 pass bound to that foreign
+          // toolCallId — original audit must not borrow the pass (distinct court
+          // id; do not nest a second public resume into the open soft-reask court).
           if (input.inspectorContinuesOnce !== true) {
             const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
             await sealAcceptedSubmission({
@@ -1022,12 +1055,81 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
               runDirectory,
               courtAttemptId: "foreign-court-other-public-call",
               toolCallId: "call_fixer_foreign_court",
-              details: { ...FIXER_DONE, report: "foreign-court-volume" },
+              details: {
+                ...FIXER_DONE,
+                report: input.foreignCourtPassesAudit === true
+                  ? "foreign-volume"
+                  : "foreign-court-volume",
+              },
             });
+            if (input.foreignCourtPassesAudit === true) {
+              const inspRunId = `${runId}-foreign-insp`;
+              const inspDir = unboundLeaf(home, bookKey, inspRunId, "inspector");
+              await mkdir(sessionDirectoryOf(inspDir), { recursive: true });
+              seedCurrentSection(inspDir, "invocation", {
+                role: "inspector",
+                runId: inspRunId,
+                bookKey,
+                projectRoot: project,
+                runDirectory: inspDir,
+                host: "pi",
+                provider: "test",
+                model: "caller-seat",
+              });
+              seedCurrentSection(inspDir, "admitted", {
+                role: "inspector",
+                runId: inspRunId,
+                bookKey,
+                projectRoot: project,
+                runDirectory: inspDir,
+                instruction: "review foreign",
+                instructionEmpty: false,
+                attachments: [],
+                ticketNumber: TICKET,
+                sessionDirectory: sessionDirectoryOf(inspDir),
+                sessionFile: sessionFileOf(inspDir),
+              });
+              seedCurrentSection(inspDir, "runState", {
+                runId: inspRunId,
+                role: "inspector",
+                state: "terminal",
+                bookKey,
+                projectRoot: project,
+                runDirectory: inspDir,
+                sessionDirectory: sessionDirectoryOf(inspDir),
+                sessionFile: sessionFileOf(inspDir),
+              });
+              await sealAcceptedSubmission({
+                cwd: project,
+                home,
+                runId: inspRunId,
+                role: "inspector",
+                runDirectory: inspDir,
+                courtAttemptId: "insp-foreign-pass",
+                toolCallId: "call_inspector_foreign",
+                details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
+              });
+              seedTerminal(inspDir, "report", {
+                role: "inspector",
+                runId: inspRunId,
+                outcome: {
+                  kind: "accepted",
+                  role: "inspector",
+                  payloads: [{ status: "converged", findings: [], reason: "ok", ticketNumber: TICKET }],
+                },
+              });
+              bookDirectOfficerRunPointer({
+                parentSessionFile: sessionFileOf(runDirectory),
+                officer: "inspector",
+                sessionFile: sessionFileOf(inspDir),
+                runDirectory: inspDir,
+                submissionToolCallId: "call_fixer_foreign_court",
+              });
+            }
           }
           return { code: 0, stderr: "", timedOut: false };
         }
-        // Audit-continue ordinary turn: spent budget blocks a second soft reask.
+        // Ordinary status reask / audit-continue turn: spent budget blocks a second soft reask.
         if (ordinaryContinue === "no-volume") {
           return { code: 0, stderr: "", timedOut: false };
         }
@@ -1056,14 +1158,56 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
       })(args, options);
     },
   });
+  // Capture structured peer payload the parent-host inspector is summoned with (#1171 F2-R8).
+  const capturingParent: typeof parent = {
+    async executeTurn(request) {
+      if (request.activation.role === "inspector") {
+        const prompt = request.continuation.prompt;
+        if (typeof prompt === "string" && prompt.length > 0) {
+          try {
+            const parsed: unknown = JSON.parse(prompt);
+            if (isRecord(parsed) && typeof parsed.report === "string") {
+              parentInspectorReports.push(parsed.report);
+            }
+          } catch {
+            // Gate may deliver non-JSON; F2-R8 asserts structured report when present.
+          }
+        }
+      }
+      return parent.executeTurn(request);
+    },
+  };
   const result = await runPublicInstructionSeat(
     ["apply", "Repair without ticket on first seal."],
-    seatEnv(home, project, runId, "pi", parent),
+    seatEnv(home, project, runId, "pi", capturingParent),
     captureIo().io,
     "fixer",
     (args) => parsePublicSeatArgv("fixer", args),
   );
   const fixerTurns = roles.filter((r) => r === "fixer").length;
+  if (reask === "bad-status-with-ticket" && ordinaryContinue === "no-volume") {
+    // F2-R9: soft reask sealed bad-status+ticket; ordinary status reask no-volume.
+    assert.equal(fixerTurns, 3, "soft reask seal then ordinary status reask");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", "ordinary status reask publishes no_receipt");
+    const live = result.admitted?.runDirectory;
+    assert.ok(live !== undefined && existsSync(live), "live admitted directory");
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
+    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
+      .map((row) => row.outcome?.kind);
+    assert.deepEqual(
+      attemptKinds,
+      ["accepted", "accepted", "no_receipt"],
+      "original, bad-status seal, ordinary status reask no_receipt",
+    );
+    const durable = readCurrentSection(live!, "terminal") as {
+      face?: string;
+      body?: { outcome?: { kind?: string } };
+    } | undefined;
+    assert.equal(durable?.face, "no_receipt", "durable face follows ordinary status reask");
+    assert.equal(durable?.body?.outcome?.kind, "no_receipt", "durable outcome is no_receipt");
+    return;
+  }
   if (input.inspectorContinuesOnce === true && ordinaryContinue === "reseal") {
     // F2-R4a: silence soft reask, then reseal after continue — budget blocks second reask.
     assert.equal(fixerTurns, 3, `${reask}: one soft reask then one reseal turn`);
@@ -1152,7 +1296,30 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
     true,
     `${reask}: original sealed payload must remain the presented volume`,
   );
+  if (input.foreignCourtPassesAudit === true) {
+    // F2-R8: parent台院 must review original-volume bound to original tool call —
+    // not skip via foreign-volume's pass record.
+    assert.deepEqual(
+      parentInspectorReports,
+      ["original-volume"],
+      `${reask}: parent inspector structured report is original, not foreign`,
+    );
+    const inspectorPointers = historyPayloads<{
+      officer?: string;
+      submissionToolCallId?: string;
+    }>(live!, "officer-pointer").filter((row) => row.officer === "inspector");
+    assert.ok(
+      inspectorPointers.some((row) => row.submissionToolCallId === "call_fixer_foreign_court"),
+      `${reask}: foreign pass was booked`,
+    );
+    assert.equal(
+      inspectorPointers.at(-1)?.submissionToolCallId,
+      "call_fixer_original",
+      `${reask}: latest officer pointer binds original seal, not foreign`,
+    );
+  }
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
+  // Foreign-court seal (F2-R7 / F2-R8) writes ledger rows but not attempt-history.
   const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
     .map((row) => row.outcome?.kind);
   assert.deepEqual(
@@ -1188,6 +1355,32 @@ test("#1171 F2 / F2-R7 reask silence keeps original; foreign-court seal does not
       bookKey,
       runId: "01a011710-0000-7000-8000-0000000f2siln",
       reask: "silence",
+    });
+  });
+});
+
+test("#1171 F2-R8 silence; foreign public seal+pass must not skip original audit", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r8",
+      reask: "silence",
+      foreignCourtPassesAudit: true,
+    });
+  });
+});
+
+test("#1171 F2-R9 soft reask bad-status+ticket; ordinary status no-volume persists", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
+      home,
+      project,
+      bookKey,
+      runId: "01a011710-0000-7000-8000-0000f2r9",
+      reask: "bad-status-with-ticket",
+      ordinaryContinue: "no-volume",
     });
   });
 });

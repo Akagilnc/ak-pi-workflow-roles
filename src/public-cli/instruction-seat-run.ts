@@ -179,10 +179,21 @@ function unreadablePostSubmissionStatus(
  * status: the caller presents the volumes already in hand and does not advance
  * review. ADR 0007 audit continues are not this shape.
  */
+/**
+ * Drop turn-scoped soft-reask identity; keep cross-turn budgets and ownership cell.
+ * #1171 F2-R5 / F2-R9: ordinary status reask and court continue must not inherit
+ * softTicketReaskTurn (that flag only governs the soft-reask turn's own settle).
+ */
+function withoutSoftTicketReaskTurn(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
+  const { softTicketReaskTurn: _softTicketReaskTurn, ...rest } = env;
+  return rest;
+}
+
 function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv | undefined {
   const spent = env.unreadableReasksSpent ?? 0;
   if (spent >= deliveryLimitFromConfig(env.autoResumeLimit)) return undefined;
-  return { ...env, unreadableReasksSpent: spent + 1 };
+  // Ordinary status reask: strip soft-reask turn identity; keep spent budget (#1171 F2-R9).
+  return { ...withoutSoftTicketReaskTurn(env), unreadableReasksSpent: spent + 1 };
 }
 
 /** Budget spent on an unreadable status. Distinct from "status is readable". */
@@ -339,8 +350,7 @@ async function reaskMissingTicketOnce(
 
 /** Court continue: keep cross-turn budgets + ownership cell; drop turn-scoped soft-reask identity. */
 function envForCourtContinue(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
-  const { softTicketReaskTurn: _softTicketReaskTurn, ...rest } = env;
-  return { ...rest, unreadableReasksSpent: 0 };
+  return { ...withoutSoftTicketReaskTurn(env), unreadableReasksSpent: 0 };
 }
 
 /** True when a terminal still carries a sealed accepted / audit_escalation volume. */
@@ -1468,6 +1478,8 @@ async function auditSubmittedRole(
   resumedOfficer?: AdmittedRoleInvocation,
   passedReceipt?: unknown,
 ): Promise<SeatRunResult> {
+  // Ordinary audit chain: drop soft-reask turn identity; keep budgets/ownership (#1171 F2-R9).
+  env = withoutSoftTicketReaskTurn(env);
   const admitted = turn.admitted;
   if (admitted === undefined || !AUDITED_ROLES.has(admitted.role)
     || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
@@ -1512,10 +1524,13 @@ async function auditSubmittedRole(
     await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
     return turn;
   }
-  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const acceptedRow = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted");
-  const toolCallId = acceptedRow?.toolCallId;
-  if (toolCallId === undefined) throw new Error("accepted submission has no tool call identity");
+  // #1171 F2-R8: bind audit to the sealed identity carried on this turn's
+  // settlement terminal — never the whole-leg latest accepted row (another
+  // lawful public call may have sealed and passed台院 meanwhile).
+  const toolCallId = turn.terminal.submissionToolCallId;
+  if (toolCallId === undefined || toolCallId.length === 0) {
+    throw new Error("accepted submission has no tool call identity");
+  }
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
   const entries = admitted.role === "doctor"
     ? await readBoundSessionEntries(sessionFile)
