@@ -34,10 +34,11 @@ be omitted only with an **explicit disposition** recorded in the trail.
    finding/disposition to authority, a fixed reviewed range (full base
    and target SHAs), and current facts (see `packets/judge-review.md`).
 7. **Issue forward repair material when needed** — write opaque prose
-   instructions (see `packets/fixer-repair.md`) and, only when needed, a separate
-   typed prerequisite attachment (see `packets/fixer-prerequisites.json`) without
-   overwriting prior artifacts. Preserve the accepted current Fixer receipt and
-   its audit observation; fields are defined by [the Fixer contract](../src/package-contracts/fixer-output.ts).
+   instructions (see `packets/fixer-repair.md`) without overwriting prior
+   artifacts. Caller `--prerequisites` is an opaque path passed into the Fixer's
+   first message; the package does not read or validate it. Preserve the accepted
+   current Fixer receipt and its audit observation; fields are defined by [the
+   Fixer contract](../src/package-contracts/fixer-output.ts).
 
 ## Artifact preservation rules
 

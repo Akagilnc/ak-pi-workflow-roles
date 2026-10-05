@@ -49,10 +49,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       reportPhase: true,
     },
     boardPlacement: "marshal",
+    navigatorSubject: "public-instruction",
     activationFlags: [
-      { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
-      { field: "prerequisitesPath", flag: "ak-fixer-prerequisites" },
     ],
     activationStage: "load-and-install",
   },
@@ -72,8 +71,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     artifactFace: {
       reportPhase: true,
     },
+    navigatorSubject: "public-instruction",
     activationFlags: [
-      { field: "taskPath", flag: "ak-coder-task", binds: "input" },
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
     ],
     activationStage: "load-and-install",

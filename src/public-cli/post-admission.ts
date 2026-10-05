@@ -132,11 +132,11 @@ function projectRelocatedTurnIdentity(
   mutableRequest.principal = admitted.principal;
   const activation = mutableRequest.activation;
   if (isRecord(activation)) {
-    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath"] as const) {
+    for (const field of ["inputPath"] as const) {
       const record = activation as Record<string, unknown>;
       if (field in record) record[field] = rewrite(record[field]);
     }
-    // #1165: activation.requestManifestPath is a caller path — do not rewrite.
+    // #1165/#1168: caller file-flag paths are not activation fields to rewrite.
   }
   if (result.terminal !== undefined) {
     for (const artifact of result.terminal.artifacts) {

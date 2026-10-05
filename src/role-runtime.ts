@@ -351,8 +351,6 @@ export {
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
-export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
-export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export {
   AUDITOR_SOUL_ROLES,
   AK_ROLE_AUDITOR_SUBJECT_ENV,
@@ -465,8 +463,6 @@ export type RoleRuntimeDependencies = {
   loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   /** One soul loader. The role argument selects the registry record. */
   loadRoleSoul(role: PackagedRole): Promise<string>;
-  loadFixPacket?(path: string): Promise<string>;
-  loadCoderTask?(path: string): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -1482,12 +1478,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("fixer"),
-        async loadPacket(path) {
-          if (dependencies.loadFixPacket === undefined) {
-            throw new Error("Fixer packet loader is not configured");
-          }
-          return dependencies.loadFixPacket(path);
-        },
       },
       hostActions,
       { unfinishedReasonBounceLimit: deliveryLimit },
@@ -1496,12 +1486,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("coder"),
-        async loadTask(path) {
-          if (dependencies.loadCoderTask === undefined) {
-            throw new Error("Coder task loader is not configured");
-          }
-          return dependencies.loadCoderTask(path);
-        },
       },
       hostActions,
       { unfinishedReasonBounceLimit: deliveryLimit },

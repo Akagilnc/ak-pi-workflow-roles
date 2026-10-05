@@ -54,7 +54,6 @@ const entries = [
   "open-tool-schema",
   "package-contracts/collector-output",
   "package-contracts/fixer-output",
-  "package-contracts/fixer-packet",
   "package-contracts/gatekeeper-output",
   "package-contracts/judge-output",
   "package-contracts/navigator-output",

@@ -463,8 +463,8 @@ const FIXER_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "JSON array of {id, requirement} prerequisite objects.",
-      zh: "{id, requirement} 前置条件 JSON 数组路径。",
+      en: "Caller prerequisites path passed as-is to the role. Package does not read, copy, or validate; use an absolute path when cwd differs from --project.",
+      zh: "调用方前置条件文件路径原样递给衙门。包不读、不复制、不校验；调用方当前目录与 --project 不同时请给绝对路径。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];

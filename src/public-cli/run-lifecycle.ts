@@ -20,7 +20,6 @@ import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFile
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
-import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
@@ -977,10 +976,7 @@ type LoadedAdmittedRequestFields = {
   readonly instructionEmpty: boolean;
   readonly attachments: FrozenAttachment[];
   readonly phase?: CoderPhase | FixerPhase;
-  readonly taskPath?: string;
-  readonly packetPath?: string;
   readonly prerequisitesPath?: string;
-  readonly prerequisites?: readonly FixerPrerequisite[];
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
@@ -1066,10 +1062,7 @@ async function loadResumableRunRecord(
   let instructionEmpty = true;
   let attachments: FrozenAttachment[] = [];
   let phase: CoderPhase | FixerPhase | undefined;
-  let taskPath: string | undefined;
-  let packetPath: string | undefined;
   let prerequisitesPath: string | undefined;
-  let prerequisites: readonly FixerPrerequisite[] | undefined;
   let baseRevision: string | undefined;
   let lens: ReviewerLens | undefined;
   let authorityRefs: readonly string[] | undefined;
@@ -1113,20 +1106,9 @@ async function loadResumableRunRecord(
       if (record.phase === "plan" || record.phase === "apply") {
         phase = record.phase;
       }
-      if (typeof record.taskPath === "string" && record.taskPath.trim() !== "") {
-        taskPath = record.taskPath;
-      }
-      if (typeof record.packetPath === "string" && record.packetPath.trim() !== "") {
-        packetPath = record.packetPath;
-      }
-      if (
-        typeof record.prerequisitesPath === "string" &&
-        record.prerequisitesPath.trim() !== ""
-      ) {
+      // #1168: opaque caller path on resume — do not trim-filter provided values.
+      if (typeof record.prerequisitesPath === "string") {
         prerequisitesPath = record.prerequisitesPath;
-      }
-      if (Array.isArray(record.prerequisites)) {
-        prerequisites = record.prerequisites as FixerPrerequisite[];
       }
       if (
         typeof record.baseRevision === "string" &&
@@ -1304,10 +1286,7 @@ async function loadResumableRunRecord(
       instructionEmpty,
       attachments,
       ...(phase === undefined ? {} : { phase }),
-      ...(taskPath === undefined ? {} : { taskPath }),
-      ...(packetPath === undefined ? {} : { packetPath }),
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-      ...(prerequisites === undefined ? {} : { prerequisites }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
       ...(lens === undefined ? {} : { lens }),
       ...(authorityRefs === undefined ? {} : { authorityRefs }),
@@ -1438,12 +1417,6 @@ function admitResumedRole(loaded: {
     }
     case "worker-task": {
       const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
-      const taskPath = fields.taskPath;
-      if (taskPath === undefined) {
-        throw new CliUsageError(
-          `role run admitted coder task path is missing: ${runId}`,
-        );
-      }
       if (fields.instruction.trim() === "") {
         throw new CliUsageError(
           `role run admitted coder task is blank: ${runId}`,
@@ -1454,34 +1427,24 @@ function admitResumedRole(loaded: {
         phase,
         ...base,
         instructionEmpty: false,
-        taskPath,
       };
       return admitted;
     }
     case "worker-packet": {
       const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
-      const packetPath = fields.packetPath;
-      if (packetPath === undefined) {
-        throw new CliUsageError(
-          `role run admitted fixer packet path is missing: ${runId}`,
-        );
-      }
       if (fields.instruction.trim() === "") {
         throw new CliUsageError(
           `role run admitted fixer instruction is blank: ${runId}`,
         );
       }
-      const prerequisites = fields.prerequisites ?? Object.freeze([]);
       const admitted: AdmittedFixerInvocation = {
         role: "fixer",
         phase,
         ...base,
         instructionEmpty: false,
-        packetPath,
         ...(fields.prerequisitesPath === undefined
           ? {}
           : { prerequisitesPath: fields.prerequisitesPath }),
-        prerequisites,
       };
       return admitted;
     }

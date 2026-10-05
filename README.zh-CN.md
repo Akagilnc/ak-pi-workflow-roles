@@ -23,7 +23,7 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
-`--attach` 与通进司 `--request-manifest` 把调用方路径原样写进衙门第一句话。包不读、不复制、不校验；调用方当前目录与 `--project` 不同时请给绝对路径（[ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)）。
+`--attach`、修内司 `--prerequisites` 与通进司 `--request-manifest` 把调用方路径原样写进衙门第一句话。包不读、不复制、不校验；调用方当前目录与 `--project` 不同时请给绝对路径（[ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)）。
 
 退出码与 Terminal 语义见 [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[Terminal 实现](src/public-cli/terminal.ts)。
 

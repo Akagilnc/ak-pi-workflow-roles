@@ -23,7 +23,7 @@ Public entry and result delivery: [ADR 0052](https://github.com/Akagilnc/ak-pi-w
 ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
-`--attach` and collector `--request-manifest` pass the caller path as-is into the role's first message. The package does not read, copy, or validate the file; when the caller's cwd differs from `--project`, pass an absolute path ([ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)).
+`--attach`, fixer `--prerequisites`, and collector `--request-manifest` pass the caller path as-is into the role's first message. The package does not read, copy, or validate the file; when the caller's cwd differs from `--project`, pass an absolute path ([ADR 0087](docs/adr/0087-package-routes-and-passes-through-code-hands-no-paths.md)).
 
 Exit status and Terminal semantics: [ADR 0052](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md), [Terminal implementation](src/public-cli/terminal.ts).
 

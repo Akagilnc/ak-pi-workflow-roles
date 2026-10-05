@@ -87,13 +87,10 @@ export type RoleTurnActivation =
   | {
       readonly role: "coder";
       readonly phase: string;
-      readonly taskPath: string;
     }
   | {
       readonly role: "fixer";
       readonly phase: string;
-      readonly packetPath: string;
-      readonly prerequisitesPath?: string;
     }
   | {
       readonly role: "reviewer";
