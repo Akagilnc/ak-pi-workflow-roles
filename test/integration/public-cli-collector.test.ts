@@ -10,8 +10,8 @@ import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
-import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
+import { createCollectorRoleRuntime } from "../../src/collector-role.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { admitPublicRole, parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -19,15 +19,16 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
+import type { RoleHost } from "../../src/host-contracts.ts";
 
 function receipt(overrides: Record<string, unknown> = {}) {
-  const manifest = emptyCollectorManifest();
   return {
     host: "github.com",
     repository: "acme/widgets",
     prNumber: 1168,
     prState: "OPEN",
-    manifestDigest: manifest.digest,
+    // Open receipt field may still be submitted by the role; package does not invent it.
+    manifestDigest: "role-submitted-optional",
     groups: [{
       identity: { userType: "Bot", userId: 199175422 },
       displayLogin: "chatgpt-codex-connector[bot]",
@@ -91,6 +92,34 @@ test("#1165 public --request-manifest admits without reading or validating the f
     seedProject(project);
     const bad = join(home, "bad.json");
     await writeFile(bad, "{ not json", "utf8");
+    const admitted = await admitPublicRole("collector", parsePublicSeatArgv("collector", [
+      "--pr", "42", "--repo", "acme/widgets", "--request-manifest", bad, "--project", project,
+    ]), {
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      createRunId: () => "collector-manifest-admit-only",
+    });
+    assert.equal(admitted.role, "collector");
+    assert.equal("manifestDigest" in admitted, false);
+    if (admitted.role === "collector") {
+      assert.equal(admitted.requestManifestPath, bad);
+    }
+
+    const flags = new Map<string, unknown>([
+      ["ak-collector-repo", "acme/widgets"],
+      ["ak-collector-pr", "42"],
+      ["ak-collector-request-manifest", bad],
+    ]);
+    const runtime = createCollectorRoleRuntime(
+      { getFlag: (name: string) => flags.get(name) } as RoleHost,
+      { loadSoul: async () => "collector soul" },
+    );
+    const activation = await runtime.activate({} as never);
+    const materials = runtime.assembleMaterials(activation, "base");
+    assert.equal(materials.includes("manifestDigest:"), false);
+    assert.ok(materials.includes(`requestManifestPath: ${bad}`));
+
     const result = await runAkRole([
       "collector", "--model", "test/caller-seat:high", "--pr", "42", "--repo", "acme/widgets",
       "--request-manifest", bad, "--project", project,

@@ -60,7 +60,6 @@ import {
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
-  emptyCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
   type CollectorRepository,
@@ -230,7 +229,6 @@ export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly prNumber?: number;
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
-  readonly manifestDigest: string;
 };
 
 export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
@@ -1397,7 +1395,6 @@ export async function admitPublicRole(
         repository = resolveGitHubRemoteRepository(projectRoot);
       }
       // #1165: pass caller path as-is; package does not read, validate, or rewrite.
-      const manifestDigest = emptyCollectorManifest().digest;
       const admittedCollector = await admitStandardMaterialInvocation("collector", {
         ...shared,
         instruction,
@@ -1412,7 +1409,6 @@ export async function admitPublicRole(
             ...(parsed.requestManifestPath === undefined
               ? {}
               : { requestManifestPath: parsed.requestManifestPath }),
-            manifestDigest,
           };
         },
       });

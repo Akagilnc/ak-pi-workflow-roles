@@ -9,10 +9,8 @@ import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import {
-  emptyCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
-  type CollectorManifest,
   type CollectorRepository,
 } from "./collector-config.ts";
 import {
@@ -62,7 +60,6 @@ export type CollectorActivation = {
   soul: string;
   repository: CollectorRepository;
   prNumber: number | undefined;
-  manifest: CollectorManifest;
   requestManifestPath?: string;
 };
 
@@ -72,7 +69,6 @@ function buildMethodContext(activation: CollectorActivation): string {
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
     `prNumber: ${activation.prNumber === undefined ? "未绑定" : String(activation.prNumber)}`,
-    `manifestDigest: ${activation.manifest.digest}`,
     ...(activation.requestManifestPath === undefined
       ? []
       : [`requestManifestPath: ${activation.requestManifestPath}`]),
@@ -126,8 +122,6 @@ export function createCollectorRoleRuntime(
         soul,
         repository,
         prNumber,
-        // #1165: package does not read the caller file; empty digest records that fact.
-        manifest: emptyCollectorManifest(),
         ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
       };
     },

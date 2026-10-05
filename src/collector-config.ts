@@ -1,4 +1,3 @@
-import { sha256Hex } from "./sha256.ts";
 import { isTicketNumberString, parseTicketNumber } from "./run-ticket-number.ts";
 
 export const COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
@@ -9,14 +8,6 @@ export type CollectorRepository = {
   canonical: string;
   owner: string;
   repo: string;
-};
-
-export type CollectorRequestConfig = { id: string; requestBody: string };
-export type CollectorManifest = {
-  requests: readonly CollectorRequestConfig[];
-  canonicalJson: string;
-  digest: string;
-  sourcePath?: string;
 };
 
 function fail(message: string, cause?: unknown): never {
@@ -50,13 +41,4 @@ export function parseCollectorPrNumber(raw: unknown): number {
     ? "Collector pull request number must be a positive safe integer string"
     : "Collector pull request number must be a positive safe integer");
   return value;
-}
-
-function canonicalManifest(requests: readonly CollectorRequestConfig[]): string {
-  return `${JSON.stringify({ requests: requests.map((request) => ({ id: request.id, body: request.requestBody })) })}\n`;
-}
-
-export function emptyCollectorManifest(): CollectorManifest {
-  const canonicalJson = canonicalManifest([]);
-  return { requests: [], canonicalJson, digest: sha256Hex(canonicalJson) };
 }

@@ -204,10 +204,13 @@ test("#1165 --request-manifest: malformed existing and missing both start; cwd m
         admitted: {
           instruction: string;
           requestManifestPath?: string;
+          manifestDigest?: string;
         };
       };
       assert.equal(current.admitted.instruction, instruction);
       assert.equal(current.admitted.requestManifestPath, manifestPath);
+      // Admission records caller path only — no package-invented empty-manifest digest (#1165).
+      assert.equal("manifestDigest" in current.admitted, false);
 
       const delivered = readUserDialogueStdin(capturedStdin ?? "");
       assert.ok(delivered.startsWith(instruction));
