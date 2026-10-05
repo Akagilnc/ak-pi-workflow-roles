@@ -56,8 +56,7 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  rewriteRunDirectoryPathFields,
-  rewriteRunDirectoryPathValue,
+  projectLiveAdmittedRunPaths,
 } from "../role-run-relocation.ts";
 import { readPageSync, renderCurrentSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
@@ -618,27 +617,7 @@ export async function relocateAdmittedRunToTicket(
   // render that may refuse (#1161 L1 / BASE order).
   heldLease?.relocate(target.runDirectory);
 
-  const admittedRecord = admitted as unknown as Record<string, unknown>;
-  rewriteRunDirectoryPathFields(
-    admittedRecord,
-    [
-      "runDirectory",
-      "taskPath",
-      "packetPath",
-      "prerequisitesPath",
-      "requestManifestPath",
-      "mergerInputPath",
-    ],
-    oldRunDirectory,
-    target.runDirectory,
-  );
-  for (const attachment of admitted.attachments) {
-    (attachment as { frozenPath: string }).frozenPath = rewriteRunDirectoryPathValue(
-      attachment.frozenPath,
-      oldRunDirectory,
-      target.runDirectory,
-    ) as string;
-  }
+  projectLiveAdmittedRunPaths(admitted, oldRunDirectory, target.runDirectory);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is

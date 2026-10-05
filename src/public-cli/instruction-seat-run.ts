@@ -4,8 +4,9 @@
  * starts two ordinary single-axis runs here.
  */
 import { dirname, resolve } from "node:path";
-import { MISSING_TICKET_REASK } from "../report-ticket-tool.ts";
+import { MISSING_TICKET_REASK_MATERIAL } from "../report-ticket-tool.ts";
 import { isUnboundRunDirectory } from "../role-run-placement.ts";
+import { readPackageMaterial } from "../session-opening-materials.ts";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
@@ -277,6 +278,7 @@ async function reaskUnreadablePostSubmissionStatus(
 /**
  * #1171: sealed submission still leaves the leg unbound → soft reask once.
  * Does not reject the sealed receipt; exhaustion leaves unbound as filed.
+ * Reask copy lives in package resources (ADR 0073).
  */
 async function reaskMissingTicketOnce(
   admitted: AdmittedRoleInvocation,
@@ -292,11 +294,94 @@ async function reaskMissingTicketOnce(
   }
   const payloads = terminal.roleOutcome.payloads ?? [];
   if (payloads.length === 0) return undefined;
+  const instruction = (await readPackageMaterial(MISSING_TICKET_REASK_MATERIAL)).trim();
   return runPublicInstructionSeatResume(
-    { runId: admitted.runId, summons: { instruction: MISSING_TICKET_REASK } },
+    { runId: admitted.runId, summons: { instruction } },
     { ...env, ticketReasksSpent: 1 },
     io,
   );
+}
+
+/** True when a reask turn sealed a real substitute submission (not silence / report-only). */
+function reaskSealedSubstituteSubmission(reask: SeatRunResult): boolean {
+  const kind = reask.terminal?.roleOutcome.kind;
+  if (kind !== "accepted" && kind !== "audit_escalation") return false;
+  return (reask.terminal?.roleOutcome.payloads ?? []).length > 0;
+}
+
+/**
+ * #1171 F2: missing-ticket reask must not replace the original sealed submission
+ * unless the reask itself sealed a new one. Keep original terminal; take live
+ * placement from the reask when it relocated.
+ */
+function mergeMissingTicketReask(
+  original: SeatRunResult,
+  ticketReask: SeatRunResult | undefined,
+): SeatRunResult {
+  if (ticketReask === undefined) return original;
+  if (reaskSealedSubstituteSubmission(ticketReask)) return ticketReask;
+  const admitted = ticketReask.admitted ?? original.admitted;
+  return admitted === undefined ? { ...original } : { ...original, admitted };
+}
+
+/**
+ * Post-submission status reask, then missing-ticket soft reask, then audit.
+ * #1171 F3: status exhaustion must not skip the one missing-ticket reask.
+ * #1171 F2: ticket reask without a substitute seal continues the original chain.
+ */
+async function continueAfterPostSubmissionGuards(
+  result: SeatRunResult,
+  admittedRole: PackagedRole,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+  held: readonly string[],
+): Promise<SeatRunResult> {
+  const live = result.admitted;
+  if (live === undefined) {
+    await presentOriginalVolume(held, result.terminal, io);
+    return result;
+  }
+  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
+    live,
+    result.terminal,
+    env,
+    io,
+  );
+  let afterStatus = result;
+  if (isUnreadableReaskExhausted(unreadableReask)) {
+    const terminal = result.terminal === undefined
+      ? undefined
+      : withUnsettledDirection(result.terminal);
+    afterStatus = terminal === undefined
+      ? { ...result, admitted: live }
+      : { ...result, admitted: live, terminal };
+    // Fall through: missing-ticket reask still owed on the original sealed volume.
+  } else if (unreadableReask !== undefined) {
+    return unreadableReask;
+  }
+  const forTicket = afterStatus.admitted ?? live;
+  const ticketReask = await reaskMissingTicketOnce(
+    forTicket,
+    afterStatus.terminal ?? result.terminal,
+    env,
+    io,
+  );
+  const continued = mergeMissingTicketReask(afterStatus, ticketReask);
+  const continuedAdmitted = continued.admitted ?? live;
+  if (AUDITED_ROLES.has(admittedRole) && continued.terminal?.roleOutcome.kind === "accepted") {
+    return auditSubmittedRole(
+      { ...continued, admitted: continuedAdmitted },
+      env,
+      io,
+    );
+  }
+  await presentOriginalVolume(
+    held,
+    continued.terminal,
+    io,
+    continuedAdmitted.runDirectory,
+  );
+  return { ...continued, admitted: continuedAdmitted };
 }
 
 function roleRecord(role: PackagedRole) {
@@ -490,27 +575,13 @@ async function dispatchAdmitted(
   const result = await execute(env);
   // Prefer the live admitted object returned from the turn (may have relocated).
   const live = result.admitted ?? admitted;
-  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
-    live,
-    result.terminal,
+  return continueAfterPostSubmissionGuards(
+    { ...result, admitted: live },
+    admitted.role,
     env,
     io,
+    held,
   );
-  if (isUnreadableReaskExhausted(unreadableReask)) {
-    const terminal = result.terminal === undefined
-      ? undefined
-      : withUnsettledDirection(result.terminal);
-    await presentOriginalVolume(held, terminal, io, live.runDirectory);
-    return terminal === undefined ? { ...result, admitted: live } : { ...result, admitted: live, terminal };
-  }
-  if (unreadableReask !== undefined) return unreadableReask;
-  const ticketReask = await reaskMissingTicketOnce(live, result.terminal, env, io);
-  if (ticketReask !== undefined) return ticketReask;
-  if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
-    return auditSubmittedRole({ ...result, admitted: live }, env, io);
-  }
-  await presentOriginalVolume(held, result.terminal, io, live.runDirectory);
-  return { ...result, admitted: live };
 }
 
 /**
@@ -1001,32 +1072,17 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
-    const unreadableReask = result.admitted === undefined
-      ? undefined
-      : await reaskUnreadablePostSubmissionStatus(
-        result.admitted,
-        result.terminal,
-        env,
-        io,
-      );
-    if (isUnreadableReaskExhausted(unreadableReask)) {
-      const terminal = result.terminal === undefined
-        ? undefined
-        : withUnsettledDirection(result.terminal);
-      await presentOriginalVolume(held, terminal, io, result.admitted?.runDirectory);
-      return terminal === undefined ? result : { ...result, terminal };
+    if (result.admitted === undefined) {
+      await presentOriginalVolume(held, result.terminal, io);
+      return result;
     }
-    if (unreadableReask !== undefined) return unreadableReask;
-    const ticketReask = result.admitted === undefined
-      ? undefined
-      : await reaskMissingTicketOnce(result.admitted, result.terminal, env, io);
-    if (ticketReask !== undefined) return ticketReask;
-    if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
-      && result.terminal?.roleOutcome.kind === "accepted") {
-      return auditSubmittedRole(result, env, io);
-    }
-    await presentOriginalVolume(held, result.terminal, io, result.admitted?.runDirectory);
-    return result;
+    return continueAfterPostSubmissionGuards(
+      result,
+      result.admitted.role,
+      env,
+      io,
+      held,
+    );
   };
   let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
   try {

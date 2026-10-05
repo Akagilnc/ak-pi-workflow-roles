@@ -18,6 +18,42 @@ import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transpor
 import { readPageSync, updateSectionSync } from "./run-dossier.ts";
 import { isRecord, isEnoent } from "./unknown-value.ts";
 
+/** Live admitted face path fields rewritten after unbound→ticket relocate. */
+export const LIVE_ADMITTED_PATH_FIELDS = [
+  "runDirectory",
+  "taskPath",
+  "packetPath",
+  "prerequisitesPath",
+  "requestManifestPath",
+  "mergerInputPath",
+] as const;
+
+/**
+ * Project one live admitted invocation onto its new run directory (field list +
+ * attachment frozenPath). Principal sealing stays with the caller.
+ */
+export function projectLiveAdmittedRunPaths(
+  admitted: {
+    readonly attachments: ReadonlyArray<{ frozenPath: string }>;
+  },
+  oldRunDirectory: string,
+  newRunDirectory: string,
+): void {
+  rewriteRunDirectoryPathFields(
+    admitted as unknown as Record<string, unknown>,
+    LIVE_ADMITTED_PATH_FIELDS,
+    oldRunDirectory,
+    newRunDirectory,
+  );
+  for (const attachment of admitted.attachments) {
+    (attachment as { frozenPath: string }).frozenPath = rewriteRunDirectoryPathValue(
+      attachment.frozenPath,
+      oldRunDirectory,
+      newRunDirectory,
+    ) as string;
+  }
+}
+
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",
   "admittedRequestPath", // pre-#1161 pages only

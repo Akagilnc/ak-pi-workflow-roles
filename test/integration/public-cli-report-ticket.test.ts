@@ -6,7 +6,6 @@
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
-import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,6 +34,7 @@ import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
+import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -141,47 +141,6 @@ function nestAdaptersFor(
   ];
 }
 
-/** MCP tools/call — same socket protocol as public-cli-secretariat-run / host-axis. */
-async function callMcpTool(input: {
-  readonly socketPath: string;
-  readonly token: string;
-  readonly name: string;
-  readonly args: unknown;
-}): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const sock = connect(input.socketPath);
-    let buf = "";
-    sock.setEncoding("utf8");
-    sock.on("data", (chunk) => {
-      buf += chunk;
-      if (!buf.includes("\n")) return;
-      sock.destroy();
-      const reply = JSON.parse(buf.split("\n")[0]!) as { error?: unknown };
-      if (reply.error !== undefined) reject(new Error(JSON.stringify(reply.error)));
-      else resolve();
-    });
-    sock.on("error", reject);
-    sock.on("connect", () => {
-      sock.write(
-        `${JSON.stringify({
-          id: 1,
-          token: input.token,
-          method: "tools/call",
-          params: { name: input.name, arguments: input.args },
-        })}\n`,
-      );
-    });
-  });
-}
-
-function mcpTokenFromPrepared(prepared: { mcpServers: readonly unknown[] }): string {
-  const envRows = (prepared.mcpServers[0] as { env?: Array<{ name: string; value: string }> } | undefined)
-    ?.env ?? [];
-  const token = envRows.find((row) => row.name === "AK_ACP_MCP_TOKEN")?.value;
-  assert.ok(token, "MCP token required");
-  return token;
-}
-
 /** Headless / ACP seam: report via envelope MCP, then optional submit. */
 function envelopeHostThatReportsThen(input: {
   readonly hostName: "codex" | "grok-build";
@@ -190,6 +149,7 @@ function envelopeHostThatReportsThen(input: {
   readonly reportCount?: number;
   readonly beforeReport?: (request: RoleTurnRequest) => void | Promise<void>;
   readonly onAfterReport?: () => void;
+  readonly afterReportOnly?: boolean;
 }) {
   const reportCount = input.reportCount ?? 1;
   return {
@@ -215,6 +175,15 @@ function envelopeHostThatReportsThen(input: {
           });
         }
         input.onAfterReport?.();
+        if (input.afterReportOnly === true) {
+          return await driveExternalRoleTurnRounds(prepared, request, {
+            roundLimitName: "ReportTicketRoundLimit",
+            currentSessionId: () => undefined,
+            async runRound() {
+              return { status: "delivered" };
+            },
+          });
+        }
         if (input.submit !== undefined) {
           if (input.hostName === "grok-build") {
             await callMcpTool({
@@ -696,5 +665,151 @@ test("#1171 public resume first sealed submit without ticket soft-reasks once", 
       objectPayloads(result.terminal!.roleOutcome).at(-1)?.report,
       "resume still no ticket",
     );
+  });
+});
+
+test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_DIR", async () => {
+  await withSeatProject(async ({ home, project }) => {
+    const parentUnbound = join(home, ".ak-roles", "books", "parent-book", "unbound", "runs", "parent@fixer");
+    const childUnbound = join(home, ".ak-roles", "books", "child-book", "unbound", "runs", "child@fixer");
+    const childTicket = join(home, ".ak-roles", "books", "child-book", String(TICKET), "runs", "child@fixer");
+    await mkdir(sessionDirectoryOf(childUnbound), { recursive: true });
+    seedCurrentSection(childUnbound, "invocation", {
+      role: "fixer", runId: "child", bookKey: "child-book", projectRoot: project,
+    });
+    seedCurrentSection(childUnbound, "admitted", {
+      role: "fixer", runId: "child", bookKey: "child-book", projectRoot: project,
+    });
+    const prior = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = parentUnbound;
+    try {
+      const context: HostContext = {
+        cwd: project,
+        mode: "print",
+        model: undefined,
+        runDirectory: childUnbound,
+        sessionManager: {
+          getLeafEntry: () => undefined,
+          getLeafId: () => "child",
+          getEntries: () => [],
+          getSessionDir: () => sessionDirectoryOf(childUnbound),
+          getSessionFile: () => sessionFileOf(childUnbound),
+          setSessionFile() {},
+          appendCustomEntry() {},
+        },
+        abort() {},
+      };
+      const reported = await reportTicketFromHostContext(context, TICKET);
+      assert.equal(reported.relocated, true);
+      assert.equal(context.runDirectory, childTicket);
+      assert.equal(
+        process.env.AK_ROLE_RUN_DIR,
+        parentUnbound,
+        "parent ambient env must stay parent when child relocates",
+      );
+      assert.equal(existsSync(childUnbound), false);
+      assert.equal(existsSync(childTicket), true);
+    } finally {
+      if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = prior;
+    }
+  });
+});
+
+test("#1171 F2 reask report-only keeps original accepted and reaches audit", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000000f2keep";
+    const roles: string[] = [];
+    const parent = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1]!;
+        roles.push(role);
+        if (role === "fixer") {
+          const turn = roles.filter((r) => r === "fixer").length;
+          if (turn === 1) {
+            return scriptedTerminatingToolSession({
+              role: "fixer",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              details: { ...FIXER_DONE },
+            })(args, options);
+          }
+          // Soft reask: report ticket only — no substitute sealed submission.
+          const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
+          await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
+          const context: HostContext = {
+            cwd: options.cwd,
+            mode: "rpc",
+            model: undefined,
+            runDirectory,
+            sessionManager: {
+              getLeafEntry: () => undefined,
+              getLeafId: () => runId,
+              getEntries: () => [],
+              getSessionDir: () => sessionDirectoryOf(runDirectory),
+              getSessionFile: () => sessionFileOf(runDirectory),
+              setSessionFile() {},
+              appendCustomEntry() {},
+            },
+            abort() {},
+          };
+          await reportTicketFromHostContext(context, TICKET);
+          return { code: 0, stderr: "", timedOut: false };
+        }
+        return scriptedTerminatingToolSession({
+          role: role as "inspector",
+          toolName: "ak_inspector_output",
+          details: { status: "converged", findings: [], reason: "ok" },
+        })(args, options);
+      },
+    });
+    const result = await runPublicInstructionSeat(
+      ["apply", "Repair without ticket on first seal."],
+      seatEnv(home, project, runId, "pi", parent),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(roles.filter((r) => r === "fixer").length, 2);
+    assert.ok(roles.includes("inspector"), "original sealed submission must still enter audit");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
+    assert.equal(
+      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "done"),
+      true,
+      "original sealed payload must remain the presented volume",
+    );
+  });
+});
+
+test("#1171 F3 status-reask exhaustion still issues missing-ticket reask once", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000000f3ask";
+    const scripted = fixerTurnHost((turn) => {
+      if (turn === 1 || turn === 2) {
+        return {
+          status: "not-a-lawful-status",
+          report: `bad status turn ${turn}`,
+          classResults: FIXER_DONE.classResults,
+        };
+      }
+      return {
+        status: "completed",
+        report: "after ticket reask",
+        ticketNumber: TICKET,
+        classResults: FIXER_DONE.classResults,
+      };
+    });
+    const result = await runPublicInstructionSeat(
+      ["apply", "Bad status then ticket."],
+      seatEnv(home, project, runId, "pi", scripted.host, { autoResumeLimit: 1 }),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.ok(scripted.turns >= 3, `missing-ticket reask must run after status budget; turns=${scripted.turns}`);
+    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
+    assert.equal(result.admitted?.ticketNumber, TICKET);
   });
 });

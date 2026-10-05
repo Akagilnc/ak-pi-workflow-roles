@@ -127,7 +127,10 @@ export async function reportTicketFromHostContext(
   const nextDirectory = relocation?.newRunDirectory ?? admitted.runDirectory;
 
   (context as { runDirectory?: string }).runDirectory = nextDirectory;
-  if (typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== "") {
+  // Same-leg spawn env only (#1171 F1): never overwrite another leg's ambient
+  // AK_ROLE_RUN_DIR in a shared process. HostContext is the per-turn authority
+  // (host-contracts); Pi dedicated children still refresh when env === old path.
+  if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
     process.env.AK_ROLE_RUN_DIR = nextDirectory;
   }
   // Native host rebind only — SessionManager has no setSessionDir; appends follow sessionFile.
@@ -159,6 +162,5 @@ export function registerReportTicketTool(roleHost: RoleHost): void {
   });
 }
 
-/** Soft re-ask copy when a sealed submission still leaves the leg unbound (#1171). */
-export const MISSING_TICKET_REASK =
-  "本腿仍无票号。请调用 ak_report_ticket 申报，或在交卷里带上 ticketNumber。只问这一次。" as const;
+/** Soft re-ask when a sealed submission still leaves the leg unbound (#1171 / ADR 0073). */
+export const MISSING_TICKET_REASK_MATERIAL = "resources/missing-ticket-reask.md" as const;

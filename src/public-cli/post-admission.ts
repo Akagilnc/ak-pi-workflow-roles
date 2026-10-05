@@ -36,7 +36,7 @@ import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
 } from "../receipt-delivery-policy.ts";
-import { rewritePrincipalSessionPaths, rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
+import { rewritePrincipalSessionPaths, rewriteRunDirectoryPathValue, projectLiveAdmittedRunPaths } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
@@ -181,32 +181,8 @@ export async function refreshAdmittedPlacementAfterHostTurn(
     found,
   );
   const principal = authority.seal(coords);
-  const mutable = admitted as unknown as Record<string, unknown>;
-  for (const field of [
-    "runDirectory",
-    "taskPath",
-    "packetPath",
-    "prerequisitesPath",
-    "requestManifestPath",
-    "mergerInputPath",
-  ] as const) {
-    if (field in mutable) {
-      mutable[field] = rewriteRunDirectoryPathValue(
-        mutable[field],
-        oldRunDirectory,
-        found,
-      );
-    }
-  }
-  mutable.runDirectory = found;
-  mutable.principal = principal;
-  for (const attachment of admitted.attachments) {
-    (attachment as { frozenPath: string }).frozenPath = rewriteRunDirectoryPathValue(
-      attachment.frozenPath,
-      oldRunDirectory,
-      found,
-    ) as string;
-  }
+  projectLiveAdmittedRunPaths(admitted, oldRunDirectory, found);
+  (admitted as { principal: typeof principal }).principal = principal;
   heldLease?.relocate(found);
   return { oldRunDirectory, newRunDirectory: found };
 }
