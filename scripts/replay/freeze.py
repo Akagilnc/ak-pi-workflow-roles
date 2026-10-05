@@ -208,10 +208,16 @@ def main():
             if live.startswith(home):  # historical command text often spells the home as ~
                 text = text.replace("~" + live[len(home):], frozen)
         return text
-    for name in sorted(os.listdir(run)):  # role inputs too: merger-input.json, legacy copies…
+    # Top-level role inputs (e.g. merger-input.json) freeze with the run.
+    # #1168: do not copy obsolete dispatch copies into a new replay kit.
+    _skip_run_files = {
+        "current.json", "history.jsonl", "state.jsonl", "log.jsonl",
+        "task.md", "fix-packet.md", "prerequisites.json",
+    }
+    for name in sorted(os.listdir(run)):
         src_path = f"{run}/{name}"
-        if not os.path.isfile(src_path) or name in ("current.json", "history.jsonl", "state.jsonl", "log.jsonl"):
-            continue  # dossier files are rebuilt truncated below
+        if not os.path.isfile(src_path) or name in _skip_run_files:
+            continue  # dossier files are rebuilt truncated below; obsolete copies stay put
         try:
             with open(src_path, encoding="utf-8") as f:
                 text = f.read()

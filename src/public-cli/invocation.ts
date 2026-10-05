@@ -612,14 +612,12 @@ export async function relocateAdmittedRunToTicket(
     [
       "runDirectory",
       "mergerInputPath",
-      // Legacy pages may still carry copy paths; rewrite those under the run dir.
-      "taskPath",
-      "packetPath",
     ],
     oldRunDirectory,
     target.runDirectory,
   );
-  // #1165/#1168: caller file-flag paths stay as given; do not rewrite.
+  // #1165/#1168: caller file-flag paths stay as given. Obsolete copy fields
+  // (taskPath/packetPath) are not rewritten — stock volumes keep their bytes.
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is

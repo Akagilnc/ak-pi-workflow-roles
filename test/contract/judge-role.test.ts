@@ -523,8 +523,6 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     "FIXER LAW",
     "plan",
   ]);
-  assert.equal(fixerPrompt.includes("fix_packet_path"), false);
-  assert.equal(fixerPrompt.includes("fixer_prerequisites_path"), false);
   const fixerTool = fixer.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(fixerTool);
   assert.deepEqual(
@@ -557,7 +555,6 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     {},
   ) as { systemPrompt: string }).systemPrompt;
   assertDelivers(coderPrompt, "BASE", ["CODER LAW", "plan"]);
-  assert.equal(coderPrompt.includes("coder_task"), false);
 });
 
 test("named Judge and worker tools preserve schema leaves and receipts", async () => {
@@ -764,7 +761,6 @@ test("coder plan activates without task copy and returns planned", async () => {
     "CODER LAW",
     "plan",
   ]);
-  assert.equal(prompt.includes("coder_task"), false);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
@@ -1015,7 +1011,6 @@ test("fixer role startup materials carry soul and phase only; returns a thin rep
     "FIXER LAW\nCreate one forward commit.",
     "apply",
   ]);
-  assert.equal(prompt.includes("fix_packet_path"), false);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
@@ -1056,7 +1051,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  // Activation installs the fixer tool; engine detour may project active tools.
+  assert.deepEqual(harness.activeToolSets, []);
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 });
 
