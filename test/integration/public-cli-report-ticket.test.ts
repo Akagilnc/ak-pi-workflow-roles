@@ -750,6 +750,95 @@ test("#1171 public resume first sealed submit without ticket soft-reasks once", 
   });
 });
 
+test("#1171 F2-R6 resume prior seals; silence soft reask keeps this seal", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000f2r6hist";
+    // Seed two sealed unbound rows so full-run sealed.length > 1 before this call.
+    // Distinct toolCallIds so later audit is not skipped as "already passed".
+    const seedRoles: string[] = [];
+    const seedHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1]!;
+        seedRoles.push(role);
+        if (role === "fixer") {
+          const turn = seedRoles.filter((r) => r === "fixer").length;
+          return scriptedTerminatingToolSession({
+            role: "fixer",
+            toolName: FIXER_OUTPUT_TOOL_NAME,
+            details: {
+              ...FIXER_DONE,
+              report: turn === 1 ? "seed-1" : "seed-2",
+            },
+            toolCallId: `call_fixer_seed_${turn}`,
+            ...(turn === 1 ? {} : { sessionWriteMode: "append" as const }),
+          })(args, options);
+        }
+        return scriptedTerminatingToolSession({
+          role: role as "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
+          toolCallId: `call_inspector_seed_${seedRoles.filter((r) => r === "inspector").length}`,
+        })(args, options);
+      },
+    });
+    await runPublicInstructionSeat(
+      ["apply", "Seed multi-seal unbound history."],
+      seatEnv(home, project, runId, "pi", seedHost),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(seedRoles.filter((r) => r === "fixer").length, 2);
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+
+    const roles: string[] = [];
+    const resumeHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1]!;
+        roles.push(role);
+        if (role === "fixer") {
+          const turn = roles.filter((r) => r === "fixer").length;
+          if (turn === 1) {
+            return scriptedTerminatingToolSession({
+              role: "fixer",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              details: { ...FIXER_DONE, report: "resume-this-seal" },
+              toolCallId: "call_fixer_resume_1",
+              sessionWriteMode: "append",
+            })(args, options);
+          }
+          // Soft reask silence: historical sealed.count must not invent a substitute.
+          return { code: 0, stderr: "", timedOut: false };
+        }
+        return scriptedTerminatingToolSession({
+          role: role as "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
+          toolCallId: "call_inspector_resume_1",
+        })(args, options);
+      },
+    });
+    const result = await runPublicInstructionSeatResume(
+      { runId, message: "resume; soft reask silent" },
+      seatEnv(home, project, runId, "pi", resumeHost),
+      captureIo().io,
+    );
+    assert.equal(roles.filter((r) => r === "fixer").length, 2, "resume soft-reasks once");
+    assert.ok(roles.includes("inspector"), "kept this-call seal must still enter audit");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "resume-this-seal"),
+      true,
+      "silence must keep this resume seal; must not wash via nested no_receipt ownership",
+    );
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+  });
+});
+
 test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_DIR", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000f1nest";
