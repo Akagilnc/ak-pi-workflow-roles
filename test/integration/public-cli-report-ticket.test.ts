@@ -657,3 +657,64 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
     assert.equal(resumed.admitted?.runDirectory, live);
   });
 });
+
+test("#1171 public resume first sealed submit without ticket soft-reasks once", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-0000resreask";
+    // Spend the initial soft-reask budget so the leg stays unbound with a sealed receipt.
+    const seed = fixerTurnHost((turn) => ({
+      status: "completed",
+      report: turn === 1 ? "seed turn 1" : "seed turn 2 still unbound",
+      classResults: FIXER_DONE.classResults,
+    }));
+    await runPublicInstructionSeat(
+      ["apply", "Seed unbound sealed receipt."],
+      seatEnv(home, project, runId, "pi", seed.host),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(seed.turns, 2);
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+
+    const resumed = fixerTurnHost((turn) => ({
+      status: "completed",
+      report: turn === 1 ? "resume no ticket" : "resume still no ticket",
+      classResults: FIXER_DONE.classResults,
+    }));
+    const result = await runPublicInstructionSeatResume(
+      { runId, message: "resume without ticket" },
+      seatEnv(home, project, runId, "pi", resumed.host),
+      captureIo().io,
+    );
+    assert.equal(resumed.turns, 2, "resume must soft-reask missing ticket once");
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      objectPayloads(result.terminal!.roleOutcome).at(-1)?.report,
+      "resume still no ticket",
+    );
+  });
+});
+
+test("#1171 pi SessionManager: setSessionFile moves file handle; getSessionDir stays native-old", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-1171-sm-dir-"));
+  const oldDir = join(root, "old");
+  const newDir = join(root, "new");
+  await mkdir(oldDir);
+  await mkdir(newDir);
+  const oldFile = join(oldDir, "session.jsonl");
+  const newFile = join(newDir, "session.jsonl");
+  await writeFile(oldFile, "");
+  await writeFile(newFile, "");
+  const sessionManager = SessionManager.open(oldFile, oldDir, root);
+  assert.equal(sessionManager.getSessionDir(), oldDir);
+  sessionManager.setSessionFile(newFile);
+  assert.equal(sessionManager.getSessionFile(), newFile);
+  // Host native: setSessionFile does not update getSessionDir; appends follow the file.
+  assert.equal(sessionManager.getSessionDir(), oldDir);
+  sessionManager.appendCustomEntry("ak_1171_dir_probe", { ok: true });
+  const newText = await readFile(newFile, "utf8");
+  assert.equal(newText.includes("ak_1171_dir_probe"), true);
+  assert.equal((await readFile(oldFile, "utf8")).includes("ak_1171_dir_probe"), false);
+});

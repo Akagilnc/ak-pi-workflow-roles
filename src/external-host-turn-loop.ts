@@ -3,6 +3,9 @@
  * One copy: serial, abort merge/race, closeRound re-ask rounds,
  * host-aborted, round-limit. Last hop = ExternalHostTurnDriver (four verbs).
  */
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+
 import type {
   RoleTurnHost,
   RoleTurnKnownFailure,
@@ -11,10 +14,58 @@ import type {
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
-import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
+import { describeErrorIdentity, findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+import { parseRunLeaf } from "./role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
+
+/**
+ * #1171: mid-turn report-ticket may have moved the leg (envelope HostContext /
+ * child process). Prefer the request path when it still exists; otherwise
+ * re-locate by run id (same seam as post-admission refresh). Mutates the live
+ * request so later turn-record / exit-copy / fault notes stay on the new leaf.
+ */
+export async function syncTurnRequestLivePlacement(
+  request: RoleTurnRequest,
+): Promise<string> {
+  let live = request.runDirectory;
+  if (!existsSync(live)) {
+    const parsed = parseRunLeaf(basename(live));
+    if (parsed !== undefined) {
+      const found = await findRunDirectoryById(
+        request.home,
+        parsed.runId,
+        undefined,
+        parsed.role,
+      );
+      if (found !== undefined) live = found;
+    }
+  }
+  if (live === request.runDirectory) return live;
+  const mutable = request as {
+    runDirectory: string;
+    principal: { sessionDirectory?: string; sessionFile?: string };
+  };
+  const old = mutable.runDirectory;
+  mutable.runDirectory = live;
+  if (typeof mutable.principal.sessionDirectory === "string") {
+    mutable.principal.sessionDirectory = rewriteRunDirectoryPathValue(
+      mutable.principal.sessionDirectory,
+      old,
+      live,
+    ) as string;
+  }
+  if (typeof mutable.principal.sessionFile === "string") {
+    mutable.principal.sessionFile = rewriteRunDirectoryPathValue(
+      mutable.principal.sessionFile,
+      old,
+      live,
+    ) as string;
+  }
+  return live;
+}
 
 /**
  * What one host start was given: one `turn-delivery` row of history.jsonl per start. History is
@@ -188,7 +239,7 @@ export async function driveExternalRoleTurnRounds(
       closure = await prepared.closeRound();
     } catch (error) {
       await retainPackageFault({
-        runDirectory: request.runDirectory,
+        runDirectory: await syncTurnRequestLivePlacement(request),
         diagnostic: `round closure failed beside host terminal: ${describeErrorIdentity(error)}`,
         error,
       });
@@ -200,7 +251,7 @@ export async function driveExternalRoleTurnRounds(
       try { await driver.afterAccepted?.(); }
       catch (error) {
         await retainPackageFault({
-          runDirectory: request.runDirectory,
+          runDirectory: await syncTurnRequestLivePlacement(request),
           diagnostic: `post-acceptance close failed beside host terminal: ${describeErrorIdentity(error)}`,
           error,
         });
@@ -209,7 +260,7 @@ export async function driveExternalRoleTurnRounds(
     }
     if ("failure" in closure) {
       await retainPackageFault({
-        runDirectory: request.runDirectory,
+        runDirectory: await syncTurnRequestLivePlacement(request),
         diagnostic: `round closure failed beside host terminal: ${JSON.stringify(closure.failure)}`,
       });
       // This is an explicit envelope failure (e.g. required audit/ledger failure),
@@ -226,7 +277,7 @@ export async function driveExternalRoleTurnRounds(
       countedReasks += 1;
       if (countedReasks > countedReaskLimit) {
         await retainPackageFault({
-          runDirectory: request.runDirectory,
+          runDirectory: await syncTurnRequestLivePlacement(request),
           diagnostic: `${driver.roundLimitName}: round-retry-limit`,
         });
         return result;
@@ -242,14 +293,14 @@ export async function driveExternalRoleTurnRounds(
  * failure stays primary. Ordinary cleanup is handled at its owning seam. */
 export async function disposeExternalRoleTurn(
   prepared: Pick<PreparedRoleTurn, "dispose">,
-  request: Pick<RoleTurnRequest, "runDirectory">,
+  request: RoleTurnRequest,
   outcome: RoleTurnResult,
 ): Promise<RoleTurnResult> {
   try {
     await prepared.dispose?.();
   } catch (error) {
     await retainPackageFault({
-      runDirectory: request.runDirectory,
+      runDirectory: await syncTurnRequestLivePlacement(request),
       diagnostic: `required envelope shutdown failed beside host terminal: ${describeErrorIdentity(error)}`,
       error,
     });

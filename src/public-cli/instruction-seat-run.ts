@@ -1017,6 +1017,10 @@ export async function runPublicInstructionSeatResume(
       return terminal === undefined ? result : { ...result, terminal };
     }
     if (unreadableReask !== undefined) return unreadableReask;
+    const ticketReask = result.admitted === undefined
+      ? undefined
+      : await reaskMissingTicketOnce(result.admitted, result.terminal, env, io);
+    if (ticketReask !== undefined) return ticketReask;
     if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
       && result.terminal?.roleOutcome.kind === "accepted") {
       return auditSubmittedRole(result, env, io);

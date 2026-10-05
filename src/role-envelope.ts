@@ -3,7 +3,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
-import { sessionFileOf } from "./role-run-placement.ts";
+import { sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -28,6 +28,7 @@ import {
 } from "./role-runtime.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectActivationFlags } from "./role-activation-flags.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import {
   isCorrectableExecuteError,
   projectCorrectableExecuteRejection,
@@ -170,11 +171,14 @@ export async function prepareRoleEnvelope(options: {
       }
     });
   };
+  const mutableRequest = request as {
+    runDirectory: string;
+    principal: { sessionDirectory?: string; sessionFile?: string };
+  };
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
-    runDirectory: request.runDirectory,
     ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     ...(request.invocationScopeId === undefined ? {} : { invocationScopeId: request.invocationScopeId }),
     ...(request.host === undefined || request.host.trim() === "" ? {} : { host: request.host.trim() }),
@@ -198,6 +202,40 @@ export async function prepareRoleEnvelope(options: {
       // and non-correctable MCP catch). Submission does not abort the turn.
     },
   };
+  // #1171: report-ticket updates HostContext.runDirectory; keep the shared turn
+  // request (and principal session paths) on the same leaf for adapter exit-copy.
+  Object.defineProperty(context, "runDirectory", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return mutableRequest.runDirectory;
+    },
+    set(next: string) {
+      if (typeof next !== "string" || next.trim() === "") return;
+      const old = mutableRequest.runDirectory;
+      if (old === next) return;
+      mutableRequest.runDirectory = next;
+      sessionFile = sessionFileOf(next);
+      if (typeof mutableRequest.principal.sessionDirectory === "string") {
+        mutableRequest.principal.sessionDirectory = rewriteRunDirectoryPathValue(
+          mutableRequest.principal.sessionDirectory,
+          old,
+          next,
+        ) as string;
+      } else {
+        mutableRequest.principal.sessionDirectory = sessionDirectoryOf(next);
+      }
+      if (typeof mutableRequest.principal.sessionFile === "string") {
+        mutableRequest.principal.sessionFile = rewriteRunDirectoryPathValue(
+          mutableRequest.principal.sessionFile,
+          old,
+          next,
+        ) as string;
+      } else {
+        mutableRequest.principal.sessionFile = sessionFile;
+      }
+    },
+  });
   const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {
     const payload = {
       ...(message.content === undefined ? {} : { content: message.content }),
@@ -595,7 +633,7 @@ export async function prepareRoleEnvelope(options: {
     } catch (error) {
       // Closing the relay is ordinary cleanup, not required envelope work.
       await retainPackageFault({
-        runDirectory: request.runDirectory,
+        runDirectory: mutableRequest.runDirectory,
         diagnostic: `relay close failed beside envelope shutdown: ${describeErrorIdentity(error)}`,
         error,
       });

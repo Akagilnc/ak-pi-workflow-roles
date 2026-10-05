@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
-import { sessionDirectoryOf } from "../role-run-placement.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../role-run-placement.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -10,6 +10,7 @@ import {
   externalHostFailure as failure,
   raceAgainstHostAbort,
   recordTurnDelivery,
+  syncTurnRequestLivePlacement,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
@@ -260,7 +261,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let sessionId: string | undefined;
     let sessionOpened = false;
     let accepted = false;
-    const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+    // Re-resolve after mid-turn report-ticket may have moved principal (#1171).
+    const liveSessionParent = (): string =>
+      config.sessionIdentity.resolveSessionFile(request.principal);
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     let reportedFailure: RoleTurnResult["knownFailure"];
     let packageFailure: RoleTurnResult["knownFailure"];
@@ -321,7 +324,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             ? loaded.sessionId
             : bindSessionId;
           if (config.hostName !== "hermes") recordNativeSessionPointer({
-            host: config.hostName, sessionId: loadedId, cwd: request.cwd, sessionParent, home: request.home,
+            host: config.hostName, sessionId: loadedId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home,
           });
           return loadedId;
         };
@@ -350,7 +353,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionReady = false;
           } else {
             if (config.hostName !== "hermes") recordNativeSessionPointer({
-              host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home,
+              host: config.hostName, sessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home,
             });
             sessionOpened = true;
             await config.sessionIdentity.bind(request.principal, sessionId);
@@ -377,7 +380,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             // MCP advertises tool.parameters; prepared.jsonSchema is the headless
             // draft-07 stamp of that clone — record the delivered parameters face.
             const { $schema: _headlessStamp, ...deliveredSchema } = prepared.jsonSchema;
-            await recordTurnDelivery(request.runDirectory, {
+            await recordTurnDelivery(await syncTurnRequestLivePlacement(request), {
               systemPrompt: systemPromptOverride,
               outputSchema: deliveredSchema,
             }, "acp-host");
@@ -441,7 +444,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       reportedFailure = native?.knownFailure;
       outcome = native ?? { code: null, stderr: connection?.stderr?.() ?? "", timedOut: false };
       await retainPackageFault({
-        runDirectory: request.runDirectory,
+        runDirectory: await syncTurnRequestLivePlacement(request),
         diagnostic: `ACP turn exception beside native host facts: ${describeErrorIdentity(error)}`,
         error,
       });
@@ -459,7 +462,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           try { connection.notify("session/cancel", { sessionId }); }
           catch (error) {
             await retainPackageFault({
-              runDirectory: request.runDirectory,
+              runDirectory: await syncTurnRequestLivePlacement(request),
               diagnostic: `session cancel failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -468,7 +471,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         try { naturalTermination = await connection.close(); }
         catch (error) {
           await retainPackageFault({
-            runDirectory: request.runDirectory,
+            runDirectory: await syncTurnRequestLivePlacement(request),
             diagnostic: `connection close failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });
@@ -490,7 +493,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         let knownFailure = outcome.knownFailure;
         if (nativeFailed && knownFailure !== undefined && knownFailure !== reportedFailure) {
           if (knownFailure !== packageFailure) await retainPackageFault({
-            runDirectory: request.runDirectory,
+            runDirectory: await syncTurnRequestLivePlacement(request),
             diagnostic: knownFailure.diagnostic ?? "ACP package failure beside late native termination",
             error: knownFailure,
           });
@@ -501,17 +504,18 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       }
       if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
         try {
+          const liveRunDirectory = await syncTurnRequestLivePlacement(request);
           copyAndRecordHostDossier({
             host: config.hostName,
             sessionId,
             cwd: request.cwd,
-            sessionDirectory: sessionDirectoryOf(request.runDirectory),
-            sessionParent,
+            sessionDirectory: sessionDirectoryOf(liveRunDirectory),
+            sessionParent: sessionFileOf(liveRunDirectory),
             ...(request.home !== undefined ? { home: request.home } : {}),
           });
         } catch (error) {
           await retainPackageFault({
-            runDirectory: request.runDirectory,
+            runDirectory: await syncTurnRequestLivePlacement(request),
             diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });

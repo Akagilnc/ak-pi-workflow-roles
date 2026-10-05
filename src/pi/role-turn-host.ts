@@ -27,6 +27,7 @@ import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { readLedgerSessionJsonlLines, readStrictPiSessionJsonl } from "../ledger-session-read.ts";
 import { copyAndRecordHostDossier } from "../host-session-record.ts";
+import { syncTurnRequestLivePlacement } from "../external-host-turn-loop.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
@@ -464,6 +465,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // bind projects host.sessions; copy records the landing. Host adapters do
       // not write current.json — public bind/settlement seams own that render.
       try {
+        await syncTurnRequestLivePlacement(request);
         const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);
         const sessionId = await readPiSessionHeaderId(sessionFile);
         if (sessionId !== undefined) {
@@ -482,7 +484,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         }
       } catch (error) {
         await retainPackageFault({
-          runDirectory: request.runDirectory,
+          runDirectory: await syncTurnRequestLivePlacement(request),
           diagnostic: `pi host dossier record failed beside host terminal: ${describeErrorIdentity(error)}`,
           error,
         });
