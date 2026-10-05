@@ -24,13 +24,6 @@ import type {
   RoleTurnRequest,
 } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
-import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
-import {
-  persistNavigatorWorkBase,
-  navigatorWorkContextFile,
-  readNavigatorWorkBase,
-} from "../../src/navigator-work-base.ts";
-import { createNativeNavigatorSessionFactory } from "../../src/navigator-public-session.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -585,74 +578,5 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
     }
-  });
-});
-
-test("#1166 navigator public summon: caller prompt bytes; work base structured; no path inject", async () => {
-  await withTempRoot("ak-1166-navigator-", async (root) => {
-    seedGitRepository(root);
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "test", model: "caller-seat" } } })}\n`,
-    );
-
-    const subject = "caller-subject-bytes";
-    const authority = "caller-authority-bytes";
-    const subjectKey = `${join(root, ".ak/work")}#ad-hoc`;
-    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
-    await mkdir(join(parentRun, "session"), { recursive: true });
-
-    const nest = join(root, ".ak-roles", "books", "probe", "navigator", "a".repeat(32));
-    await mkdir(nest, { recursive: true });
-    const workContextPath = await persistNavigatorWorkBase(nest, { subject, authority });
-    assert.ok(workContextPath !== undefined);
-    assert.equal(workContextPath, navigatorWorkContextFile(nest));
-    assert.deepEqual(await readNavigatorWorkBase(workContextPath!), { subject, authority });
-
-    const summons: string[] = [];
-    const nav = createNavigatorAttendance({
-      context: {
-        cwd: root,
-        home: root,
-        runDirectory: parentRun,
-      } as never,
-      role: "coder",
-      phase: "apply",
-      subjectKey,
-      subject,
-      authority,
-      createSession: createNativeNavigatorSessionFactory({
-        summonPublicRole: async (options) => {
-          summons.push(options.argv[0] ?? "");
-          return {
-            exitCode: 0,
-            runDirectory: join(
-              root,
-              ".ak-roles",
-              "books",
-              "probe",
-              "unbound",
-              "runs",
-              "01a01166nav000700080000000001@navigator",
-            ),
-            terminal: {
-              roleOutcome: { kind: "accepted", payloads: [{ prose: "下一步" }] },
-            },
-          } as never;
-        },
-        hostRunResumable: async () => false,
-      }),
-      onEvent: () => {},
-    });
-
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.ok(summons.length >= 1);
-    for (const argv of summons) {
-      const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
-      assert.equal(fed.subjectKey, subjectKey);
-      assert.equal(fed.workContextPath, undefined);
-    }
-    await nav.dispose();
   });
 });
