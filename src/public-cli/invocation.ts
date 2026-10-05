@@ -307,7 +307,6 @@ export type AdmissionPlacement = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
-  readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly bookKey: string;
 };
@@ -1611,7 +1610,6 @@ type PlacedRoleAdmission = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly attachments: readonly AdmittedAttachment[];
-  readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly ticketFields: ReturnType<typeof ticketAdmissionFields>;
 };
@@ -1644,7 +1642,6 @@ async function placeRoleAdmission(options: {
     sessionDirectory,
     sessionFile,
     runDirectory,
-    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1667,7 +1664,6 @@ async function placeRoleAdmission(options: {
     sessionDirectory,
     sessionFile,
     attachments,
-    attachmentsDirectory,
     ledgerHome,
     ticketFields,
   };
