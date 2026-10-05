@@ -464,9 +464,11 @@ for (const caseRow of [
     name: "second report does not invent a second leaf",
     runId: "01a011710-0000-7000-8000-0000000again",
     hostName: "codex" as const,
-    reportCount: 2,
+    // Same public line also covers already-placed re-report identity (B2):
+    // second call may carry a different number; durable placement stays TICKET.
+    ticketNumbers: [TICKET, 1172] as const,
     submit: { ...FIXER_DONE },
-    expectKind: undefined,
+    expectKind: undefined as string | undefined,
   },
 ]) {
   test(`#1171 ${caseRow.name}`, async () => {
@@ -476,7 +478,9 @@ for (const caseRow of [
         envelopeHostThatReportsThen({
           hostName: caseRow.hostName,
           ticketNumber: TICKET,
-          reportCount: caseRow.reportCount,
+          ...("ticketNumbers" in caseRow
+            ? { ticketNumbers: caseRow.ticketNumbers }
+            : { reportCount: caseRow.reportCount }),
           ...(caseRow.submit === undefined ? {} : { submit: caseRow.submit }),
           onAfterReport: () => {
             afterReport = {
@@ -498,51 +502,36 @@ for (const caseRow of [
       );
       assert.deepEqual(afterReport, { unbound: false, ticket: true });
       assert.equal(existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")), false);
-      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer")), true);
+      const placement = ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer");
+      assert.equal(existsSync(placement), true);
       if (caseRow.expectKind !== undefined) {
         assert.equal(result.terminal?.roleOutcome.kind, caseRow.expectKind);
       } else {
         assert.equal(result.exitCode, 0, `${caseRow.name} ${result.terminal?.roleOutcome.kind}`);
         assert.equal(result.admitted?.ticketNumber, TICKET);
+        assert.equal(result.admitted?.runDirectory, placement);
+        if ("ticketNumbers" in caseRow) {
+          for (const foreignTicket of caseRow.ticketNumbers) {
+            if (foreignTicket === TICKET) continue;
+            assert.equal(
+              existsSync(ticketLeaf(home, bookKey, foreignTicket, caseRow.runId, "fixer")),
+              false,
+              "must not migrate or invent a foreign ticket leaf",
+            );
+          }
+          assert.equal(
+            (readCurrentSection(placement, "admitted") as { ticketNumber?: number }).ticketNumber,
+            TICKET,
+          );
+          assert.equal(
+            (readCurrentSection(placement, "invocation") as { ticketNumber?: number }).ticketNumber,
+            TICKET,
+          );
+        }
       }
     });
   });
 }
-
-test("#1171 already-placed re-report keeps placement ticket identity (B2)", async () => {
-  const OTHER = 1172;
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-b2ident";
-    const roleTurnHost = withPassingReviewHost(
-      envelopeHostThatReportsThen({
-        hostName: "codex",
-        ticketNumber: TICKET,
-        ticketNumbers: [TICKET, OTHER],
-        submit: { ...FIXER_DONE },
-      }),
-    );
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair #1171 B2 identity."],
-      seatEnv(home, project, runId, "codex", roleTurnHost),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    const placement = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
-    const foreign = ticketLeaf(home, bookKey, OTHER, runId, "fixer");
-    assert.equal(result.exitCode, 0, String(result.terminal?.roleOutcome.kind));
-    assert.equal(existsSync(placement), true);
-    assert.equal(existsSync(foreign), false, "must not migrate or invent a foreign ticket leaf");
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
-    assert.equal(result.admitted?.ticketNumber, TICKET);
-    assert.equal(result.admitted?.runDirectory, placement);
-    const admitted = readCurrentSection(placement, "admitted") as { ticketNumber?: number };
-    const invocation = readCurrentSection(placement, "invocation") as { ticketNumber?: number };
-    assert.equal(admitted.ticketNumber, TICKET);
-    assert.equal(invocation.ticketNumber, TICKET);
-  });
-});
-
 test("#1171 delivery throw after mid-turn report does not revive unbound", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-delivthrow";

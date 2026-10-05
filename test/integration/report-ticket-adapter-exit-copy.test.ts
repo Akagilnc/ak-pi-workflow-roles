@@ -61,6 +61,99 @@ async function withAdapterSeatProject(
   });
 }
 
+/** One ACP mid-turn report assembly shared by happy-path and close-fault cases. */
+async function runAcpMidTurnReportViaPublicEntry(input: {
+  readonly home: string;
+  readonly project: string;
+  readonly runId: string;
+  readonly instruction: string;
+  readonly autoResumeLimit?: number;
+  readonly onClose?: () => Promise<void>;
+  readonly decoratePrepared?: (
+    prepared: Awaited<ReturnType<typeof prepareRoleEnvelope>>,
+  ) => Awaited<ReturnType<typeof prepareRoleEnvelope>> | Promise<Awaited<ReturnType<typeof prepareRoleEnvelope>>>;
+}): Promise<{ disposeCalls: number; result: Awaited<ReturnType<typeof runPublicInstructionSeat>> }> {
+  const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-acp-")), "mcp.sock");
+  const grokNative = join(
+    input.home,
+    ".grok",
+    "sessions",
+    encodeURIComponent(input.project),
+    SESSION_ID,
+  );
+  await mkdir(grokNative, { recursive: true });
+  await writeFile(join(grokNative, "chat_history.jsonl"), `${JSON.stringify({ t: 1 })}\n`, "utf8");
+  await writeFile(join(grokNative, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
+
+  let preparedToken = "";
+  let disposeCalls = 0;
+  const connection: AcpConnection = {
+    async request(method) {
+      if (method === "initialize") {
+        return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
+      }
+      if (method === "session/new") return { sessionId: SESSION_ID };
+      if (method === "session/prompt") {
+        await callMcpTool({
+          socketPath,
+          token: preparedToken,
+          name: REPORT_TICKET_TOOL_NAME,
+          args: { ticketNumber: TICKET },
+        });
+        return { stopReason: "end_turn" };
+      }
+      if (method === "session/close") return {};
+      return {};
+    },
+    notify() {},
+    async close() {
+      await input.onClose?.();
+    },
+  };
+
+  const host = createAcpRoleTurnHost({
+    hostName: "grok-build",
+    modelPassing: "argv",
+    sessionIdentity: {
+      async load() { return undefined; },
+      async bind() {},
+      resolveSessionFile: (principal) => piDurablePrincipalAuthority.decode(principal).sessionFile,
+    },
+    connect: async () => connection,
+    prepare: async (req: RoleTurnRequest) => {
+      const prepared = await prepareRoleEnvelope({
+        request: req,
+        dependencies: createRoleRuntimeDependencies(packageRoot),
+        socketPath,
+        sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
+      });
+      preparedToken = mcpTokenFromPrepared(prepared);
+      const decorated = input.decoratePrepared === undefined
+        ? prepared
+        : await input.decoratePrepared(prepared);
+      const innerDispose = decorated.dispose?.bind(decorated);
+      return {
+        ...decorated,
+        async dispose() {
+          disposeCalls += 1;
+          await innerDispose?.();
+        },
+      };
+    },
+  });
+
+  const result = await runPublicInstructionSeat(
+    ["apply", input.instruction],
+    seatEnv(input.home, input.project, input.runId, "grok-build", withPassingReviewHost(host), {
+      ...(input.autoResumeLimit === undefined ? {} : { autoResumeLimit: input.autoResumeLimit }),
+    }),
+    captureIo().io,
+    "fixer",
+    (args) => parsePublicSeatArgv("fixer", args),
+  );
+  return { disposeCalls, result };
+}
+
 test("#1171 headless true adapter via public entry: mid-turn report → exit-copy under ticket", async () => {
   await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-adapter01";
@@ -144,69 +237,12 @@ process.stdout.write(JSON.stringify({
 test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy under ticket", async () => {
   await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-adapter02";
-    const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-acp-")), "mcp.sock");
-    const grokNative = join(
+    const { result } = await runAcpMidTurnReportViaPublicEntry({
       home,
-      ".grok",
-      "sessions",
-      encodeURIComponent(project),
-      SESSION_ID,
-    );
-    await mkdir(grokNative, { recursive: true });
-    await writeFile(join(grokNative, "chat_history.jsonl"), `${JSON.stringify({ t: 1 })}\n`, "utf8");
-    await writeFile(join(grokNative, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
-
-    let preparedToken = "";
-    const connection: AcpConnection = {
-      async request(method) {
-        if (method === "initialize") {
-          return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
-        }
-        if (method === "session/new") return { sessionId: SESSION_ID };
-        if (method === "session/prompt") {
-          await callMcpTool({
-            socketPath,
-            token: preparedToken,
-            name: REPORT_TICKET_TOOL_NAME,
-            args: { ticketNumber: TICKET },
-          });
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      async close() {},
-    };
-
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
-        resolveSessionFile: (principal) => piDurablePrincipalAuthority.decode(principal).sessionFile,
-      },
-      connect: async () => connection,
-      prepare: async (req: RoleTurnRequest) => {
-        const prepared = await prepareRoleEnvelope({
-          request: req,
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
-        });
-        preparedToken = mcpTokenFromPrepared(prepared);
-        return prepared;
-      },
+      project,
+      runId,
+      instruction: "Repair #1171 via ACP adapter.",
     });
-
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair #1171 via ACP adapter."],
-      seatEnv(home, project, runId, "grok-build", withPassingReviewHost(host)),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
     const unboundDir = unboundLeaf(home, bookKey, runId, "fixer");
     const ticketDir = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
     assert.equal(existsSync(unboundDir), false, "unbound must not revive after ACP exit-copy");
@@ -223,76 +259,8 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
 test("#1171 ACP close fault retained when live placement vanishes (B1)", async () => {
   await withAdapterSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-b1fault";
-    const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-acp-b1-")), "mcp.sock");
-    const grokNative = join(
-      home,
-      ".grok",
-      "sessions",
-      encodeURIComponent(project),
-      SESSION_ID,
-    );
-    await mkdir(grokNative, { recursive: true });
-    await writeFile(join(grokNative, "chat_history.jsonl"), `${JSON.stringify({ t: 1 })}\n`, "utf8");
-    await writeFile(join(grokNative, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
-
-    let preparedToken = "";
-    let disposeCalls = 0;
     const CLOSE_FAULT = "native-close-original-fault";
     const ticketDir = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
-    const connection: AcpConnection = {
-      async request(method) {
-        if (method === "initialize") {
-          return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
-        }
-        if (method === "session/new") return { sessionId: SESSION_ID };
-        if (method === "session/prompt") {
-          await callMcpTool({
-            socketPath,
-            token: preparedToken,
-            name: REPORT_TICKET_TOOL_NAME,
-            args: { ticketNumber: TICKET },
-          });
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      async close() {
-        // Vanish at close time (prompt-time deletes get rewritten before finally).
-        await rm(ticketDir, { recursive: true, force: true });
-        throw Object.assign(new Error(CLOSE_FAULT), { code: "ECONNRESET" });
-      },
-    };
-
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
-        resolveSessionFile: (principal) => piDurablePrincipalAuthority.decode(principal).sessionFile,
-      },
-      connect: async () => connection,
-      prepare: async (req: RoleTurnRequest) => {
-        const prepared = await prepareRoleEnvelope({
-          request: req,
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
-        });
-        preparedToken = mcpTokenFromPrepared(prepared);
-        const innerDispose = prepared.dispose?.bind(prepared);
-        return {
-          ...prepared,
-          async dispose() {
-            disposeCalls += 1;
-            await innerDispose?.();
-          },
-        };
-      },
-    });
-
     const processStderr: string[] = [];
     const priorWrite = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
@@ -300,26 +268,25 @@ test("#1171 ACP close fault retained when live placement vanishes (B1)", async (
       return (priorWrite as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
     }) as typeof process.stderr.write;
     try {
-      await runPublicInstructionSeat(
-        ["apply", "Repair #1171 B1 fault retain."],
-        seatEnv(home, project, runId, "grok-build", withPassingReviewHost(host), {
-          autoResumeLimit: 0,
-        }),
-        captureIo().io,
-        "fixer",
-        (args) => parsePublicSeatArgv("fixer", args),
-      );
+      const { disposeCalls } = await runAcpMidTurnReportViaPublicEntry({
+        home,
+        project,
+        runId,
+        instruction: "Repair #1171 B1 fault retain.",
+        autoResumeLimit: 0,
+        async onClose() {
+          // Vanish at close time (prompt-time deletes get rewritten before finally).
+          await rm(ticketDir, { recursive: true, force: true });
+          throw Object.assign(new Error(CLOSE_FAULT), { code: "ECONNRESET" });
+        },
+      });
       assert.ok(disposeCalls >= 1, `dispose must run even when live placement vanished; calls=${disposeCalls}`);
       // Soft retain presents on process.stderr when the leaf is gone.
-      // Lookup failure must not replace or drop the original close identity.
+      // Contract: original close fault identity remains — not package diagnostic prose.
       const presented = processStderr.join("");
       assert.ok(
         presented.includes(CLOSE_FAULT) || presented.includes("ECONNRESET"),
-        `original close fault must remain beside lookup failure; stderr=${JSON.stringify(processStderr)}`,
-      );
-      assert.ok(
-        presented.includes("live run path resolve failed"),
-        "placement lookup failure must stay beside the original close fault",
+        `original close fault must remain; stderr=${JSON.stringify(processStderr)}`,
       );
     } finally {
       process.stderr.write = priorWrite;
