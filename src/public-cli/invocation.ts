@@ -2048,11 +2048,18 @@ async function admitStandardMaterialInvocation<
 
 export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
 
+type InstructionTransportAttachment = {
+  /** Caller-supplied file-flag path (ADR 0087). */
+  readonly provenancePath?: string;
+  /** Historical freeze copy — never listed to the seat as a file-flag path. */
+  readonly frozenPath?: string;
+};
+
 type InstructionTransportSource = {
   readonly role?: string;
   readonly instruction: string;
   readonly instructionEmpty: boolean;
-  readonly attachments: readonly { readonly frozenPath: string }[];
+  readonly attachments: readonly InstructionTransportAttachment[];
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
@@ -2069,9 +2076,28 @@ function admittedTransportPromptKind(
 }
 
 /**
+ * Append caller file-flag paths after dialogue body (ADR 0087 / #1166 J11).
+ * Lists provenancePath only — never freeze-copy paths.
+ */
+export function appendCallerFileFlagPaths(
+  body: string,
+  attachments: readonly InstructionTransportAttachment[],
+): string {
+  const paths = attachments
+    .map((attachment) => attachment.provenancePath)
+    .filter((path): path is string => typeof path === "string" && path.length > 0);
+  if (paths.length === 0) return body;
+  const lines = [body, "", "已受理附件："];
+  for (const path of paths) {
+    lines.push(`- ${path}`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * One initial prompt transport. The registry `transportPrompt` leaf selects
- * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
- * caller instruction plus frozen attachment paths.
+ * a fixed kickoff, a bound baseline, or skill args. Absent means the caller
+ * instruction plus caller file-flag paths (ADR 0087).
  * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(
@@ -2111,15 +2137,10 @@ export function buildInstructionTransportPrompt(
     }
     return lines.join("\n");
   }
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return lines.join("\n");
+  return appendCallerFileFlagPaths(
+    admitted.instructionEmpty ? "" : admitted.instruction,
+    admitted.attachments,
+  );
 }
 
 export type AdmitCountersignInvocationOptions = {

@@ -20,8 +20,8 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import { projectPublicTurnAxes, type RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
+  appendCallerFileFlagPaths,
   bindAdmittedTicketNumber,
-  buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
@@ -1481,25 +1481,23 @@ export function resumeTurnRequestProjectionOptions(
   summonsPrepared?: {
     readonly instruction: string;
     readonly instructionEmpty: boolean;
-    readonly attachments: readonly { frozenPath: string }[];
+    readonly attachments: readonly {
+      readonly provenancePath?: string;
+      readonly frozenPath?: string;
+    }[];
   },
 ): RoleTurnRequestProjectionOptions {
-  // #879: officer dialogue content is caller/peer words only — no「请重读」,
-  // no code-authored constant substitute, no attachment-list wrap of peer body.
-  // Binding pointer stays on summons sourceRunPath / activation / attachments.
+  // #879: officer dialogue is caller/peer words; #1166 J11 merges caller file-flag
+  // paths when present. Gate with no file flags stays body-only (ADR 0085).
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
+  const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
-      // #755: same-ticket review / open-court — caller words.
-      // #879 station-child officer: words only (attachments are independent freeze).
-      prompt = officerDialogue
+      // #755: same-ticket review / open-court — caller words + caller file flags.
+      prompt = officerDialogue && fileFlags.length === 0
         ? request.message
-        : buildInstructionTransportPrompt({
-            instruction: request.message,
-            instructionEmpty: false,
-            attachments: summonsPrepared.attachments,
-          });
+        : appendCallerFileFlagPaths(request.message, fileFlags);
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
@@ -1507,11 +1505,11 @@ export function resumeTurnRequestProjectionOptions(
       prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
-    // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
-    // Other seats keep #755 instruction + optional attachment path listing.
-    prompt = officerDialogue
-      ? (summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction)
-      : buildInstructionTransportPrompt(summonsPrepared);
+    const body = summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction;
+    // No file flags: body alone (gate peer words). With flags: merge delivery.
+    prompt = officerDialogue && fileFlags.length === 0
+      ? body
+      : appendCallerFileFlagPaths(body, fileFlags);
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
@@ -1671,7 +1669,10 @@ export async function prepareSummonsResumeMaterials(
   | {
       readonly instruction: string;
       readonly instructionEmpty: boolean;
-      readonly attachments: readonly { frozenPath: string }[];
+      readonly attachments: readonly {
+        readonly provenancePath: string;
+        readonly frozenPath?: string;
+      }[];
     }
   | undefined
 > {
@@ -1682,14 +1683,20 @@ export async function prepareSummonsResumeMaterials(
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
     summons.instructionEmpty ?? instruction.trim() === "";
-  let attachments: readonly { frozenPath: string }[] = [];
+  let attachments: readonly {
+    readonly provenancePath: string;
+    readonly frozenPath?: string;
+  }[] = [];
   if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
+    // ADR 0087 / #1166 J11: dialogue always lists caller original paths.
     const alreadyFrozen = summons.attachmentPaths.every((path) =>
       isAlreadyFrozenSummonsAttachment(runDirectory, path),
     );
-    attachments = alreadyFrozen
-      ? summons.attachmentPaths.map((frozenPath) => ({ frozenPath }))
-      : await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
+    if (!alreadyFrozen) {
+      // Disk freeze may still run for internal identity; never listed as file-flag path.
+      await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
+    }
+    attachments = summons.attachmentPaths.map((path) => ({ provenancePath: path }));
   }
   return { instruction, instructionEmpty, attachments };
 }
@@ -1791,31 +1798,9 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        // Internal re-summons freezes external paths once and records that identity.
-        if (request.summons !== undefined) {
-          const prepared = await prepareSummonsResumeMaterials(
-            admittedForBuild.runDirectory,
-            request.summons,
-          );
-          if (
-            prepared !== undefined &&
-            (request.summons.attachmentPaths?.length ?? 0) > 0
-          ) {
-            request = {
-              ...request,
-              summons: {
-                ...request.summons,
-                attachmentPaths: prepared.attachments.map(
-                  (attachment) => attachment.frozenPath,
-                ),
-              },
-            };
-          }
-        }
-
-        // Public explicit resume: attach the stored native id when the caller
-        // left it unset (399c3c8c). In-call auto-resume / 催交 / gate retry omit
-        // the field; those load inside the host adapter (host-contracts).
+        // ADR 0087 / #1166 J11: summons keep caller file-flag paths. Freeze-for-copy
+        // rewriting is not legal dialogue delivery; prepareSummonsResumeMaterials in
+        // buildTurnRequest lists provenancePath and may still freeze for disk identity.
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
         if (
           turnRequest.continuation.kind === "resume"

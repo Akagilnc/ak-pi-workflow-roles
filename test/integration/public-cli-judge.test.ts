@@ -421,13 +421,14 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       ["converged"],
     );
 
-    // Source mutation after admission does not affect frozen snapshot.
+    // Source mutation after admission does not affect frozen snapshot on disk.
+    // Dialogue lists caller original path (ADR 0087), not the freeze copy.
     await writeFile(attachment, "changed", "utf8");
     const frozenPath = join(runDir, "attachments", "00-note.txt");
     const delivered = readUserDialogueStdin(capturedStdin ?? "");
     assert.ok(delivered.includes(instruction));
-    assert.ok(delivered.includes(frozenPath));
-    assert.equal(delivered.includes(attachment), false);
+    assert.ok(delivered.includes(attachment));
+    assert.equal(delivered.includes(frozenPath), false);
     assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
   });
 });

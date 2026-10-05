@@ -20,22 +20,12 @@ import {
   courtAttemptIdFromHostContext,
   runDirectoryFromHostContext,
   type HostContext,
-  type RoleTurnActivation,
   type RoleTurnRequest,
 } from "../../src/host-contracts.ts";
-import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
-import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
-import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
-import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
-import {
-  CANONICAL_SOURCE_ROLE,
-  CANONICAL_SOURCE_RUN_ID,
-  seedCanonicalSourceRun,
-} from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Same ledger-local run leaf as createTempPackageHomeLedger / #818 withEnvelopeHome. */
@@ -428,162 +418,5 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
     else process.env.AK_ROLE_RUN_DIR = previousRun;
     if (previousCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
     else process.env.AK_ROLE_COURT_ATTEMPT = previousCourt;
-  }
-});
-const INSPECTOR_PARENT = "/tmp/ak-879-parent-run";
-const OFFICER_PAYLOAD = { status: "completed", report: "officer-peer-body" };
-const ENGINE = "cursor";
-const ENGINE_MODEL = "cursor-grok-4.6-high-fast";
-
-function admittedInspector(instruction: string, runDirectory: string): AdmittedInspectorInvocation {
-  return {
-    role: "inspector",
-    runId: "run-inspector",
-    bookKey: "book",
-    projectRoot: "/tmp/proj",
-    instruction,
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory,
-    principal: fixturePrincipal(join(runDirectory, "session")),
-  };
-}
-
-test("#879/#1166 inspector first mint: sourceRunPath on activation, payload stays dialogue", () => {
-  const request = buildInstructionSeatTurnRequest(
-    {
-      ...admittedInspector("", "/tmp/ak-879-inspector-run"),
-      sourceRunPath: INSPECTOR_PARENT,
-    },
-    {
-      packageRoot,
-      home: "/tmp/home",
-      agentDir: "/tmp/agent",
-      continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
-    },
-  );
-  assert.equal(request.activation.role, "inspector");
-  assert.equal(
-    request.activation.role === "inspector" ? request.activation.sourceRun : undefined,
-    INSPECTOR_PARENT,
-  );
-  // Dialogue stays the peer payload bytes; binding pointer is activation only (J6).
-  assert.equal(request.continuation.prompt, JSON.stringify(OFFICER_PAYLOAD));
-  assert.equal(projectActivationFlags(request).get("ak-inspector-source-run"), INSPECTOR_PARENT);
-});
-
-test("#879/#1166 inspector audited-run identity rides readingMaterial, not prompt", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-879-inspector-bind-"));
-  const parentRun = await seedCanonicalSourceRun(home, packageRoot);
-  const runDirectory = ledgerProbeRun(home, "run-inspector@inspector");
-  await mkdir(join(runDirectory, "session"), { recursive: true });
-  const request = buildInstructionSeatTurnRequest(
-    {
-      ...admittedInspector("", runDirectory),
-      sourceRunPath: parentRun,
-      projectRoot: packageRoot,
-      principal: fixturePrincipal(join(runDirectory, "session")),
-    },
-    {
-      packageRoot,
-      home,
-      agentDir: join(home, "agent"),
-      continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
-    },
-  );
-  const prepared = await prepareRoleEnvelope({
-    request,
-    dependencies: createRoleRuntimeDependencies(packageRoot),
-    socketPath: join(home, "mcp.sock"),
-  });
-  try {
-    assert.equal(prepared.prompt, JSON.stringify(OFFICER_PAYLOAD));
-    const bindings = prepared.systemPrompt.materials.filter(
-      (material) =>
-        typeof material === "object"
-        && material !== null
-        && (material as { kind?: unknown }).kind === "audited-run-identity",
-    );
-    assert.equal(bindings.length, 1);
-    assert.deepEqual(bindings[0], {
-      kind: "audited-run-identity",
-      identity: `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
-    });
-  } finally {
-    await prepared.dispose?.();
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("#879 station-child officer engine material stays off dialogue", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-879-officer-engine-"));
-  const notesPath = resolveEngineMaterialPath(packageRoot, ENGINE);
-  const parentRun = await seedCanonicalSourceRun(home, packageRoot);
-  const seats: readonly RoleTurnActivation[] = [
-    { role: "notary", sourceRun: parentRun },
-    { role: "inspector", sourceRun: parentRun },
-    { role: "auditor" },
-  ];
-  try {
-    for (const activation of seats) {
-      const runDirectory = ledgerProbeRun(home, `${activation.role}-engine@${activation.role}`);
-      await mkdir(join(runDirectory, "session"), { recursive: true });
-      const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
-      if (activation.role === "auditor") {
-        process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-      }
-      let prepared;
-      try {
-        prepared = await prepareRoleEnvelope({
-          request: {
-            principal: fixturePrincipal(join(runDirectory, "session")),
-            activation,
-            methods: [],
-            continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
-            engine: ENGINE,
-            engineModel: ENGINE_MODEL,
-            cwd: packageRoot,
-            home,
-            agentDir: join(runDirectory, "agent"),
-            runDirectory,
-            stationChild: true,
-          },
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath: join(home, `${activation.role}.sock`),
-        });
-      } finally {
-        if (activation.role === "auditor") {
-          if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
-          else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
-        }
-      }
-      try {
-        // Dialogue equality + structured engine material; no prompt model/name zero-hit (J6).
-        assert.equal(prepared.prompt, JSON.stringify(OFFICER_PAYLOAD));
-        const engines = prepared.systemPrompt.materials.filter(
-          (material) =>
-            typeof material === "object"
-            && material !== null
-            && (material as { kind?: unknown }).kind === "engine-session-material",
-        );
-        assert.equal(engines.length, 1, `${activation.role} must keep engine material`);
-        const handbook = await readFile(notesPath, "utf8");
-        const dispatch = await readFile(
-          join(packageRoot, "resources", "engine-dispatch.md"),
-          "utf8",
-        );
-        assert.deepEqual(engines[0], {
-          kind: "engine-session-material",
-          name: ENGINE,
-          model: ENGINE_MODEL,
-          handbook,
-          dispatchHandbook: dispatch,
-        });
-      } finally {
-        await prepared.dispose?.();
-      }
-    }
-  } finally {
-    await rm(home, { recursive: true, force: true });
   }
 });

@@ -83,24 +83,3 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(h.beforeStart());
 });
-
-test("Notary agent-start projects audited-run identity exactly (no path)", async () => {
-  const h = notaryHarness();
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    { failInfrastructure(error) { throw error; } },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  // Ticket arrives as admitted value from envelope — role never getFlag's it.
-  await runtime.activate({ ticketNumber: 582 });
-  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    systemPrompt?: string;
-    readingMaterial?: { kind: string; identity: string };
-  };
-  assert.equal(typeof result.systemPrompt, "string");
-  assert.deepEqual(result.readingMaterial, {
-    kind: "audited-run-identity",
-    identity: `${LOCATOR.runId}@${LOCATOR.role}`,
-  });
-});

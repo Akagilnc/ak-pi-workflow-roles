@@ -41,6 +41,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
+  appendCallerFileFlagPaths,
   buildInstructionTransportPrompt,
   materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
@@ -308,7 +309,10 @@ async function loadLedgerPeerBody(
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
-  const latest = [...rows].reverse().find((row) => row.kind === "accepted");
+  // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
+  // present the latest row as-is. Never filter current manuscript by accepted /
+  // terminal outcome kind (that resurrects a prior sealed draft).
+  const latest = rows.at(-1);
   if (latest === undefined) return undefined;
   return readableGateItem(latest.accepted);
 }
@@ -356,7 +360,11 @@ async function resolveInitialPrompt(
       projectRoot: admitted.projectRoot,
       home: env.home,
     });
-    if (body !== undefined) return body;
+    // #1166 J11: merge existing file-flag delivery — never early-return body alone
+    // when caller attach paths were admitted. Gate with no file flags stays body-only.
+    if (body !== undefined) {
+      return appendCallerFileFlagPaths(body, admitted.attachments);
+    }
   }
   return buildInstructionTransportPrompt(admitted);
 }
@@ -971,7 +979,7 @@ export async function runPublicInstructionSeat(
           instruction: parsed.instruction ?? "",
           projectRoot: admitted.projectRoot,
           failureLabel: "secretariat unbound summons",
-          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.provenancePath),
           correlationId: admitted.runId,
         }, env, io);
       } catch (error) {

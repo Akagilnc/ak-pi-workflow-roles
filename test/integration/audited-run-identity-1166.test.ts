@@ -33,6 +33,7 @@ import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
@@ -50,7 +51,10 @@ import {
   scriptedTerminatingToolSession,
   withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import {
+  recordNonSealedSubmission,
+  sealAcceptedSubmission,
+} from "../helpers/submission-ledger-fixture.ts";
 
 const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
 const PEER_PATH = "/caller/already/had/this/path.md";
@@ -463,10 +467,15 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
       expectedIdentity,
       `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
     );
-    const peer = {
+    const previous = {
       status: "converged",
-      report: "ledger-peer-original",
-      path: "/peer/original/path.md",
+      report: "ledger-peer-previous",
+      path: "/peer/previous/path.md",
+    };
+    const current = {
+      status: "converged",
+      report: "ledger-peer-CURRENT",
+      path: "/peer/current/path.md",
     };
     await sealAcceptedSubmission({
       cwd: project,
@@ -474,10 +483,21 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
       runId: CANONICAL_SOURCE_RUN_ID,
       runDirectory: parentRun,
       role: "judge",
-      details: peer,
-      toolCallId: "direct-peer",
+      details: previous,
+      toolCallId: "direct-peer-previous",
     });
-    const expectedPrompt = readableGateItem(peer);
+    // Latest ledger row may be correctable-rejection — still the current manuscript (J10).
+    await recordNonSealedSubmission({
+      cwd: project,
+      home,
+      runId: CANONICAL_SOURCE_RUN_ID,
+      runDirectory: parentRun,
+      role: "judge",
+      details: current,
+      toolCallId: "direct-peer-current",
+      executeError: new WorkerUnfinishedReasonReminderError(),
+    });
+    const expectedPrompt = readableGateItem(current);
 
     for (const seat of [
       {
