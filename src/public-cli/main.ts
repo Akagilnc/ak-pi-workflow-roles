@@ -2,8 +2,6 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ensureHostPiRuntimeResolvable } from "./host-pi-runtime.ts";
-
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -12,9 +10,8 @@ const here = dirname(fileURLToPath(import.meta.url));
  * Shipped layout is `<packageRoot>/dist/public-cli/main.js` → two levels up when
  * that ancestor owns package.json. A relocated single-file bundle (no package
  * tree beside the bin) must NOT keep climbing: `join("/tmp/<bin>","..","..")`
- * is `"/"` on Linux CI, and host-pi linking then does
- * `mkdir('/node_modules/@earendil-works')` → EACCES. Fall back to the bin
- * directory so links stay on the ESM ancestor walk and remain writable.
+ * is `"/"` on Linux CI. Fall back to the bin directory so AK_ROLE_PACKAGE_ROOT
+ * stays on a writable package-adjacent path.
  */
 function resolvePackageRoot(binDir: string): string {
   const canonical = join(binDir, "..", "..");
@@ -30,9 +27,6 @@ const packageRoot = resolvePackageRoot(here);
 // Pin to the running bin's package so a stale outer install pin cannot load a
 // host family this tree owns but the older install lacks.
 process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
-
-// The host-provided runtime must be resolvable before the CLI module graph loads it.
-ensureHostPiRuntimeResolvable(packageRoot);
 
 const { runAkRole, commandNeedsProcessCancel } = await import("./cli.ts");
 const { installProcessCancelHandlers } = await import("./process-cancel.ts");

@@ -30,7 +30,7 @@ import {
   resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
 import type { HostRecordSession, RecordSessionHost } from "./host-contracts.ts";
-import { piRecordSessionHost } from "./pi/record-session-host.ts";
+import { packageRecordSessionHost } from "./package-record-session-host.ts";
 import { sitianVolumeDirectory } from "./sitian-appender.ts";
 export {
   DIRECT_OFFICER_RUN_POINTER_KIND,
@@ -316,7 +316,7 @@ export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 /**
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
- * invisible to that directory walk, so this runs once before SessionManager.open.
+ * invisible to that directory walk, so this runs once before the host open.
  * Circle is the authorized nest (sessionDir) itself — lexical path and realpath must both
  * stay inside it. Same-book cross-nest pointers and cross-book symlinks are refused alike.
  * realpath/stat failures stay typed ActivationLedgerError with original cause — never
@@ -381,7 +381,7 @@ export type RecordSessionOpen = {
  */
 export function createRecordSessionOpen(
   options: CreateRecordSessionOptions,
-  host: RecordSessionHost = piRecordSessionHost,
+  host: RecordSessionHost = packageRecordSessionHost,
 ): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
@@ -419,7 +419,7 @@ export function createRecordSessionOpen(
       throw new Error("Durable record ownership requires a parent session inside the ledger home");
     }
     // Ordinary kinds: durable parent's file is the sole nesting authority. A divergent
-    // SessionManager directory must not create a second placement route.
+    // host session directory must not create a second placement route.
     // Do not restore generic bookDir/<kind> fallback for foreign/unrooted parents.
     sessionDir = sitianVolumeDirectory(dirname(parentResolved), options.kind);
     parentSession = parentFile;
@@ -444,8 +444,8 @@ export function createRecordSessionOpen(
       if (continued.resumed) {
         return continued;
       }
-      // Pi's native continuation falls back to an unparented fresh session. The
-      // archivist owns the durable parent, so mint through the ordinary fresh path.
+      // Host continuation without a match falls back to an unparented fresh session.
+      // The archivist owns the durable parent, so mint through the ordinary fresh path.
     }
   }
 
@@ -454,16 +454,14 @@ export function createRecordSessionOpen(
     sessionDir,
     ...(parentSession === undefined ? {} : { parentSession }),
   });
-  // Pi defers session-file create until the first assistant message. Custom-entry-only
-  // records never get that turn, so the sole record entry materializes the in-memory
-  // header onto the UUIDv7 path before returning. Existing path → early return.
+  // Package host materializes the header on create. Keep a deferred-header path for
+  // injected hosts that still postpone file create until the first write.
   if (session.isPersisted()) {
     const file = session.getSessionFile();
     if (file !== undefined && !existsSync(file)) {
       const header = session.getHeader();
       if (header !== null && header.type === "session") {
         writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
-        // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
         session.setSessionFile(file);
       }
     }
