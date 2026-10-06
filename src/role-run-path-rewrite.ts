@@ -141,35 +141,28 @@ export function rewritePrincipalSessionPaths(
 
 /**
  * Live turn request: move runDirectory and keep principal session paths on the
- * new leaf. With authority: decode → rewrite coords copy → seal (opaque wire
- * stays host-owned; never forge fields onto the prior principal, #1183 / #636).
- * Without authority: only rewrite when the wire is already an extensible record
- * that owns the session path fields — never add properties to opaque/frozen wire.
+ * new leaf. Sole path = host authority decode → rewrite coords copy → seal
+ * (#1183 / #636). No shape-based in-place rewrite and no silent skip.
  */
 export function projectTurnRequestLiveRunDirectory(
   request: {
     runDirectory: string;
-    principal: DurablePrincipal | { sessionDirectory?: string; sessionFile?: string };
+    principal: DurablePrincipal;
   },
   newRunDirectory: string,
-  authority?: DurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): void {
   const old = request.runDirectory;
   if (old === newRunDirectory) return;
+  const coords = { ...authority.decode(request.principal) };
+  rewritePrincipalSessionPaths(
+    coords as Record<string, unknown>,
+    old,
+    newRunDirectory,
+  );
+  const sealed = authority.seal(coords);
   request.runDirectory = newRunDirectory;
-  if (authority !== undefined) {
-    const coords = { ...authority.decode(request.principal) };
-    rewritePrincipalSessionPaths(
-      coords as Record<string, unknown>,
-      old,
-      newRunDirectory,
-    );
-    (request as { principal: DurablePrincipal }).principal = authority.seal(coords);
-    return;
-  }
-  const principal = request.principal;
-  if (!isRecord(principal) || !Object.isExtensible(principal)) return;
-  rewritePrincipalSessionPaths(principal, old, newRunDirectory);
+  (request as { principal: DurablePrincipal }).principal = sealed;
 }
 
 /** Typed notary/source-run locator: only runDirectory is a path. */

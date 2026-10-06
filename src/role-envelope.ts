@@ -218,6 +218,11 @@ export async function prepareRoleEnvelope(options: {
     set(next: string) {
       if (typeof next !== "string" || next.trim() === "") return;
       if (mutableRequest.runDirectory === next) return;
+      if (principalAuthority === undefined) {
+        throw new Error(
+          "mid-turn run relocate requires principalAuthority on prepareRoleEnvelope",
+        );
+      }
       projectTurnRequestLiveRunDirectory(mutableRequest, next, principalAuthority);
       sessionFile = sessionFileOf(next);
     },

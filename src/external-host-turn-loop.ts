@@ -47,12 +47,12 @@ export async function resolveLiveRunDirectoryPath(
 /**
  * Prefer the request path when it still exists; otherwise re-locate by run id
  * (resolveLiveRunDirectoryPath). Mutates the live request so later turn-record /
- * exit-copy / fault notes stay on the new leaf. Pass principalAuthority so opaque
- * principal wire is resealed rather than mutated in place (#1183).
+ * exit-copy / fault notes stay on the new leaf. Authority is required so opaque
+ * principal wire is resealed — never shape-guessed in place (#1183).
  */
 export async function syncTurnRequestLivePlacement(
   request: RoleTurnRequest,
-  authority?: DurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<string> {
   const live = await resolveLiveRunDirectoryPath(request.runDirectory, request.home);
   if (live === undefined) {
@@ -73,7 +73,7 @@ export async function syncTurnRequestLivePlacement(
  */
 export async function trySyncTurnRequestLivePlacement(
   request: RoleTurnRequest,
-  authority?: DurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<{ readonly runDirectory: string } | { readonly resolveError: unknown }> {
   try {
     return { runDirectory: await syncTurnRequestLivePlacement(request, authority) };
@@ -83,28 +83,44 @@ export async function trySyncTurnRequestLivePlacement(
 }
 
 /**
- * Retain a package fault on the live leaf when locatable. Lookup failure must not
- * replace the original fault or block later cleanup — reuse retainPackageFault when
- * the leaf exists; otherwise present both causes on stderr (Pi transport path shape).
+ * Retain a package fault on the live leaf when locatable. Directory lookup only —
+ * does not mutate live principal identity (#1183). Lookup failure must not replace
+ * the original fault or block later cleanup.
  */
 export async function retainPackageFaultBesideLivePlacement(
   request: RoleTurnRequest,
   input: { readonly diagnostic: string; readonly error?: unknown },
 ): Promise<void> {
-  const live = await trySyncTurnRequestLivePlacement(request);
-  if ("resolveError" in live) {
-    const resolveDiagnostic =
-      `live run path resolve failed beside fault: ${describeErrorIdentity(live.resolveError)}`;
+  let runDirectory = request.runDirectory;
+  if (!existsSync(runDirectory)) {
     try {
-      process.stderr.write(`${input.diagnostic}\n`);
-      process.stderr.write(`${resolveDiagnostic}\n`);
-    } catch {
-      // Best-effort presentation beside an already-chosen terminal.
+      const found = await resolveLiveRunDirectoryPath(request.runDirectory, request.home);
+      if (found === undefined) {
+        const resolveDiagnostic =
+          `live run path resolve failed beside fault: admitted run missing under ${request.home}`;
+        try {
+          process.stderr.write(`${input.diagnostic}\n`);
+          process.stderr.write(`${resolveDiagnostic}\n`);
+        } catch {
+          // Best-effort presentation beside an already-chosen terminal.
+        }
+        return;
+      }
+      runDirectory = found;
+    } catch (resolveError) {
+      const resolveDiagnostic =
+        `live run path resolve failed beside fault: ${describeErrorIdentity(resolveError)}`;
+      try {
+        process.stderr.write(`${input.diagnostic}\n`);
+        process.stderr.write(`${resolveDiagnostic}\n`);
+      } catch {
+        // Best-effort presentation beside an already-chosen terminal.
+      }
+      return;
     }
-    return;
   }
   await retainPackageFault({
-    runDirectory: live.runDirectory,
+    runDirectory,
     diagnostic: input.diagnostic,
     ...(Object.hasOwn(input, "error") ? { error: input.error } : {}),
   });
