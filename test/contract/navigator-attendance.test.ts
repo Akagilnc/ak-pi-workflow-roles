@@ -578,72 +578,7 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
 });
 
-test("#1160 structured byStatus body and opaque status keys survive attendance pick", async () => {
-  await withTempRoot("navigator-bystatus-opaque-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = await attendance(setting, harness, events, root);
-    const structured = { prose: "original-body", next: "reviewer" };
-    // Own-property "__proto__" status key must remain selectable.
-    const byStatus = Object.create(null) as Record<string, unknown>;
-    Object.defineProperty(byStatus, "completed", {
-      value: structured,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-    Object.defineProperty(byStatus, "__proto__", {
-      value: "original-body",
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-    await prepareWithAdvice(nav, harness, { byStatus }, "struct-prepare");
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events[0]?.disposition, "advice");
-    assert.equal(events[0]?.prose, JSON.stringify(structured));
-
-    await prepareWithAdvice(nav, harness, { byStatus }, "proto-prepare");
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "__proto__" });
-    assert.equal(events[1]?.disposition, "advice");
-    assert.equal(events[1]?.prose, "original-body");
-  });
-});
-
-test("#1160 duplicate status payloads concatenate instead of dropping later prose", async () => {
-  await withTempRoot("navigator-bystatus-merge-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = await attendance(setting, harness, events, root);
-    nav.prepare();
-    while (harness.tool() === undefined || !harness.isPromptParked()) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    await harness.tool().execute("one", { byStatus: { completed: "body-1" } }, undefined, undefined, {} as never);
-    await harness.tool().execute("two", { byStatus: { completed: "body-2" } }, undefined, undefined, {} as never);
-    harness.release();
-    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events[0]?.disposition, "advice");
-    assert.equal(events[0]?.prose, "body-1\n\nbody-2");
-  });
-});
-
-test("#1160 native public session passes structured byStatus through to prepare tool", async () => {
+test("#1160 native public session carries materials and byStatus originals", async () => {
   await withTempRoot("navigator-public-bystatus-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -655,6 +590,8 @@ test("#1160 native public session passes structured byStatus through to prepare 
     const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
     await mkdir(join(parentRun, "session"), { recursive: true });
     const events: any[] = [];
+    // Opaque status key arrives via JSON (own property), not Object.assign pollution.
+    const opaquePayload = JSON.parse('{"__proto__":"opaque-body","completed":{"prose":"original-body","next":"reviewer"}}');
     const nav = createNavigatorAttendance({
       context: { cwd: root, home: root, runDirectory: parentRun } as never,
       role: "coder",
@@ -679,7 +616,7 @@ test("#1160 native public session passes structured byStatus through to prepare 
               roleOutcome: {
                 kind: "accepted",
                 payloads: [
-                  { byStatus: { completed: { prose: "original-body", next: "reviewer" } } },
+                  { byStatus: opaquePayload },
                   { byStatus: { completed: "body-2" } },
                 ],
               },
@@ -689,8 +626,6 @@ test("#1160 native public session passes structured byStatus through to prepare 
       }),
       onEvent: async (event) => { events.push(event); },
     });
-    // Intercept prepare tool via a wrapping factory would be heavier; settle path
-    // observes the projected prose after native public-session merge.
     nav.prepare();
     while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
@@ -699,6 +634,13 @@ test("#1160 native public session passes structured byStatus through to prepare 
       events[0]?.prose,
       `${JSON.stringify({ prose: "original-body", next: "reviewer" })}\n\nbody-2`,
     );
+
+    // Fresh prepare cycle reuses the same nested payloads for the opaque status key.
+    nav.prepare();
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "__proto__" });
+    assert.equal(events[1]?.disposition, "advice");
+    assert.equal(events[1]?.prose, "opaque-body");
   });
 });
 

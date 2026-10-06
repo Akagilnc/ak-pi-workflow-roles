@@ -49,13 +49,10 @@ function nonEmptyProse(value: unknown): string | undefined {
   }
   if (value === undefined || value === null) return undefined;
   if (typeof value === "object") {
-    try {
-      const text = JSON.stringify(value);
-      if (text === undefined || text.trim() === "" || text === "{}" || text === "[]") return undefined;
-      return text;
-    } catch {
-      return undefined;
-    }
+    // No catch: serialization failure must surface (failure honesty).
+    const text = JSON.stringify(value);
+    if (text === undefined || text.trim() === "" || text === "{}" || text === "[]") return undefined;
+    return text;
   }
   const text = String(value);
   return text.trim() === "" ? undefined : text;
@@ -69,29 +66,18 @@ function setStatusProse(target: Map<string, string>, key: string, prose: string)
 function byStatusFromUnknown(value: unknown): Map<string, string> {
   const out = new Map<string, string>();
   if (!isRecord(value)) return out;
-  // Own keys only — including opaque names like "__proto__".
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string") continue;
-    const prose = nonEmptyProse(Reflect.get(value, key));
+  for (const [key, raw] of Object.entries(value)) {
+    const prose = nonEmptyProse(raw);
     if (prose !== undefined) out.set(key, prose);
   }
   return out;
 }
 
-/** JSON-safe object for tool.execute / host payloads; preserves opaque status keys. */
+/** Plain object for tool.execute / host payloads; Object.fromEntries keeps opaque keys. */
 export function byStatusToPlainObject(
   byStatus: ReadonlyMap<string, string>,
 ): Record<string, string> {
-  const out = Object.create(null) as Record<string, string>;
-  for (const [key, prose] of byStatus) {
-    Object.defineProperty(out, key, {
-      value: prose,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
-  return out;
+  return Object.fromEntries(byStatus);
 }
 
 /**
@@ -110,13 +96,9 @@ export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | 
       if (serialized !== undefined) return { prose: serialized };
     }
     // Free-form object submission: present the whole body as prose when it has content.
-    const keys = Reflect.ownKeys(value).filter((key) => typeof key === "string") as string[];
+    const keys = Object.keys(value);
     if (keys.length === 0) return { prose: "" };
-    try {
-      return { prose: JSON.stringify(value) };
-    } catch {
-      return { prose: String(value) };
-    }
+    return { prose: JSON.stringify(value) };
   }
   return { prose: String(value) };
 }
@@ -162,15 +144,10 @@ export function preparedAdviceFromUnknown(value: unknown): PreparedNavigatorAdvi
     // Explicit empty prose / byStatus → no advice (do not re-stringify the shell).
     if (hasProseField || hasByStatusField) return undefined;
     // Free-form object without byStatus/prose: single-advice compat via stringify.
-    const keys = Reflect.ownKeys(value);
+    const keys = Object.keys(value);
     if (keys.length === 0) return undefined;
-    try {
-      const text = JSON.stringify(value);
-      return text.trim() === "" || text === "{}" ? undefined : { byStatus: new Map(), prose: text };
-    } catch {
-      const text = String(value);
-      return text.trim() === "" ? undefined : { byStatus: new Map(), prose: text };
-    }
+    const text = JSON.stringify(value);
+    return text.trim() === "" || text === "{}" ? undefined : { byStatus: new Map(), prose: text };
   }
   return {
     byStatus,

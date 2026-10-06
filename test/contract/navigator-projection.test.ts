@@ -1,6 +1,6 @@
 /**
  * #959: navigator projection is prose passthrough.
- * Status pick/merge contracts live on the attendance entry (navigator-attendance.test).
+ * Status pick/merge and byStatus transfer live on the attendance entry.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -29,11 +29,4 @@ test("#959 prose emptiness uses trim; payload keeps original whitespace", () => 
   assert.equal(navigatorProseFromUnknown("  下一步送大理寺  \n"), "  下一步送大理寺  \n");
   assert.equal(navigatorProseFromUnknown("\n\t  \n"), undefined);
   assert.equal(navigatorProseFromUnknown(""), undefined);
-});
-
-test("#1160 structured prose body serializes instead of [object Object]", () => {
-  assert.equal(
-    navigatorProseFromUnknown({ prose: { body: "original", next: "reviewer" } }),
-    JSON.stringify({ body: "original", next: "reviewer" }),
-  );
 });
