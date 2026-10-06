@@ -284,12 +284,16 @@ export const packageRecordSessionHost: RecordSessionHost = {
         resumed: true,
       };
     }
-    const session = createPackageRecordSession({
-      cwd,
-      sessionDir,
-      persist: true,
-    });
-    return { session, resumed: false };
+    // Miss: do not materialize. Archivist discards this session and mints a fresh
+    // parented principal; writing here would leave an unparented orphan header.
+    return {
+      session: createPackageRecordSession({
+        cwd,
+        sessionDir: "",
+        persist: false,
+      }),
+      resumed: false,
+    };
   },
   inMemoryRecordSession(cwd) {
     return createPackageRecordSession({

@@ -261,6 +261,59 @@ process.stdout.write("ok\\n");
   }
 });
 
+test("#1178 continue miss does not leave an unparented orphan in the nest", async () => {
+  await withHermeticHome({ prefix: "ak-pkg-record-continue-miss-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const parentDir = join(
+      machineLedgerHome(home),
+      "books",
+      "proj",
+      "1178",
+      "runs",
+      "r@coder",
+      "session",
+    );
+    await mkdir(parentDir, { recursive: true });
+    const parentFile = join(parentDir, "session.jsonl");
+    await writeFile(parentFile, sessionHeaderLine("parent-miss", project));
+    const parent = { getSessionFile: () => parentFile };
+
+    const first = createRecordSessionOpen({
+      cwd: project,
+      kind: WORKER_SUBMISSION_GATE_KIND,
+      parent,
+    });
+    assert.equal(first.resumed, false);
+    first.session.appendCustomEntry("ak-commit-baseline", { version: 1, head: "h0" });
+    const nest = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
+    const afterFirst = (await readdir(nest)).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(afterFirst.length, 1);
+
+    // Different cwd → continueRecent misses; must not leave an unparented header behind.
+    const second = createRecordSessionOpen({
+      cwd: join(project, "other"),
+      kind: WORKER_SUBMISSION_GATE_KIND,
+      parent,
+    });
+    assert.equal(second.resumed, false);
+    const afterSecond = (await readdir(nest)).filter((name) => name.endsWith(".jsonl"));
+    assert.equal(afterSecond.length, 2, "continue miss must not add an orphan before the fresh mint");
+
+    const headers = await Promise.all(
+      afterSecond.map(async (name) => {
+        const line = (await readFile(join(nest, name), "utf8")).split("\n")[0]!;
+        return JSON.parse(line) as { parentSession?: string; cwd?: string };
+      }),
+    );
+    for (const header of headers) {
+      assert.equal(header.parentSession, parentFile);
+    }
+  });
+});
+
 test("#1178 packageRecordSessionHost open reloads custom entries", async () => {
   await withHermeticHome({ prefix: "ak-pkg-record-open-" }, async ({ home }) => {
     const nest = join(home, "nest");
