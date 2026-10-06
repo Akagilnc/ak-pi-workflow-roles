@@ -224,6 +224,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
           }
           // #959 / #1160: pass through prose and byStatus. No route parsing.
           const {
+            byStatusToPlainObject,
             mergePreparedAdvice,
             preparedAdviceFromUnknown,
           } = await import("./package-contracts/navigator-output.ts");
@@ -237,7 +238,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             "navigator-public-prepare",
             {
               ...(prepared.prose === undefined ? {} : { prose: prepared.prose }),
-              ...(Object.keys(prepared.byStatus).length === 0 ? {} : { byStatus: prepared.byStatus }),
+              ...(prepared.byStatus.size === 0 ? {} : { byStatus: byStatusToPlainObject(prepared.byStatus) }),
             },
             undefined,
             undefined,

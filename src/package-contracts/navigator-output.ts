@@ -13,44 +13,83 @@ import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.
 
 export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
 
-export const navigatorOutputSchema = withTerminatingOutputDeclarations(
-  openToolObject(
-    Type.Object({
-      prose: Type.Optional(Type.Unknown({
-        description: "单条散文建议。无状态分叉时使用；原样呈现。",
-      })),
-      byStatus: Type.Optional(Type.Unknown({
-        description:
-          "按主衙门结局 status 预写的散文建议。键为 status 字面量，值为建议正文。"
-          + "结算时代码只按实际 status 取对应原文，不解析建议语义。",
-      })),
-    }),
-  ),
-);
+/**
+ * Single owner of prose / byStatus field declarations (#1160).
+ * Output tool and attendance prepare tool both compose from this.
+ */
+export const navigatorAdviceFields = {
+  prose: Type.Unknown({
+    description: "单条散文建议。无状态分叉时使用；原样呈现。",
+  }),
+  byStatus: Type.Unknown({
+    description:
+      "按主衙门结局 status 预写的散文建议。键为 status 字面量，值为建议正文。"
+      + "结算时代码只按实际 status 取对应原文，不解析建议语义。",
+  }),
+} as const;
+
+/** Open tool object for prose/byStatus (attendance prepare + public output body). */
+export const navigatorAdviceBodySchema = openToolObject(Type.Object(navigatorAdviceFields));
+
+export const navigatorOutputSchema = withTerminatingOutputDeclarations(navigatorAdviceBodySchema);
 
 export type NavigatorAdvice = { readonly prose: string };
 
 /** Parallel-prepare payload: status-keyed prose plus optional single prose. */
 export type PreparedNavigatorAdvice = {
-  readonly byStatus: Readonly<Record<string, string>>;
+  /** Map keeps opaque status keys (including "__proto__") as own entries. */
+  readonly byStatus: ReadonlyMap<string, string>;
   readonly prose?: string;
 };
 
+/** Serialize structured bodies with JSON; never String(object) → [object Object]. */
 function nonEmptyProse(value: unknown): string | undefined {
   if (typeof value === "string") {
     return value.trim() === "" ? undefined : value;
   }
   if (value === undefined || value === null) return undefined;
+  if (typeof value === "object") {
+    try {
+      const text = JSON.stringify(value);
+      if (text === undefined || text.trim() === "" || text === "{}" || text === "[]") return undefined;
+      return text;
+    } catch {
+      return undefined;
+    }
+  }
   const text = String(value);
   return text.trim() === "" ? undefined : text;
 }
 
-function byStatusFromUnknown(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  const out: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    const prose = nonEmptyProse(raw);
-    if (prose !== undefined) out[key] = prose;
+function setStatusProse(target: Map<string, string>, key: string, prose: string): void {
+  const prior = target.get(key);
+  target.set(key, prior === undefined ? prose : `${prior}\n\n${prose}`);
+}
+
+function byStatusFromUnknown(value: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!isRecord(value)) return out;
+  // Own keys only — including opaque names like "__proto__".
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") continue;
+    const prose = nonEmptyProse(Reflect.get(value, key));
+    if (prose !== undefined) out.set(key, prose);
+  }
+  return out;
+}
+
+/** JSON-safe object for tool.execute / host payloads; preserves opaque status keys. */
+export function byStatusToPlainObject(
+  byStatus: ReadonlyMap<string, string>,
+): Record<string, string> {
+  const out = Object.create(null) as Record<string, string>;
+  for (const [key, prose] of byStatus) {
+    Object.defineProperty(out, key, {
+      value: prose,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return out;
 }
@@ -67,10 +106,11 @@ export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | 
   if (isRecord(value)) {
     if (typeof value.prose === "string") return { prose: value.prose };
     if (value.prose !== undefined && value.prose !== null) {
-      return { prose: typeof value.prose === "string" ? value.prose : String(value.prose) };
+      const serialized = nonEmptyProse(value.prose);
+      if (serialized !== undefined) return { prose: serialized };
     }
     // Free-form object submission: present the whole body as prose when it has content.
-    const keys = Object.keys(value);
+    const keys = Reflect.ownKeys(value).filter((key) => typeof key === "string") as string[];
     if (keys.length === 0) return { prose: "" };
     try {
       return { prose: JSON.stringify(value) };
@@ -108,28 +148,28 @@ export function preparedAdviceFromUnknown(value: unknown): PreparedNavigatorAdvi
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") {
     const prose = nonEmptyProse(value);
-    return prose === undefined ? undefined : { byStatus: {}, prose };
+    return prose === undefined ? undefined : { byStatus: new Map(), prose };
   }
   if (!isRecord(value)) {
     const prose = nonEmptyProse(value);
-    return prose === undefined ? undefined : { byStatus: {}, prose };
+    return prose === undefined ? undefined : { byStatus: new Map(), prose };
   }
   const byStatus = byStatusFromUnknown(value.byStatus);
   const hasProseField = Object.prototype.hasOwnProperty.call(value, "prose");
   const hasByStatusField = Object.prototype.hasOwnProperty.call(value, "byStatus");
   const prose = nonEmptyProse(value.prose);
-  if (Object.keys(byStatus).length === 0 && prose === undefined) {
+  if (byStatus.size === 0 && prose === undefined) {
     // Explicit empty prose / byStatus → no advice (do not re-stringify the shell).
     if (hasProseField || hasByStatusField) return undefined;
     // Free-form object without byStatus/prose: single-advice compat via stringify.
-    const keys = Object.keys(value);
+    const keys = Reflect.ownKeys(value);
     if (keys.length === 0) return undefined;
     try {
       const text = JSON.stringify(value);
-      return text.trim() === "" || text === "{}" ? undefined : { byStatus: {}, prose: text };
+      return text.trim() === "" || text === "{}" ? undefined : { byStatus: new Map(), prose: text };
     } catch {
       const text = String(value);
-      return text.trim() === "" ? undefined : { byStatus: {}, prose: text };
+      return text.trim() === "" ? undefined : { byStatus: new Map(), prose: text };
     }
   }
   return {
@@ -138,18 +178,21 @@ export function preparedAdviceFromUnknown(value: unknown): PreparedNavigatorAdvi
   };
 }
 
-/** First-defined status keys win; prose concatenates when both present. */
+/** Merge status keys; same-status prose concatenates (no silent drop). */
 export function mergePreparedAdvice(
   prior: PreparedNavigatorAdvice | undefined,
   next: PreparedNavigatorAdvice | undefined,
 ): PreparedNavigatorAdvice | undefined {
   if (prior === undefined) return next;
   if (next === undefined) return prior;
-  const byStatus = { ...next.byStatus, ...prior.byStatus };
+  const byStatus = new Map(prior.byStatus);
+  for (const [key, prose] of next.byStatus) {
+    setStatusProse(byStatus, key, prose);
+  }
   const proseParts = [prior.prose, next.prose]
     .filter((part): part is string => typeof part === "string" && part.trim() !== "");
   const prose = proseParts.length === 0 ? undefined : proseParts.join("\n\n");
-  if (Object.keys(byStatus).length === 0 && prose === undefined) return undefined;
+  if (byStatus.size === 0 && prose === undefined) return undefined;
   return {
     byStatus,
     ...(prose === undefined ? {} : { prose }),
@@ -167,9 +210,9 @@ export function pickPreparedProse(
   status: string | undefined,
 ): string | undefined {
   if (prepared === undefined) return undefined;
-  if (Object.keys(prepared.byStatus).length > 0) {
+  if (prepared.byStatus.size > 0) {
     if (status === undefined) return undefined;
-    const hit = prepared.byStatus[status];
+    const hit = prepared.byStatus.get(status);
     return typeof hit === "string" && hit.trim() !== "" ? hit : undefined;
   }
   const prose = prepared.prose;

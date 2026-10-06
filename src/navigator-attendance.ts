@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { type Static } from "typebox";
 
 import {
   NAVIGATOR_INVOCATION_ENTRY,
@@ -61,7 +61,9 @@ export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy } from "./receipt-delivery-policy.ts";
 import {
+  byStatusToPlainObject,
   mergePreparedAdvice,
+  navigatorAdviceBodySchema,
   pickPreparedProse,
   preparedAdviceFromUnknown,
   type PreparedNavigatorAdvice,
@@ -138,19 +140,10 @@ export type NavigatorEvent = {
   arrivalMessage?: string;
 };
 
-// #959 / #1160: prepare is a prose vehicle. byStatus carries status-keyed prep;
+// #959 / #1160: prepare reuses the single navigator advice field owner.
 // Object root only (ADR 0060); nested shape is never a gate — every object root
 // reaches execute exactly once (Rule 0).
-const prepareSchema = Type.Object({
-  prose: Type.Optional(Type.Unknown({
-    description: "单条散文建议。无状态分叉时使用；原样呈现。",
-  })),
-  byStatus: Type.Optional(Type.Unknown({
-    description:
-      "按主衙门结局 status 预写的散文建议。键为 status 字面量，值为建议正文。"
-      + "结算时代码只按实际 status 取对应原文。",
-  })),
-}, { additionalProperties: true });
+const prepareSchema = navigatorAdviceBodySchema;
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorAttendanceOptions = {
@@ -404,7 +397,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     let output: PrepareOutput | undefined;
     let prepareBatchRejected = false;
     outputSink = (value) => {
-      // #836 / #1160: extra prepare calls merge byStatus (first key wins) and prose.
+      // #836 / #1160: extra prepare calls merge byStatus (same key concatenates) and prose.
       const next = normalizePreparedAdvice(value);
       if (output === undefined) {
         output = value;
@@ -413,19 +406,23 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const merged = mergePreparedAdvice(normalizePreparedAdvice(output), next);
       output = {
         ...(merged?.prose === undefined ? {} : { prose: merged.prose }),
-        ...(merged === undefined || Object.keys(merged.byStatus).length === 0
+        ...(merged === undefined || merged.byStatus.size === 0
           ? {}
-          : { byStatus: merged.byStatus }),
+          : { byStatus: byStatusToPlainObject(merged.byStatus) }),
       };
     };
     const activeSession = await loadMaterialsAndSession(invocationId);
     // #1160: parallel prepare from parent start — model runs now; settle only picks.
+    // Pass already-loaded subject/authority so the prepare run can judge progress
+    // (ticket text lives in those materials when present — no path invention).
     const request = JSON.stringify({
       kind: "prepare",
       role: options.role,
       phase: options.phase,
       invocationId,
       subjectKey,
+      subject,
+      authority,
     });
     try {
       try {
