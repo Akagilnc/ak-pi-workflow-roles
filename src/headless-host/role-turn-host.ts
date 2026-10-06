@@ -482,15 +482,19 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       try {
         await writeFile(systemPromptPath, systemPrompt, "utf8");
         let deliveredSchema: unknown;
+        // #1160: structured schema only when non-navigator OR attendance byStatus prepare.
+        // Direct navigator keeps free-form prose exit (#959) on both Codex and Claude.
+        const navigatorProseExit =
+          prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+          && request.navigatorByStatusPrepare !== true;
         if (codex) {
           // #1148: Codex --output-schema requires a native strict transport schema.
           // Project from the unique open declaration; do not alter package receipt rules.
-          // #1160: navigator auto byStatus prepare also mounts --output-schema so the
-          // status table returns structured (not whole-JSON-as-prose). Direct prose
-          // stays expressible via the schema's prose field.
-          outputSchemaPath = join(inputsDirectory, "output-schema.json");
-          deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
-          await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+          if (!navigatorProseExit) {
+            outputSchemaPath = join(inputsDirectory, "output-schema.json");
+            deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
+            await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+          }
         } else {
           mcpConfigPath = join(inputsDirectory, "mcp-config.json");
           await writeFile(
@@ -498,8 +502,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
-          // #959: navigator prose exit — no closed JSON schema on claude.
-          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
+          if (!navigatorProseExit) deliveredSchema = prepared.jsonSchema;
         }
         startedWithSchema = deliveredSchema;
       } catch (setupError) {
@@ -524,13 +527,14 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           let args: readonly string[];
           try {
             const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
+            const navigatorProseExit =
+              prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+              && request.navigatorByStatusPrepare !== true;
             args = buildTurnArgs({
               description: config.description,
               systemPromptPath,
-              // #959: navigator prose exit — no closed JSON schema on claude either.
-              ...(prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-                ? {}
-                : { jsonSchema: prepared.jsonSchema }),
+              // Direct navigator prose exit omits --json-schema; byStatus prepare mounts it.
+              ...(navigatorProseExit ? {} : { jsonSchema: prepared.jsonSchema }),
               mcpServers: prepared.mcpServers,
               ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
               ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
@@ -666,22 +670,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
-            const navigator = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
+            const navigatorProseExit =
+              prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+              && request.navigatorByStatusPrepare !== true;
             const deliverReply = async (): Promise<ReturnType<typeof deliveredFromSpawned> | undefined> => {
               if (!observation.turnCompleted || observation.finalMessage === undefined) return undefined;
-              // Codex --output-schema forces structured JSON for every seat including
-              // navigator (#1160 byStatus). Parse the native agent_message the same way
-              // as other seats — do not wrap the whole body as one prose string.
+              if (navigatorProseExit) {
+                // Direct ak-role navigator: free-form agent_message is the prose body.
+                if (observation.finalMessage.trim() === "") return undefined;
+                await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
+                return deliveredFromSpawned(spawned);
+              }
+              // Structured seats (incl. #1160 byStatus prepare): native JSON receipt.
               let receipt: unknown;
               try {
                 receipt = JSON.parse(observation.finalMessage);
               } catch (error) {
-                if (navigator && observation.finalMessage.trim() !== "") {
-                  // Direct prose path residual: free text still becomes { prose } when
-                  // the host did not emit JSON (schema path is the structured owner).
-                  await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
-                  return deliveredFromSpawned(spawned);
-                }
                 await noteBeside(error, "native receipt JSON could not be read");
                 return undefined;
               }
@@ -727,11 +731,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             await prepared.ingestStructuredOutput(envelope.structured_output);
           } else if (
             prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+            && request.navigatorByStatusPrepare !== true
             && typeof envelope.result === "string"
             && envelope.result.trim() !== ""
           ) {
-            // #959: claude prose exit — free-form result text is the receipt body
-            // when structured_output is absent (json-schema omitted for navigator).
+            // #959: direct navigator prose exit — free-form result text is the body
+            // when structured_output is absent (json-schema omitted).
             await prepared.ingestStructuredOutput({ prose: envelope.result });
           }
           return deliveredFromSpawned(spawned);

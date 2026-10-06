@@ -70,6 +70,8 @@ export type RoleTurnRequestProjectionOptions = {
   invocationScopeId?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   readonly stationChild?: boolean;
+  /** #1160 attendance auto byStatus prepare (not direct navigator prose). */
+  readonly navigatorByStatusPrepare?: boolean;
   /**
    * #1132: the one effective delivery-request ceiling (#422 single resolve by
    * the caller). Projected so the host adapter's own re-ask loop and the AK
@@ -123,6 +125,9 @@ export function projectRoleTurnRequest(
       ? {}
       : { invocationScopeId: options.invocationScopeId }),
     ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
+    ...(options.navigatorByStatusPrepare === undefined
+      ? {}
+      : { navigatorByStatusPrepare: options.navigatorByStatusPrepare }),
     ...(options.deliveryRequestLimit === undefined
       ? {}
       : { deliveryRequestLimit: options.deliveryRequestLimit }),

@@ -81,6 +81,8 @@ export type NavigatorPublicSummon = (options: {
   readonly resumeRunId?: string;
   /** Shared-lifecycle cancel forwarded from HostContext.signal (#675 / #959). */
   readonly signal?: AbortSignal;
+  /** #1160 attendance auto byStatus prepare — host mounts structured schema. */
+  readonly navigatorByStatusPrepare?: boolean;
 }) => Promise<PublicSummonResult>;
 
 type MemoryEntry = {
@@ -136,6 +138,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
             role: "navigator" as const,
             argv: [text] as const,
             cwd: context.cwd,
+            // Attendance prepare always asks for structured byStatus (#1160).
+            // Direct `ak-role navigator` never sets this flag.
+            navigatorByStatusPrepare: true as const,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
           };

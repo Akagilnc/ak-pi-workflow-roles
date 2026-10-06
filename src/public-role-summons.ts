@@ -121,6 +121,11 @@ export type PublicSummonRequest = {
    * (#946 / ADR 0082).
    */
   readonly stationChild?: boolean;
+  /**
+   * #1160 attendance auto byStatus prepare. Nested navigator only — never set
+   * on direct `ak-role navigator` (keeps free-form prose exit).
+   */
+  readonly navigatorByStatusPrepare?: boolean;
 };
 
 const execFileAsync = promisify(execFile);
@@ -398,6 +403,9 @@ export async function summonPublicRole(
           // Nested court stations keep station-child semantics; dual-lens
           // ordinary Reviewer axes opt out (#946 / ADR 0082).
           ...(options.stationChild === false ? {} : { stationChild: true }),
+          ...(options.navigatorByStatusPrepare === true
+            ? { navigatorByStatusPrepare: true as const }
+            : {}),
           // Forward composition-root adapters so nested stations (e.g.
           // secretariat → diarist) select the same faux/production table (#924).
           ...(options.hostAdapters === undefined

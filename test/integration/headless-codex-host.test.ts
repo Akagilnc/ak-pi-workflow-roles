@@ -740,8 +740,8 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
 }
 
 /**
- * #1160: navigator auto byStatus prepare on codex mounts --output-schema and
- * ingests the structured status table so pickPreparedProse yields each original.
+ * #1160: attendance byStatus prepare mounts --output-schema via explicit
+ * navigatorByStatusPrepare and ingests structured status keys.
  * Entry = createHeadlessRoleTurnHost.executeTurn; protocol process, not a real LLM.
  */
 test("#1160 codex navigator byStatus prepare returns structured status table", { timeout: 10000 }, async () => {
@@ -801,11 +801,156 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
       home: root,
       agentDir: join(root, "agent"),
       runDirectory: root,
+      navigatorByStatusPrepare: true,
     });
     assert.equal(result.code, 0, JSON.stringify(result));
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     const argv = JSON.parse((await readFile(argvLog, "utf8")).trim()) as string[];
     assert.equal(argv.includes("--output-schema"), true, `argv=${JSON.stringify(argv)}`);
+    assert.deepEqual(ingested, statusTable);
+    const prepared = preparedAdviceFromUnknown(ingested);
+    assert.equal(pickPreparedProse(prepared, "completed"), "C");
+    assert.equal(pickPreparedProse(prepared, "unfinished"), "U");
+  } finally {
+    ledger.dispose();
+  }
+});
+
+/** Direct ak-role navigator on codex keeps free-form prose exit (no --output-schema). */
+test("#1160 codex direct navigator prose exit omits output-schema and keeps bytes", { timeout: 10000 }, async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1160-codex-prose-", runName: "run@navigator" });
+  const root = ledger.runDirectory;
+  const argvLog = join(root, "argv.log");
+  const fakeBin = join(root, "fake-codex-nav-prose");
+  // Leading/trailing quotes must survive as prose body bytes (not JSON string unescape).
+  const proseBody = '"quoted advice"';
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+readFileSync(0, "utf8");
+const events = [
+  { type: "thread.started", thread_id: "thread-nav-prose" },
+  { type: "item.completed", item: { type: "agent_message", text: ${JSON.stringify(proseBody)} } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    let ingested: unknown;
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: fakeBin,
+      env: { CODEX_HOME: join(root, ".codex") },
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(root, "session", "session.jsonl"),
+      },
+      prepare: async (request) => ({
+        mcpServers: [],
+        systemPrompt: { body: "navigator-system", materials: [] },
+        prompt: request.continuation.prompt,
+        jsonSchema: terminatingToolJsonSchema(navigatorOutputSchema),
+        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        async ingestStructuredOutput(value) { ingested = value; },
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(root, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "direct prose" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory: root,
+      // no navigatorByStatusPrepare — direct prose path
+    });
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    const argv = JSON.parse((await readFile(argvLog, "utf8")).trim()) as string[];
+    assert.equal(argv.includes("--output-schema"), false, `argv=${JSON.stringify(argv)}`);
+    assert.deepEqual(ingested, { prose: proseBody });
+  } finally {
+    ledger.dispose();
+  }
+});
+
+/** #1160 Claude attendance byStatus prepare mounts --json-schema and picks status keys. */
+test("#1160 claude navigator byStatus prepare returns structured status table", { timeout: 10000 }, async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1160-claude-bystatus-", runName: "run@navigator" });
+  const root = ledger.runDirectory;
+  const argvLog = join(root, "argv.log");
+  const fakeBin = join(root, "fake-claude-navigator");
+  const statusTable = { byStatus: { completed: "C", unfinished: "U" } };
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+readFileSync(0, "utf8");
+const sid = "claude-nav-bystatus";
+process.stdout.write(JSON.stringify({
+  type: "result",
+  session_id: sid,
+  structured_output: ${JSON.stringify(statusTable)},
+  result: "ignored-when-structured",
+}) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("claude");
+    assert.ok(description);
+    let ingested: unknown;
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "claude",
+      binary: fakeBin,
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(root, "session", "session.jsonl"),
+      },
+      prepare: async (request) => ({
+        mcpServers: [],
+        systemPrompt: { body: "navigator-system", materials: [] },
+        prompt: request.continuation.prompt,
+        jsonSchema: terminatingToolJsonSchema(navigatorOutputSchema),
+        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        async ingestStructuredOutput(value) { ingested = value; },
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(root, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "prepare byStatus" },
+      model: { provider: "anthropic", model: "claude-test", thinking: "low" },
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory: root,
+      navigatorByStatusPrepare: true,
+    });
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    const argv = JSON.parse((await readFile(argvLog, "utf8")).trim()) as string[];
+    assert.equal(argv.includes("--json-schema"), true, `argv=${JSON.stringify(argv)}`);
     assert.deepEqual(ingested, statusTable);
     const prepared = preparedAdviceFromUnknown(ingested);
     assert.equal(pickPreparedProse(prepared, "completed"), "C");
