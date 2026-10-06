@@ -4,12 +4,12 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
+import { readStateControlRowsSync } from "./run-dossier.ts";
 import { RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { reportRunRecord } from "./sitian-facade.ts";
-import { parseSitianRecordText } from "./sitian-reader.ts";
 import {
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
@@ -18,7 +18,7 @@ import {
 import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
-import { isMissingPathError, isRecord } from "./unknown-value.ts";
+import { isRecord } from "./unknown-value.ts";
 
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
@@ -185,40 +185,17 @@ function liveRunDirectory(parent: WorkerSubmissionGateParent): string {
 }
 
 /**
- * Control-plane read of this leg's state.jsonl for gate restore.
- * Same fail-closed contract as readPageSync / session-identity: IO fault and
- * decoder diagnostics refuse; illegal gate payloads refuse — never filter into
- * "no prior state" and silently re-arm (#1178 C1).
+ * Interpret gate facts from this leg's control-plane state rows.
+ * File IO / decoder fail-closed is sole-owned by readStateControlRowsSync;
+ * illegal gate payloads still refuse here — never wash into re-arm (#1178 C1/C4).
  */
-function readGateStateRows(runDirectory: string): readonly Record<string, unknown>[] {
-  const path = join(runDirectory, RUN_STATE_FILE);
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) return [];
-    throw new Error(
-      `${RUN_STATE_FILE} is unreadable (${String((error as NodeJS.ErrnoException).code ?? (error as Error).name)}): ${runDirectory}`,
-      { cause: error },
-    );
-  }
-  // Sole Sitian decoder — do not invent a second skip parser.
-  const { records, diagnostics } = parseSitianRecordText(text);
-  if (diagnostics.length > 0) {
-    throw new Error(
-      `${RUN_STATE_FILE} has malformed row(s); refusing stale control-plane page: ${runDirectory}`,
-    );
-  }
-  return records as readonly Record<string, unknown>[];
-}
-
 function readGateState(runDirectory: string, invocationScopeId?: string): {
   baseline: string | null | undefined;
   reminded: boolean;
   prefixReminded: boolean;
   unfinishedReasonBounces: number;
 } {
-  const rows = readGateStateRows(runDirectory);
+  const rows = readStateControlRowsSync(runDirectory);
   let baseline: string | null | undefined;
   let reminded = false;
   let prefixReminded = false;
