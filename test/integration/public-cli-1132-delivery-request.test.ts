@@ -406,7 +406,8 @@ async function driveFixerCloseRound(
     socketPath: `/tmp/ak-1132-mcp-${randomUUID()}.sock`,
     listTerminatingToolOnMcp: false,
     sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-  });
+    principalAuthority: piDurablePrincipalAuthority,
+    });
   try {
     return await driveExternalRoleTurnRounds(prepared, request, {
       roundLimitName: "StructuredOutputRoundLimit",

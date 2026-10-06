@@ -349,7 +349,8 @@ function secretariatHostDrivingRealTools(input: {
           socketPath: join(socketDir, "mcp.sock"),
           listTerminatingToolOnMcp: false,
           sessionFile: coords.sessionFile,
-        });
+          principalAuthority: piDurablePrincipalAuthority,
+    });
         try {
           while (nextStep < input.steps.length) {
             const step = input.steps[nextStep++]!;
@@ -930,8 +931,17 @@ async function adapterBoundaryCase(input: {
       projectRoot: project,
       runId: "01a0adp969-0000-7000-8000-000000000001",
       role: "secretariat",
+      bookKey: "test-book",
+      runDirectory,
     });
-    seedCurrentSection(runDirectory, "invocation", { ticketNumber: 924, role: "secretariat" });
+    seedCurrentSection(runDirectory, "invocation", {
+      ticketNumber: 924,
+      role: "secretariat",
+      runId: "01a0adp969-0000-7000-8000-000000000001",
+      bookKey: "test-book",
+      projectRoot: project,
+      runDirectory,
+    });
 
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
@@ -970,7 +980,8 @@ async function adapterBoundaryCase(input: {
         socketPath: join(socketDir, "mcp.sock"),
         listTerminatingToolOnMcp: input.hostName === "grok-build",
         sessionFile,
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
 
     if (input.hostName === "grok-build") {
       const description = lookupHostDescription("grok-build");

@@ -27,6 +27,7 @@ import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependenci
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 /** Same ledger-local run leaf as createTempPackageHomeLedger / #818 withEnvelopeHome. */
 function ledgerProbeRun(home: string, leaf: string): string {
@@ -78,6 +79,7 @@ test("shared envelope keeps seat identity separate from typed reference material
       request: request(),
       dependencies: createRoleRuntimeDependencies(packageRoot),
       socketPath,
+      principalAuthority: piDurablePrincipalAuthority,
     });
     try {
       const soul = await packagedMaterials(["souls/judge.md"]);
@@ -112,7 +114,8 @@ test("shared envelope keeps seat identity separate from typed reference material
         },
         dependencies: createRoleRuntimeDependencies(packageRoot),
         socketPath: join(home, "auditor.sock"),
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
     } finally {
       if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
@@ -144,6 +147,7 @@ test("Pi production root supplies typed main and auditor reference materials", a
       request: request(),
       dependencies,
       socketPath,
+      principalAuthority: piDurablePrincipalAuthority,
     });
     try {
       assert.deepEqual(judge.systemPrompt.materials, [{
@@ -175,7 +179,8 @@ test("Pi production root supplies typed main and auditor reference materials", a
         },
         dependencies,
         socketPath: join(home, "pi-auditor.sock"),
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
     } finally {
       if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
@@ -205,7 +210,8 @@ test("shared envelope registers engine detour when request.engine is set", async
         request: request("agy"),
         dependencies: createRoleRuntimeDependencies(packageRoot),
         socketPath,
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
       try {
         assert.equal(
           process.env[AK_ROLE_ENGINE_ENV],
@@ -248,7 +254,8 @@ test("shared envelope ignores ambient AK_ROLE_ENGINE when request has no engine"
         request: request(),
         dependencies: createRoleRuntimeDependencies(packageRoot),
         socketPath,
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
       try {
         assert.equal(process.env[AK_ROLE_ENGINE_ENV], "ambient-should-not-arm");
         const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
@@ -300,9 +307,15 @@ test("concurrent envelopes arm detour per request without process.env writes", a
     const free = await mkRequest("free");
     const deps = createRoleRuntimeDependencies(packageRoot);
     const [preparedA, preparedB, preparedFree] = await Promise.all([
-      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath }),
-      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath }),
-      prepareRoleEnvelope({ request: free.request, dependencies: deps, socketPath: free.socketPath }),
+      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
+ principalAuthority: piDurablePrincipalAuthority,
+      }),
+      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
+ principalAuthority: piDurablePrincipalAuthority,
+      }),
+      prepareRoleEnvelope({ request: free.request, dependencies: deps, socketPath: free.socketPath,
+ principalAuthority: piDurablePrincipalAuthority,
+      }),
     ]);
     try {
       assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
@@ -390,8 +403,12 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
     const b = await mkRun("b", "court-b");
     const deps = createRoleRuntimeDependencies(packageRoot);
     const [preparedA, preparedB] = await Promise.all([
-      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath }),
-      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath }),
+      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
+ principalAuthority: piDurablePrincipalAuthority,
+      }),
+      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
+ principalAuthority: piDurablePrincipalAuthority,
+      }),
     ]);
     try {
       assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);

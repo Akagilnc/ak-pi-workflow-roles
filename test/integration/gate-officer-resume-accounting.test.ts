@@ -534,7 +534,8 @@ test("#1092 station-child officer: no case-dossier pointer material; dialogue = 
         },
         dependencies: createRoleRuntimeDependencies(packageRoot),
         socketPath: join(socketDir, "mcp.sock"),
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
       try {
         assert.deepEqual(JSON.parse(prepared.prompt), body);
         const dossiers = prepared.systemPrompt.materials.filter(
