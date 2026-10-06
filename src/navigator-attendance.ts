@@ -60,7 +60,12 @@ export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy } from "./receipt-delivery-policy.ts";
-import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
+import {
+  mergePreparedAdvice,
+  pickPreparedProse,
+  preparedAdviceFromUnknown,
+  type PreparedNavigatorAdvice,
+} from "./package-contracts/navigator-output.ts";
 import { sha256Hex } from "./sha256.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -133,11 +138,17 @@ export type NavigatorEvent = {
   arrivalMessage?: string;
 };
 
-// #959: prepare is a prose vehicle. Object root only (ADR 0060); nested shape is
-// never a gate — every object root reaches execute exactly once (Rule 0).
+// #959 / #1160: prepare is a prose vehicle. byStatus carries status-keyed prep;
+// Object root only (ADR 0060); nested shape is never a gate — every object root
+// reaches execute exactly once (Rule 0).
 const prepareSchema = Type.Object({
   prose: Type.Optional(Type.Unknown({
-    description: "游奕使散文建议，原样呈现。不要求 candidates/next 结构。",
+    description: "单条散文建议。无状态分叉时使用；原样呈现。",
+  })),
+  byStatus: Type.Optional(Type.Unknown({
+    description:
+      "按主衙门结局 status 预写的散文建议。键为 status 字面量，值为建议正文。"
+      + "结算时代码只按实际 status 取对应原文。",
   })),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
@@ -200,13 +211,13 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
 }
 
 /**
- * #959: extract prose from any prepare submission shape. Missing/empty → undefined.
- * Never a rejection — shape is not an admission gate.
- * Production prose arrives via nested public summon → prepare tool.execute only;
+ * #959 / #1160: extract prepared advice from any prepare submission shape.
+ * Missing/empty → undefined. Never a rejection — shape is not an admission gate.
+ * Production payload arrives via nested public summon → prepare tool.execute only;
  * archivist entries() never carries assistant message text, so no parallel harvest.
  */
-function normalizePrepareProse(value: unknown): string | undefined {
-  return navigatorProseFromUnknown(value);
+function normalizePreparedAdvice(value: unknown): PreparedNavigatorAdvice | undefined {
+  return preparedAdviceFromUnknown(value);
 }
 
 export function navigatorSubjectKey(
@@ -268,7 +279,7 @@ export function formatNavigatorReport(report: NavigatorReport): string {
 }
 
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
-  let preparation: Promise<string | undefined> | undefined;
+  let preparation: Promise<PreparedNavigatorAdvice | undefined> | undefined;
   let preparationInFlight = false;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
@@ -276,7 +287,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let preparedProse: string | undefined;
+  /** Parallel-prepare result: status-keyed prose picked at settle (#1160). */
+  let preparedAdvice: PreparedNavigatorAdvice | undefined;
   // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
   let activeInvocationId: string | undefined = invocationPrincipal;
@@ -311,11 +323,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   /**
-   * Settlement is the only model round. Standby records attendance and does not prompt.
+   * #1160: prepare runs the model in parallel from parent start and stores byStatus.
+   * settle picks by settlement.status — no second model round.
    * Soul and route playbook stay on the navigator system prompt, not this user turn.
    */
-  let prepareBoundSettlement: NavigatorSettlement | undefined;
-  /** Session only — no host prompt (standby attendance, or cold settle book-before-feed). */
   const loadMaterialsAndSession = async (invocationId: string): Promise<NavigatorPreparationSession> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
@@ -384,133 +395,123 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     if (session === undefined) throw new Error("Navigator session was not created");
     return session;
   };
-  const prepare = async (existingSession?: NavigatorPreparationSession): Promise<string | undefined> => {
+  const prepare = async (): Promise<PreparedNavigatorAdvice | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
-    const boundSettlement = prepareBoundSettlement;
-    prepareBoundSettlement = undefined;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     let output: PrepareOutput | undefined;
     let prepareBatchRejected = false;
     outputSink = (value) => {
-      // #836: extra prepare calls keep the first prose; later calls append as more prose.
+      // #836 / #1160: extra prepare calls merge byStatus (first key wins) and prose.
+      const next = normalizePreparedAdvice(value);
       if (output === undefined) {
         output = value;
         return;
       }
-      const prior = normalizePrepareProse(output) ?? "";
-      const next = normalizePrepareProse(value) ?? "";
-      const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
-      output = { prose: merged };
+      const merged = mergePreparedAdvice(normalizePreparedAdvice(output), next);
+      output = {
+        ...(merged?.prose === undefined ? {} : { prose: merged.prose }),
+        ...(merged === undefined || Object.keys(merged.byStatus).length === 0
+          ? {}
+          : { byStatus: merged.byStatus }),
+      };
     };
-    const activeSession = existingSession ?? await loadMaterialsAndSession(invocationId);
-      // Standby records the invocation entry and does not call the model.
-      if (boundSettlement === undefined) return undefined;
-      const request = JSON.stringify({
-        ...boundSettlement,
-        invocationId,
-        subjectKey,
-      });
+    const activeSession = await loadMaterialsAndSession(invocationId);
+    // #1160: parallel prepare from parent start — model runs now; settle only picks.
+    const request = JSON.stringify({
+      kind: "prepare",
+      role: options.role,
+      phase: options.phase,
+      invocationId,
+      subjectKey,
+    });
+    try {
       try {
-        try {
-          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          // #1132: the ceiling this turn already resolved. Absent = package default.
-          const delivery = createReceiptDeliveryPolicy(options.deliveryRequestLimit);
-          // Production prose arrives only via nested summon → prepare tool.execute
-          // (navigator-public-session). No assistant-entry harvest — entries() is
-          // archivist custom-only on the wired factory (#959).
-          const promptAllowingRejectedPrepare = async (text: string) => {
-            const entryStart = activeSession.entries().length;
-            prepareBatchRejected = false;
-            let promptFailure: unknown;
-            try {
-              await activeSession.prompt(text);
-            } catch (error) {
-              promptFailure = error;
-            }
-            const providerFailure = activeSession.providerFailure?.();
-            if (providerFailure !== undefined) {
-              throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
-            }
-            const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
-            if (rejectedReason !== undefined) {
-              // A rejected call makes every provisional output from this prompt
-              // ineligible for publication before the correction turn starts.
-              output = undefined;
-              prepareBatchRejected = true;
-              // The correction prompt below is the one spend for this rejection.
-              delivery.recordRejected(rejectedReason);
-              return;
-            }
-            if (promptFailure !== undefined) throw promptFailure;
-            const sessionNoReceipt = activeSession.noReceipt?.();
-            if (sessionNoReceipt !== undefined) {
-              // This session already settled without an accepted receipt. Keep the
-              // larger issued count and stop; a nested zero must not wipe prompts
-              // this layer already sent (#675 / #1132).
-              delivery.recordNestedNoReceipt(sessionNoReceipt);
-              return;
-            }
-          };
-          await promptAllowingRejectedPrepare(request);
-          // Bound output only: correction after rejected prepare. Early ready-wait
-          // does not 催交 final advice (owner: prepare then wait for settlement feed).
-          if (boundSettlement !== undefined) {
-            while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-              delivery.recordDeliveryRequest();
-              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
-            }
-            if (output === undefined && delivery.nextAction() === "request-delivery") {
-              delivery.closeBudget();
-            }
-            if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-              // Nested @navigator run already holds lawful no_receipt + runPointer when
-              // present. Do not write a parallel parent lifecycle off a dead side-branch
-              // pointer (#1178). 催交 / nested settle / no-advice delivery stay above.
-              preparedProse = undefined;
-              return undefined;
-            }
+        if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        // #1132: the ceiling this turn already resolved. Absent = package default.
+        const delivery = createReceiptDeliveryPolicy(options.deliveryRequestLimit);
+        // Production payload arrives only via nested summon → prepare tool.execute
+        // (navigator-public-session). No assistant-entry harvest — entries() is
+        // archivist custom-only on the wired factory (#959).
+        const promptAllowingRejectedPrepare = async (text: string) => {
+          const entryStart = activeSession.entries().length;
+          prepareBatchRejected = false;
+          let promptFailure: unknown;
+          try {
+            await activeSession.prompt(text);
+          } catch (error) {
+            promptFailure = error;
           }
-        } catch (error) {
-          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
-        }
-        if (output === undefined) {
-          // Early host round: ready and wait — no final prose until settlement is fed.
-          if (boundSettlement === undefined) {
-            preparedProse = undefined;
-            return undefined;
-          }
-          const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
-            if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return false;
-            return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
-          });
-          const nativeMessage = isRecord(nativeFailure) && isRecord(nativeFailure.message) ? nativeFailure.message : undefined;
-          const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
-            ? nativeMessage.errorMessage
-            : "Navigator did not submit direction advice";
-          // Classification originates only at the native provider stream seam.
-          // AssistantMessage metadata is a human diagnostic surface, not an acceptance oracle.
           const providerFailure = activeSession.providerFailure?.();
-          const source = providerFailure?.source ?? "unknown";
-          const cause = providerFailure?.cause ?? source;
-          throw navigatorUnavailableError(source, errorMessage, cause);
+          if (providerFailure !== undefined) {
+            throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
+          }
+          const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
+          if (rejectedReason !== undefined) {
+            // A rejected call makes every provisional output from this prompt
+            // ineligible for publication before the correction turn starts.
+            output = undefined;
+            prepareBatchRejected = true;
+            // The correction prompt below is the one spend for this rejection.
+            delivery.recordRejected(rejectedReason);
+            return;
+          }
+          if (promptFailure !== undefined) throw promptFailure;
+          const sessionNoReceipt = activeSession.noReceipt?.();
+          if (sessionNoReceipt !== undefined) {
+            // This session already settled without an accepted receipt. Keep the
+            // larger issued count and stop; a nested zero must not wipe prompts
+            // this layer already sent (#675 / #1132).
+            delivery.recordNestedNoReceipt(sessionNoReceipt);
+            return;
+          }
+        };
+        await promptAllowingRejectedPrepare(request);
+        // Correction after rejected prepare on the sole model round (#1160).
+        while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
+          delivery.recordDeliveryRequest();
+          await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
         }
-        // Early tool/prose is not final advice — discard; settlement feed owns output.
-        if (boundSettlement === undefined) {
-          preparedProse = undefined;
+        if (output === undefined && delivery.nextAction() === "request-delivery") {
+          delivery.closeBudget();
+        }
+        if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
+          // Nested @navigator run already holds lawful no_receipt + runPointer when
+          // present. Do not write a parallel parent lifecycle off a dead side-branch
+          // pointer (#1178). Honest empty prep → settle reports no-advice.
+          preparedAdvice = undefined;
           return undefined;
         }
-        preparedProse = normalizePrepareProse(output);
-        return preparedProse;
-      } finally {
-        const playbookFailure = activeSession.routePlaybookReadFailure?.();
-        observedRoutePlaybookFailure = typeof playbookFailure === "string" && playbookFailure.trim() !== ""
-          ? playbookFailure
-          : undefined;
-        outputSink = undefined;
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
       }
+      if (output === undefined) {
+        const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
+          if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return false;
+          return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
+        });
+        const nativeMessage = isRecord(nativeFailure) && isRecord(nativeFailure.message) ? nativeFailure.message : undefined;
+        const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
+          ? nativeMessage.errorMessage
+          : "Navigator did not submit direction advice";
+        // Classification originates only at the native provider stream seam.
+        // AssistantMessage metadata is a human diagnostic surface, not an acceptance oracle.
+        const providerFailure = activeSession.providerFailure?.();
+        const source = providerFailure?.source ?? "unknown";
+        const cause = providerFailure?.cause ?? source;
+        throw navigatorUnavailableError(source, errorMessage, cause);
+      }
+      preparedAdvice = normalizePreparedAdvice(output);
+      return preparedAdvice;
+    } finally {
+      const playbookFailure = activeSession.routePlaybookReadFailure?.();
+      observedRoutePlaybookFailure = typeof playbookFailure === "string" && playbookFailure.trim() !== ""
+        ? playbookFailure
+        : undefined;
+      outputSink = undefined;
+    }
   };
 
   return {
@@ -530,8 +531,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     prepare(): void {
       if (disposed || preparation !== undefined) return;
       preparationFailure = undefined;
+      preparedAdvice = undefined;
       // Track live in-flight only — a resolved preparation still held until settle
-      // drain must not read as preparing (test helpers release early ready-wait by this).
+      // drain must not read as preparing (test helpers release by this).
       preparationInFlight = true;
       preparation = prepare().finally(() => {
         preparationInFlight = false;
@@ -575,22 +577,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
       // Dispose during post-role grace must ignore late completion entirely (#675).
       if (disposed) return;
-      observedRoutePlaybookFailure = undefined;
+      // Keep playbook failure observed on the prepare round; settle does not re-prompt (#1160).
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      // Drain in-flight standby attendance (record only). Then feed the typed
-      // settlement as the only model round on the same host session.
-      if (sessionReady !== undefined) {
-        try { await sessionReady; } catch (error) { preparationFailure ??= error; }
-      }
-      if (preparation !== undefined) {
-        try {
-          await preparation;
-        } catch (error) {
-          preparationFailure ??= error;
-        }
-        preparation = undefined;
-      }
       const settlementFact = {
         invocationId,
         subjectKey,
@@ -601,9 +590,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           ? { status: settlement.status }
           : {}),
       };
-      // Arrival is presentation-only: never start soul/model/help/session just to book.
-      let drainedProse: string | undefined;
+      // Arrival is presentation-only: wait only for nest open, never for the model round.
       if (settlement.kind === "arrival") {
+        if (sessionReady !== undefined) {
+          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+        }
         session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure !== undefined) {
           report = unavailable(invocationId, preparationFailure);
@@ -614,45 +605,34 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           };
         }
       } else {
-        // Feed settlement; navigator speaks. Clear early-path failure only when a
-        // session already exists so the output prompt can run (owner: 准备好了就等着，
-        // 结果出来喂给它让它自己输出).
-        if (session !== undefined) preparationFailure = undefined;
-        // Cold settle: session only (no unbound host prompt), then book + feed.
-        // Pass the session into prepare so setModel/INVOCATION run once.
-        let coldSession: NavigatorPreparationSession | undefined;
-        if (session === undefined && preparationFailure === undefined) {
-          try {
-            coldSession = await loadMaterialsAndSession(invocationId);
-          } catch (error) {
-            preparationFailure = error;
-          }
+        // Drain in-flight parallel prepare, then pick by status — no second model round (#1160).
+        if (sessionReady !== undefined) {
+          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
         }
-        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
-        if (preparationFailure === undefined) {
-          prepareBoundSettlement = settlement;
-          preparation = prepare(coldSession);
-          void preparation.catch((error) => { preparationFailure = error; });
+        if (preparation !== undefined) {
           try {
-            drainedProse = await preparation;
+            await preparation;
           } catch (error) {
             preparationFailure ??= error;
           }
           preparation = undefined;
         }
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure !== undefined) {
           // Contract: README.md#Navigator-attendance — failed attendance is typed
           // unavailable without invalidating the role Receipt; retain the cause.
           report = unavailable(invocationId, preparationFailure);
-        } else if (typeof drainedProse === "string" && drainedProse.trim() !== "") {
-          // #959: present prose as-is on every parent outcome — including
-          // human_decision / escalate. Old path wiped prose on escalate and left
-          // auto-attendance looking empty after a successful nested summon.
-          // Prior words stay on the host session (CLI resume); no package advice ledger.
-          report = { disposition: "advice", prose: drainedProse };
         } else {
-          // Empty/no-receipt prepare → affirmative no-advice (never inferred later).
-          report = { disposition: "no-advice" };
+          const status = "status" in settlement ? settlement.status : undefined;
+          const picked = pickPreparedProse(preparedAdvice, status);
+          if (typeof picked === "string" && picked.trim() !== "") {
+            // #959 / #1160: present the pre-written prose as-is on every parent outcome
+            // including human_decision / escalate. No settlement model round.
+            report = { disposition: "advice", prose: picked };
+          } else {
+            // Missing key / empty prepare / no prior prepare → affirmative no-advice.
+            report = { disposition: "no-advice" };
+          }
         }
       }
       if (observedRoutePlaybookFailure !== undefined) {
@@ -685,8 +665,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       preparation = undefined;
       sessionReady = undefined;
-      preparedProse = undefined;
+      preparedAdvice = undefined;
       preparationFailure = undefined;
+      observedRoutePlaybookFailure = undefined;
   }
 }
 

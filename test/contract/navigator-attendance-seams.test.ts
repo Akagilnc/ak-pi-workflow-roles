@@ -307,14 +307,14 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
         harness.entries.some((entry: any) => entry.customType === "ak-navigator-settlement" && entry.data?.kind === "accepted"),
         true,
       );
-      assert.equal(harness.prompts(), 1, "standby does not prompt; settlement is the only model round");
-      const settlementPrompt = harness.promptTexts()[0];
-      assert.equal(typeof settlementPrompt, "string");
-      const fed = JSON.parse(settlementPrompt ?? "") as Record<string, unknown>;
-      assert.equal(fed.kind, "accepted");
-      assert.equal(fed.status, "completed");
+      assert.equal(harness.prompts(), 1, "prepare is the sole model round; settle only picks");
+      const preparePrompt = harness.promptTexts()[0];
+      assert.equal(typeof preparePrompt, "string");
+      const fed = JSON.parse(preparePrompt ?? "") as Record<string, unknown>;
+      assert.equal(fed.kind, "prepare");
       assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
       assert.equal(typeof fed.invocationId, "string");
+      assert.equal("status" in fed, false, "prepare does not know the outcome yet");
     }
 
     {
@@ -1138,12 +1138,12 @@ async function withNavigatorInfraGraceEnvelope(
     createRoleRuntimeExtension({
       loadRoleSoul: async () => "JUDGE LAW",
       loadNavigatorWorkContext: async () => ({
-        // Placeholder skips warm prepare on session_start so the hung nest is
-        // only the settlement-feed summon under post-role grace (#959).
+        // Concrete subject starts parallel prepare on session_start; grace aborts
+        // that hung nest at settle — settle itself does not start a model round (#1160).
         subjectKey: `${runDir}/work`,
         subject: options.subject,
         authority: options.authority,
-        subjectProvenance: "placeholder" as const,
+        subjectProvenance: "role_input" as const,
       }),
       createNavigatorAttendance: (attendanceOptions) =>
         createNavigatorAttendance({
@@ -1208,6 +1208,12 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
       async ({ handlers, sent, ctx, seenSignal, summonStarted, nestStopped }) => {
         await handlers.get("session_start")?.({}, ctx);
 
+        await waitForEventLoopCondition(() => summonStarted(), {
+          label: "parallel prepare must start nested public summon",
+          timeoutMs: 2_000,
+        });
+        assert.equal(seenSignal()?.aborted, false, "nest stays live until grace dispose");
+
         const toolResult = handlers.get("tool_result");
         assert.ok(toolResult, "shared envelope must register tool_result");
         const pending = Promise.resolve(
@@ -1232,11 +1238,7 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
           },
         );
 
-        await waitForEventLoopCondition(() => summonStarted(), {
-          label: "settlement feed must start nested public summon",
-          timeoutMs: 2_000,
-        });
-        assert.equal(settled, false, "hung feed must still be inside grace");
+        assert.equal(settled, false, "hung prepare must still be inside grace");
         assert.equal(seenSignal()?.aborted, false, "nest stays live until grace dispose");
 
         t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);

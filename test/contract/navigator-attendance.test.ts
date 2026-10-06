@@ -17,16 +17,18 @@ import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
+  byStatusAdvice,
   proseAdvice,
   sessionHarness,
   attendance,
   settleWithAdvice,
+  prepareWithAdvice,
   waitForStandbyOrModelRound,
 } from "../helpers/navigator-attendance-kit.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
-test("Navigator early prepare from parent start; settle feeds result for output", async () => {
+test("#1160 prepare runs model from parent start; settle picks byStatus without a second round", async () => {
   await withTempRoot("navigator-attendance-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -38,46 +40,54 @@ test("Navigator early prepare from parent start; settle feeds result for output"
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    nav.prepare();
-    await waitForStandbyOrModelRound(nav, harness);
-    assert.equal(harness.prompts(), 0, "standby records attendance and does not call the model");
-    assert.equal(harness.isPromptParked(), false, "standby must not park a model round");
-    assert.equal(
-      harness.entries.some((entry: any) => entry.customType === "ak-navigator-invocation"),
-      true,
-      "standby still books attendance",
-    );
-
-    const settlement = { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed" };
-    let settled = false;
-    const waiting = nav.settle(settlement).then(() => { settled = true; });
-    while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(harness.prompts(), 1);
-    const settlementPrompt = harness.promptTexts()[0];
-    assert.equal(typeof settlementPrompt, "string");
-    const fed = JSON.parse(settlementPrompt ?? "") as Record<string, unknown>;
-    assert.equal(fed.kind, settlement.kind);
-    assert.equal(fed.status, settlement.status);
-    assert.equal(fed.role, settlement.role);
-    assert.equal(fed.phase, settlement.phase);
+    const advice = byStatusAdvice({
+      completed: "完成后续送 reviewer",
+      unfinished: "未完继续 apply",
+    });
+    // Playbook diagnostic is observed on the prepare summon, not at settle (#1160).
+    harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
+    await prepareWithAdvice(nav, harness, advice, "prepare");
+    assert.equal(harness.prompts(), 1, "prepare is the sole model round");
+    const preparePrompt = harness.promptTexts()[0];
+    assert.equal(typeof preparePrompt, "string");
+    const fed = JSON.parse(preparePrompt ?? "") as Record<string, unknown>;
+    assert.equal(fed.kind, "prepare");
+    assert.equal(fed.role, "coder");
+    assert.equal(fed.phase, "apply");
     assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
     assert.equal(typeof fed.invocationId, "string");
-    assert.equal("authority" in fed, false);
-    harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
-    await Promise.resolve();
-    assert.equal(settled, false);
-    const advice = proseAdvice();
-    await harness.tool().execute("prepare", advice, undefined, undefined, {} as never);
-    harness.release();
-    await waiting;
+    assert.equal("status" in fed, false, "prepare does not know the outcome yet");
+
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 1, "settle must not start another model round");
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "advice");
+    assert.equal(events[0].prose, "完成后续送 reviewer");
     assert.equal(events[0].routePlaybookReadFailure, "ENOENT: missing playbook");
-    assert.equal(events[0].prose, advice.prose);
     const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement");
     assert.equal((invocation as any).data.invocationId, events[0].invocationId);
     assert.equal((settlementEntry as any).data.invocationId, events[0].invocationId);
+    assert.equal((settlementEntry as any).data.status, "completed");
+  });
+});
+
+test("#1160 missing status key yields no-advice without a settlement model round", async () => {
+  await withTempRoot("navigator-missing-status-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, root);
+    await prepareWithAdvice(nav, harness, byStatusAdvice({ completed: "只备了 completed" }));
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "refused" });
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events[0]?.disposition, "no-advice");
   });
 });
 
@@ -93,21 +103,17 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    nav.prepare();
-    await waitForStandbyOrModelRound(nav, harness);
-    assert.equal(harness.prompts(), 0);
-    assert.equal(harness.isPromptParked(), false);
-    // Settlement feed rejects once then corrects (budget lives on the output turn).
     harness.rejectPrepare("root parameters must be an object");
-    const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    nav.prepare();
     while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    const advice = proseAdvice();
+    const advice = byStatusAdvice({ completed: "校正后的建议" });
     await harness.tool().execute("corrected-prepare", advice, undefined, undefined, {} as never);
     harness.release();
-    await waiting;
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
     assert.equal(events[0]?.disposition, "advice");
-    assert.equal(events[0]?.prose, advice.prose);
+    assert.equal(events[0]?.prose, "校正后的建议");
   });
 });
 
@@ -123,9 +129,9 @@ test("default delivery ceiling sends two Navigator corrections and then stops", 
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
+    harness.rejectPrepare("root rejection one", "root rejection two", "root rejection three");
     nav.prepare();
     while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    harness.rejectPrepare("root rejection one", "root rejection two", "root rejection three");
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 3, "one initial prompt plus two corrections, then stop");
     const deliveryFeed = JSON.parse(harness.promptTexts()[1] ?? "") as {
@@ -157,10 +163,11 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
     harness.failTransport("socket reset");
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    // Cold settle (no early prepare): one feed prompt hits transport failure.
+    nav.prepare();
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 1);
-    // Single materials load: one setModel + one INVOCATION (not a second prepare reload).
+    // Single materials load: one setModel + one INVOCATION.
     assert.equal(harness.modelSettings.length, 1);
     assert.equal(
       harness.entries.filter((entry: any) => entry.customType === "ak-navigator-invocation").length,
@@ -172,8 +179,8 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
   });
 });
 
-test("each model round is only the typed settlement, not a reassembled materials pack", async () => {
-  await withTempRoot("navigator-settlement-only-", async (root) => {
+test("#1160 settle reuses one prepare; different statuses pick different prose; no settle prompt", async () => {
+  await withTempRoot("navigator-settlement-pick-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
@@ -184,40 +191,39 @@ test("each model round is only the typed settlement, not a reassembled materials
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    const first = { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed", message: "owner words" };
-    const settle1 = nav.settle(first);
-    while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-    const firstPrompt = harness.promptTexts()[0];
-    assert.equal(typeof firstPrompt, "string");
-    const fedFirst = JSON.parse(firstPrompt ?? "") as Record<string, unknown>;
-    assert.equal(fedFirst.status, first.status);
-    assert.equal(fedFirst.message, first.message);
-    assert.equal(fedFirst.subjectKey, "/repo/.ak/work/issues/28");
     harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
-    await harness.tool().execute("prepare-1", proseAdvice(), undefined, undefined, {} as never);
-    harness.release();
-    await settle1;
+    await prepareWithAdvice(
+      nav,
+      harness,
+      byStatusAdvice({
+        completed: "完成→reviewer",
+        unfinished: "未完→续 apply",
+      }),
+      "prepare-1",
+    );
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "完成→reviewer");
     assert.equal(events[0]?.routePlaybookReadFailure, "ENOENT: missing playbook");
+    assert.equal(harness.prompts(), 1);
+
+    // Fresh prepare for the next cycle — clear playbook diagnostic.
     harness.setRoutePlaybookReadFailure("");
-    const second = { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed", message: "second typed fact" };
-    const settle2 = nav.settle(second);
-    while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    const secondPrompt = harness.promptTexts()[1];
-    const priorPrompt = harness.promptTexts()[0];
-    assert.equal(typeof secondPrompt, "string");
-    assert.equal(typeof priorPrompt, "string");
-    const fedSecond = JSON.parse(secondPrompt ?? "") as Record<string, unknown>;
-    assert.equal(fedSecond.message, second.message);
-    assert.equal(fedSecond.subjectKey, "/repo/.ak/work/issues/28");
-    assert.equal(JSON.parse(priorPrompt ?? "").invocationId, fedSecond.invocationId);
-    await harness.tool().execute("prepare-2", proseAdvice(), undefined, undefined, {} as never);
-    harness.release();
-    await settle2;
+    await prepareWithAdvice(
+      nav,
+      harness,
+      byStatusAdvice({ completed: "第二轮 completed" }),
+      "prepare-2",
+    );
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(events[1]?.disposition, "advice");
+    assert.equal(events[1]?.prose, "第二轮 completed");
     assert.equal(events[1]?.routePlaybookReadFailure, undefined);
+    assert.equal(harness.prompts(), 2, "each cycle one prepare round; settle never prompts");
   });
 });
 
-test("#959 prose advice settles as-is across prepares while changed settings are reread", async () => {
+test("#959 / #1160 prose advice settles as-is across prepares while changed settings are reread", async () => {
   await withTempRoot("navigator-prose-settings-", async (root) => {
     // Existing withTempRoot holds the caller navigator seat fixture; pass as explicit context.home.
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
@@ -230,7 +236,6 @@ test("#959 prose advice settles as-is across prepares while changed settings are
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    nav.prepare();
     await settleWithAdvice(nav, harness, { kind: "accepted", role: "coder", phase: "apply", status: "completed" }, { prose: "第一步：送 reviewer" }, "prepare-1");
     assert.equal(events[0].disposition, "advice");
     assert.equal(events[0].prose, "第一步：送 reviewer");
@@ -238,35 +243,30 @@ test("#959 prose advice settles as-is across prepares while changed settings are
       { seats: { navigator: { provider: "provider", model: "two" } } },
       root,
     );
-    nav.prepare();
     await settleWithAdvice(nav, harness, { kind: "accepted", role: "coder", phase: "apply", status: "completed" }, { prose: "第二步：仍送 reviewer" }, "prepare-2");
     assert.equal(events[1].disposition, "advice");
     assert.equal(events[1].prose, "第二步：仍送 reviewer");
-    // Standby does not prompt; each settlement is one model round.
+    // Prepare is the only model round each cycle.
     assert.equal(harness.prompts(), 2);
     await savePublicCliConfig(
       { seats: { navigator: { provider: "provider", model: "three" } } },
       root,
     );
-    nav.prepare();
     await settleWithAdvice(nav, harness, { kind: "accepted", role: "coder", phase: "apply", status: "completed" }, { prose: "第三步：改送 fixer" }, "prepare-3");
     assert.equal(events[2].disposition, "advice");
     assert.equal(events[2].prose, "第三步：改送 fixer");
     // #675 ⑥: bare provider/model has no invented thinking default.
-    // setModel on early + feed each cycle.
+    // setModel once per prepare cycle (no settlement feed reload).
     assert.deepEqual(harness.modelSettings, [
       { model: "provider/one" },
-      { model: "provider/one" },
       { model: "provider/two" },
-      { model: "provider/two" },
-      { model: "provider/three" },
       { model: "provider/three" },
     ]);
     assert.equal(harness.prompts(), 3);
   });
 });
 
-test("#959 human_decision and role-infrastructure still present prepared prose", async () => {
+test("#959 / #1160 human_decision picks escalate key; infra without status is no-advice", async () => {
   await withTempRoot("navigator-human-prose-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -278,12 +278,21 @@ test("#959 human_decision and role-infrastructure still present prepared prose",
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    nav.prepare();
-    await settleWithAdvice(nav, harness, { kind: "human_decision", role: "coder", phase: "apply", status: "escalate" }, proseAdvice("escalate 后仍呈现散文"), "advice-owner");
-    nav.prepare();
-    await settleWithAdvice(nav, harness, { kind: "role_infrastructure_failure", role: "coder", phase: "apply" }, proseAdvice("infra 后仍呈现散文"), "advice-infra");
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "human_decision", role: "coder", phase: "apply", status: "escalate" },
+      byStatusAdvice({ escalate: "escalate 后仍呈现散文", completed: "其它" }),
+      "advice-owner",
+    );
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "role_infrastructure_failure", role: "coder", phase: "apply" },
+      byStatusAdvice({ completed: "infra 无 status 不可取" }),
+      "advice-infra",
+    );
     assert.equal(events.length, 2);
-    // #959: parent escalate/infra must not wipe already-prepared navigator prose.
     assert.equal(events[0]?.disposition, "advice");
     assert.equal(events[0]?.prose, "escalate 后仍呈现散文");
     assert.equal(typeof events[0]?.invocationId, "string");
@@ -291,8 +300,8 @@ test("#959 human_decision and role-infrastructure still present prepared prose",
     assert.equal(events[0]?.role, "coder");
     assert.equal(events[0]?.phase, "apply");
     assert.equal(typeof events[0]?.subjectKey, "string");
-    assert.equal(events[1]?.disposition, "advice");
-    assert.equal(events[1]?.prose, "infra 后仍呈现散文");
+    // role_infrastructure_failure has no status — byStatus cannot match.
+    assert.equal(events[1]?.disposition, "no-advice");
     // One attendance instance keeps one exact principal across settles.
     assert.equal(events[1]?.invocationId, events[0]?.invocationId);
     assert.equal(harness.prompts(), 2);
@@ -312,11 +321,9 @@ test("a session that settled without a receipt is not re-summoned for delivery",
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
     harness.settleWithoutReceipt("no typed candidate batch");
-    // Bound feed only (no early): nested session settles without receipt once.
+    nav.prepare();
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    // Each prompt is an independent public summon: a delivery request after the
-    // session settled opens new sessions instead of pressing the one that owes
-    // the receipt.
     assert.equal(harness.prompts(), 1);
     assert.equal(events.length, 1);
     assert.equal(events[0]?.disposition, "no-advice");
@@ -340,6 +347,8 @@ test("a delivery prompt already sent keeps its count when the nested session rep
     const nav = await attendance(setting, harness, events, root);
     harness.rejectPrepare("prepare shape rejected");
     harness.settleWithoutReceipt("nested settled without a receipt");
+    nav.prepare();
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
     assert.equal(events[0]?.disposition, "no-advice");
@@ -425,6 +434,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
       onEvent: async (event) => { events.push(event); },
     });
     nav.prepare();
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
 
     const outcome = summoned?.terminal?.roleOutcome;
@@ -564,4 +574,22 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "escalate" } }), { kind: "human_decision", role: "secretariat", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "converged" } }), { kind: "accepted", role: "secretariat", phase: null, status: "converged" });
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
+});
+
+test("#1160 cold settle without prior prepare is honest no-advice (no settlement model round)", async () => {
+  await withTempRoot("navigator-cold-settle-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, root);
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 0, "settle must not cold-start a model round");
+    assert.equal(events[0]?.disposition, "no-advice");
+  });
 });

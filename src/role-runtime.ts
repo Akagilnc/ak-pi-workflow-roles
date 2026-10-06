@@ -1107,9 +1107,10 @@ export function createRoleRuntimeExtension(
       if (settlement === undefined || attendance === undefined) return;
       const workContext = navigatorWorkContext;
       const pending = (async () => {
-        // ADR 0052 / #959: every settlement that starts a post-role feed host round
+        // ADR 0052 / #959 / #1160: every settlement that waits on parallel prepare
         // (accepted, human_decision, role_infrastructure_failure) shares one grace
         // and the same honest unavailable projection — no unbounded parallel branch.
+        // Settle picks byStatus; grace is only the tail wait, not a cold model start.
         const settlePromise = attendance.settle(settlement);
         // Attach catch immediately so a late rejection after grace timeout cannot
         // surface as unhandledRejection / stale-ctx after session dispose (#675).
@@ -1775,7 +1776,7 @@ export function createRoleRuntimeExtension(
               }
             },
           });
-          // Concrete work context starts standby attendance (record only, no model).
+          // Concrete work context starts parallel prepare (model runs now; #1160).
           // Placeholder subjects wait for before_agent_start (user prompt may replace the subject key).
           if (
             navigatorWorkContext.contextError === undefined &&

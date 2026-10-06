@@ -6,7 +6,7 @@
  * no books/<book>/navigator/<hash>/ side-branch nest, work-context file,
  * current-session pointer, or attendance parallel ledger (#1178).
  * Host conversation continuity uses CLI resume (`resumeRunId`) within this
- * attendance lifetime (in-memory pointer); cross-turn design is #1160.
+ * attendance lifetime (in-memory pointer). Parallel byStatus prepare is #1160.
  */
 import { basename } from "node:path";
 
@@ -222,18 +222,23 @@ export function createNativeNavigatorSessionFactory(deps?: {
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
-          // #959: present navigator words as prose. No candidates/next parsing.
-          const { navigatorProseFromUnknown } = await import("./package-contracts/navigator-output.ts");
-          const proseParts: string[] = [];
+          // #959 / #1160: pass through prose and byStatus. No route parsing.
+          const {
+            mergePreparedAdvice,
+            preparedAdviceFromUnknown,
+          } = await import("./package-contracts/navigator-output.ts");
+          let prepared = undefined as ReturnType<typeof preparedAdviceFromUnknown>;
           for (const payload of outcome.payloads ?? []) {
-            const prose = navigatorProseFromUnknown(payload);
-            if (prose !== undefined) proseParts.push(prose);
+            prepared = mergePreparedAdvice(prepared, preparedAdviceFromUnknown(payload));
           }
-          if (proseParts.length === 0) return;
+          if (prepared === undefined) return;
           if (disposed) return;
           await tool.execute(
             "navigator-public-prepare",
-            { prose: proseParts.join("\n\n") },
+            {
+              ...(prepared.prose === undefined ? {} : { prose: prepared.prose }),
+              ...(Object.keys(prepared.byStatus).length === 0 ? {} : { byStatus: prepared.byStatus }),
+            },
             undefined,
             undefined,
             context as never,

@@ -1,6 +1,6 @@
 /**
- * Shared fixtures for Navigator attendance coverage (#420 / #959).
- * #959: navigator speaks prose — fixtures submit free-form advice, not candidates.
+ * Shared fixtures for Navigator attendance coverage (#420 / #959 / #1160).
+ * #1160: prepare runs the model in parallel; settle picks by status — no second round.
  */
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
@@ -16,9 +16,19 @@ export function context(home?: string) {
   } as never;
 }
 
-/** Prose advice batch for prepare tool.execute. */
+/** Single-prose advice batch for prepare tool.execute. */
 export function proseAdvice(prose = "下一步送 reviewer 独立审阅实现。"): { prose: string } {
   return { prose };
+}
+
+/** Status-keyed prepare batch (#1160). */
+export function byStatusAdvice(
+  byStatus: Record<string, string> = {
+    completed: "下一步送 reviewer 独立审阅实现。",
+    unfinished: "继续同一 worker apply。",
+  },
+): { byStatus: Record<string, string> } {
+  return { byStatus };
 }
 
 export function sessionHarness() {
@@ -130,8 +140,7 @@ async function waitForEventLoop(condition: () => boolean): Promise<void> {
 }
 
 /**
- * Standby either finishes without a model round, or a round has already started.
- * Waiting only on isPreparing() parks forever when the old ready-wait prompt is restored.
+ * Prepare either finishes, or a model round has already started.
  */
 export async function waitForStandbyOrModelRound(
   nav: { isPreparing(): boolean },
@@ -140,9 +149,21 @@ export async function waitForStandbyOrModelRound(
   await waitForEventLoop(() => !nav.isPreparing() || harness.prompts() > 0 || harness.isPromptParked());
 }
 
+/** Submit body into a parked prepare round and wait until preparation settles. */
+async function completeParkedPrepare(
+  nav: { isPreparing(): boolean },
+  harness: ReturnType<typeof sessionHarness>,
+  body: unknown,
+  toolCallId: string,
+): Promise<void> {
+  await waitForEventLoop(() => harness.isPromptParked() && harness.tool() !== undefined);
+  await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
+  harness.release();
+  await waitForEventLoop(() => !nav.isPreparing());
+}
+
 /**
- * Standby prepare records attendance and does not prompt. Wait it out, then
- * settle feeds the typed settlement and takes the only model round.
+ * Drive the parallel prepare model round with a body, then settle (no second prompt).
  */
 export async function settleWithAdvice(
   nav: Awaited<ReturnType<typeof attendance>>,
@@ -151,13 +172,29 @@ export async function settleWithAdvice(
   body: unknown = proseAdvice(),
   toolCallId = "prepare",
 ): Promise<void> {
-  while (nav.isPreparing()) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
+  if (harness.isPromptParked() || nav.isPreparing()) {
+    // Caller already started prepare — complete the parked round.
+    await completeParkedPrepare(nav, harness, body, toolCallId);
+  } else {
+    // Fresh cycle: start prepare, complete it, then settle.
+    await prepareWithAdvice(nav, harness, body, toolCallId);
   }
-  const targetPrompts = harness.prompts() + 1;
-  const waiting = nav.settle(settlement as never);
-  await waitForEventLoop(() => harness.prompts() >= targetPrompts && harness.tool() !== undefined);
-  await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
-  harness.release();
-  await waiting;
+  await nav.settle(settlement as never);
+}
+
+/** Start prepare, submit body, wait until preparation is stored. */
+export async function prepareWithAdvice(
+  nav: Awaited<ReturnType<typeof attendance>>,
+  harness: ReturnType<typeof sessionHarness>,
+  body: unknown = proseAdvice(),
+  toolCallId = "prepare",
+): Promise<void> {
+  const before = harness.prompts();
+  nav.prepare();
+  // prepare() is a no-op while a resolved preparation is still held until settle.
+  if (!nav.isPreparing() && !harness.isPromptParked()) {
+    return;
+  }
+  await completeParkedPrepare(nav, harness, body, toolCallId);
+  void before;
 }

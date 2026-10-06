@@ -80,18 +80,20 @@ test("#959 arrival books settlement on an existing nest without re-prompting", a
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
-    // Standby opens the nest without a model round; arrival books without a feed prompt.
+    // Parallel prepare opens the nest (and may park a model round). Arrival books
+    // without waiting on that round and without starting a settlement feed (#1160).
     nav.prepare();
     await waitForStandbyOrModelRound(nav, harness);
     const promptsBeforeArrival = harness.prompts();
-    assert.equal(harness.isPromptParked(), false);
+    assert.equal(harness.prompts() >= 1 || harness.tool() !== undefined, true, "prepare opened the nest");
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
-    assert.equal(promptsBeforeArrival, 0);
     assert.equal(harness.prompts(), promptsBeforeArrival, "arrival must not run a settlement feed prompt");
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
     assert.equal(settlementEntry?.data?.kind, "arrival");
     assert.equal(settlementEntry?.data?.role, "lander");
+    // Release the parked prepare so the fixture does not leak an open prompt.
+    if (harness.isPromptParked()) harness.release();
   });
 });
 
@@ -244,17 +246,16 @@ test("attendance dispose settles session close rejection on the caller", async (
         }),
         onEvent: async () => {},
       });
+      // #1160: prepare is the model round. Dispose while that round is in flight.
       nav.prepare();
-      while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-      // Settlement prompt is in flight; dispose during that round.
-      const settleP = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       await prompted;
       await assert.rejects(
         () => Promise.resolve(nav.dispose()),
         (error: unknown) => error === closeBoom,
       );
       releasePrompt?.();
-      await settleP.catch(() => {});
+      while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).catch(() => {});
     } finally {
       releasePrompt?.();
     }
@@ -311,6 +312,9 @@ test("resumed setModel session failures preserve typed source and cause", async 
     await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
     assert.equal(created, true);
     assert.equal(events[0]?.disposition, "advice");
+    // #1160: one setModel per prepare cycle (no settlement feed reload).
+    // Fail on the second prepare's setModel.
+    setModelCalls = 2;
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     nav.prepare();
     await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
