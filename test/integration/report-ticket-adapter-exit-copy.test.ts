@@ -115,6 +115,7 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
       async load() { return undefined; },
       async bind() {},
       resolveSessionFile: (principal) => piDurablePrincipalAuthority.decode(principal).sessionFile,
+      principalAuthority: piDurablePrincipalAuthority,
     },
     connect: async () => connection,
     prepare: async (req: RoleTurnRequest) => {
@@ -123,6 +124,7 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
         dependencies: createRoleRuntimeDependencies(packageRoot),
         socketPath,
         sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       });
       preparedToken = mcpTokenFromPrepared(prepared);
       const innerDispose = prepared.dispose?.bind(prepared);
@@ -198,6 +200,7 @@ process.stdout.write(JSON.stringify({
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: (principal) => piDurablePrincipalAuthority.decode(principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: (req) => prepareRoleEnvelope({
         request: req,
@@ -205,6 +208,7 @@ process.stdout.write(JSON.stringify({
         socketPath,
         listTerminatingToolOnMcp: false,
         sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       }),
     });
 

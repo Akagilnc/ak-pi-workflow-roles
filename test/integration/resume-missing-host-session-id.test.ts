@@ -14,6 +14,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 function packageNotes(runDirectory: string): Array<{ diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }> {
   return runLogPayloads(runDirectory, "post-admission-diagnostic");
@@ -60,6 +61,7 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
         throw new Error("resume must not bind a new session id");
       },
       resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
     },
     connect: async () => connection,
     prepare: async () => ({
@@ -101,6 +103,7 @@ test("ACP successful turn preserves host facts and carries required disposal fai
       async load() { throw new Error("explicit resume must not load binding"); },
       async bind() {},
       resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
     },
     connect: async () => ({
       async request(method) {
@@ -156,6 +159,7 @@ test("#1091 headless resume without bound session id reports missing; never bind
         throw new Error("resume must not bind a new session id");
       },
       resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
     },
     prepare: async () => ({
       mcpServers: [],

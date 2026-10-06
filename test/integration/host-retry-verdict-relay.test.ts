@@ -13,6 +13,7 @@ import type { HeadlessHostDescription } from "../../src/headless-host/descriptio
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 /** Same opaque payload as the unit ACP tracer — not a free-text template. */
 const OPAQUE_RETRY_MESSAGE = JSON.stringify({
@@ -79,6 +80,7 @@ test("headless executeTurn delivers opaque retry.message on resume", async () =>
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async () => ({
         mcpServers: [{ name: "ak-probe", type: "stdio", command: "/usr/bin/true", args: [] }],

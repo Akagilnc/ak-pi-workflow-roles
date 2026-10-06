@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import type {
+  DurablePrincipalAuthority,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
@@ -46,10 +47,12 @@ export async function resolveLiveRunDirectoryPath(
 /**
  * Prefer the request path when it still exists; otherwise re-locate by run id
  * (resolveLiveRunDirectoryPath). Mutates the live request so later turn-record /
- * exit-copy / fault notes stay on the new leaf.
+ * exit-copy / fault notes stay on the new leaf. Pass principalAuthority so opaque
+ * principal wire is resealed rather than mutated in place (#1183).
  */
 export async function syncTurnRequestLivePlacement(
   request: RoleTurnRequest,
+  authority?: DurablePrincipalAuthority,
 ): Promise<string> {
   const live = await resolveLiveRunDirectoryPath(request.runDirectory, request.home);
   if (live === undefined) {
@@ -59,13 +62,7 @@ export async function syncTurnRequestLivePlacement(
     );
   }
   if (live !== request.runDirectory) {
-    projectTurnRequestLiveRunDirectory(
-      request as {
-        runDirectory: string;
-        principal: { sessionDirectory?: string; sessionFile?: string };
-      },
-      live,
-    );
+    projectTurnRequestLiveRunDirectory(request, live, authority);
   }
   return live;
 }
@@ -76,9 +73,10 @@ export async function syncTurnRequestLivePlacement(
  */
 export async function trySyncTurnRequestLivePlacement(
   request: RoleTurnRequest,
+  authority?: DurablePrincipalAuthority,
 ): Promise<{ readonly runDirectory: string } | { readonly resolveError: unknown }> {
   try {
-    return { runDirectory: await syncTurnRequestLivePlacement(request) };
+    return { runDirectory: await syncTurnRequestLivePlacement(request, authority) };
   } catch (resolveError) {
     return { resolveError };
   }

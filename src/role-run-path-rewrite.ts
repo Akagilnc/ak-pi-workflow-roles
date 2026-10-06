@@ -8,6 +8,10 @@
  */
 import { sep } from "node:path";
 
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+} from "./host-contracts.ts";
 import { isRecord } from "./unknown-value.ts";
 
 export const ADMITTED_PAGE_PATH_FIELDS = [
@@ -136,24 +140,36 @@ export function rewritePrincipalSessionPaths(
 }
 
 /**
- * Live turn request: move runDirectory and rewrite principal session paths in place.
- * Callers that lack authority.seal use this; admitted refresh seals after the same rewrite.
+ * Live turn request: move runDirectory and keep principal session paths on the
+ * new leaf. With authority: decode → rewrite coords copy → seal (opaque wire
+ * stays host-owned; never forge fields onto the prior principal, #1183 / #636).
+ * Without authority: only rewrite when the wire is already an extensible record
+ * that owns the session path fields — never add properties to opaque/frozen wire.
  */
 export function projectTurnRequestLiveRunDirectory(
   request: {
     runDirectory: string;
-    principal: { sessionDirectory?: string; sessionFile?: string };
+    principal: DurablePrincipal | { sessionDirectory?: string; sessionFile?: string };
   },
   newRunDirectory: string,
+  authority?: DurablePrincipalAuthority,
 ): void {
   const old = request.runDirectory;
   if (old === newRunDirectory) return;
   request.runDirectory = newRunDirectory;
-  rewritePrincipalSessionPaths(
-    request.principal as Record<string, unknown>,
-    old,
-    newRunDirectory,
-  );
+  if (authority !== undefined) {
+    const coords = { ...authority.decode(request.principal) };
+    rewritePrincipalSessionPaths(
+      coords as Record<string, unknown>,
+      old,
+      newRunDirectory,
+    );
+    (request as { principal: DurablePrincipal }).principal = authority.seal(coords);
+    return;
+  }
+  const principal = request.principal;
+  if (!isRecord(principal) || !Object.isExtensible(principal)) return;
+  rewritePrincipalSessionPaths(principal, old, newRunDirectory);
 }
 
 /** Typed notary/source-run locator: only runDirectory is a path. */

@@ -564,7 +564,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           // What this CLI start was given: one history record per start.
-          await recordTurnDelivery(await syncTurnRequestLivePlacement(request), {
+          await recordTurnDelivery(await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority), {
             systemPrompt,
             ...(startedWithSchema === undefined ? {} : { outputSchema: startedWithSchema }),
           }, "headless-host");
@@ -748,7 +748,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       } finally {
         // Cleanup must not depend on live-path sync: lookup failure stays beside
         // the original cleanup/copy work and never skips rm(inputsDirectory).
-        const live = await trySyncTurnRequestLivePlacement(request);
+        const live = await trySyncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority);
         const liveRunDirectory = "runDirectory" in live ? live.runDirectory : undefined;
         if (liveRunDirectory === undefined && "resolveError" in live) {
           await retainPackageFaultBesideLivePlacement(request, {

@@ -128,6 +128,7 @@ function envelopeHostThatReportsThen(input: {
         socketPath,
         listTerminatingToolOnMcp: input.hostName === "grok-build",
         sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       });
       try {
         const token = mcpTokenFromPrepared(prepared);

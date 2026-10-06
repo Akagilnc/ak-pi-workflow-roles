@@ -498,7 +498,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // bind projects host.sessions; copy records the landing. Host adapters do
       // not write current.json — public bind/settlement seams own that render.
       try {
-        await syncTurnRequestLivePlacement(request);
+        await syncTurnRequestLivePlacement(request, config.principalAuthority);
         const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);
         const sessionId = await readPiSessionHeaderId(sessionFile);
         if (sessionId !== undefined) {

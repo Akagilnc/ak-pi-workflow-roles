@@ -76,6 +76,7 @@ test("headless host records pointer and copies native dossier post-exit (ADR 008
       `#!/usr/bin/env node
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 const sidIdx = process.argv.indexOf("--session-id");
 const sid = sidIdx !== -1 ? process.argv[sidIdx + 1] : "default-sid";
@@ -108,6 +109,7 @@ process.stdout.write(JSON.stringify({
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async () => ({
         mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
@@ -205,6 +207,7 @@ process.stdout.write(JSON.stringify({
           async load() { return undefined; },
           async bind() {},
           resolveSessionFile: () => sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
         },
         prepare: async () => ({
           mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],

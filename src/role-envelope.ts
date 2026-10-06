@@ -3,7 +3,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
-import { sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
+import { sessionFileOf } from "./role-run-placement.ts";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -94,6 +94,12 @@ export async function prepareRoleEnvelope(options: {
    * Tests may omit → runDirectory default.
    */
   readonly sessionFile?: string;
+  /**
+   * Host authority that sealed request.principal. Required for mid-turn run
+   * relocate to reseal opaque principal wire (#1183); absent keeps live
+   * sessionManager/runDirectory only and never mutates opaque principal.
+   */
+  readonly principalAuthority?: import("./host-contracts.ts").DurablePrincipalAuthority;
 }): Promise<PreparedRoleTurn> {
   const { request } = options;
   if (options.socketPath === "") {
@@ -170,8 +176,9 @@ export async function prepareRoleEnvelope(options: {
   };
   const mutableRequest = request as {
     runDirectory: string;
-    principal: { sessionDirectory?: string; sessionFile?: string };
+    principal: import("./host-contracts.ts").DurablePrincipal;
   };
+  const principalAuthority = options.principalAuthority;
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -199,8 +206,9 @@ export async function prepareRoleEnvelope(options: {
       // and non-correctable MCP catch). Submission does not abort the turn.
     },
   };
-  // #1171: report-ticket updates HostContext.runDirectory; keep the shared turn
-  // request (and principal session paths) on the same leaf for adapter exit-copy.
+  // #1171 / #1183: report-ticket updates HostContext.runDirectory; reseal principal
+  // through host authority when provided. Never assign Pi session fields onto
+  // opaque/frozen principal wire (DurablePrincipal / #636).
   Object.defineProperty(context, "runDirectory", {
     configurable: true,
     enumerable: true,
@@ -210,14 +218,8 @@ export async function prepareRoleEnvelope(options: {
     set(next: string) {
       if (typeof next !== "string" || next.trim() === "") return;
       if (mutableRequest.runDirectory === next) return;
-      projectTurnRequestLiveRunDirectory(mutableRequest, next);
+      projectTurnRequestLiveRunDirectory(mutableRequest, next, principalAuthority);
       sessionFile = sessionFileOf(next);
-      if (typeof mutableRequest.principal.sessionDirectory !== "string") {
-        mutableRequest.principal.sessionDirectory = sessionDirectoryOf(next);
-      }
-      if (typeof mutableRequest.principal.sessionFile !== "string") {
-        mutableRequest.principal.sessionFile = sessionFile;
-      }
     },
   });
   const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {

@@ -54,6 +54,7 @@ export function createProductionHeadlessRoleTurnHost(
           request,
           dependencies: roleRuntimeDependencies,
           sessionFile: sessionIdentity.resolveSessionFile(request.principal),
+          principalAuthority,
           // Same MCP relay as ACP so intermediate AK tools stay reachable;
           // headless adapter projects the row into --mcp-config.
           socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,

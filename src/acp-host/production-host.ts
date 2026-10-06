@@ -42,6 +42,7 @@ function createComposedAcpRoleTurnHost(
       request,
       dependencies: config.roleRuntimeDependencies,
       sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
+      principalAuthority: config.sessionIdentity.principalAuthority,
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
     }),
   });

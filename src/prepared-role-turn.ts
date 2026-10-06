@@ -75,4 +75,6 @@ export type SessionIdentityAuthority = Readonly<{
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
   /** Durable principal session path for layout ownership — not a rebuild source (#617 DK-4). */
   resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
+  /** Host authority that sealed the principal — mid-turn relocate reseals through it (#1183). */
+  readonly principalAuthority: import("./host-contracts.ts").DurablePrincipalAuthority;
 }>;

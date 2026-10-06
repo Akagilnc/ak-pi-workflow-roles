@@ -11,6 +11,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 const CASES = [
   {
@@ -81,6 +82,7 @@ async function runNavigatorProseIngest(
         },
         async bind() {},
         resolveSessionFile: () => ledger.sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       },
       connect: async () => connection,
       prepare: async () => ({
