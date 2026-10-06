@@ -18,25 +18,15 @@ const entries = [
   "host-session-record",
   "navigator-session-contracts",
   // Static import of navigator-attendance and navigator-public-session.
-  "navigator-work-base",
-  // Static import of navigator-work-base.
   "atomic-write",
   "public-role-summons",
   "activation-ledger-git",
   "activation-ledger-topology",
-  "archivist-record-entry",
-  // Default RecordSessionHost for archivist (#1178) — published non-bundle edge.
-  "package-record-session-host",
-  // Open-path session load used by package-record-session-host.
+  // Session JSONL read/write (host dossier / envelope; no side-branch record host).
   "ledger-session-read",
-  // Shared header/custom JSONL write shapes (role-envelope + package record host).
   "ledger-session-write",
   // Static import of ledger-session-read.
   "unknown-value",
-  // Pure subject nest topology — static import of archivist-record-entry;
-  // cold discovery without SessionManager (#636). Keep listed while that
-  // relative edge remains (#857 removal left the import graph open).
-  "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable);

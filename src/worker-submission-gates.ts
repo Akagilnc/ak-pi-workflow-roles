@@ -1,15 +1,14 @@
-/** #242/#369 worker gates ①② at submission seam. Durability: ADR 0065 createRecordSession only. */
+/** #242/#369 worker gates ①② at submission seam.
+ * Durability (#1178): this leg's state.jsonl via reportRunRecord / readStateRowsSync.
+ * No session/worker-submission-gate/ side-branch nest.
+ */
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-  createRecordSession,
-  type RecordSessionParent,
-  WORKER_SUBMISSION_GATE_KIND,
-} from "./archivist-record-entry.ts";
-import type { HostRecordSession } from "./host-contracts.ts";
-import { sitianReport } from "./sitian-facade.ts";
+import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
+import { readStateRowsSync } from "./run-dossier.ts";
+import { reportRunRecord } from "./sitian-facade.ts";
 import {
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
@@ -23,7 +22,8 @@ import { isRecord } from "./unknown-value.ts";
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
-export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
+/** Historical kind name — no longer a nest identity; kept for callers/tests that still name the gate. */
+export const WORKER_SUBMISSION_GATE_RECORD_KIND = "worker-submission-gate";
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce";
@@ -36,7 +36,12 @@ const HOOK_FILE = "reference-transaction";
 /** Open platform-prefix domain (constitution #10) — not a closed singleton. */
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
 
-export type WorkerSubmissionGateParent = RecordSessionParent;
+const GATE_SOURCE = "worker-submission-gates";
+
+/** Live parent session — mid-turn report-ticket updates setSessionFile (#1171). */
+export type WorkerSubmissionGateParent = {
+  getSessionFile(): string | undefined;
+};
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -172,34 +177,55 @@ function unfinishedReasonPresent(details?: unknown): boolean {
   return containsWrittenReason(details.reason);
 }
 
-function readGateState(session: HostRecordSession, invocationScopeId?: string): {
+function liveRunDirectory(parent: WorkerSubmissionGateParent): string {
+  const file = parent.getSessionFile();
+  if (file === undefined || file.length === 0) {
+    throw new Error("Worker submission gate requires a parent session file for this leg's state.jsonl");
+  }
+  return runDirectoryOfSessionFile(file);
+}
+
+function readGateState(runDirectory: string, invocationScopeId?: string): {
   baseline: string | null | undefined;
   reminded: boolean;
   prefixReminded: boolean;
   unfinishedReasonBounces: number;
 } {
+  // Fail closed on unreadable state — same contract as other state.jsonl control paths.
+  const rows = readStateRowsSync(runDirectory);
   let baseline: string | null | undefined;
   let reminded = false;
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
-  for (const entry of session.getEntries()) {
-    if (entry.type !== "custom") continue;
-    if (entry.customType === WORKER_COMMIT_BASELINE_ENTRY_TYPE) {
-      const data = entry.data;
-      if (isRecord(data) && (data.head === null || typeof data.head === "string")) {
-        baseline = data.head as string | null;
+  for (const row of rows) {
+    const kind = row.kind;
+    const payload = row.payload;
+    if (kind === WORKER_COMMIT_BASELINE_ENTRY_TYPE) {
+      if (isRecord(payload) && (payload.head === null || typeof payload.head === "string")) {
+        baseline = payload.head as string | null;
       }
-    } else if (entry.customType === WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE) {
+    } else if (kind === WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE) {
       reminded = true;
-    } else if (entry.customType === WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE) {
+    } else if (kind === WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE) {
       prefixReminded = true;
-    } else if (entry.customType === WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE
-      && invocationScopeId !== undefined && isRecord(entry.data)
-      && entry.data.invocationScopeId === invocationScopeId) {
+    } else if (
+      kind === WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE
+      && invocationScopeId !== undefined
+      && isRecord(payload)
+      && payload.invocationScopeId === invocationScopeId
+    ) {
       unfinishedReasonBounces += 1;
     }
   }
   return { baseline, reminded, prefixReminded, unfinishedReasonBounces };
+}
+
+function appendGateState(
+  runDirectory: string,
+  kind: string,
+  payload: Record<string, unknown>,
+): void {
+  reportRunRecord(runDirectory, kind, payload, GATE_SOURCE);
 }
 
 function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
@@ -237,11 +263,6 @@ function reliableWindow(
 
 export type CreateWorkerSubmissionGateOptions = {
   /**
-   * Explicit package home for sitian writes (tests / admitted run).
-   * Path still derives from required parent session; home only pins ledger root. #604 Scope 2.
-   */
-  readonly home?: string;
-  /**
    * #1132: ADR 0050 缺理由催全次数 read from the single configured
    * `autoResumeLimit` value. Absent = package default. Resolved once here; the
    * gate never re-reads it per submission. Exhaustion still accepts (照收) —
@@ -263,13 +284,8 @@ export function createWorkerSubmissionGate(
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
   let invocationScopeId: string | undefined;
-  let record: HostRecordSession | undefined;
-  /** Live parent — mid-turn run relocate (#1171) may move its session file. */
+  /** Live parent — mid-turn report-ticket renames the run leaf and updates setSessionFile. */
   let parentRef: WorkerSubmissionGateParent | undefined;
-  /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
-  let sessionParent: string | undefined;
-  const explicitHome =
-    typeof options.home === "string" && options.home.length > 0 ? options.home : undefined;
   // #1132: one configured number, resolved once at gate construction.
   const unfinishedReasonBounceLimit = deliveryLimitFromConfig(options.unfinishedReasonBounceLimit);
   const head = (cwd: string): string | null => {
@@ -280,35 +296,12 @@ export function createWorkerSubmissionGate(
       return null;
     }
   };
-  /**
-   * #1171: report-ticket renames the run leaf; the gate nest moves with it, but the
-   * in-memory HostRecordSession still names the old path. Reopen under the live
-   * parent (continueRecent resumes the moved nest) before any append.
-   */
-  const liveRecord = (): HostRecordSession | undefined => {
-    if (record === undefined || root === undefined || parentRef === undefined) return record;
-    const file = record.getSessionFile();
-    if (file !== undefined && existsSync(file)) return record;
-    const parentFile = parentRef.getSessionFile();
-    if (parentFile === undefined || parentFile.length === 0) return record;
-    sessionParent = parentFile;
-    record = createRecordSession({
-      cwd: root,
-      kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
-      parent: parentRef,
-    });
-    return record;
-  };
-  const gateSitian = (cwd: string, payload: Record<string, unknown>) => {
-    sitianReport({
-      level: "event",
-      kind: "gate",
-      cwd,
-      ...(sessionParent === undefined ? {} : { sessionParent }),
-      ...(explicitHome === undefined ? {} : { home: explicitHome }),
-      payload,
-      source: "worker-submission-gates",
-    });
+  /** Current leg directory from the live parent session file. */
+  const liveDir = (): string => {
+    if (parentRef === undefined) {
+      throw new Error("Worker submission gate is not armed");
+    }
+    return liveRunDirectory(parentRef);
   };
   return {
     arm(cwd, parent, scope) {
@@ -316,13 +309,8 @@ export function createWorkerSubmissionGate(
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
       parentRef = parent;
-      sessionParent = parent.getSessionFile();
-      record = createRecordSession({
-        cwd,
-        kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
-        parent,
-      });
-      const prior = readGateState(record, invocationScopeId);
+      const runDirectory = liveRunDirectory(parent);
+      const prior = readGateState(runDirectory, invocationScopeId);
       unfinishedReasonBounces = prior.unfinishedReasonBounces;
       if (prior.baseline !== undefined) {
         baseline = prior.baseline;
@@ -333,23 +321,20 @@ export function createWorkerSubmissionGate(
       baseline = head(cwd);
       reminded = false;
       prefixReminded = false;
-      record.appendCustomEntry(WORKER_COMMIT_BASELINE_ENTRY_TYPE, {
-        version: 1,
-        head: baseline,
-      });
-      gateSitian(cwd, {
-        type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+      appendGateState(runDirectory, WORKER_COMMIT_BASELINE_ENTRY_TYPE, {
         version: 1,
         head: baseline,
       });
     },
     assertAcceptable(status, details) {
-      const gateRecord = liveRecord();
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
         if (unfinishedReasonBounces < unfinishedReasonBounceLimit) {
-          gateRecord?.appendCustomEntry(WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE, {
-            version: 1, invocationScopeId,
-          });
+          if (parentRef !== undefined) {
+            appendGateState(liveDir(), WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE, {
+              version: 1,
+              invocationScopeId,
+            });
+          }
           unfinishedReasonBounces += 1;
           throw new WorkerUnfinishedReasonReminderError();
         }
@@ -361,11 +346,7 @@ export function createWorkerSubmissionGate(
       // Gate ① — forgetfulness reminder (ADR 0066; behavior unchanged).
       if (!headMoved && !reminded) {
         reminded = true;
-        gateRecord?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-        gateSitian(root, {
-          type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-          version: 1,
-        });
+        appendGateState(liveDir(), WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
         throw new WorkerCommitReminderError();
       }
       reminded = true;
@@ -381,11 +362,7 @@ export function createWorkerSubmissionGate(
         return;
       }
       prefixReminded = true;
-      gateRecord?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-      gateSitian(root, {
-        type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
-        version: 1,
-      });
+      appendGateState(liveDir(), WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
       throw new WorkerPrefixReminderError();
     },
   };

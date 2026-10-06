@@ -1,12 +1,13 @@
 /**
- * Navigator attendance session factory (#675 r3).
+ * Navigator attendance session factory (#675 r3 / #1178).
  * Each prepare turn uses the public navigator activation path (summonPublicRole) —
  * same seat table and shared envelope as `ak-role navigator`.
- * Archivist createRecordSession books the attendance nest under the parent;
- * host conversation continuity uses CLI resume (`resumeRunId`), not a package
- * advice ledger (development-closure: do not invent package-level memory).
+ * Advice and run facts stay on the nested @navigator run dossier only —
+ * no books/<book>/navigator/<hash>/ side-branch nest, work-context file,
+ * current-session pointer, or attendance parallel ledger (#1178).
+ * Host conversation continuity uses CLI resume (`resumeRunId`) within this
+ * attendance lifetime (in-memory pointer); cross-turn design is #1160.
  */
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import { sitianReportSafe } from "./host-session-record.ts";
@@ -25,16 +26,13 @@ import { parseRunLeaf } from "./role-run-placement.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
-import {
-  navigatorWorkContextFile,
-} from "./navigator-work-base.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
 /**
- * Ledger process home for navigator attendance: admitted HostContext.runDirectory
+ * Ledger process home for navigator summon: admitted HostContext.runDirectory
  * first, else a parent session file under .ak-roles. Never context.home / env HOME /
- * passwd guesses — those split the nest from the owning run (#852).
+ * passwd guesses (#852).
  */
 async function resolveNavigatorLedgerHome(context: HostContext): Promise<string | undefined> {
   const { tryHomeFromAkRolesPath } = await import(
@@ -104,43 +102,38 @@ export type NavigatorPublicSummon = (options: {
   readonly signal?: AbortSignal;
 }) => Promise<PublicSummonResult>;
 
+type MemoryEntry = {
+  readonly type: string;
+  readonly customType?: string;
+  readonly data?: unknown;
+};
+
 export function createNativeNavigatorSessionFactory(deps?: {
   /** Test/composition inject — production leaves unset and uses public-role-summons. */
   readonly summonPublicRole?: NavigatorPublicSummon;
   /** Test inject — production uses navigatorHostRunResumable (typed CLI load). */
   readonly hostRunResumable?: (home: string, runId: string) => Promise<boolean>;
 }): NavigatorSessionFactory {
-  return async ({ context, subject, tool }) => {
+  return async ({ context, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
-    // Factory open only books the archivist nest — no package default, no eager seat read.
+    // Factory open only holds in-memory attendance bookkeeping — no side-branch nest.
     let thinkingLevel: string | undefined;
-
-    // Archivist nest for attendance bookkeeping (ADR 0018 / 0065) — not a host session open.
-    // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
-    // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
-    // Home comes from HostContext.runDirectory (or ledger parent path) — never context.home.
-    const { createRecordSession, NAVIGATOR_RECORD_KIND } = await import("./archivist-record-entry.ts");
-    const home = await resolveNavigatorLedgerHome(context);
-    const sessionManager = createRecordSession({
-      cwd: context.cwd,
-      kind: NAVIGATOR_RECORD_KIND,
-      subject,
-      ...(context.sessionManager !== undefined ? { parent: context.sessionManager } : {}),
-      ...(home !== undefined ? { home } : {}),
-    });
-
+    const entries: MemoryEntry[] = [];
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: Partial<NoReceiptLifecycleFacts> | undefined;
     let routePlaybookReadFailure: string | undefined;
     let disposed = false;
-    /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
-    let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
+    /** In-factory host run id for CLI resume within this attendance lifetime. */
+    let hostRunId: string | undefined;
 
     const summon: NavigatorPublicSummon = deps?.summonPublicRole
       ?? (async (options) => {
         const { summonPublicRole } = await import("./public-role-summons.ts");
         return summonPublicRole(options);
       });
+
+    const parentSessionFile = (): string | undefined =>
+      context.sessionManager?.getSessionFile?.();
 
     return {
       prompt: async (text) => {
@@ -156,12 +149,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // (ADR 0018 / #959 — legal HostContext may omit signal).
           if (disposed) return;
           const resumeRunId = hostRunId;
-          // Prompt stays caller/summoner bytes (#1166). Nest work-context path is an
-          // internal locator for startup materials only — never folded into argv,
-          // never written onto shared parent process.env across await.
-          const workContextPath = navigatorWorkContextFile(sessionManager.getSessionDir());
-          const workContextLocator =
-            existsSync(workContextPath) ? workContextPath : undefined;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
@@ -171,9 +158,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
-            ...(workContextLocator === undefined
-              ? {}
-              : { navigatorWorkContextPath: workContextLocator }),
           };
 
           // Prefer host CLI resume so prior advice stays on the host session.
@@ -239,7 +223,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             return;
           }
 
-          // Pin host run for the next attendance prompt on this subject (CLI resume key).
+          // Pin host run for the next attendance prompt in this lifetime (CLI resume key).
           const runDirectory = summoned.runDirectory
             ?? (typeof summoned.admitted?.runDirectory === "string"
               ? summoned.admitted.runDirectory
@@ -248,7 +232,11 @@ export function createNativeNavigatorSessionFactory(deps?: {
             const nextRunId = runIdFromNavigatorDirectory(runDirectory);
             if (nextRunId !== undefined) {
               hostRunId = nextRunId;
-              sessionManager.appendCustomEntry(NAVIGATOR_HOST_RUN_POINTER_ENTRY, { runId: nextRunId });
+              entries.push({
+                type: "custom",
+                customType: NAVIGATOR_HOST_RUN_POINTER_ENTRY,
+                data: { runId: nextRunId },
+              });
             }
           }
 
@@ -287,17 +275,18 @@ export function createNativeNavigatorSessionFactory(deps?: {
       noReceipt: () => noReceipt,
       routePlaybookReadFailure: () => routePlaybookReadFailure,
       appendEntry: (customType, data) => {
-        sessionManager.appendCustomEntry(customType, data);
+        entries.push({ type: "custom", customType, data });
+        const parent = parentSessionFile();
         sitianReportSafe({
           level: "event",
           kind: "attendance",
           cwd: context.cwd,
-          sessionParent: sessionManager.getSessionFile(),
+          ...(parent === undefined ? {} : { sessionParent: parent }),
           payload: { customType, data },
           source: "navigator-public-session",
         });
       },
-      entries: () => sessionManager.getEntries(),
+      entries: () => entries,
       setModel: async (next, nextThinking) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
@@ -310,7 +299,8 @@ export function createNativeNavigatorSessionFactory(deps?: {
         thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
       getThinkingLevel: () => thinkingLevel,
-      recordPointer: () => sessionManager.getSessionDir(),
+      // No side-branch nest path — empty pointer so work-base persist is a no-op.
+      recordPointer: () => "",
       dispose: async () => {
         // Marker only — nested cancel and non-blocking teardown are owned by
         // navigator-attendance / role-runtime (ADR 0018 / #959).

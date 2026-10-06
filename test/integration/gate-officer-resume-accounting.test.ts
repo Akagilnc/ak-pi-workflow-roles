@@ -18,7 +18,7 @@ import test from "node:test";
 
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { OFFICER_POINTER_RECORD_KIND, readBookedOfficerPointers } from "../../src/archivist-record-pointer.ts";
-import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
+import { bookDirectOfficerRunPointer } from "../../src/archivist-record-pointer.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 import { writeSectionSync } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";

@@ -2,7 +2,6 @@
  * Canonical ledger session JSONL read primitives (shared owner).
  * Consumers (ticket-trajectory, analyst, …) must import here — no second parse kernel.
  */
-import { appendFileSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import { isRecord } from "./unknown-value.ts";
@@ -13,108 +12,6 @@ export type LedgerSessionRow = Record<string, unknown>;
 export async function readStrictPiSessionJsonl(path: string): Promise<unknown[]> {
   const text = await readFile(path, "utf8");
   return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as unknown);
-}
-
-/**
- * Match SessionManager.parseSessionEntryLine:
- * blank or JSON-parse failure → null (skippable); any successful parse is kept as-is
- * (including non-objects like `[]` / `42`). Callers apply their own truthiness / header policy.
- */
-function parseSessionEntryLine(line: string): unknown {
-  if (line.trim() === "") return null;
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Match SessionManager loadEntriesFromFile / parseSessionHeaderCandidate header test:
- * type === "session" and id is a string — empty string id is accepted (no length gate).
- */
-function isPiSessionHeader(entry: unknown): entry is LedgerSessionRow & {
-  readonly type: "session";
-  readonly id: string;
-} {
-  return isRecord(entry) && entry.type === "session" && typeof entry.id === "string";
-}
-
-/**
- * Open-path load for a durable pi session file (package record host / resume).
- * Matches SessionManager loadEntriesFromFile + open contract:
- * - empty file → empty entries (caller initializes header)
- * - non-empty without a valid session header as first kept entry → throws; file untouched
- * - valid session → entries; missing final newline is repaired on disk so later appends keep line boundaries
- * Only JSON-parse failures are skipped. Successfully parsed non-objects stay in the entry list
- * (truthy values only, matching `if (entry) entries.push(entry)`), so a `[]`/`42` prefix
- * makes the first entry non-header and rejects the volume — not a skippable bad line.
- */
-export function loadPiSessionFileForOpen(path: string): readonly LedgerSessionRow[] {
-  const text = readFileSync(path, "utf8");
-  if (text.length === 0) return [];
-
-  const lines = text.split("\n");
-  // split keeps a trailing empty segment iff text ends with "\n".
-  const endsWithNewline = lines.length > 0 && lines[lines.length - 1] === "";
-  const physical = endsWithNewline ? lines.slice(0, -1) : lines;
-
-  // loadEntriesFromFile keeps truthy parse results only (null/0/false/"" drop out).
-  const entries: unknown[] = [];
-  for (const line of physical) {
-    const entry = parseSessionEntryLine(line);
-    if (entry) entries.push(entry);
-  }
-
-  if (entries.length === 0) {
-    // Non-empty bytes without any kept entry are invalid (SessionManager open).
-    if (text.length > 0) {
-      throw new Error(`Session file is not a valid pi session: ${path}`);
-    }
-    return [];
-  }
-  // loadEntriesFromFile returns [] when first entry is not a session header; open then
-  // throws for non-empty files. Surface the same failure here without rewriting the file.
-  if (!isPiSessionHeader(entries[0])) {
-    throw new Error(`Session file is not a valid pi session: ${path}`);
-  }
-  // SessionManager repairs a missing final newline after validating the header so
-  // subsequent appendFile calls do not glue JSON onto the prior record.
-  if (!endsWithNewline) {
-    appendFileSync(path, "\n");
-  }
-  return entries as LedgerSessionRow[];
-}
-
-/**
- * Discovery-only session header peek (best-effort).
- * Match SessionManager parseSessionHeaderCandidate + readSessionHeaderForDiscovery:
- * blank/malformed lines keep scanning; first successfully-parsed non-header ends the
- * candidate (null); valid session header (string id, including "") → value. Never throws.
- */
-export function readPiSessionHeaderForDiscovery(path: string): {
-  readonly id: string;
-  readonly cwd?: string;
-} | null {
-  try {
-    const text = readFileSync(path, "utf8");
-    for (const line of text.split("\n")) {
-      if (line.trim() === "") continue;
-      const entry = parseSessionEntryLine(line);
-      // parseSessionHeaderCandidate: falsy parse result → keep scanning
-      if (!entry) continue;
-      // First parseable non-session entry ends discovery for this candidate.
-      if (!isPiSessionHeader(entry)) return null;
-      const cwd = entry.cwd;
-      return {
-        id: entry.id,
-        ...(typeof cwd === "string" ? { cwd } : {}),
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 /**

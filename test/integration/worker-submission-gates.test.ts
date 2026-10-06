@@ -1,6 +1,5 @@
-// #685 C1: createRecordSession host durability leg culled. C3: resume 后无二次
-// false bounce 未结 — docs/research/issue-685-c3-deleted-contract-handoff.md §C.
-/** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
+/** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry.
+ * #1178: gate state lives on this leg's state.jsonl (no worker-submission-gate nest). */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -19,14 +18,15 @@ import test from "node:test";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../../src/worker-submission-gates.ts";
+import { readStateRowsSync } from "../../src/run-dossier.ts";
+import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
+import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
 import {
   machineLedgerHome,
 } from "../helpers/pi-test-harness.ts";
@@ -43,8 +43,8 @@ function configureGitUser(cwd: string): void {
 }
 
 /**
- * #604 / #857: fixture owns a temp package home and passes it into
- * createWorkerSubmissionGate({ home }). Arm always takes an explicit durable parent.
+ * #604 / #857 / #1178: fixture owns a temp package home and a real run leaf so
+ * gate state lands in state.jsonl. Arm always takes an explicit durable parent.
  */
 async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
@@ -61,15 +61,29 @@ async function withTempGit<T>(
   });
 }
 
-/** Durable parent session under the temp ledger home — required arm input (#857). */
-function durableParent(home: string, cwd: string): SessionManager {
-  const sessionDir = join(machineLedgerHome(home), "books", "repo", "runs", randomUUID(), "session");
-  mkdirSync(sessionDir, { recursive: true });
-  return SessionManager.create(cwd, sessionDir);
+/** Durable parent under a real run leaf so gate state lands in state.jsonl (#1178). */
+function durableParent(home: string, _cwd?: string): {
+  getSessionFile(): string | undefined;
+  runDirectory: string;
+} {
+  const runDirectory = join(
+    machineLedgerHome(home),
+    "books",
+    "repo",
+    "runs",
+    formatRunLeaf(randomUUID(), "coder"),
+  );
+  mkdirSync(join(runDirectory, "session"), { recursive: true });
+  const sessionFile = sessionFileOf(runDirectory);
+  writeFileSync(sessionFile, "", "utf8");
+  return {
+    runDirectory,
+    getSessionFile: () => sessionFile,
+  };
 }
 
-function gateWithHome(home: string) {
-  return createWorkerSubmissionGate({ home });
+function gateWithHome(_home?: string) {
+  return createWorkerSubmissionGate();
 }
 
 function plantOwnedHooks(cwd: string): { hooksDir: string; hookPath: string } {
@@ -116,7 +130,7 @@ async function scrubPlanted(
 
 function armThenCommit(cwd: string, home: string, message: string) {
   const gate = gateWithHome(home);
-  gate.arm(cwd, durableParent(home, cwd));
+  gate.arm(cwd, durableParent(home));
   git(cwd, ["commit", "--allow-empty", "-m", message]);
   return gate;
 }
@@ -395,5 +409,64 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
         },
       );
     });
+  });
+});
+
+test("#1178 gate state survives re-arm on the same leg state.jsonl (resume continuity)", async () => {
+  await withTempGit(async (root, home) => {
+    const parent = durableParent(home);
+    const gate = createWorkerSubmissionGate();
+    gate.arm(root, parent);
+    assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
+
+    const rows = readStateRowsSync(parent.runDirectory);
+    const kinds = rows.map((row) => row.kind);
+    assert.ok(kinds.includes("commit-baseline"));
+    assert.ok(kinds.includes("commit-reminder-bounce"));
+    assert.equal(existsSync(join(parent.runDirectory, "session", "worker-submission-gate")), false);
+    assert.ok(existsSync(join(parent.runDirectory, RUN_STATE_FILE)));
+
+    // Fresh gate instance (as on resume) restores bounce mark from state.jsonl.
+    const resumed = createWorkerSubmissionGate();
+    resumed.arm(root, parent);
+    assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
+  });
+});
+
+test("#1178 gate state follows live parent session file after mid-turn path change", async () => {
+  await withTempGit(async (root, home) => {
+    const first = durableParent(home);
+    let sessionFile = first.getSessionFile()!;
+    const parent = { getSessionFile: () => sessionFile };
+    const gate = createWorkerSubmissionGate();
+    gate.arm(root, parent);
+    assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
+
+    // Simulate report-ticket relocate: move the whole run leaf and update setSessionFile.
+    const relocated = join(
+      machineLedgerHome(home),
+      "books",
+      "repo",
+      "1178",
+      "runs",
+      formatRunLeaf(randomUUID(), "coder"),
+    );
+    const { renameSync, cpSync, rmSync } = await import("node:fs");
+    mkdirSync(join(relocated, ".."), { recursive: true });
+    // Node 18+ rename across dirs; fall back to copy tree.
+    try {
+      renameSync(first.runDirectory, relocated);
+    } catch {
+      cpSync(first.runDirectory, relocated, { recursive: true });
+      rmSync(first.runDirectory, { recursive: true, force: true });
+    }
+    sessionFile = sessionFileOf(relocated);
+
+    // Live parent path: confirm path without second bounce; facts on relocated state.jsonl.
+    assert.doesNotThrow(() => gate.assertAcceptable("completed"));
+    const kinds = readStateRowsSync(relocated).map((row) => row.kind);
+    assert.ok(kinds.includes("commit-baseline"));
+    assert.ok(kinds.includes("commit-reminder-bounce"));
+    assert.equal(existsSync(join(relocated, "session", "worker-submission-gate")), false);
   });
 });

@@ -200,11 +200,6 @@ export type RoleTurnRequest = {
    * number. Absent = package default. Never re-read from disk downstream.
    */
   readonly deliveryRequestLimit?: number;
-  /**
-   * Navigator nest work-context locator for startup materials (#1166).
-   * Request-scoped — never parent process.env across await.
-   */
-  readonly navigatorWorkContextPath?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */
@@ -263,7 +258,7 @@ export interface DurablePrincipalAuthority {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; /** Public-invocation scope (#537); never process-global env. */ invocationScopeId?: string; /** Selected host axis (#537 / ADR 0082); never process-global env invent. */ host?: string; /** Navigator nest work-context locator (#1166); never process-global env. */ navigatorWorkContextPath?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; /** Public-invocation scope (#537); never process-global env. */ invocationScopeId?: string; /** Selected host axis (#537 / ADR 0082); never process-global env invent. */ host?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
 /** Per-turn run directory; adapters must project any child-process identity. */
 export function runDirectoryFromHostContext(context: HostContext): string | undefined {
@@ -384,41 +379,3 @@ export interface RoleHost {
 
 /** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */
 export type HostInstitutionalModelSelection = RoleTurnModelConfig;
-
-/** Host-owned durable record session used by AK ledger placement. */
-export interface HostRecordSession {
-  getSessionFile(): string | undefined;
-  getSessionDir(): string;
-  getEntries(): readonly {
-    readonly type: string;
-    readonly customType?: string;
-    readonly data?: unknown;
-  }[];
-  getHeader(): { readonly type: string } | null;
-  isPersisted(): boolean;
-  setSessionFile(path: string): void;
-  appendCustomEntry(customType: string, data?: unknown): unknown;
-}
-
-/** Host session lifecycle seam; native selection stays inside its adapter. */
-export interface RecordSessionHost {
-  openRecordSession(options: {
-    readonly sessionFile: string;
-    readonly sessionDir: string;
-    readonly cwd: string;
-  }): HostRecordSession;
-  createRecordSession(options: {
-    readonly cwd: string;
-    readonly sessionDir: string;
-    readonly parentSession?: string;
-  }): HostRecordSession;
-  continueRecentRecordSession(options: {
-    readonly cwd: string;
-    readonly sessionDir: string;
-  }): {
-    readonly session: HostRecordSession;
-    /** Whether the host continued an existing session rather than falling back to a new one. */
-    readonly resumed: boolean;
-  };
-  inMemoryRecordSession(cwd: string): HostRecordSession;
-}

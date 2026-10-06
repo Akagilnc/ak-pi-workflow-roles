@@ -64,8 +64,6 @@ import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
 } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
-import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
-
 import { sha256Hex } from "./sha256.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -427,7 +425,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).
           const promptAllowingRejectedPrepare = async (text: string) => {
-            await persistNavigatorWorkBase(activeSession.recordPointer(), { subject, authority });
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
             let promptFailure: unknown;

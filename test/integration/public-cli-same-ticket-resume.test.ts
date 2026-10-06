@@ -1184,7 +1184,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     );
     assert.deepEqual(
       (await readdir(join(coderRunDirectory, "session"))).sort(),
-      ["session.jsonl", "worker-submission-gate"],
+      ["session.jsonl"],
     );
     // The analyst's reader finds the summoned inspector through the officer pointer the
     // gate booked, and counts its rounds from that officer's own session.

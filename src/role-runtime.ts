@@ -112,7 +112,7 @@ import {
   auditedRunIdentityMaterial,
 } from "./audited-run-identity.ts";
 import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
-import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
+
 import { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } from "./auditor-soul.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -711,11 +711,6 @@ export function createNavigatorRoleRuntime(
             parts.push(message);
           }
         }
-        const work = await loadNavigatorWorkBaseSuffix(
-          ctx.sessionManager?.getSessionDir?.(),
-          ctx.navigatorWorkContextPath,
-        );
-        if (work !== undefined && work.trim() !== "") parts.push(work);
         if (parts.length === 0) return;
         const text = parts.join("\n\n");
         return {
@@ -1811,7 +1806,7 @@ export function createRoleRuntimeExtension(
           ]);
         }
         // Worker gates ①②: registry declares the worker seats (ADR 0066 / 0070).
-        // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
+        // Baseline/bounce survive resume via this leg's state.jsonl (#1178).
         if ("worker" in entry && entry.worker === true) {
           const workerArms = { coder, fixer } as const;
           workerArms[entry.role].armSubmissionGate(ctx.cwd, ctx.sessionManager, ctx.invocationScopeId);

@@ -196,7 +196,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
 
     // Symlink escape is no longer an activation rejection class (ADR 0065 / #221):
-    // record-placement enforcement moved to createRecordSession. An existing regular
+    // record-placement enforcement lives on the activation ledger path. An existing regular
     // file principal is admitted even when realpath leaves the book.
   });
 });

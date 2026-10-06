@@ -179,10 +179,6 @@ export async function prepareRoleEnvelope(options: {
     ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     ...(request.invocationScopeId === undefined ? {} : { invocationScopeId: request.invocationScopeId }),
     ...(request.host === undefined || request.host.trim() === "" ? {} : { host: request.host.trim() }),
-    ...(request.navigatorWorkContextPath === undefined
-      || request.navigatorWorkContextPath.trim() === ""
-      ? {}
-      : { navigatorWorkContextPath: request.navigatorWorkContextPath }),
     sessionManager: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,

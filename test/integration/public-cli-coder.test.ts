@@ -453,7 +453,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
   });
 });
 
-test("ak-role resume continues a relocated coder gate despite its stale session pointer", async () => {
+test("#1178 public coder resume after ticket relocate keeps gate state on state.jsonl", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -463,7 +463,8 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     });
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
-    let staleUnboundFile: string | undefined;
+    const { readStateRowsSync } = await import("../../src/run-dossier.ts");
+    const { existsSync } = await import("node:fs");
 
     {
       const { io } = captureIo();
@@ -489,20 +490,15 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
             await mkdir(sessionDir, { recursive: true });
             const sessionFile = join(sessionDir, "session.jsonl");
             await writeFile(sessionFile, "", "utf8");
-            const gate = createWorkerSubmissionGate({ home });
+            const gate = createWorkerSubmissionGate();
             gate.arm(project, { getSessionFile: () => sessionFile });
             assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
-            const unboundGateDirectory = join(sessionDir, "worker-submission-gate");
-            const gateFiles = (await readdir(unboundGateDirectory)).filter(
-              (file) => file.endsWith(".jsonl"),
-            );
-            assert.equal(gateFiles.length, 1);
-            staleUnboundFile = join(unboundGateDirectory, gateFiles[0]!);
-            await writeFile(
-              join(unboundGateDirectory, "current-session.json"),
-              `${JSON.stringify({ sessionFile: staleUnboundFile })}\n`,
-              "utf8",
-            );
+            // No side-branch nest under session/.
+            assert.equal(existsSync(join(sessionDir, "worker-submission-gate")), false);
+            const runDirectory = dirname(sessionDir);
+            const kinds = readStateRowsSync(runDirectory).map((row) => row.kind);
+            assert.ok(kinds.includes("commit-baseline"));
+            assert.ok(kinds.includes("commit-reminder-bounce"));
             const details = {
               status: "partially_completed",
               report: "Initial turn binds the ticket before resume.",
@@ -554,14 +550,11 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
     assert.equal("taskPath" in admitted, false);
-
-    const gateDirectory = join(sessionDirectory, "worker-submission-gate");
-    const stalePointer = join(gateDirectory, "current-session.json");
-    assert.ok(staleUnboundFile?.includes(join("unbound", "runs")));
-    assert.deepEqual(
-      JSON.parse(await readFile(stalePointer, "utf8")),
-      { sessionFile: staleUnboundFile },
-    );
+    // After ticket relocate, gate facts moved with the leg — no nest directory.
+    assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false);
+    const relocatedKinds = readStateRowsSync(runDirectory).map((row) => row.kind);
+    assert.ok(relocatedKinds.includes("commit-baseline"));
+    assert.ok(relocatedKinds.includes("commit-reminder-bounce"));
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -582,8 +575,9 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
-        const gate = createWorkerSubmissionGate({ home });
+        const gate = createWorkerSubmissionGate();
         gate.arm(project, { getSessionFile: () => join(sessionDirectory, "session.jsonl") });
+        // Prior bounce restored from state.jsonl — confirm without a second reminder.
         assert.doesNotThrow(() => gate.assertAcceptable("completed"));
         const details = {
                 status: "planned",

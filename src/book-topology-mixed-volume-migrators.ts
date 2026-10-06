@@ -7,7 +7,8 @@ import type { Dirent, Stats } from "node:fs";
 import { appendFile, cp, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-import { WORKER_SUBMISSION_GATE_KIND } from "./archivist-record-entry.ts";
+/** Historical side-branch nest name under a run session (pre-#1178). */
+const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 import {
   reconcileMigrationPartition,
   type BookTopologyMigrationContext,
