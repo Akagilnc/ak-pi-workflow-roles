@@ -1,5 +1,5 @@
 /** #242/#369 worker gates ①② at submission seam.
- * Durability (#1178): this leg's state.jsonl via reportRunRecord / readStateRowsSync.
+ * Durability (#1178): this leg's state.jsonl via reportRunRecord / readStateControlRowsSync.
  * No session/worker-submission-gate/ side-branch nest.
  */
 import { execFileSync } from "node:child_process";

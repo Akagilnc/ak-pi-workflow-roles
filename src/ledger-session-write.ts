@@ -1,7 +1,6 @@
 /**
  * Sole owner of pi session JSONL v3 write shapes (header + durable line).
- * Main principal (role-envelope) and side-branch nests (package record host)
- * both serialize through here — one write rule, separate call-site lifecycles.
+ * role-envelope serializes through here — one write rule; call sites own lifecycle.
  */
 import { randomUUID } from "node:crypto";
 
