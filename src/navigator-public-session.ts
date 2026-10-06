@@ -6,7 +6,7 @@
  * no books/<book>/navigator/<hash>/ side-branch nest, work-context file,
  * current-session pointer, or attendance parallel ledger (#1178).
  * Host conversation continuity uses CLI resume (`resumeRunId`) within this
- * attendance lifetime (in-memory pointer); cross-turn design is #1160.
+ * attendance lifetime (in-memory pointer). Parallel byStatus prepare is #1160.
  */
 import { basename } from "node:path";
 
@@ -81,6 +81,8 @@ export type NavigatorPublicSummon = (options: {
   readonly resumeRunId?: string;
   /** Shared-lifecycle cancel forwarded from HostContext.signal (#675 / #959). */
   readonly signal?: AbortSignal;
+  /** #1160 attendance auto byStatus prepare — host mounts structured schema. */
+  readonly navigatorByStatusPrepare?: boolean;
 }) => Promise<PublicSummonResult>;
 
 type MemoryEntry = {
@@ -98,7 +100,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
   return async ({ context, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
     // Factory open only holds in-memory attendance bookkeeping — no side-branch nest.
-    let thinkingLevel: string | undefined;
     const entries: MemoryEntry[] = [];
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: Partial<NoReceiptLifecycleFacts> | undefined;
@@ -137,6 +138,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
             role: "navigator" as const,
             argv: [text] as const,
             cwd: context.cwd,
+            // Attendance prepare always asks for structured byStatus (#1160).
+            // Direct `ak-role navigator` never sets this flag.
+            navigatorByStatusPrepare: true as const,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
           };
@@ -222,18 +226,24 @@ export function createNativeNavigatorSessionFactory(deps?: {
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
-          // #959: present navigator words as prose. No candidates/next parsing.
-          const { navigatorProseFromUnknown } = await import("./package-contracts/navigator-output.ts");
-          const proseParts: string[] = [];
+          // #959 / #1160: pass through prose and byStatus. No route parsing.
+          const {
+            byStatusToPlainObject,
+            mergePreparedAdvice,
+            preparedAdviceFromUnknown,
+          } = await import("./package-contracts/navigator-output.ts");
+          let prepared = undefined as ReturnType<typeof preparedAdviceFromUnknown>;
           for (const payload of outcome.payloads ?? []) {
-            const prose = navigatorProseFromUnknown(payload);
-            if (prose !== undefined) proseParts.push(prose);
+            prepared = mergePreparedAdvice(prepared, preparedAdviceFromUnknown(payload));
           }
-          if (proseParts.length === 0) return;
+          if (prepared === undefined) return;
           if (disposed) return;
           await tool.execute(
             "navigator-public-prepare",
-            { prose: proseParts.join("\n\n") },
+            {
+              ...(prepared.prose === undefined ? {} : { prose: prepared.prose }),
+              ...(prepared.byStatus.size === 0 ? {} : { byStatus: byStatusToPlainObject(prepared.byStatus) }),
+            },
             undefined,
             undefined,
             context as never,
@@ -264,18 +274,15 @@ export function createNativeNavigatorSessionFactory(deps?: {
         });
       },
       entries: () => entries,
-      setModel: async (next, nextThinking) => {
-        let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
+      setModel: async (next) => {
+        // Validate only — resume/fresh mint both read the live seat table
+        // (#675 / #617 DK-3). No test-only thinking observation state (#1160 F1).
         try {
-          nextParsed = parseNavigatorModelSetting(next);
+          parseNavigatorModelSetting(next);
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        // Resume and fresh mint both read the live seat table (#675 / #617 DK-3).
-        // A seat edit between prepares applies on the next host turn.
-        thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
-      getThinkingLevel: () => thinkingLevel,
       dispose: async () => {
         // Marker only — nested cancel and non-blocking teardown are owned by
         // navigator-attendance / role-runtime (ADR 0018 / #959).

@@ -4,10 +4,17 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorOutputSchema,
+  pickPreparedProse,
+  preparedAdviceFromUnknown,
+} from "../../src/package-contracts/navigator-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { terminatingToolJsonSchema } from "../../src/role-envelope.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
@@ -731,3 +738,159 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
     }
   });
 }
+
+/**
+ * #1160 headless navigator exit modes — one protocol harness, three contract inputs.
+ * Entry = createHeadlessRoleTurnHost.executeTurn; protocol process, not a real LLM.
+ */
+const NAVIGATOR_STATUS_TABLE = { byStatus: { completed: "C", unfinished: "U" } } as const;
+const NAVIGATOR_DIRECT_PROSE = '"quoted advice"';
+
+async function withNavigatorHeadlessProtocol(
+  options: {
+    readonly hostName: "codex" | "claude";
+    readonly prefix: string;
+    /** Protocol child stdout body (codex JSONL events or claude result line). */
+    readonly protocolScript: string;
+    readonly byStatusPrepare?: true;
+    readonly model: { readonly provider: string; readonly model: string; readonly thinking: string };
+  },
+  assertTurn: (ctx: {
+    readonly result: RoleTurnResult;
+    readonly argv: string[];
+    readonly ingested: unknown;
+  }) => void,
+): Promise<void> {
+  const ledger = createTempPackageHomeLedger({ prefix: options.prefix, runName: "run@navigator" });
+  const root = ledger.runDirectory;
+  const argvLog = join(root, "argv.log");
+  const fakeBin = join(root, "fake-navigator-host");
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+readFileSync(0, "utf8");
+${options.protocolScript}
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription(options.hostName);
+    assert.ok(description);
+    let ingested: unknown;
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: options.hostName,
+      binary: fakeBin,
+      ...(options.hostName === "codex" ? { env: { CODEX_HOME: join(root, ".codex") } } : {}),
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(root, "session", "session.jsonl"),
+      },
+      prepare: async (request) => ({
+        mcpServers: [],
+        systemPrompt: { body: "navigator-system", materials: [] },
+        prompt: request.continuation.prompt,
+        jsonSchema: terminatingToolJsonSchema(navigatorOutputSchema),
+        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        async ingestStructuredOutput(value) { ingested = value; },
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(root, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "navigator turn" },
+      model: options.model,
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory: root,
+      ...(options.byStatusPrepare === true ? { navigatorByStatusPrepare: true as const } : {}),
+    });
+    const argv = JSON.parse((await readFile(argvLog, "utf8")).trim()) as string[];
+    assertTurn({ result, argv, ingested });
+  } finally {
+    ledger.dispose();
+  }
+}
+
+function assertByStatusPicked(ingested: unknown): void {
+  assert.deepEqual(ingested, NAVIGATOR_STATUS_TABLE);
+  const prepared = preparedAdviceFromUnknown(ingested);
+  assert.equal(pickPreparedProse(prepared, "completed"), "C");
+  assert.equal(pickPreparedProse(prepared, "unfinished"), "U");
+}
+
+test("#1160 codex navigator byStatus prepare returns structured status table", { timeout: 10000 }, async () => {
+  await withNavigatorHeadlessProtocol(
+    {
+      hostName: "codex",
+      prefix: "ak-1160-codex-bystatus-",
+      byStatusPrepare: true,
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      protocolScript: `const events = [
+  { type: "thread.started", thread_id: "thread-nav-bystatus" },
+  { type: "item.completed", item: { type: "agent_message", text: ${JSON.stringify(JSON.stringify(NAVIGATOR_STATUS_TABLE))} } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");`,
+    },
+    ({ result, argv, ingested }) => {
+      assert.equal(result.code, 0, JSON.stringify(result));
+      assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+      assert.equal(argv.includes("--output-schema"), true, `argv=${JSON.stringify(argv)}`);
+      assertByStatusPicked(ingested);
+    },
+  );
+});
+
+test("#1160 codex direct navigator prose exit omits output-schema and keeps bytes", { timeout: 10000 }, async () => {
+  await withNavigatorHeadlessProtocol(
+    {
+      hostName: "codex",
+      prefix: "ak-1160-codex-prose-",
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      protocolScript: `const events = [
+  { type: "thread.started", thread_id: "thread-nav-prose" },
+  { type: "item.completed", item: { type: "agent_message", text: ${JSON.stringify(NAVIGATOR_DIRECT_PROSE)} } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");`,
+    },
+    ({ result, argv, ingested }) => {
+      assert.equal(result.code, 0, JSON.stringify(result));
+      assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+      assert.equal(argv.includes("--output-schema"), false, `argv=${JSON.stringify(argv)}`);
+      assert.deepEqual(ingested, { prose: NAVIGATOR_DIRECT_PROSE });
+    },
+  );
+});
+
+test("#1160 claude navigator byStatus prepare returns structured status table", { timeout: 10000 }, async () => {
+  await withNavigatorHeadlessProtocol(
+    {
+      hostName: "claude",
+      prefix: "ak-1160-claude-bystatus-",
+      byStatusPrepare: true,
+      model: { provider: "anthropic", model: "claude-test", thinking: "low" },
+      protocolScript: `process.stdout.write(JSON.stringify({
+  type: "result",
+  session_id: "claude-nav-bystatus",
+  structured_output: ${JSON.stringify(NAVIGATOR_STATUS_TABLE)},
+  result: "ignored-when-structured",
+}) + "\\n");`,
+    },
+    ({ result, argv, ingested }) => {
+      assert.equal(result.code, 0, JSON.stringify(result));
+      assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+      assert.equal(argv.includes("--json-schema"), true, `argv=${JSON.stringify(argv)}`);
+      assertByStatusPicked(ingested);
+    },
+  );
+});

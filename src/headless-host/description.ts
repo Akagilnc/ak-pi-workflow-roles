@@ -433,7 +433,8 @@ export function codexTurnArgs(options: {
   /**
    * Absolute path for the native `--output-schema` flag.
    * File holds the Codex-strict transport projection of the open declaration (#1148).
-   * Optional for prose-exit seats (#959 navigator) so agent_message stays free text.
+   * Optional: omit for direct navigator prose exit (#959); attendance byStatus
+   * prepare mounts it via RoleTurnRequest.navigatorByStatusPrepare (#1160).
    */
   readonly outputSchemaPath?: string;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];

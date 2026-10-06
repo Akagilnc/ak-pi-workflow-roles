@@ -194,6 +194,12 @@ export type RoleTurnRequest = {
   /** Station child role run (#840): omit automatic navigator attendance. */
   readonly stationChild?: boolean;
   /**
+   * #1160 attendance auto-prepare: host mounts native structured schema so
+   * byStatus returns as structured fields. Direct `ak-role navigator` omits
+   * this and keeps the free-form prose exit (#959).
+   */
+  readonly navigatorByStatusPrepare?: boolean;
+  /**
    * #1132: the effective delivery-request ceiling resolved once by the caller
    * from the single configured `autoResumeLimit` value and projected here, so
    * the AK execution seam and the host adapter's own re-ask loop share one

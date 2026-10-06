@@ -392,7 +392,7 @@ function terminalFromSpawned(
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly systemPromptPath: string;
-  /** Open schema; omit for #959 navigator prose-exit seats. Codex does not receive a narrowed copy. */
+  /** Open schema for Claude --json-schema; omit for #959 navigator prose-exit seats. */
   readonly jsonSchema?: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly mcpConfigPath?: string;
@@ -408,7 +408,7 @@ function buildTurnArgs(options: {
     if (options.sessionKind === "resume" && !options.sessionId) {
       throw new Error("codex resume requires a bound thread_id");
     }
-    // #959: prose-exit seats (navigator) omit --output-schema; other seats still require it.
+    // Codex always mounts --output-schema when the path is supplied (incl. navigator byStatus #1160).
     return codexTurnArgs({
       systemPromptPath: options.systemPromptPath,
       ...(options.outputSchemaPath === undefined ? {} : { outputSchemaPath: options.outputSchemaPath }),
@@ -443,7 +443,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
-      const codex = isCodexExecDescription(config.description);
+    const codex = isCodexExecDescription(config.description);
+    // #1160: one exit-mode decision per turn — direct navigator free prose vs structured.
+    // Attendance sets request.navigatorByStatusPrepare; direct ak-role navigator does not.
+    const navigatorProseExit =
+      prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+      && request.navigatorByStatusPrepare !== true;
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
@@ -485,7 +490,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         if (codex) {
           // #1148: Codex --output-schema requires a native strict transport schema.
           // Project from the unique open declaration; do not alter package receipt rules.
-          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
+          if (!navigatorProseExit) {
             outputSchemaPath = join(inputsDirectory, "output-schema.json");
             deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
             await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
@@ -497,8 +502,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
-          // #959: navigator prose exit — no closed JSON schema on claude either.
-          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
+          if (!navigatorProseExit) deliveredSchema = prepared.jsonSchema;
         }
         startedWithSchema = deliveredSchema;
       } catch (setupError) {
@@ -526,10 +530,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             args = buildTurnArgs({
               description: config.description,
               systemPromptPath,
-              // #959: navigator prose exit — no closed JSON schema on claude either.
-              ...(prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-                ? {}
-                : { jsonSchema: prepared.jsonSchema }),
+              // Direct navigator prose exit omits --json-schema; byStatus prepare mounts it.
+              ...(navigatorProseExit ? {} : { jsonSchema: prepared.jsonSchema }),
               mcpServers: prepared.mcpServers,
               ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
               ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
@@ -665,14 +667,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
-            const navigator = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
             const deliverReply = async (): Promise<ReturnType<typeof deliveredFromSpawned> | undefined> => {
               if (!observation.turnCompleted || observation.finalMessage === undefined) return undefined;
-              if (navigator) {
+              if (navigatorProseExit) {
+                // Direct ak-role navigator: free-form agent_message is the prose body.
                 if (observation.finalMessage.trim() === "") return undefined;
                 await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
                 return deliveredFromSpawned(spawned);
               }
+              // Structured seats (incl. #1160 byStatus prepare): native JSON receipt.
               let receipt: unknown;
               try {
                 receipt = JSON.parse(observation.finalMessage);
@@ -721,12 +724,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           if (envelope.structured_output !== undefined) {
             await prepared.ingestStructuredOutput(envelope.structured_output);
           } else if (
-            prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+            navigatorProseExit
             && typeof envelope.result === "string"
             && envelope.result.trim() !== ""
           ) {
-            // #959: claude prose exit — free-form result text is the receipt body
-            // when structured_output is absent (json-schema omitted for navigator).
+            // #959: direct navigator prose exit — free-form result text is the body
+            // when structured_output is absent (json-schema omitted).
             await prepared.ingestStructuredOutput({ prose: envelope.result });
           }
           return deliveredFromSpawned(spawned);
