@@ -42,6 +42,10 @@ import { retainPackageFault } from "./public-cli/settlement.ts";
 import { describeErrorIdentity } from "./public-cli/run-lifecycle.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
+import {
+  buildPiSessionHeader,
+  formatPiSessionJsonlLine,
+} from "./ledger-session-write.ts";
 
 export { projectActivationFlags };
 
@@ -133,13 +137,10 @@ export async function prepareRoleEnvelope(options: {
     try {
       await writeFile(
         sessionFile,
-        `${JSON.stringify({
-          type: "session",
-          version: 3,
+        formatPiSessionJsonlLine(buildPiSessionHeader({
           id: runId,
-          timestamp: new Date().toISOString(),
           cwd: request.cwd,
-        })}\n`,
+        })),
         { encoding: "utf8", flag: "wx" },
       );
     } catch (error) {
@@ -157,11 +158,7 @@ export async function prepareRoleEnvelope(options: {
   /** Append one package-owned session entry to the durable principal (fire-and-order). */
   const persistPackageSessionEntry = (entry: Record<string, unknown>): void => {
     const customType = typeof entry.customType === "string" ? entry.customType : "unknown";
-    const line = `${JSON.stringify({
-      ...entry,
-      id: typeof entry.id === "string" ? entry.id : randomUUID(),
-      timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
-    })}\n`;
+    const line = formatPiSessionJsonlLine(entry);
     durableWriteChain = durableWriteChain.then(async () => {
       try {
         await appendFile(sessionFile, line, "utf8");

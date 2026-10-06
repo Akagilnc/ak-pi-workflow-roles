@@ -85,7 +85,10 @@ export function readPiSessionHeaderForDiscovery(path: string): {
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       const row = parseSessionObjectLine(line);
-      if (row === undefined || !isSessionHeaderRow(row)) return null;
+      // Match SessionManager parseSessionHeaderCandidate: blank/malformed keep scanning;
+      // first parseable non-session entry ends discovery for this candidate.
+      if (row === undefined) continue;
+      if (!isSessionHeaderRow(row)) return null;
       const cwd = row.cwd;
       return {
         id: row.id as string,

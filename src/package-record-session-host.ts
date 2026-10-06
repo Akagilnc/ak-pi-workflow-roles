@@ -23,17 +23,11 @@ import {
   readPiSessionHeaderForDiscovery,
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
-
-const SESSION_VERSION = 3;
-
-type SessionHeader = {
-  readonly type: "session";
-  readonly version: number;
-  readonly id: string;
-  readonly timestamp: string;
-  readonly cwd: string;
-  readonly parentSession?: string;
-};
+import {
+  buildPiSessionHeader,
+  formatPiSessionJsonlLine,
+  type PiSessionHeader,
+} from "./ledger-session-write.ts";
 
 type SessionEntry = {
   readonly type: string;
@@ -44,51 +38,34 @@ type SessionEntry = {
   readonly timestamp?: string;
 };
 
-function newSessionId(): string {
-  return randomUUID();
-}
-
-function newEntryId(): string {
-  return randomUUID();
-}
-
-function sessionFileName(header: SessionHeader): string {
+function sessionFileName(header: PiSessionHeader): string {
   const fileTimestamp = header.timestamp.replace(/[:.]/g, "-");
   return `${fileTimestamp}_${header.id}.jsonl`;
 }
 
-/** Same session header shape role-envelope writes for package-owned principals. */
-function buildHeader(options: {
+function headerForCreate(options: {
   readonly cwd: string;
   readonly parentSession?: string;
-}): SessionHeader {
-  const header: SessionHeader = {
-    type: "session",
-    version: SESSION_VERSION,
-    id: newSessionId(),
-    timestamp: new Date().toISOString(),
+}): PiSessionHeader {
+  return buildPiSessionHeader({
+    id: randomUUID(),
     cwd: resolve(options.cwd),
-  };
-  return options.parentSession === undefined
-    ? header
-    : { ...header, parentSession: options.parentSession };
+    ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
+  });
 }
 
-function headerFromEntries(entries: readonly SessionEntry[]): SessionHeader | null {
+function headerFromEntries(entries: readonly SessionEntry[]): PiSessionHeader | null {
   const first = entries.find((entry) => entry.type === "session");
   if (first === undefined) return null;
   const raw = first as Record<string, unknown>;
   if (typeof raw.id !== "string" || raw.id.length === 0) return null;
-  const cwd = raw.cwd;
-  const parentSession = raw.parentSession;
-  return {
-    type: "session",
-    version: typeof raw.version === "number" ? raw.version : SESSION_VERSION,
+  const cwd = typeof raw.cwd === "string" ? raw.cwd : "";
+  return buildPiSessionHeader({
     id: raw.id,
+    cwd,
     timestamp: typeof raw.timestamp === "string" ? raw.timestamp : new Date().toISOString(),
-    cwd: typeof cwd === "string" ? cwd : "",
-    ...(typeof parentSession === "string" ? { parentSession } : {}),
-  };
+    ...(typeof raw.parentSession === "string" ? { parentSession: raw.parentSession } : {}),
+  });
 }
 
 function entriesFromRows(rows: readonly LedgerSessionRow[]): SessionEntry[] {
@@ -139,9 +116,9 @@ function loadOrInitPersistedFile(options: {
   readonly cwd: string;
   readonly sessionFile: string;
   readonly parentSession?: string;
-}): { header: SessionHeader; entries: SessionEntry[] } {
+}): { header: PiSessionHeader; entries: SessionEntry[] } {
   if (!existsSync(options.sessionFile)) {
-    const header = buildHeader({
+    const header = headerForCreate({
       cwd: options.cwd,
       ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
     });
@@ -151,11 +128,11 @@ function loadOrInitPersistedFile(options: {
   const loaded = loadPiSessionFileForOpen(options.sessionFile);
   if (loaded.length === 0) {
     // Empty file: initialize session header in place (SessionManager open contract).
-    const header = buildHeader({
+    const header = headerForCreate({
       cwd: options.cwd,
       ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
     });
-    writeFileSync(options.sessionFile, `${JSON.stringify(header)}\n`, "utf8");
+    writeFileSync(options.sessionFile, formatPiSessionJsonlLine(header), "utf8");
     return { header, entries: [header] };
   }
 
@@ -176,7 +153,7 @@ function createPackageRecordSession(options: {
 }): HostRecordSession {
   const cwd = resolve(options.cwd);
   const sessionDir = options.sessionDir === "" ? "" : resolve(options.sessionDir);
-  let header: SessionHeader | null;
+  let header: PiSessionHeader | null;
   let entries: SessionEntry[];
   let sessionFile: string | undefined = options.sessionFile;
 
@@ -191,16 +168,16 @@ function createPackageRecordSession(options: {
     sessionFile = resolve(sessionFile);
   } else if (options.persist && sessionDir !== "") {
     mkdirSync(sessionDir, { recursive: true });
-    header = buildHeader({
+    header = headerForCreate({
       cwd,
       ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
     });
     entries = [header];
     sessionFile = join(sessionDir, sessionFileName(header));
     // Materialize immediately — package writers do not defer until a conversation turn.
-    writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { flag: "wx" });
+    writeFileSync(sessionFile, formatPiSessionJsonlLine(header), { flag: "wx" });
   } else {
-    header = buildHeader({
+    header = headerForCreate({
       cwd,
       ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
     });
@@ -242,26 +219,27 @@ function createPackageRecordSession(options: {
         return;
       }
       if (header === null) {
-        header = buildHeader({ cwd });
+        header = headerForCreate({ cwd });
         entries = [header];
       }
     },
     appendCustomEntry(customType: string, data?: unknown) {
+      // parentId is side-branch tree linkage; id/timestamp come from the shared line writer.
       const entry: SessionEntry = {
         type: "custom",
         customType,
         ...(data === undefined ? {} : { data }),
-        id: newEntryId(),
         parentId: leafId(),
-        timestamp: new Date().toISOString(),
       };
-      entries.push(entry);
+      const line = formatPiSessionJsonlLine(entry as Record<string, unknown>);
+      const written = JSON.parse(line) as SessionEntry;
+      entries.push(written);
       if (options.persist && sessionFile !== undefined) {
         // Open/create always leave a trailing newline (or repair on load), so append
         // keeps JSONL line boundaries without a deferred full rewrite path.
-        appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
+        appendFileSync(sessionFile, line, "utf8");
       }
-      return entry.id;
+      return written.id!;
     },
   };
 }

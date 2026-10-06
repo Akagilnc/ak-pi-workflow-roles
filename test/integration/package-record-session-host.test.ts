@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -170,19 +171,27 @@ test("#1178 no-parent no-subject stays in-memory and creates no files", async ()
   });
 });
 
-test("#1178 archivist record entry loads and writes when coding-agent peer is unresolvable", async () => {
-  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+test("#1178 published archivist writes when coding-agent peer is unresolvable", async () => {
+  const { existsSync, mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { spawnSync } = await import("node:child_process");
   const { pathToFileURL } = await import("node:url");
   const { tmpdir } = await import("node:os");
   const { worktreeTempPrefix } = await import("../helpers/worktree-temp.ts");
+  // Published non-bundle production entry (public CLI / non-pi graph) — not src/tsx.
+  const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const publishedArchivist = join(packageRoot, "dist", "archivist-record-entry.js");
+  assert.ok(
+    existsSync(publishedArchivist),
+    `published archivist missing at ${publishedArchivist}; run npm run build first`,
+  );
   const root = mkdtempSync(worktreeTempPrefix("ak-pkg-record-peer-iso-"));
-  const peerHomes: string[] = [];
+  // Create→use→finally ownership: home known before spawn so failure still cleans.
+  const peerHome = mkdtempSync(join(tmpdir(), "ak-1178-peer-iso-home-"));
   try {
     const hooks = join(root, "block-peer-hooks.mjs");
     const register = join(root, "register-block-peer.mjs");
     const probe = join(root, "probe.mjs");
-    const archivistUrl = new URL("../../src/archivist-record-entry.ts", import.meta.url).href;
+    const archivistUrl = pathToFileURL(publishedArchivist).href;
     writeFileSync(
       hooks,
       `export async function resolve(specifier, context, nextResolve) {
@@ -209,13 +218,11 @@ register(${JSON.stringify(pathToFileURL(hooks).href)});
     );
     writeFileSync(
       probe,
-      `import { mkdirSync, readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+      `import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
+const home = ${JSON.stringify(peerHome)};
 const { createRecordSession, WORKER_SUBMISSION_GATE_KIND } = await import(${JSON.stringify(archivistUrl)});
-const home = mkdtempSync(join(tmpdir(), "ak-1178-peer-iso-home-"));
-process.stdout.write(JSON.stringify({ home }) + "\\n");
 const project = join(home, "proj");
 mkdirSync(project, { recursive: true });
 const parentDir = join(home, ".ak-roles", "books", "proj", "runs", "r@coder", "session");
@@ -248,9 +255,19 @@ process.stdout.write(JSON.stringify({
 }) + "\\n");
 `,
     );
+    const expectedParentFile = join(
+      peerHome,
+      ".ak-roles",
+      "books",
+      "proj",
+      "runs",
+      "r@coder",
+      "session",
+      "session.jsonl",
+    );
     const result = spawnSync(
       process.execPath,
-      ["--import", "tsx", "--import", register, probe],
+      ["--import", register, probe],
       {
         encoding: "utf8",
         cwd: process.cwd(),
@@ -259,21 +276,17 @@ process.stdout.write(JSON.stringify({
     );
     assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
     const lines = result.stdout.trim().split("\n").filter(Boolean);
-    assert.ok(lines.length >= 2, `expected structured probe lines, got: ${result.stdout}`);
-    const meta = JSON.parse(lines[0]!) as { home?: string };
-    if (typeof meta.home === "string") peerHomes.push(meta.home);
-    const observed = JSON.parse(lines[1]!) as {
+    assert.ok(lines.length >= 1, `expected structured probe line, got: ${result.stdout}`);
+    const observed = JSON.parse(lines[lines.length - 1]!) as {
       headerType?: string;
       parentSession?: string;
       customType?: string;
     };
     assert.equal(observed.headerType, "session");
-    assert.ok(typeof observed.parentSession === "string" && observed.parentSession.length > 0);
+    assert.equal(observed.parentSession, expectedParentFile);
     assert.equal(observed.customType, "ak-commit-baseline");
   } finally {
-    for (const home of peerHomes) {
-      rmSync(home, { recursive: true, force: true });
-    }
+    rmSync(peerHome, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

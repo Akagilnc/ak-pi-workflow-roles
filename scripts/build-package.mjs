@@ -29,6 +29,8 @@ const entries = [
   "package-record-session-host",
   // Open-path session load used by package-record-session-host.
   "ledger-session-read",
+  // Shared header/custom JSONL write shapes (role-envelope + package record host).
+  "ledger-session-write",
   // Static import of ledger-session-read.
   "unknown-value",
   // Pure subject nest topology — static import of archivist-record-entry;
