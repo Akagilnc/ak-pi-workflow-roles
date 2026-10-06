@@ -1,37 +1,21 @@
 /**
  * #959: navigator prior advice stays on the host session via CLI resume.
- * Package only pins a host runId pointer — never a prose advice ledger.
+ * Package only pins a host runId pointer in attendance memory — never a prose
+ * advice ledger or books/.../navigator/<hash>/ side-branch nest (#1178).
  * Fresh mint only after typed load says principal cannot reopen (CliUsageError).
- * #1166: nest work-context locator rides the public summon → RoleTurnRequest seam
- * (no argv path inject; no parallel success-stub proof chain).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { resolveNavigatorWorkSubjectPlacement } from "../../src/archivist-record-topology.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import {
   createNativeNavigatorSessionFactory,
-  NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-  readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
-import {
-  navigatorWorkContextFile,
-  readNavigatorWorkBase,
-} from "../../src/navigator-work-base.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import {
-  roleTurnHostFromLegacyPiRunner,
-  scriptedTerminatingToolSession,
-} from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
@@ -122,18 +106,6 @@ test("#959 second attendance prompt resumes the pinned host runId", async () => 
 
     await session.prompt("materials-one");
     assert.equal(prepared[0], "第一次建议");
-    assert.equal(
-      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      "01navhost",
-    );
-    assert.ok(
-      (session.entries() as readonly unknown[]).some(
-        (entry) =>
-          typeof entry === "object"
-          && entry !== null
-          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-      ),
-    );
 
     await session.prompt("materials-two");
     assert.equal(prepared[1], "第二次建议");
@@ -279,8 +251,6 @@ test("#959 dispose during resume preflight must not start summon", async () => {
 
     await session.prompt("pin-host-run");
     assert.equal(summonCalls, 1);
-    const pinned = readNavigatorHostRunPointer(session.entries() as readonly unknown[]);
-    assert.equal(pinned, "01navpre1");
 
     const secondPrompt = session.prompt("blocked-in-preflight");
     // Let the second prompt reach hostRunResumable before dispose.
@@ -295,21 +265,7 @@ test("#959 dispose during resume preflight must not start summon", async () => {
     await secondPrompt;
 
     assert.equal(summonCalls, 1, "dispose during preflight must not start a new summon");
-    assert.equal(
-      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      pinned,
-      "blocked second prompt must not rewrite host-run pointer after dispose",
-    );
     assert.equal(prepared, 1, "only the first live prompt may prepare");
-    assert.equal(
-      (session.entries() as readonly unknown[]).filter(
-        (entry) =>
-          typeof entry === "object"
-          && entry !== null
-          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-      ).length,
-      1,
-    );
   });
 });
 
@@ -371,98 +327,12 @@ test("#959 typed non-resumable preflight allows one fresh mint", async () => {
     allowResume = false;
     await session.prompt("first-mint");
     assert.equal(calls, 1);
-    assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navfirst");
 
     // Pinned run is no longer resumable (typed preflight false) → one fresh mint.
     allowResume = false;
     await session.prompt("after-absence");
     assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
-    assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
   });
 });
 
-test("fresh navigator settlement keeps subject and authority on the nest base", async () => {
-  await withTempRoot("navigator-work-base-", async (root) => {
-    seedGitRepository(root);
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "test", model: "caller-seat" } } }, null, 2)}\n`,
-    );
-    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
-    await mkdir(join(parentRun, "session"), { recursive: true });
-    const authority = "authority-token-9f3c";
-    const subject = "task-bytes-9f3c";
-    const subjectKey = `${join(root, ".ak/work")}#ad-hoc`;
-    const expectedLocator = navigatorWorkContextFile(
-      resolveNavigatorWorkSubjectPlacement({ cwd: root, subject: subjectKey, home: root }).sessionDir,
-    );
-    const summons: string[] = [];
-    const liveRequests: RoleTurnRequest[] = [];
-    let mint = 0;
-    const sealHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "navigator",
-        toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-        details: { prose: "下一步", ticketNumber: 1166 },
-      }),
-    });
-    const nav = createNavigatorAttendance({
-      context: {
-        cwd: root,
-        home: root,
-        runDirectory: parentRun,
-      } as never,
-      role: "coder",
-      phase: "apply",
-      subjectKey,
-      subject,
-      authority,
-      createSession: createNativeNavigatorSessionFactory({
-        // Real public summon + in-repo fake host — same seam as #1166 / #1164.
-        summonPublicRole: async (options) => {
-          summons.push(options.argv[0] ?? "");
-          mint += 1;
-          const { summonPublicRole } = await import("../../src/public-role-summons.ts");
-          return summonPublicRole({
-            ...options,
-            packageRoot,
-            home: root,
-            credentials: { "openai-codex": true, xai: true },
-            createRunId: () => `01navbase${String(mint).padStart(2, "0")}`,
-            roleTurnHost: {
-              async executeTurn(request) {
-                liveRequests.push(request);
-                return sealHost.executeTurn(request);
-              },
-            },
-          });
-        },
-        hostRunResumable: async () => false,
-      }),
-      onEvent: () => {},
-    });
-
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(summons.length, 2);
-    assert.equal(liveRequests.length, 2);
-    for (const argv of summons) {
-      // #1166: package must not inject a work-context path — structured field only.
-      // Do not zero-hit-scan prompt/argv prose for subject/authority tokens (J6).
-      const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
-      assert.equal(fed.subjectKey, subjectKey);
-      assert.equal(fed.workContextPath, undefined);
-    }
-    for (const request of liveRequests) {
-      assert.equal(request.activation.role, "navigator");
-      assert.equal(request.navigatorWorkContextPath, expectedLocator);
-      // Generated subject/authority materials: observe via structured nest file only.
-      assert.deepEqual(await readNavigatorWorkBase(expectedLocator), { subject, authority });
-    }
-    await nav.dispose();
-  });
-});

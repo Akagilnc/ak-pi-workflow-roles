@@ -14,21 +14,21 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
     │   └── runs/<runId>@<role>/
     │       ├── current.json                 当前（整文件重写）
     │       ├── history.jsonl                历史（只追加）
-    │       ├── state.jsonl                  四整页事实行（只追加）
+    │       ├── state.jsonl                  状态事实行（只追加；含四整页与 worker 闸状态）
     │       ├── log.jsonl                    司天台流水（只追加）
     │       └── session/                     宿主原件（见下）
     ├── unbound/
     │   └── runs/<runId>@<role>/             同上形状
-    ├── navigator/<work-subject>/
     └── collector-handbook/
 ```
 
-簿根只有四类项：
+簿根只有三类项：
 
 1. `<ticket>/`：以票号命名的票目录；该票起居录及全部腿均在其中。
 2. `unbound/`：确实无票或尚未取得 typed 票身份的腿；腿形状与票下相同。
-3. `navigator/`：游奕使跨票工作主体记录。
-4. `collector-handbook/`：仓库级通进司手册。
+3. `collector-handbook/`：仓库级通进司手册。
+
+（#1178 起不再在簿根建 `navigator/<work-subject>/` 旁支；游奕使建议与运行事实只在其 `@navigator` run 卷宗。存量旁支目录不自动删除。）
 
 归属判据是：删除一张票后仍有意义的记录才留在票外。属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言、报票号工具 `ak_report_ticket`，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
 
@@ -59,13 +59,17 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 - `turn-delivery`：宿主每实际起跑一次，发出的系统提示与输出 schema 一行（催交回合各算一次；pi 取最后一个 `before_agent_start` 处理器留下的提示）。写失败只申报、不拦起跑。
 - `officer-pointer`：闸传召官员腿的指针，一行。
 
-### `state.jsonl`——四整页事实行
+### `state.jsonl`——状态事实行
 
-只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`；`report` 的 `body` 不含各轮交卷原文，只带 `attemptHistoryIdentity` 指向所属那次结算的 `attempt-history` 行，并带所属庭 `courtAttemptId`），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。单列一卷是因为三种写失败处置各不相同，与 main 上原文件一一对应：状态页写失败抛错；交卷账本卷（`history.jsonl`）不可写不拦续跑；辅助流水（`log.jsonl`）写失败只申报一次、不改宿主终局。
+只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`；`report` 的 `body` 不含各轮交卷原文，只带 `attemptHistoryIdentity` 指向所属那次结算的 `attempt-history` 行，并带所属庭 `courtAttemptId`），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。
+
+另含 worker 交卷闸跨续跑状态（#1178）：`commit-baseline`（提交基线）、`commit-reminder-bounce` / `prefix-reminder-bounce`（已提醒过一次）、`unfinished-reason-bounce`（缺理由催办，带 `invocationScopeId`）。续跑与票号归位后按各类最新一行（催办按当前调用计数）恢复；不另建 `session/worker-submission-gate/` 旁支。
+
+单列一卷是因为三种写失败处置各不相同，与 main 上原文件一一对应：状态页写失败抛错；交卷账本卷（`history.jsonl`）不可写不拦续跑；辅助流水（`log.jsonl`）写失败只申报一次、不改宿主终局。
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本；父会话不是腿自己 session 的（navigator 嵌套等）仍落各自 `session/<kind>/records.jsonl`，不在本页射程。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
 
 ### 宿主原件
 
@@ -89,8 +93,9 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 陛下 2026-10-03 逐字：「允许多出来」（本票施工会话，源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-worktree-roles-1161/6d409146-5717-4ff6-83cf-728f50533a24.jsonl`，对施工者列出的这三样的答复）。run 目录里上述五项之外保留：
 
 - `session/session.jsonl`（headless／ACP 腿包自己写的那份）：太史取帧起止与工具区间（`analyst-ledger`）、票轨迹（`ticket-trajectory`）、起居郎取原生会话区间（`ticket-provenance`）、settlement 取无卷生命周期事实与导航员到场都读它。
-- `session/worker-submission-gate/`：worker 闸跨续跑保存的状态（提交基线、已提醒标记、缺理由催办次数），续跑时读回；由 ADR 0065 的 `createRecordSession` 持有，不是日志副本。
 - 各席受理时写入的输入，在 run 目录顶层：`merger-input.json`（校书郎 git 事实），席位运行时按路径读取。`--attach`、修内司 `--prerequisites` 与通进司 `--request-manifest` 只在受理记录里留下调用方原路径，不在腿目录落抄件；修内司／将作监派单文只作第一句话，不写 `fix-packet.md`／`task.md`（#1165、#1168）。
+
+（#1178 起 `session/worker-submission-gate/` 与簿根 `navigator/<hash>/` 旁支均不再创建或读取；闸状态见上节 `state.jsonl`。）
 
 ## 边界
 

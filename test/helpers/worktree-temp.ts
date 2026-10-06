@@ -54,8 +54,9 @@ export type OutsideWorktreeTempOptions = {
  * mkdtemp prefix outside this worktree for true Git / Node-ancestor isolation.
  * Uses os.tmpdir(); if that lands inside this worktree (worktree-local TMPDIR),
  * or (when requested) under a node_modules ancestry, falls back to a conventional
- * system temp root so the fixture stays outside. Create-and-abandon — do not
- * delete the resulting root (worktree-only restore).
+ * system temp root so the fixture stays outside. The creating seam still owns
+ * create→use→finally cleanup of the self-created root; do not delete pre-existing
+ * paths outside the worktree.
  */
 export function outsideWorktreeTempPrefix(
   label: string,

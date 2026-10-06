@@ -1,6 +1,5 @@
-// #685 C1: createRecordSession host durability leg culled. C3: resume 后无二次
-// false bounce 未结 — docs/research/issue-685-c3-deleted-contract-handoff.md §C.
-/** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
+/** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry.
+ * #1178: gate state lives on this leg's state.jsonl (no worker-submission-gate nest). */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -13,13 +12,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
-
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
   createWorkerSubmissionGate,
@@ -27,6 +24,9 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../../src/worker-submission-gates.ts";
+import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
+import { parseSitianRecordText } from "../../src/sitian-reader.ts";
+import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
 import {
   machineLedgerHome,
 } from "../helpers/pi-test-harness.ts";
@@ -43,8 +43,8 @@ function configureGitUser(cwd: string): void {
 }
 
 /**
- * #604 / #857: fixture owns a temp package home and passes it into
- * createWorkerSubmissionGate({ home }). Arm always takes an explicit durable parent.
+ * #604 / #857 / #1178: fixture owns a temp package home and a real run leaf so
+ * gate state lands in state.jsonl. Arm always takes an explicit durable parent.
  */
 async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
@@ -61,15 +61,29 @@ async function withTempGit<T>(
   });
 }
 
-/** Durable parent session under the temp ledger home — required arm input (#857). */
-function durableParent(home: string, cwd: string): SessionManager {
-  const sessionDir = join(machineLedgerHome(home), "books", "repo", "runs", randomUUID(), "session");
-  mkdirSync(sessionDir, { recursive: true });
-  return SessionManager.create(cwd, sessionDir);
+/** Durable parent under a real run leaf so gate state lands in state.jsonl (#1178). */
+function durableParent(home: string, _cwd?: string): {
+  getSessionFile(): string | undefined;
+  runDirectory: string;
+} {
+  const runDirectory = join(
+    machineLedgerHome(home),
+    "books",
+    "repo",
+    "runs",
+    formatRunLeaf(randomUUID(), "coder"),
+  );
+  mkdirSync(join(runDirectory, "session"), { recursive: true });
+  const sessionFile = sessionFileOf(runDirectory);
+  writeFileSync(sessionFile, "", "utf8");
+  return {
+    runDirectory,
+    getSessionFile: () => sessionFile,
+  };
 }
 
-function gateWithHome(home: string) {
-  return createWorkerSubmissionGate({ home });
+function gateWithHome(_home?: string) {
+  return createWorkerSubmissionGate();
 }
 
 function plantOwnedHooks(cwd: string): { hooksDir: string; hookPath: string } {
@@ -116,7 +130,7 @@ async function scrubPlanted(
 
 function armThenCommit(cwd: string, home: string, message: string) {
   const gate = gateWithHome(home);
-  gate.arm(cwd, durableParent(home, cwd));
+  gate.arm(cwd, durableParent(home));
   git(cwd, ["commit", "--allow-empty", "-m", message]);
   return gate;
 }
@@ -145,39 +159,56 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    // bare non-git arm target must sit outside this worktree's upward Git discovery;
-    // outside root is not deleted (owner 2026-09-06 directory boundary).
+    // bare non-git arm target must sit outside this worktree's upward Git discovery.
+    // Creating seam owns create→use→finally cleanup of this self-created root (#1178).
     const bare = await mkdtemp(outsideWorktreeTempPrefix("ak-worker-gate-bare-"));
-    const gate = gateWithHome(home);
-    gate.arm(root, durableParent(home, root));
-    for (const status of ["planned", "refused"] as const) {
-      assert.doesNotThrow(() => gate.assertAcceptable(status), status);
+    try {
+      const parent = durableParent(home, root);
+      const gate = gateWithHome(home);
+      gate.arm(root, parent);
+      for (const status of ["planned", "refused"] as const) {
+        assert.doesNotThrow(() => gate.assertAcceptable(status), status);
+      }
+      assert.doesNotThrow(() =>
+        gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
+      );
+      assert.throws(
+        () => gate.assertAcceptable("completed"),
+        (error: unknown) =>
+          error instanceof WorkerCommitReminderError &&
+          error.code === "worker_commit_reminder",
+      );
+      // #1178: durable facts on this leg state.jsonl — no session/worker-submission-gate nest.
+      assert.equal(existsSync(join(parent.runDirectory, "session", "worker-submission-gate")), false);
+      const stateText = readFileSync(join(parent.runDirectory, RUN_STATE_FILE), "utf8");
+      const { records, diagnostics } = parseSitianRecordText(stateText);
+      assert.equal(diagnostics.length, 0);
+      const kinds = records.map((row) => row.kind);
+      assert.ok(kinds.includes("commit-baseline"));
+      assert.ok(kinds.includes("commit-reminder-bounce"));
+      // Re-arm restores bounce from state.jsonl (same durable parent / resume path).
+      const resumed = gateWithHome(home);
+      resumed.arm(root, parent);
+      assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
+      assert.doesNotThrow(() => gate.assertAcceptable("completed"));
+      const g2 = gateWithHome(home);
+      g2.arm(root, durableParent(home, root));
+      assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
+      git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
+      assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
+
+      assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)),
+        (error: unknown) => typeof error === "object" && error !== null &&
+          "status" in error && error.status === 128);
+
+      await withTempGit(async (unborn, unbornHome) => {
+        const g = gateWithHome(unbornHome);
+        g.arm(unborn, durableParent(unbornHome, unborn));
+        assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
+      }, { seed: false });
+    } finally {
+      await rm(bare, { recursive: true, force: true });
     }
-    assert.doesNotThrow(() =>
-      gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
-    );
-    assert.throws(
-      () => gate.assertAcceptable("completed"),
-      (error: unknown) =>
-        error instanceof WorkerCommitReminderError &&
-        error.code === "worker_commit_reminder",
-    );
-    assert.doesNotThrow(() => gate.assertAcceptable("completed"));
-    const g2 = gateWithHome(home);
-    g2.arm(root, durableParent(home, root));
-    assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
-    git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
-    assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
-
-    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)),
-      (error: unknown) => typeof error === "object" && error !== null &&
-        "status" in error && error.status === 128);
-
-    await withTempGit(async (unborn, unbornHome) => {
-      const g = gateWithHome(unbornHome);
-      g.arm(unborn, durableParent(unbornHome, unborn));
-      assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
-    }, { seed: false });
   });
 });
 

@@ -76,11 +76,6 @@ export type RoleTurnRequestProjectionOptions = {
    * execution seam count with the same configured number.
    */
   readonly deliveryRequestLimit?: number;
-  /**
-   * Navigator nest work-context locator (#1166). Request-scoped internal path —
-   * not dialogue content.
-   */
-  readonly navigatorWorkContextPath?: string;
 };
 
 export type AdmittedTurnInvocation = {
@@ -131,10 +126,6 @@ export function projectRoleTurnRequest(
     ...(options.deliveryRequestLimit === undefined
       ? {}
       : { deliveryRequestLimit: options.deliveryRequestLimit }),
-    ...(options.navigatorWorkContextPath === undefined
-      || options.navigatorWorkContextPath.trim() === ""
-      ? {}
-      : { navigatorWorkContextPath: options.navigatorWorkContextPath }),
   };
 }
 

@@ -1007,7 +1007,7 @@ test("public navigator session takes a seat edit for the next summon instead of 
     await withPrimaryAwareCleanup(
       async () => {
         // Ledger home derives from HostContext.runDirectory (#852) — never context.home.
-        // This case only locks seat-edit-between-prepares; nest must stay under the temp root.
+        // This case only locks seat-edit-between-prepares (#1178: no navigator side-branch nest).
         seedGitRepository(root);
         await savePublicCliConfig(
           { seats: { navigator: { provider: "provider", model: "one" } } },
@@ -1028,11 +1028,6 @@ test("public navigator session takes a seat edit for the next summon instead of 
           subject: "seat edit between prepares",
           tool: undefined as never,
         });
-        const nestDir = session.recordPointer?.() ?? "";
-        assert.ok(
-          nestDir.startsWith(join(root, ".ak-roles")),
-          `navigator nest must stay under temp ledger, got ${nestDir}`,
-        );
         // Every prompt is an independent public summon whose nested CLI reads the
         // live seat table (#675 验收② / #617 DK-3): a seat edit between prepares
         // applies on the next summon and never makes attendance unavailable.

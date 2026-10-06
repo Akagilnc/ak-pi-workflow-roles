@@ -204,7 +204,6 @@ export type NavigatorPreparationSession = {
   routePlaybookReadFailure?(): string | undefined;
   setModel?(model: string, thinkingLevel?: string): Promise<void>;
   getThinkingLevel?(): string | undefined;
-  recordPointer(): string;
   dispose(): void | Promise<void>;
 };
 

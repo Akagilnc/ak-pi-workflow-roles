@@ -67,7 +67,6 @@ export function sessionHarness() {
         thinkingLevel === undefined ? { model } : { model, thinkingLevel },
       );
     },
-    recordPointer: () => "/fixture/navigator-record",
     dispose() {},
   };
   return {

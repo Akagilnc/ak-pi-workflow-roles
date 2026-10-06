@@ -300,17 +300,26 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
  * fallback. A row file that cannot be read fails closed. An illegal (non-object)
  * latest payload keeps its failure identity; it is not filtered into absence.
  */
-export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
+/**
+ * Control-plane rows of `state.jsonl` (#1161 / #1178).
+ * IO fault and decoder diagnostics refuse — reachable older facts must not
+ * silently drive lifecycle. Missing file is empty. Rendering / observation that
+ * keeps reachable rows after damage still uses `readStateRowsSync`.
+ * Sole owner of this fail-closed policy; page readers and worker gate share it.
+ */
+export function readStateControlRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  // Control plane fails closed on damaged rows: reachable older pages must not
-  // silently drive lifecycle (#1161 C3). Rendering still keeps reachable facts.
   if (state.diagnostics !== undefined && state.diagnostics.length > 0) {
     throw new Error(
       `${RUN_STATE_FILE} has malformed row(s); refusing stale control-plane page: ${runDirectory}`,
     );
   }
-  return lastPagePayload(state.rows, PAGE_ROW_KIND[section], runDirectory);
+  return state.rows;
+}
+
+export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
+  return lastPagePayload(readStateControlRowsSync(runDirectory), PAGE_ROW_KIND[section], runDirectory);
 }
 
 /** Every row of history.jsonl, in order; a file that cannot be read throws. */
@@ -320,7 +329,11 @@ export function readHistoryRowsSync(runDirectory: string): readonly Record<strin
   return history.rows;
 }
 
-/** Every row of state.jsonl, in order; a file that cannot be read throws. */
+/**
+ * Every row of state.jsonl, in order; a file that cannot be read throws.
+ * Wide observation path: decoder diagnostics are not a hard refuse (render keeps
+ * reachable rows). Control consumers must use `readStateControlRowsSync`.
+ */
 export function readStateRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
   const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
   if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);

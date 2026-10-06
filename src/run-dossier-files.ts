@@ -30,4 +30,6 @@ export const OFFICER_POINTER_RECORD_KIND = "officer-pointer" as const;
  */
 export const RUN_STATE_KINDS: ReadonlySet<string> = new Set([
   "invocation", "admitted-request", "run-state", "terminal", "host-session-id",
+  // #1178: worker gate durable facts — baseline + reminder/bounce marks on this leg.
+  "commit-baseline", "commit-reminder-bounce", "prefix-reminder-bounce", "unfinished-reason-bounce",
 ]);
