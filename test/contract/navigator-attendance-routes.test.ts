@@ -191,7 +191,6 @@ test("dispose during pending createSession drains the created session without pr
           appendEntry() {},
           entries: () => [],
           async setModel() { setModelCalls += 1; },
-          getThinkingLevel: () => "off",
           dispose() { disposeCalls += 1; markSessionDisposed(); },
         };
       },
@@ -241,7 +240,6 @@ test("attendance dispose settles session close rejection on the caller", async (
           appendEntry() {},
           entries: () => [],
           async setModel() {},
-          getThinkingLevel: () => "off" as const,
           dispose() { return Promise.reject(closeBoom); },
         }),
         onEvent: async () => {},
@@ -302,7 +300,6 @@ test("resumed setModel session failures preserve typed source and cause", async 
               throw new Error("setModel blew up with untyped wording");
             }
           },
-          getThinkingLevel: () => "off",
           dispose() {},
         };
       },

@@ -203,7 +203,6 @@ export type NavigatorPreparationSession = {
   /** Native message from the nested playbook read, when that read failed. */
   routePlaybookReadFailure?(): string | undefined;
   setModel?(model: string, thinkingLevel?: string): Promise<void>;
-  getThinkingLevel?(): string | undefined;
   dispose(): void | Promise<void>;
 };
 

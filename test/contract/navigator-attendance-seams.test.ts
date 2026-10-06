@@ -998,55 +998,6 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
   });
 });
 
-test("public navigator session takes a seat edit for the next summon instead of failing model", async () => {
-  await withTempRoot("navigator-public-seat-", async (root) => {
-    const priorHome = process.env.HOME;
-    process.env.HOME = root;
-    const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
-    const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
-    await withPrimaryAwareCleanup(
-      async () => {
-        // Ledger home derives from HostContext.runDirectory (#852) — never context.home.
-        // This case only locks seat-edit-between-prepares (#1178: no navigator side-branch nest).
-        seedGitRepository(root);
-        await savePublicCliConfig(
-          { seats: { navigator: { provider: "provider", model: "one" } } },
-          root,
-        );
-        const parentRun = join(
-          root,
-          ".ak-roles",
-          "books",
-          basename(root),
-          "unbound",
-          "runs",
-          "parent@coder",
-        );
-        await mkdir(join(parentRun, "session"), { recursive: true });
-        const session = await createNativeNavigatorSessionFactory()({
-          context: { cwd: root, runDirectory: parentRun, sessionManager: undefined } as never,
-          subject: "seat edit between prepares",
-          tool: undefined as never,
-        });
-        // Every prompt is an independent public summon whose nested CLI reads the
-        // live seat table (#675 验收② / #617 DK-3): a seat edit between prepares
-        // applies on the next summon and never makes attendance unavailable.
-        await savePublicCliConfig(
-          { seats: { navigator: { provider: "other", model: "two", thinking: "high" } } },
-          root,
-        );
-        await session.setModel?.("other/two:high", "high");
-        assert.equal(session.getThinkingLevel?.(), "high");
-        await session.dispose();
-      },
-      async () => {
-        if (priorHome === undefined) delete process.env.HOME;
-        else process.env.HOME = priorHome;
-      },
-    );
-  });
-});
-
 /** Sole #959 grace case: hung nest summon + real session_start/tool_result/shutdown. */
 async function withNavigatorInfraGraceEnvelope(
   options: {

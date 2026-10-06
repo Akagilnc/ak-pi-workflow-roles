@@ -7,7 +7,14 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorOutputSchema,
+  pickPreparedProse,
+  preparedAdviceFromUnknown,
+} from "../../src/package-contracts/navigator-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { terminatingToolJsonSchema } from "../../src/role-envelope.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
@@ -731,3 +738,79 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
     }
   });
 }
+
+/**
+ * #1160: navigator auto byStatus prepare on codex mounts --output-schema and
+ * ingests the structured status table so pickPreparedProse yields each original.
+ * Entry = createHeadlessRoleTurnHost.executeTurn; protocol process, not a real LLM.
+ */
+test("#1160 codex navigator byStatus prepare returns structured status table", { timeout: 10000 }, async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-1160-codex-bystatus-", runName: "run@navigator" });
+  const root = ledger.runDirectory;
+  const argvLog = join(root, "argv.log");
+  const fakeBin = join(root, "fake-codex-navigator");
+  const statusTable = { byStatus: { completed: "C", unfinished: "U" } };
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+readFileSync(0, "utf8");
+const events = [
+  { type: "thread.started", thread_id: "thread-nav-bystatus" },
+  { type: "item.completed", item: { type: "agent_message", text: ${JSON.stringify(JSON.stringify(statusTable))} } },
+  { type: "turn.completed" },
+];
+process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    let ingested: unknown;
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: fakeBin,
+      env: { CODEX_HOME: join(root, ".codex") },
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(root, "session", "session.jsonl"),
+      },
+      prepare: async (request) => ({
+        mcpServers: [],
+        systemPrompt: { body: "navigator-system", materials: [] },
+        prompt: request.continuation.prompt,
+        jsonSchema: terminatingToolJsonSchema(navigatorOutputSchema),
+        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        async ingestStructuredOutput(value) { ingested = value; },
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(root, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "prepare byStatus" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory: root,
+    });
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    const argv = JSON.parse((await readFile(argvLog, "utf8")).trim()) as string[];
+    assert.equal(argv.includes("--output-schema"), true, `argv=${JSON.stringify(argv)}`);
+    assert.deepEqual(ingested, statusTable);
+    const prepared = preparedAdviceFromUnknown(ingested);
+    assert.equal(pickPreparedProse(prepared, "completed"), "C");
+    assert.equal(pickPreparedProse(prepared, "unfinished"), "U");
+  } finally {
+    ledger.dispose();
+  }
+});

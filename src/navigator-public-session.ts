@@ -98,7 +98,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
   return async ({ context, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
     // Factory open only holds in-memory attendance bookkeeping — no side-branch nest.
-    let thinkingLevel: string | undefined;
     const entries: MemoryEntry[] = [];
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: Partial<NoReceiptLifecycleFacts> | undefined;
@@ -270,18 +269,15 @@ export function createNativeNavigatorSessionFactory(deps?: {
         });
       },
       entries: () => entries,
-      setModel: async (next, nextThinking) => {
-        let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
+      setModel: async (next) => {
+        // Validate only — resume/fresh mint both read the live seat table
+        // (#675 / #617 DK-3). No test-only thinking observation state (#1160 F1).
         try {
-          nextParsed = parseNavigatorModelSetting(next);
+          parseNavigatorModelSetting(next);
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        // Resume and fresh mint both read the live seat table (#675 / #617 DK-3).
-        // A seat edit between prepares applies on the next host turn.
-        thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
-      getThinkingLevel: () => thinkingLevel,
       dispose: async () => {
         // Marker only — nested cancel and non-blocking teardown are owned by
         // navigator-attendance / role-runtime (ADR 0018 / #959).

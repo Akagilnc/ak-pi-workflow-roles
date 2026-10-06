@@ -392,7 +392,7 @@ function terminalFromSpawned(
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly systemPromptPath: string;
-  /** Open schema; omit for #959 navigator prose-exit seats. Codex does not receive a narrowed copy. */
+  /** Open schema for Claude --json-schema; omit for #959 navigator prose-exit seats. */
   readonly jsonSchema?: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly mcpConfigPath?: string;
@@ -408,7 +408,7 @@ function buildTurnArgs(options: {
     if (options.sessionKind === "resume" && !options.sessionId) {
       throw new Error("codex resume requires a bound thread_id");
     }
-    // #959: prose-exit seats (navigator) omit --output-schema; other seats still require it.
+    // Codex always mounts --output-schema when the path is supplied (incl. navigator byStatus #1160).
     return codexTurnArgs({
       systemPromptPath: options.systemPromptPath,
       ...(options.outputSchemaPath === undefined ? {} : { outputSchemaPath: options.outputSchemaPath }),
@@ -485,11 +485,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         if (codex) {
           // #1148: Codex --output-schema requires a native strict transport schema.
           // Project from the unique open declaration; do not alter package receipt rules.
-          if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
-            outputSchemaPath = join(inputsDirectory, "output-schema.json");
-            deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
-            await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
-          }
+          // #1160: navigator auto byStatus prepare also mounts --output-schema so the
+          // status table returns structured (not whole-JSON-as-prose). Direct prose
+          // stays expressible via the schema's prose field.
+          outputSchemaPath = join(inputsDirectory, "output-schema.json");
+          deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
+          await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
         } else {
           mcpConfigPath = join(inputsDirectory, "mcp-config.json");
           await writeFile(
@@ -497,7 +498,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
-          // #959: navigator prose exit — no closed JSON schema on claude either.
+          // #959: navigator prose exit — no closed JSON schema on claude.
           if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) deliveredSchema = prepared.jsonSchema;
         }
         startedWithSchema = deliveredSchema;
@@ -668,15 +669,19 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             const navigator = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
             const deliverReply = async (): Promise<ReturnType<typeof deliveredFromSpawned> | undefined> => {
               if (!observation.turnCompleted || observation.finalMessage === undefined) return undefined;
-              if (navigator) {
-                if (observation.finalMessage.trim() === "") return undefined;
-                await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
-                return deliveredFromSpawned(spawned);
-              }
+              // Codex --output-schema forces structured JSON for every seat including
+              // navigator (#1160 byStatus). Parse the native agent_message the same way
+              // as other seats — do not wrap the whole body as one prose string.
               let receipt: unknown;
               try {
                 receipt = JSON.parse(observation.finalMessage);
               } catch (error) {
+                if (navigator && observation.finalMessage.trim() !== "") {
+                  // Direct prose path residual: free text still becomes { prose } when
+                  // the host did not emit JSON (schema path is the structured owner).
+                  await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
+                  return deliveredFromSpawned(spawned);
+                }
                 await noteBeside(error, "native receipt JSON could not be read");
                 return undefined;
               }
