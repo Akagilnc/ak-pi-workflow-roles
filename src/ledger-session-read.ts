@@ -2,6 +2,7 @@
  * Canonical ledger session JSONL read primitives (shared owner).
  * Consumers (ticket-trajectory, analyst, …) must import here — no second parse kernel.
  */
+import { appendFileSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import { isRecord } from "./unknown-value.ts";
@@ -12,6 +13,89 @@ export type LedgerSessionRow = Record<string, unknown>;
 export async function readStrictPiSessionJsonl(path: string): Promise<unknown[]> {
   const text = await readFile(path, "utf8");
   return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as unknown);
+}
+
+function parseSessionObjectLine(line: string): LedgerSessionRow | undefined {
+  if (line.trim() === "") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  return isRecord(parsed) ? parsed : undefined;
+}
+
+function isSessionHeaderRow(row: LedgerSessionRow): boolean {
+  return row.type === "session" && typeof row.id === "string" && row.id.length > 0;
+}
+
+/**
+ * Open-path load for a durable pi session file (package record host / resume).
+ * Matches SessionManager open contract:
+ * - empty file → empty entries (caller initializes header)
+ * - non-empty without a valid session header → throws; file untouched
+ * - valid session → entries; missing final newline is repaired on disk so later appends keep line boundaries
+ * Intermediate malformed lines are skipped (not the strict ledger reading).
+ */
+export function loadPiSessionFileForOpen(path: string): readonly LedgerSessionRow[] {
+  const text = readFileSync(path, "utf8");
+  if (text.length === 0) return [];
+
+  const lines = text.split("\n");
+  // split keeps a trailing empty segment iff text ends with "\n".
+  const endsWithNewline = lines.length > 0 && lines[lines.length - 1] === "";
+  const physical = endsWithNewline ? lines.slice(0, -1) : lines;
+
+  const entries: LedgerSessionRow[] = [];
+  for (const line of physical) {
+    if (line.trim() === "") continue;
+    const row = parseSessionObjectLine(line);
+    if (row !== undefined) entries.push(row);
+  }
+
+  if (entries.length === 0) {
+    // Non-empty bytes without a parseable session header are invalid (SessionManager open).
+    if (text.length > 0) {
+      throw new Error(`Session file is not a valid pi session: ${path}`);
+    }
+    return [];
+  }
+  if (!isSessionHeaderRow(entries[0]!)) {
+    throw new Error(`Session file is not a valid pi session: ${path}`);
+  }
+  // SessionManager repairs a missing final newline after validating the header so
+  // subsequent appendFile calls do not glue JSON onto the prior record.
+  if (!endsWithNewline) {
+    appendFileSync(path, "\n");
+  }
+  return entries;
+}
+
+/**
+ * Discovery-only session header peek (best-effort).
+ * Unreadable / malformed / non-session first complete line → null; never throws for candidate skip.
+ */
+export function readPiSessionHeaderForDiscovery(path: string): {
+  readonly id: string;
+  readonly cwd?: string;
+} | null {
+  try {
+    const text = readFileSync(path, "utf8");
+    for (const line of text.split("\n")) {
+      if (line.trim() === "") continue;
+      const row = parseSessionObjectLine(line);
+      if (row === undefined || !isSessionHeaderRow(row)) return null;
+      const cwd = row.cwd;
+      return {
+        id: row.id as string,
+        ...(typeof cwd === "string" ? { cwd } : {}),
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

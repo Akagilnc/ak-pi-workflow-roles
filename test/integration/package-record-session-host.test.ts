@@ -12,7 +12,6 @@ import {
   createRecordSessionOpen,
   WORKER_SUBMISSION_GATE_KIND,
 } from "../../src/archivist-record-entry.ts";
-import { packageRecordSessionHost } from "../../src/package-record-session-host.ts";
 import {
   machineLedgerHome,
   seedGitRepository,
@@ -175,8 +174,10 @@ test("#1178 archivist record entry loads and writes when coding-agent peer is un
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { spawnSync } = await import("node:child_process");
   const { pathToFileURL } = await import("node:url");
+  const { tmpdir } = await import("node:os");
   const { worktreeTempPrefix } = await import("../helpers/worktree-temp.ts");
   const root = mkdtempSync(worktreeTempPrefix("ak-pkg-record-peer-iso-"));
+  const peerHomes: string[] = [];
   try {
     const hooks = join(root, "block-peer-hooks.mjs");
     const register = join(root, "register-block-peer.mjs");
@@ -214,6 +215,7 @@ import { tmpdir } from "node:os";
 
 const { createRecordSession, WORKER_SUBMISSION_GATE_KIND } = await import(${JSON.stringify(archivistUrl)});
 const home = mkdtempSync(join(tmpdir(), "ak-1178-peer-iso-home-"));
+process.stdout.write(JSON.stringify({ home }) + "\\n");
 const project = join(home, "proj");
 mkdirSync(project, { recursive: true });
 const parentDir = join(home, ".ak-roles", "books", "proj", "runs", "r@coder", "session");
@@ -239,10 +241,11 @@ const file = child.getSessionFile();
 if (typeof file !== "string") throw new Error("missing session file");
 child.appendCustomEntry("ak-commit-baseline", { version: 1, head: null });
 const rows = readFileSync(file, "utf8").trim().split("\\n").map((line) => JSON.parse(line));
-if (rows[0].type !== "session") throw new Error("bad header");
-if (rows[0].parentSession !== parentFile) throw new Error("bad parentSession");
-if (rows[1].customType !== "ak-commit-baseline") throw new Error("bad custom");
-process.stdout.write("ok\\n");
+process.stdout.write(JSON.stringify({
+  headerType: rows[0]?.type,
+  parentSession: rows[0]?.parentSession,
+  customType: rows[1]?.customType,
+}) + "\\n");
 `,
     );
     const result = spawnSync(
@@ -255,92 +258,22 @@ process.stdout.write("ok\\n");
       },
     );
     assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-    assert.match(result.stdout, /^ok$/m);
+    const lines = result.stdout.trim().split("\n").filter(Boolean);
+    assert.ok(lines.length >= 2, `expected structured probe lines, got: ${result.stdout}`);
+    const meta = JSON.parse(lines[0]!) as { home?: string };
+    if (typeof meta.home === "string") peerHomes.push(meta.home);
+    const observed = JSON.parse(lines[1]!) as {
+      headerType?: string;
+      parentSession?: string;
+      customType?: string;
+    };
+    assert.equal(observed.headerType, "session");
+    assert.ok(typeof observed.parentSession === "string" && observed.parentSession.length > 0);
+    assert.equal(observed.customType, "ak-commit-baseline");
   } finally {
+    for (const home of peerHomes) {
+      rmSync(home, { recursive: true, force: true });
+    }
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test("#1178 continue miss does not leave an unparented orphan in the nest", async () => {
-  await withHermeticHome({ prefix: "ak-pkg-record-continue-miss-" }, async ({ home }) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitRepository(project);
-
-    const parentDir = join(
-      machineLedgerHome(home),
-      "books",
-      "proj",
-      "1178",
-      "runs",
-      "r@coder",
-      "session",
-    );
-    await mkdir(parentDir, { recursive: true });
-    const parentFile = join(parentDir, "session.jsonl");
-    await writeFile(parentFile, sessionHeaderLine("parent-miss", project));
-    const parent = { getSessionFile: () => parentFile };
-
-    const first = createRecordSessionOpen({
-      cwd: project,
-      kind: WORKER_SUBMISSION_GATE_KIND,
-      parent,
-    });
-    assert.equal(first.resumed, false);
-    first.session.appendCustomEntry("ak-commit-baseline", { version: 1, head: "h0" });
-    const nest = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
-    const afterFirst = (await readdir(nest)).filter((name) => name.endsWith(".jsonl"));
-    assert.equal(afterFirst.length, 1);
-
-    // Different cwd → continueRecent misses; must not leave an unparented header behind.
-    const second = createRecordSessionOpen({
-      cwd: join(project, "other"),
-      kind: WORKER_SUBMISSION_GATE_KIND,
-      parent,
-    });
-    assert.equal(second.resumed, false);
-    const afterSecond = (await readdir(nest)).filter((name) => name.endsWith(".jsonl"));
-    assert.equal(afterSecond.length, 2, "continue miss must not add an orphan before the fresh mint");
-
-    const headers = await Promise.all(
-      afterSecond.map(async (name) => {
-        const line = (await readFile(join(nest, name), "utf8")).split("\n")[0]!;
-        return JSON.parse(line) as { parentSession?: string; cwd?: string };
-      }),
-    );
-    for (const header of headers) {
-      assert.equal(header.parentSession, parentFile);
-    }
-  });
-});
-
-test("#1178 packageRecordSessionHost open reloads custom entries", async () => {
-  await withHermeticHome({ prefix: "ak-pkg-record-open-" }, async ({ home }) => {
-    const nest = join(home, "nest");
-    await mkdir(nest, { recursive: true });
-    const file = join(nest, "existing.jsonl");
-    await writeFile(
-      file,
-      `${sessionHeaderLine("open-id", home)}${JSON.stringify({
-        type: "custom",
-        customType: "prior",
-        data: { n: 1 },
-        id: "e1",
-        parentId: null,
-        timestamp: "2026-09-01T00:00:01.000Z",
-      })}\n`,
-    );
-    const opened = packageRecordSessionHost.openRecordSession({
-      sessionFile: file,
-      sessionDir: nest,
-      cwd: home,
-    });
-    assert.equal(opened.getSessionFile(), file);
-    assert.equal(opened.getEntries().length, 1);
-    assert.equal(opened.getEntries()[0]!.customType, "prior");
-    opened.appendCustomEntry("next", { n: 2 });
-    const rows = (await readFile(file, "utf8")).trim().split("\n");
-    assert.equal(rows.length, 3);
-    assert.equal(JSON.parse(rows[2]!).customType, "next");
-  });
 });

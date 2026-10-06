@@ -374,8 +374,7 @@ export type RecordSessionOpen = {
  * Navigator work-subject nests use their AK ledger; worker-submission-gate asks the
  * host to continue its recent native session without selecting a stored file path.
  * Other ordinary no-subject children (attendance, …) always mint fresh.
- * New persisted principals materialize their deferred session header before return so
- * custom-entry-only writers do not need a parallel delayed-header helper.
+ * New persisted principals materialize their session header on create via the package host.
  *
  * `resumed` is the sole open-or-continue fact — callers must not re-probe nest existence.
  */
@@ -454,18 +453,11 @@ export function createRecordSessionOpen(
     sessionDir,
     ...(parentSession === undefined ? {} : { parentSession }),
   });
-  // Package host materializes the header on create. Keep a deferred-header path for
-  // injected hosts that still postpone file create until the first write.
-  if (session.isPersisted()) {
+  // Default package host materializes the header on create. Navigator sidecar is the
+  // sole post-create bookkeeping still owned here.
+  if (session.isPersisted() && options.kind === NAVIGATOR_RECORD_KIND && mayResumeSameNest) {
     const file = session.getSessionFile();
-    if (file !== undefined && !existsSync(file)) {
-      const header = session.getHeader();
-      if (header !== null && header.type === "session") {
-        writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: "wx" });
-        session.setSessionFile(file);
-      }
-    }
-    if (options.kind === NAVIGATOR_RECORD_KIND && mayResumeSameNest && file !== undefined) {
+    if (file !== undefined) {
       writeCurrentSession(sessionDir, file);
     }
   }

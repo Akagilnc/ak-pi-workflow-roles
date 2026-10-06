@@ -25,7 +25,12 @@ const entries = [
   "activation-ledger-git",
   "activation-ledger-topology",
   "archivist-record-entry",
-  "pi/record-session-host",
+  // Default RecordSessionHost for archivist (#1178) — published non-bundle edge.
+  "package-record-session-host",
+  // Open-path session load used by package-record-session-host.
+  "ledger-session-read",
+  // Static import of ledger-session-read.
+  "unknown-value",
   // Pure subject nest topology — static import of archivist-record-entry;
   // cold discovery without SessionManager (#636). Keep listed while that
   // relative edge remains (#857 removal left the import graph open).
