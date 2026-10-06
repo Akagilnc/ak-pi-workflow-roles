@@ -36,15 +36,23 @@ export function buildPiSessionHeader(options: {
 }
 
 /**
- * One physical JSONL line with trailing newline.
- * Fills missing id/timestamp the same way the principal durable writer always did.
+ * Sole owner of id/timestamp fill for pi session entries.
+ * Memory paths keep the returned object (and nested data refs) as-is;
+ * durable writers stringify only at the write seam.
  */
-export function formatPiSessionJsonlLine(entry: Record<string, unknown>): string {
+export function completePiSessionEntryFields(
+  entry: Record<string, unknown>,
+): Record<string, unknown> {
   const id = typeof entry.id === "string" && entry.id.length > 0
     ? entry.id
     : randomUUID();
   const timestamp = typeof entry.timestamp === "string" && entry.timestamp.length > 0
     ? entry.timestamp
     : new Date().toISOString();
-  return `${JSON.stringify({ ...entry, id, timestamp })}\n`;
+  return { ...entry, id, timestamp };
+}
+
+/** One physical JSONL line with trailing newline (disk write only). */
+export function formatPiSessionJsonlLine(entry: Record<string, unknown>): string {
+  return `${JSON.stringify(completePiSessionEntryFields(entry))}\n`;
 }

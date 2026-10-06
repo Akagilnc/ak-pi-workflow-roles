@@ -25,6 +25,7 @@ import {
 } from "./ledger-session-read.ts";
 import {
   buildPiSessionHeader,
+  completePiSessionEntryFields,
   formatPiSessionJsonlLine,
   type PiSessionHeader,
 } from "./ledger-session-write.ts";
@@ -55,10 +56,13 @@ function headerForCreate(options: {
 }
 
 function headerFromEntries(entries: readonly SessionEntry[]): PiSessionHeader | null {
-  const first = entries.find((entry) => entry.type === "session");
-  if (first === undefined) return null;
+  // Open load already requires entries[0] to be a session header; mirror that position
+  // (SessionManager uses the first entry, not a later type==="session" find).
+  const first = entries[0];
+  if (first === undefined || first.type !== "session") return null;
   const raw = first as Record<string, unknown>;
-  if (typeof raw.id !== "string" || raw.id.length === 0) return null;
+  // Match loadEntriesFromFile: id must be a string; empty string is accepted.
+  if (typeof raw.id !== "string") return null;
   const cwd = typeof raw.cwd === "string" ? raw.cwd : "";
   return buildPiSessionHeader({
     id: raw.id,
@@ -224,22 +228,21 @@ function createPackageRecordSession(options: {
       }
     },
     appendCustomEntry(customType: string, data?: unknown) {
-      // parentId is side-branch tree linkage; id/timestamp come from the shared line writer.
-      const entry: SessionEntry = {
+      // Memory keeps the original data reference (no JSON round-trip). id/timestamp
+      // fill stays sole-owned by ledger-session-write; disk encoding only when persist.
+      const entry = completePiSessionEntryFields({
         type: "custom",
         customType,
         ...(data === undefined ? {} : { data }),
         parentId: leafId(),
-      };
-      const line = formatPiSessionJsonlLine(entry as Record<string, unknown>);
-      const written = JSON.parse(line) as SessionEntry;
-      entries.push(written);
+      }) as SessionEntry;
+      entries.push(entry);
       if (options.persist && sessionFile !== undefined) {
         // Open/create always leave a trailing newline (or repair on load), so append
         // keeps JSONL line boundaries without a deferred full rewrite path.
-        appendFileSync(sessionFile, line, "utf8");
+        appendFileSync(sessionFile, formatPiSessionJsonlLine(entry as Record<string, unknown>), "utf8");
       }
-      return written.id!;
+      return entry.id!;
     },
   };
 }
