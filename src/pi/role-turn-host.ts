@@ -130,8 +130,10 @@ export function buildPiTurnExtraArgs(
     // Envelope assembly = projectActivationFlags; pi only renders argv pairs.
     ...activationFlagsToPiArgv(projectActivationFlags(request)),
     ...piEngineModelArgs(request),
+    // #1182: text single-shot keeps pi's native assistant error/aborted
+    // exit (stderr + exit 1). json mode never takes that failure branch.
     "--mode",
-    "json",
+    "text",
     ...buildSeatModelCliArgs(request.model),
   ];
 }
