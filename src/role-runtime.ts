@@ -16,12 +16,20 @@ import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
-import { registerReportTicketTool, REPORT_TICKET_TOOL_NAME } from "./report-ticket-tool.ts";
+import {
+  registerReportTicketTool,
+  reportTicketFromHostContext,
+  REPORT_TICKET_TOOL_NAME,
+} from "./report-ticket-tool.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
-import { isSafePositiveTicketNumber, parseTicketNumber } from "./run-ticket-number.ts";
+import {
+  isSafePositiveTicketNumber,
+  parseTicketNumber,
+  readDeclaredTicketNumber,
+} from "./run-ticket-number.ts";
 import {
   durableSessionPointer,
   resolveBookKeyFromGit,
@@ -1145,13 +1153,24 @@ export function createRoleRuntimeExtension(
       await pending;
       return pendingNavigatorPresentation?.event;
     };
-    projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
-      closed,
-      context,
-      navigatorPhase(roleHost, closed.role),
-      () => receiptDelivery.recordAccepted(),
-      settleNavigatorProjection,
-    );
+    projectClosedSubmission = async (closed, context) => {
+      // #1183: typed sealed receipt is identity acquisition — same mid-turn
+      // bind/relocate seam as ak_report_ticket. Host return must not be the
+      // first placement (dossier-topology: 取得 typed 票身份后整体归位).
+      const sealedTicket = isRecord(closed.accepted)
+        ? readDeclaredTicketNumber(closed.accepted.ticketNumber)
+        : undefined;
+      if (sealedTicket !== undefined) {
+        await reportTicketFromHostContext(context, sealedTicket);
+      }
+      await projectClosedSubmissionLifecycle(
+        closed,
+        context,
+        navigatorPhase(roleHost, closed.role),
+        () => receiptDelivery.recordAccepted(),
+        settleNavigatorProjection,
+      );
+    };
     roleHost.on("input", (_event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
