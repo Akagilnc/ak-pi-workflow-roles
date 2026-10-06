@@ -443,7 +443,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
-      const codex = isCodexExecDescription(config.description);
+    const codex = isCodexExecDescription(config.description);
+    // #1160: one exit-mode decision per turn — direct navigator free prose vs structured.
+    // Attendance sets request.navigatorByStatusPrepare; direct ak-role navigator does not.
+    const navigatorProseExit =
+      prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+      && request.navigatorByStatusPrepare !== true;
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
@@ -482,11 +487,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       try {
         await writeFile(systemPromptPath, systemPrompt, "utf8");
         let deliveredSchema: unknown;
-        // #1160: structured schema only when non-navigator OR attendance byStatus prepare.
-        // Direct navigator keeps free-form prose exit (#959) on both Codex and Claude.
-        const navigatorProseExit =
-          prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-          && request.navigatorByStatusPrepare !== true;
         if (codex) {
           // #1148: Codex --output-schema requires a native strict transport schema.
           // Project from the unique open declaration; do not alter package receipt rules.
@@ -527,9 +527,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           let args: readonly string[];
           try {
             const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
-            const navigatorProseExit =
-              prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-              && request.navigatorByStatusPrepare !== true;
             args = buildTurnArgs({
               description: config.description,
               systemPromptPath,
@@ -670,9 +667,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
-            const navigatorProseExit =
-              prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-              && request.navigatorByStatusPrepare !== true;
             const deliverReply = async (): Promise<ReturnType<typeof deliveredFromSpawned> | undefined> => {
               if (!observation.turnCompleted || observation.finalMessage === undefined) return undefined;
               if (navigatorProseExit) {
@@ -730,8 +724,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           if (envelope.structured_output !== undefined) {
             await prepared.ingestStructuredOutput(envelope.structured_output);
           } else if (
-            prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
-            && request.navigatorByStatusPrepare !== true
+            navigatorProseExit
             && typeof envelope.result === "string"
             && envelope.result.trim() !== ""
           ) {
