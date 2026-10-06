@@ -36,6 +36,7 @@ import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   historyPayloads,
   lockCurrentJson,
+  readCurrentJson,
   readCurrentSection,
   seedCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
@@ -60,6 +61,27 @@ import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.t
 import { isRecord } from "../../src/unknown-value.ts";
 
 const TICKET = 1171;
+
+/** #1183: current.json location fields match the live run directory. */
+function assertCurrentLocationPaths(runDirectory: string, label: string): void {
+  const current = readCurrentJson(runDirectory);
+  const expectedSessionDirectory = sessionDirectoryOf(runDirectory);
+  const expectedSessionFile = sessionFileOf(runDirectory);
+  for (const section of ["invocation", "admitted", "runState"] as const) {
+    const page = current[section];
+    assert.ok(page !== undefined && typeof page === "object" && page !== null, `${label}: ${section}`);
+    const record = page as Record<string, unknown>;
+    assert.equal(record.runDirectory, runDirectory, `${label}: ${section}.runDirectory`);
+    assert.equal(existsSync(String(record.runDirectory)), true, `${label}: ${section}.runDirectory exists`);
+    if (typeof record.sessionDirectory === "string") {
+      assert.equal(record.sessionDirectory, expectedSessionDirectory, `${label}: ${section}.sessionDirectory`);
+      assert.equal(existsSync(record.sessionDirectory), true, `${label}: sessionDirectory exists`);
+    }
+    if (typeof record.sessionFile === "string") {
+      assert.equal(record.sessionFile, expectedSessionFile, `${label}: ${section}.sessionFile`);
+    }
+  }
+}
 
 const FIXER_DONE = {
   status: "completed",
@@ -474,6 +496,7 @@ for (const caseRow of [
   test(`#1171 ${caseRow.name}`, async () => {
     await withSeatProject(async ({ home, project, bookKey }) => {
       let afterReport = { unbound: true, ticket: false };
+      let unboundAtStart: string | undefined;
       const roleTurnHost = withPassingReviewHost(
         envelopeHostThatReportsThen({
           hostName: caseRow.hostName,
@@ -482,11 +505,17 @@ for (const caseRow of [
             ? { ticketNumbers: caseRow.ticketNumbers }
             : { reportCount: caseRow.reportCount }),
           ...(caseRow.submit === undefined ? {} : { submit: caseRow.submit }),
+          beforeReport: (request) => {
+            unboundAtStart = request.runDirectory;
+          },
           onAfterReport: () => {
+            const placement = ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer");
             afterReport = {
               unbound: existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")),
-              ticket: existsSync(ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer")),
+              ticket: existsSync(placement),
             };
+            // #1183: mid-turn current.json already tracks the ticket leaf.
+            assertCurrentLocationPaths(placement, `${caseRow.name} mid-turn`);
           },
         }),
       );
@@ -504,6 +533,16 @@ for (const caseRow of [
       assert.equal(existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")), false);
       const placement = ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer");
       assert.equal(existsSync(placement), true);
+      // #1183: settle (incl. no_receipt) keeps current location paths on the ticket leaf.
+      assertCurrentLocationPaths(placement, `${caseRow.name} after settle`);
+      if (caseRow.expectKind === "no_receipt") {
+        assert.ok(unboundAtStart !== undefined);
+        const stateRaw = await readFile(join(placement, "state.jsonl"), "utf8");
+        assert.ok(
+          stateRaw.includes(unboundAtStart!),
+          "state.jsonl keeps pre-relocate unbound path bytes",
+        );
+      }
       if (caseRow.expectKind !== undefined) {
         assert.equal(result.terminal?.roleOutcome.kind, caseRow.expectKind);
       } else {
@@ -735,6 +774,8 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
     assert.ok(resumeSession?.startsWith(join(live, "session")));
     assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(resumed.admitted?.runDirectory, live);
+    // #1183: public resume keeps current.json location paths on the ticket leaf.
+    assertCurrentLocationPaths(live, "public resume after relocate");
   });
 });
 

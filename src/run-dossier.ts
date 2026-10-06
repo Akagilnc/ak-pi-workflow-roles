@@ -18,74 +18,14 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { basename, join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
+import { projectRenderedPagePaths } from "./role-run-path-rewrite.ts";
 import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
-
-/**
- * #1183: current.json location fields follow the directory being rendered.
- * Fact rows stay as written; only the rendering projects stored→actual.
- * Kept local so render does not import role-run-relocation (cycle via pages).
- */
-function projectRenderedPagePaths(
-  page: Record<string, unknown>,
-  actualRunDirectory: string,
-): Record<string, unknown> {
-  const stored =
-    typeof page.runDirectory === "string" && page.runDirectory.trim() !== ""
-      ? page.runDirectory
-      : undefined;
-  if (stored === undefined || stored === actualRunDirectory) return page;
-
-  const projectValue = (value: unknown): unknown => {
-    if (typeof value !== "string") return value;
-    if (value === stored) return actualRunDirectory;
-    const prefix = `${stored}${sep}`;
-    if (value.startsWith(prefix)) {
-      return `${actualRunDirectory}${value.slice(stored.length)}`;
-    }
-    return value;
-  };
-
-  const projectFields = (
-    record: Record<string, unknown>,
-    fields: readonly string[],
-  ): Record<string, unknown> => {
-    let changed = false;
-    const next = { ...record };
-    for (const field of fields) {
-      if (!(field in next)) continue;
-      const projected = projectValue(next[field]);
-      if (projected !== next[field]) {
-        next[field] = projected;
-        changed = true;
-      }
-    }
-    return changed ? next : record;
-  };
-
-  let out = projectFields(page, [
-    "runDirectory",
-    "sessionDirectory",
-    "sessionFile",
-    "admittedRequestPath",
-    "mergerInputPath",
-    "sourceRunPath",
-  ]);
-  if (isRecord(out.principal)) {
-    const principal = projectFields(out.principal, ["sessionDirectory", "sessionFile"]);
-    if (principal !== out.principal) out = { ...out, principal };
-  }
-  if (isRecord(out.sourceRun)) {
-    const sourceRun = projectFields(out.sourceRun, ["runDirectory"]);
-    if (sourceRun !== out.sourceRun) out = { ...out, sourceRun };
-  }
-  return out;
-}
 
 export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
 
