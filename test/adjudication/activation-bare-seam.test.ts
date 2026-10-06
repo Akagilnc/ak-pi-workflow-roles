@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -110,94 +110,98 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
     );
     // Non-git arm cwd must sit truly outside this worktree's upward Git discovery.
-    // worktreeTempPrefix roots inherit checkout .git; outside create-and-abandon only
-    // (owner 2026-09-06: do not delete outside the worktree). Hermetic HOME/ledger
-    // stay under worktree; durable-session arms below seedGitRepository(home).
+    // worktreeTempPrefix roots inherit checkout .git. Creating seam owns
+    // create→use→finally cleanup of this self-created root (#1178). Hermetic
+    // HOME/ledger stay under worktree; durable-session arms below seedGitRepository(home).
     const nonGitCwd = await mkdtemp(outsideWorktreeTempPrefix("ak-act-nongit-cwd-"));
-    // Pre-create a ledger session so non-git fails on book-key, not session placement.
-    const bookKey = activationBookKeyFor(home);
-    const ctx = activationExtensionContext({
-      cwd: nonGitCwd,
-      home,
-      bookKey,
-      abort() { aborts++; },
-    });
-    await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-      assert.ok(error instanceof ActivationGitRepositoryRequiredError);
-      assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
-      assert.ok(error.cause !== undefined, "original git cause must be retained");
-      return true;
-    });
-    assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
-    assert.equal(aborts, 1);
-    assert.equal(process.exitCode, 1);
-
-    seedGitRepository(home);
-
-    async function rejectSessionClass(
-      label: string,
-      sessionFile: string | null,
-      requireCause = false,
-    ): Promise<void> {
-      process.exitCode = undefined;
-      aborts = 0;
-      soulLoads = 0;
-      const { handlers: roleHandlers } = captureExtensionHandlers(
-        (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
-        { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
-      );
-      const rejectCtx = activationExtensionContext({
-        cwd: home,
+    try {
+      // Pre-create a ledger session so non-git fails on book-key, not session placement.
+      const bookKey = activationBookKeyFor(home);
+      const ctx = activationExtensionContext({
+        cwd: nonGitCwd,
         home,
         bookKey,
-        sessionFile,
         abort() { aborts++; },
       });
-      await assert.rejects(
-        async () => roleHandlers.get("session_start")?.[0]?.({ reason: "startup" }, rejectCtx),
-        (error: unknown) => {
-          assert.ok(error instanceof Error, `${label} must throw Error`);
-          if (requireCause) assert.ok(error.cause !== undefined, `${label} must retain original cause`);
-          return true;
-        },
+      await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
+        assert.ok(error instanceof ActivationGitRepositoryRequiredError);
+        assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
+        assert.ok(error.cause !== undefined, "original git cause must be retained");
+        return true;
+      });
+      assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
+      assert.equal(aborts, 1);
+      assert.equal(process.exitCode, 1);
+
+      seedGitRepository(home);
+
+      async function rejectSessionClass(
+        label: string,
+        sessionFile: string | null,
+        requireCause = false,
+      ): Promise<void> {
+        process.exitCode = undefined;
+        aborts = 0;
+        soulLoads = 0;
+        const { handlers: roleHandlers } = captureExtensionHandlers(
+          (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
+          { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+        );
+        const rejectCtx = activationExtensionContext({
+          cwd: home,
+          home,
+          bookKey,
+          sessionFile,
+          abort() { aborts++; },
+        });
+        await assert.rejects(
+          async () => roleHandlers.get("session_start")?.[0]?.({ reason: "startup" }, rejectCtx),
+          (error: unknown) => {
+            assert.ok(error instanceof Error, `${label} must throw Error`);
+            if (requireCause) assert.ok(error.cause !== undefined, `${label} must retain original cause`);
+            return true;
+          },
+        );
+        assert.equal(soulLoads, 0, `${label}: activation stage must not run`);
+        assert.equal(aborts, 1, `${label}: abort once`);
+        assert.equal(process.exitCode, 1, `${label}: nonzero exit`);
+      }
+
+      // Missing getSessionFile principal (empty / --no-session).
+      await rejectSessionClass("missing principal", null);
+
+      // Fabricated path under the book: neither file nor parent session-dir exists.
+      await rejectSessionClass(
+        "missing file",
+        join(machineLedgerHome(home), "books", bookKey, "runs", "no-such", "missing.jsonl"),
+        true,
       );
-      assert.equal(soulLoads, 0, `${label}: activation stage must not run`);
-      assert.equal(aborts, 1, `${label}: abort once`);
-      assert.equal(process.exitCode, 1, `${label}: nonzero exit`);
+
+      // Deferred path: parent session-dir exists but file is absent and no live header — reject.
+      const deferredDir = join(machineLedgerHome(home), "books", bookKey, "runs", "deferred-only");
+      mkdirSync(deferredDir, { recursive: true });
+      await rejectSessionClass("deferred missing file", join(deferredDir, "session.jsonl"), true);
+
+      // Directory masquerading as the session file principal.
+      const dirPrincipal = join(machineLedgerHome(home), "books", bookKey, "runs", "dir-principal");
+      mkdirSync(dirPrincipal, { recursive: true });
+      await rejectSessionClass("directory principal", dirPrincipal);
+
+      // Relative path rejected (must be absolute — placement under the book is archivist's job).
+      await rejectSessionClass("relative path", "relative/session.jsonl");
+
+      // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).
+      await rejectSessionClass("outside-home /tmp", worktreeTempPrefix("ak-act-outside-session.jsonl"));
+
+      // Consumer-repository pointer with no file: still rejected (cannot materialize outside home).
+      await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
+
+      // Symlink escape is no longer an activation rejection class (ADR 0065 / #221):
+      // record-placement enforcement lives on the activation ledger path. An existing regular
+      // file principal is admitted even when realpath leaves the book.
+    } finally {
+      await rm(nonGitCwd, { recursive: true, force: true });
     }
-
-    // Missing getSessionFile principal (empty / --no-session).
-    await rejectSessionClass("missing principal", null);
-
-    // Fabricated path under the book: neither file nor parent session-dir exists.
-    await rejectSessionClass(
-      "missing file",
-      join(machineLedgerHome(home), "books", bookKey, "runs", "no-such", "missing.jsonl"),
-      true,
-    );
-
-    // Deferred path: parent session-dir exists but file is absent and no live header — reject.
-    const deferredDir = join(machineLedgerHome(home), "books", bookKey, "runs", "deferred-only");
-    mkdirSync(deferredDir, { recursive: true });
-    await rejectSessionClass("deferred missing file", join(deferredDir, "session.jsonl"), true);
-
-    // Directory masquerading as the session file principal.
-    const dirPrincipal = join(machineLedgerHome(home), "books", bookKey, "runs", "dir-principal");
-    mkdirSync(dirPrincipal, { recursive: true });
-    await rejectSessionClass("directory principal", dirPrincipal);
-
-    // Relative path rejected (must be absolute — placement under the book is archivist's job).
-    await rejectSessionClass("relative path", "relative/session.jsonl");
-
-    // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).
-    await rejectSessionClass("outside-home /tmp", worktreeTempPrefix("ak-act-outside-session.jsonl"));
-
-    // Consumer-repository pointer with no file: still rejected (cannot materialize outside home).
-    await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
-
-    // Symlink escape is no longer an activation rejection class (ADR 0065 / #221):
-    // record-placement enforcement lives on the activation ledger path. An existing regular
-    // file principal is admitted even when realpath leaves the book.
   });
 });
 

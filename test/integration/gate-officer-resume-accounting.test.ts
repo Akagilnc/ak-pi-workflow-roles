@@ -11,7 +11,7 @@
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -519,32 +519,36 @@ test("#1092 station-child officer: no case-dossier pointer material; dialogue = 
     );
 
     const socketDir = await mkdtemp(join(tmpdir(), "ak-1092-officer-env-"));
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(join(officerRun!, "session")),
-        activation: { role: "judge" },
-        methods: [],
-        continuation: { kind: "resume", prompt: JSON.stringify(body) },
-        cwd: project,
-        home,
-        agentDir: join(home, "agent"),
-        runDirectory: officerRun!,
-        stationChild: true,
-      },
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath: join(socketDir, "mcp.sock"),
-    });
     try {
-      assert.deepEqual(JSON.parse(prepared.prompt), body);
-      const dossiers = prepared.systemPrompt.materials.filter(
-        (material) =>
-          typeof material === "object"
-          && material !== null
-          && (material as { kind?: unknown }).kind === "case-dossier-pointer",
-      );
-      assert.equal(dossiers.length, 0);
+      const prepared = await prepareRoleEnvelope({
+        request: {
+          principal: fixturePrincipal(join(officerRun!, "session")),
+          activation: { role: "judge" },
+          methods: [],
+          continuation: { kind: "resume", prompt: JSON.stringify(body) },
+          cwd: project,
+          home,
+          agentDir: join(home, "agent"),
+          runDirectory: officerRun!,
+          stationChild: true,
+        },
+        dependencies: createRoleRuntimeDependencies(packageRoot),
+        socketPath: join(socketDir, "mcp.sock"),
+      });
+      try {
+        assert.deepEqual(JSON.parse(prepared.prompt), body);
+        const dossiers = prepared.systemPrompt.materials.filter(
+          (material) =>
+            typeof material === "object"
+            && material !== null
+            && (material as { kind?: unknown }).kind === "case-dossier-pointer",
+        );
+        assert.equal(dossiers.length, 0);
+      } finally {
+        await prepared.dispose?.();
+      }
     } finally {
-      await prepared.dispose?.();
+      await rm(socketDir, { recursive: true, force: true });
     }
 
     await assert.rejects(

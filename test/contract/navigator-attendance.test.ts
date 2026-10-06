@@ -139,14 +139,8 @@ test("default delivery ceiling sends two Navigator corrections and then stops", 
     assert.equal(deliveryFeed.deliveryTurns, 1);
     assert.equal(deliveryFeed.rejectedReceipts?.[0]?.reason, "root rejection one");
     assert.equal(events[0]?.disposition, "no-advice");
-    const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
-    assert.deepEqual(lifecycle?.data.rejectedReceipts, [
-      { reason: "root rejection one", diagnosticAvailable: true },
-      { reason: "root rejection two", diagnosticAvailable: true },
-      { reason: "root rejection three", diagnosticAvailable: true },
-    ]);
-    assert.equal(lifecycle?.data.deliveryTurns, 2);
-    assert.equal(lifecycle?.data.terminalToolCalled, true);
+    // #1178: no parallel parent ak-no-receipt-lifecycle off a dead side-branch pointer.
+    assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);
   });
 });
 
@@ -326,15 +320,9 @@ test("a session that settled without a receipt is not re-summoned for delivery",
     assert.equal(harness.prompts(), 1);
     assert.equal(events.length, 1);
     assert.equal(events[0]?.disposition, "no-advice");
-    const lifecycle = harness.entries.filter((entry: any) => entry?.customType === "ak-no-receipt-lifecycle");
-    assert.equal(lifecycle.length, 1);
-    const facts = (lifecycle[0] as any).data;
-    assert.equal(facts.terminalToolCalled, true);
-    assert.equal(facts.deliveryTurns, 0);
-    assert.deepEqual(facts.rejectedReceipts, [
-      { reason: "no typed candidate batch", diagnosticAvailable: true },
-    ]);
-    assert.equal(facts.runPointer, "/fixture/navigator-record");
+    // Nested session already settled with its own no_receipt facts; parent does not
+    // rewrite a parallel lifecycle (#1178).
+    assert.equal(harness.entries.some((entry: any) => entry?.customType === "ak-no-receipt-lifecycle"), false);
   });
 });
 
@@ -355,12 +343,8 @@ test("a delivery prompt already sent keeps its count when the nested session rep
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
     assert.equal(events[0]?.disposition, "no-advice");
-    const lifecycle = harness.entries.find((entry: any) => entry?.customType === "ak-no-receipt-lifecycle") as any;
-    assert.equal(lifecycle?.data.deliveryTurns, 1);
-    assert.deepEqual(
-      lifecycle?.data.rejectedReceipts?.map((item: { reason?: string }) => item.reason),
-      ["prepare shape rejected", "nested settled without a receipt"],
-    );
+    // Delivery count already spent stays in-process; no parent parallel lifecycle (#1178).
+    assert.equal(harness.entries.some((entry: any) => entry?.customType === "ak-no-receipt-lifecycle"), false);
   });
 });
 

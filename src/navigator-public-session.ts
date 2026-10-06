@@ -276,8 +276,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
         thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
       getThinkingLevel: () => thinkingLevel,
-      // No side-branch nest path — empty pointer so work-base persist is a no-op.
-      recordPointer: () => "",
       dispose: async () => {
         // Marker only — nested cancel and non-blocking teardown are owned by
         // navigator-attendance / role-runtime (ADR 0018 / #959).

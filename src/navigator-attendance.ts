@@ -59,10 +59,7 @@ export {
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import {
-  createReceiptDeliveryPolicy,
-  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-} from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 import { sha256Hex } from "./sha256.ts";
 import { isRecord } from "./unknown-value.ts";
@@ -469,8 +466,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               delivery.closeBudget();
             }
             if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-              const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
-              activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+              // Nested @navigator run already holds lawful no_receipt + runPointer when
+              // present. Do not write a parallel parent lifecycle off a dead side-branch
+              // pointer (#1178). 催交 / nested settle / no-advice delivery stay above.
               preparedProse = undefined;
               return undefined;
             }

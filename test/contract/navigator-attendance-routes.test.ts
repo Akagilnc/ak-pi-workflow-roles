@@ -190,7 +190,6 @@ test("dispose during pending createSession drains the created session without pr
           entries: () => [],
           async setModel() { setModelCalls += 1; },
           getThinkingLevel: () => "off",
-          recordPointer: () => "/fixture/navigator-record",
           dispose() { disposeCalls += 1; markSessionDisposed(); },
         };
       },
@@ -241,7 +240,6 @@ test("attendance dispose settles session close rejection on the caller", async (
           entries: () => [],
           async setModel() {},
           getThinkingLevel: () => "off" as const,
-          recordPointer: () => "/fixture/navigator-record",
           dispose() { return Promise.reject(closeBoom); },
         }),
         onEvent: async () => {},
@@ -304,7 +302,6 @@ test("resumed setModel session failures preserve typed source and cause", async 
             }
           },
           getThinkingLevel: () => "off",
-          recordPointer: () => "/fixture/navigator-record",
           dispose() {},
         };
       },

@@ -1028,8 +1028,6 @@ test("public navigator session takes a seat edit for the next summon instead of 
           subject: "seat edit between prepares",
           tool: undefined as never,
         });
-        // #1178: no books/.../navigator/<hash>/ side-branch; pointer is empty.
-        assert.equal(session.recordPointer?.() ?? "", "");
         // Every prompt is an independent public summon whose nested CLI reads the
         // live seat table (#675 验收② / #617 DK-3): a seat edit between prepares
         // applies on the next summon and never makes attendance unavailable.
