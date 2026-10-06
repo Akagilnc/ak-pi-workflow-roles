@@ -11,8 +11,6 @@ import { join } from "node:path";
 
 import {
   createNativeNavigatorSessionFactory,
-  NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-  readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -108,18 +106,6 @@ test("#959 second attendance prompt resumes the pinned host runId", async () => 
 
     await session.prompt("materials-one");
     assert.equal(prepared[0], "第一次建议");
-    assert.equal(
-      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      "01navhost",
-    );
-    assert.ok(
-      (session.entries() as readonly unknown[]).some(
-        (entry) =>
-          typeof entry === "object"
-          && entry !== null
-          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-      ),
-    );
 
     await session.prompt("materials-two");
     assert.equal(prepared[1], "第二次建议");
@@ -265,8 +251,6 @@ test("#959 dispose during resume preflight must not start summon", async () => {
 
     await session.prompt("pin-host-run");
     assert.equal(summonCalls, 1);
-    const pinned = readNavigatorHostRunPointer(session.entries() as readonly unknown[]);
-    assert.equal(pinned, "01navpre1");
 
     const secondPrompt = session.prompt("blocked-in-preflight");
     // Let the second prompt reach hostRunResumable before dispose.
@@ -281,21 +265,7 @@ test("#959 dispose during resume preflight must not start summon", async () => {
     await secondPrompt;
 
     assert.equal(summonCalls, 1, "dispose during preflight must not start a new summon");
-    assert.equal(
-      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      pinned,
-      "blocked second prompt must not rewrite host-run pointer after dispose",
-    );
     assert.equal(prepared, 1, "only the first live prompt may prepare");
-    assert.equal(
-      (session.entries() as readonly unknown[]).filter(
-        (entry) =>
-          typeof entry === "object"
-          && entry !== null
-          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-      ).length,
-      1,
-    );
   });
 });
 
@@ -357,13 +327,11 @@ test("#959 typed non-resumable preflight allows one fresh mint", async () => {
     allowResume = false;
     await session.prompt("first-mint");
     assert.equal(calls, 1);
-    assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navfirst");
 
     // Pinned run is no longer resumable (typed preflight false) → one fresh mint.
     allowResume = false;
     await session.prompt("after-absence");
     assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
-    assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
   });
 });

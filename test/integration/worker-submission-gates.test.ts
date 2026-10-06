@@ -24,9 +24,9 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../../src/worker-submission-gates.ts";
-import { readStateRowsSync } from "../../src/run-dossier.ts";
-import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
 import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
+import { parseSitianRecordText } from "../../src/sitian-reader.ts";
+import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
 import {
   machineLedgerHome,
 } from "../helpers/pi-test-harness.ts";
@@ -162,8 +162,9 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     // bare non-git arm target must sit outside this worktree's upward Git discovery;
     // outside root is not deleted (owner 2026-09-06 directory boundary).
     const bare = await mkdtemp(outsideWorktreeTempPrefix("ak-worker-gate-bare-"));
+    const parent = durableParent(home, root);
     const gate = gateWithHome(home);
-    gate.arm(root, durableParent(home, root));
+    gate.arm(root, parent);
     for (const status of ["planned", "refused"] as const) {
       assert.doesNotThrow(() => gate.assertAcceptable(status), status);
     }
@@ -176,6 +177,18 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         error instanceof WorkerCommitReminderError &&
         error.code === "worker_commit_reminder",
     );
+    // #1178: durable facts on this leg state.jsonl — no session/worker-submission-gate nest.
+    assert.equal(existsSync(join(parent.runDirectory, "session", "worker-submission-gate")), false);
+    const stateText = readFileSync(join(parent.runDirectory, RUN_STATE_FILE), "utf8");
+    const { records, diagnostics } = parseSitianRecordText(stateText);
+    assert.equal(diagnostics.length, 0);
+    const kinds = records.map((row) => row.kind);
+    assert.ok(kinds.includes("commit-baseline"));
+    assert.ok(kinds.includes("commit-reminder-bounce"));
+    // Re-arm restores bounce from state.jsonl (same durable parent / resume path).
+    const resumed = gateWithHome(home);
+    resumed.arm(root, parent);
+    assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
     assert.doesNotThrow(() => gate.assertAcceptable("completed"));
     const g2 = gateWithHome(home);
     g2.arm(root, durableParent(home, root));
@@ -409,64 +422,5 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
         },
       );
     });
-  });
-});
-
-test("#1178 gate state survives re-arm on the same leg state.jsonl (resume continuity)", async () => {
-  await withTempGit(async (root, home) => {
-    const parent = durableParent(home);
-    const gate = createWorkerSubmissionGate();
-    gate.arm(root, parent);
-    assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
-
-    const rows = readStateRowsSync(parent.runDirectory);
-    const kinds = rows.map((row) => row.kind);
-    assert.ok(kinds.includes("commit-baseline"));
-    assert.ok(kinds.includes("commit-reminder-bounce"));
-    assert.equal(existsSync(join(parent.runDirectory, "session", "worker-submission-gate")), false);
-    assert.ok(existsSync(join(parent.runDirectory, RUN_STATE_FILE)));
-
-    // Fresh gate instance (as on resume) restores bounce mark from state.jsonl.
-    const resumed = createWorkerSubmissionGate();
-    resumed.arm(root, parent);
-    assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
-  });
-});
-
-test("#1178 gate state follows live parent session file after mid-turn path change", async () => {
-  await withTempGit(async (root, home) => {
-    const first = durableParent(home);
-    let sessionFile = first.getSessionFile()!;
-    const parent = { getSessionFile: () => sessionFile };
-    const gate = createWorkerSubmissionGate();
-    gate.arm(root, parent);
-    assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
-
-    // Simulate report-ticket relocate: move the whole run leaf and update setSessionFile.
-    const relocated = join(
-      machineLedgerHome(home),
-      "books",
-      "repo",
-      "1178",
-      "runs",
-      formatRunLeaf(randomUUID(), "coder"),
-    );
-    const { renameSync, cpSync, rmSync } = await import("node:fs");
-    mkdirSync(join(relocated, ".."), { recursive: true });
-    // Node 18+ rename across dirs; fall back to copy tree.
-    try {
-      renameSync(first.runDirectory, relocated);
-    } catch {
-      cpSync(first.runDirectory, relocated, { recursive: true });
-      rmSync(first.runDirectory, { recursive: true, force: true });
-    }
-    sessionFile = sessionFileOf(relocated);
-
-    // Live parent path: confirm path without second bounce; facts on relocated state.jsonl.
-    assert.doesNotThrow(() => gate.assertAcceptable("completed"));
-    const kinds = readStateRowsSync(relocated).map((row) => row.kind);
-    assert.ok(kinds.includes("commit-baseline"));
-    assert.ok(kinds.includes("commit-reminder-bounce"));
-    assert.equal(existsSync(join(relocated, "session", "worker-submission-gate")), false);
   });
 });

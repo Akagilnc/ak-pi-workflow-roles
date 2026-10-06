@@ -27,8 +27,6 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
 
-import { isRecord } from "./unknown-value.ts";
-
 /**
  * Ledger process home for navigator summon: admitted HostContext.runDirectory
  * first, else a parent session file under .ak-roles. Never context.home / env HOME /
@@ -51,27 +49,10 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
   return undefined;
 }
 
-/** Resume key only — points at a host run principal, never stores advice prose. */
-export const NAVIGATOR_HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
-
 export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
   const parsed = parseRunLeaf(basename(runDirectory));
   if (parsed === undefined || parsed.role !== "navigator") return undefined;
   return parsed.runId;
-}
-
-export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (!isRecord(entry)) continue;
-    if (entry.type === "custom" && entry.customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY) {
-      const data = entry.data;
-      if (isRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
-        return data.runId.trim();
-      }
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -231,12 +212,8 @@ export function createNativeNavigatorSessionFactory(deps?: {
           if (typeof runDirectory === "string" && runDirectory.trim() !== "") {
             const nextRunId = runIdFromNavigatorDirectory(runDirectory);
             if (nextRunId !== undefined) {
+              // In-memory only for this attendance lifetime (#1178) — no side-branch pointer ledger.
               hostRunId = nextRunId;
-              entries.push({
-                type: "custom",
-                customType: NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-                data: { runId: nextRunId },
-              });
             }
           }
 

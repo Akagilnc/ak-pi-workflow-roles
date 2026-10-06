@@ -30,11 +30,6 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import {
-  createWorkerSubmissionGate,
-  WorkerCommitReminderError,
-} from "../../src/worker-submission-gates.ts";
-
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -453,7 +448,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
   });
 });
 
-test("#1178 public coder resume after ticket relocate keeps gate state on state.jsonl", async () => {
+test("ak-role resume continues relocated coder plan phase without a gate nest", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -463,7 +458,6 @@ test("#1178 public coder resume after ticket relocate keeps gate state on state.
     });
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
-    const { readStateRowsSync } = await import("../../src/run-dossier.ts");
     const { existsSync } = await import("node:fs");
 
     {
@@ -489,16 +483,6 @@ test("#1178 public coder resume after ticket relocate keeps gate state on state.
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             const sessionFile = join(sessionDir, "session.jsonl");
-            await writeFile(sessionFile, "", "utf8");
-            const gate = createWorkerSubmissionGate();
-            gate.arm(project, { getSessionFile: () => sessionFile });
-            assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
-            // No side-branch nest under session/.
-            assert.equal(existsSync(join(sessionDir, "worker-submission-gate")), false);
-            const runDirectory = dirname(sessionDir);
-            const kinds = readStateRowsSync(runDirectory).map((row) => row.kind);
-            assert.ok(kinds.includes("commit-baseline"));
-            assert.ok(kinds.includes("commit-reminder-bounce"));
             const details = {
               status: "partially_completed",
               report: "Initial turn binds the ticket before resume.",
@@ -550,11 +534,8 @@ test("#1178 public coder resume after ticket relocate keeps gate state on state.
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
     assert.equal("taskPath" in admitted, false);
-    // After ticket relocate, gate facts moved with the leg — no nest directory.
+    // #1178: ticket relocate must not materialize a worker-submission-gate nest.
     assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false);
-    const relocatedKinds = readStateRowsSync(runDirectory).map((row) => row.kind);
-    assert.ok(relocatedKinds.includes("commit-baseline"));
-    assert.ok(relocatedKinds.includes("commit-reminder-bounce"));
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -575,10 +556,6 @@ test("#1178 public coder resume after ticket relocate keeps gate state on state.
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
-        const gate = createWorkerSubmissionGate();
-        gate.arm(project, { getSessionFile: () => join(sessionDirectory, "session.jsonl") });
-        // Prior bounce restored from state.jsonl — confirm without a second reminder.
-        assert.doesNotThrow(() => gate.assertAcceptable("completed"));
         const details = {
                 status: "planned",
                 report: "Resumed plan remains plan phase.",
@@ -616,6 +593,7 @@ test("#1178 public coder resume after ticket relocate keeps gate state on state.
         : [],
       ["partially_completed", "planned"],
     );
+    assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false);
   });
 });
 

@@ -4,11 +4,12 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { runDirectoryOfSessionFile } from "./role-run-placement.ts";
-import { readStateRowsSync } from "./run-dossier.ts";
+import { RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { reportRunRecord } from "./sitian-facade.ts";
+import { parseSitianRecordText } from "./sitian-reader.ts";
 import {
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
@@ -17,13 +18,11 @@ import {
 import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
-import { isRecord } from "./unknown-value.ts";
+import { isMissingPathError, isRecord } from "./unknown-value.ts";
 
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
-/** Historical kind name — no longer a nest identity; kept for callers/tests that still name the gate. */
-export const WORKER_SUBMISSION_GATE_RECORD_KIND = "worker-submission-gate";
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce";
@@ -185,14 +184,41 @@ function liveRunDirectory(parent: WorkerSubmissionGateParent): string {
   return runDirectoryOfSessionFile(file);
 }
 
+/**
+ * Control-plane read of this leg's state.jsonl for gate restore.
+ * Same fail-closed contract as readPageSync / session-identity: IO fault and
+ * decoder diagnostics refuse; illegal gate payloads refuse — never filter into
+ * "no prior state" and silently re-arm (#1178 C1).
+ */
+function readGateStateRows(runDirectory: string): readonly Record<string, unknown>[] {
+  const path = join(runDirectory, RUN_STATE_FILE);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return [];
+    throw new Error(
+      `${RUN_STATE_FILE} is unreadable (${String((error as NodeJS.ErrnoException).code ?? (error as Error).name)}): ${runDirectory}`,
+      { cause: error },
+    );
+  }
+  // Sole Sitian decoder — do not invent a second skip parser.
+  const { records, diagnostics } = parseSitianRecordText(text);
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `${RUN_STATE_FILE} has malformed row(s); refusing stale control-plane page: ${runDirectory}`,
+    );
+  }
+  return records as readonly Record<string, unknown>[];
+}
+
 function readGateState(runDirectory: string, invocationScopeId?: string): {
   baseline: string | null | undefined;
   reminded: boolean;
   prefixReminded: boolean;
   unfinishedReasonBounces: number;
 } {
-  // Fail closed on unreadable state — same contract as other state.jsonl control paths.
-  const rows = readStateRowsSync(runDirectory);
+  const rows = readGateStateRows(runDirectory);
   let baseline: string | null | undefined;
   let reminded = false;
   let prefixReminded = false;
@@ -201,20 +227,26 @@ function readGateState(runDirectory: string, invocationScopeId?: string): {
     const kind = row.kind;
     const payload = row.payload;
     if (kind === WORKER_COMMIT_BASELINE_ENTRY_TYPE) {
-      if (isRecord(payload) && (payload.head === null || typeof payload.head === "string")) {
-        baseline = payload.head as string | null;
+      // Illegal payload keeps failure identity — never wash into older/absent baseline.
+      if (!isRecord(payload) || !(payload.head === null || typeof payload.head === "string")) {
+        throw new Error(
+          `${RUN_STATE_FILE} ${WORKER_COMMIT_BASELINE_ENTRY_TYPE} payload is invalid: ${runDirectory}`,
+        );
       }
+      baseline = payload.head as string | null;
     } else if (kind === WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE) {
       reminded = true;
     } else if (kind === WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE) {
       prefixReminded = true;
-    } else if (
-      kind === WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE
-      && invocationScopeId !== undefined
-      && isRecord(payload)
-      && payload.invocationScopeId === invocationScopeId
-    ) {
-      unfinishedReasonBounces += 1;
+    } else if (kind === WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE) {
+      if (!isRecord(payload)) {
+        throw new Error(
+          `${RUN_STATE_FILE} ${WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE} payload is invalid: ${runDirectory}`,
+        );
+      }
+      if (invocationScopeId !== undefined && payload.invocationScopeId === invocationScopeId) {
+        unfinishedReasonBounces += 1;
+      }
     }
   }
   return { baseline, reminded, prefixReminded, unfinishedReasonBounces };
