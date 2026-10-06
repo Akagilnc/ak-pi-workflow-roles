@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
-import { sessionDirectoryOf } from "../role-run-placement.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../role-run-placement.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -20,9 +20,12 @@ import {
   hostAbortedError,
   isHostAbortedError,
   recordTurnDelivery,
+  retainPackageFaultBesideLivePlacement,
+  syncTurnRequestLivePlacement,
+  trySyncTurnRequestLivePlacement,
 } from "../external-host-turn-loop.ts";
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
-import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/settlement.ts";
+import { projectThrownFailureLeaf } from "../public-cli/settlement.ts";
 import {
   renderSystemPromptOverride,
   resolveBoundHostSessionId,
@@ -467,7 +470,9 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       // CLI start-up inputs (system prompt / schema / MCP config files) are not
       // dossier: they live in a throwaway directory, and what was delivered is
       // recorded once per actual start as a history.jsonl `turn-delivery` row.
-      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+      // Re-resolve after mid-turn report-ticket may have moved principal (#1171).
+      const liveSessionParent = (): string =>
+        config.sessionIdentity.resolveSessionFile(request.principal);
       const inputsDirectory = await mkdtemp(join(tmpdir(), "ak-role-headless-"));
       const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
       let mcpConfigPath: string | undefined;
@@ -500,8 +505,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         try {
           await rm(inputsDirectory, { recursive: true, force: true });
         } catch (cleanupError) {
-          await retainPackageFault({
-            runDirectory: request.runDirectory,
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `headless turn inputs cleanup failed beside setup failure: ${describeErrorIdentity(cleanupError)}`,
             error: cleanupError,
           });
@@ -552,13 +556,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               host: config.hostName,
               sessionId,
               cwd: request.cwd,
-              sessionParent,
+              sessionParent: liveSessionParent(),
               home: request.home,
             }) !== undefined;
           }
 
           // What this CLI start was given: one history record per start.
-          await recordTurnDelivery(request.runDirectory, {
+          await recordTurnDelivery(await syncTurnRequestLivePlacement(request), {
             systemPrompt,
             ...(startedWithSchema === undefined ? {} : { outputSchema: startedWithSchema }),
           }, "headless-host");
@@ -587,7 +591,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 if (!codex && typeof event === "object" && event !== null && "session_id" in event
                   && typeof event.session_id === "string" && event.session_id !== "" && event.session_id !== sessionId) {
                   sessionId = event.session_id;
-                  recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home });
+                  recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home });
                 }
                 if (codex && !codexIdObserved) {
                   const tid = codexObserver?.result().threadId;
@@ -597,7 +601,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                       host: config.hostName,
                       sessionId: tid,
                       cwd: request.cwd,
-                      sessionParent,
+                      sessionParent: liveSessionParent(),
                       home: request.home,
                     }) !== undefined;
                   }
@@ -608,7 +612,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             exitedSessionId = roundSessionId;
             if (codex && roundSessionId !== undefined && roundSessionId !== "" && !pointerRecorded) {
               try {
-                recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent, home: request.home });
+                recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home });
               } catch (error) {
                 spawned.packageErrors = [...spawned.packageErrors, error];
               }
@@ -626,8 +630,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           for (const error of spawned.packageErrors) {
-            await retainPackageFault({
-              runDirectory: request.runDirectory,
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `headless transport handling failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -635,8 +638,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           try {
           const noteBeside = async (error: unknown, what: string): Promise<void> => {
-            await retainPackageFault({
-              runDirectory: request.runDirectory,
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `${what}: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -729,8 +731,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
           return deliveredFromSpawned(spawned);
           } catch (error) {
-            await retainPackageFault({
-              runDirectory: request.runDirectory,
+            await retainPackageFaultBesideLivePlacement(request, {
               diagnostic: `required turn handling failed beside host terminal: ${describeErrorIdentity(error)}`,
               error,
             });
@@ -742,24 +743,39 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         },
       });
       } finally {
+        // Cleanup must not depend on live-path sync: lookup failure stays beside
+        // the original cleanup/copy work and never skips rm(inputsDirectory).
+        const live = await trySyncTurnRequestLivePlacement(request);
+        const liveRunDirectory = "runDirectory" in live ? live.runDirectory : undefined;
+        if (liveRunDirectory === undefined && "resolveError" in live) {
+          await retainPackageFaultBesideLivePlacement(request, {
+            diagnostic: `headless cleanup live path resolve failed beside host terminal: ${describeErrorIdentity(live.resolveError)}`,
+            error: live.resolveError,
+          });
+        }
         try {
           await rm(inputsDirectory, { recursive: true, force: true });
         } catch (error) {
-          await retainPackageFault({
-            runDirectory: request.runDirectory,
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `headless turn inputs cleanup failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });
         }
         try {
-          if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
-            host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
-            sessionDirectory: sessionDirectoryOf(request.runDirectory), sessionParent,
-            ...(request.home !== undefined ? { home: request.home } : {}),
-          });
+          if (
+            exitedSessionId !== undefined
+            && exitedSessionId !== ""
+            && liveRunDirectory !== undefined
+          ) {
+            copyAndRecordHostDossier({
+              host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
+              sessionDirectory: sessionDirectoryOf(liveRunDirectory),
+              sessionParent: sessionFileOf(liveRunDirectory),
+              ...(request.home !== undefined ? { home: request.home } : {}),
+            });
+          }
         } catch (error) {
-          await retainPackageFault({
-            runDirectory: request.runDirectory,
+          await retainPackageFaultBesideLivePlacement(request, {
             diagnostic: `host dossier copy failed beside host terminal: ${describeErrorIdentity(error)}`,
             error,
           });

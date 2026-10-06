@@ -264,6 +264,8 @@ export function createWorkerSubmissionGate(
   let unfinishedReasonBounces = 0;
   let invocationScopeId: string | undefined;
   let record: HostRecordSession | undefined;
+  /** Live parent — mid-turn run relocate (#1171) may move its session file. */
+  let parentRef: WorkerSubmissionGateParent | undefined;
   /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
   let sessionParent: string | undefined;
   const explicitHome =
@@ -277,6 +279,25 @@ export function createWorkerSubmissionGate(
       git(cwd, ["rev-parse", "--git-dir"]); // surface real git failures
       return null;
     }
+  };
+  /**
+   * #1171: report-ticket renames the run leaf; the gate nest moves with it, but the
+   * in-memory HostRecordSession still names the old path. Reopen under the live
+   * parent (continueRecent resumes the moved nest) before any append.
+   */
+  const liveRecord = (): HostRecordSession | undefined => {
+    if (record === undefined || root === undefined || parentRef === undefined) return record;
+    const file = record.getSessionFile();
+    if (file !== undefined && existsSync(file)) return record;
+    const parentFile = parentRef.getSessionFile();
+    if (parentFile === undefined || parentFile.length === 0) return record;
+    sessionParent = parentFile;
+    record = createRecordSession({
+      cwd: root,
+      kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
+      parent: parentRef,
+    });
+    return record;
   };
   const gateSitian = (cwd: string, payload: Record<string, unknown>) => {
     sitianReport({
@@ -294,6 +315,7 @@ export function createWorkerSubmissionGate(
       invocationScopeId = scope;
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
+      parentRef = parent;
       sessionParent = parent.getSessionFile();
       record = createRecordSession({
         cwd,
@@ -322,9 +344,10 @@ export function createWorkerSubmissionGate(
       });
     },
     assertAcceptable(status, details) {
+      const gateRecord = liveRecord();
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
         if (unfinishedReasonBounces < unfinishedReasonBounceLimit) {
-          record?.appendCustomEntry(WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE, {
+          gateRecord?.appendCustomEntry(WORKER_UNFINISHED_REASON_BOUNCE_ENTRY_TYPE, {
             version: 1, invocationScopeId,
           });
           unfinishedReasonBounces += 1;
@@ -338,7 +361,7 @@ export function createWorkerSubmissionGate(
       // Gate ① — forgetfulness reminder (ADR 0066; behavior unchanged).
       if (!headMoved && !reminded) {
         reminded = true;
-        record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+        gateRecord?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
         gateSitian(root, {
           type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
           version: 1,
@@ -358,7 +381,7 @@ export function createWorkerSubmissionGate(
         return;
       }
       prefixReminded = true;
-      record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+      gateRecord?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
       gateSitian(root, {
         type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
         version: 1,

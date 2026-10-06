@@ -372,7 +372,7 @@ function callPlanned(socketPath, token) {
       try {
         await req("tools/call", {
           name: "ak_coder_output",
-          arguments: { status: "planned", report: "Plan only; no edits." },
+          arguments: { status: "planned", report: "Plan only; no edits.", ticketNumber: 1171 },
         });
         sock.destroy();
         resolve();
@@ -926,7 +926,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; planned receipt", a
       const plannedEnvelope = {
         type: "result",
         session_id: "sess-822-claude",
-        structured_output: { status: "planned", report: "Plan only; no edits." },
+        structured_output: { status: "planned", report: "Plan only; no edits.", ticketNumber: 1171 },
       };
       await writeFile(
         binary,

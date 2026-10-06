@@ -407,7 +407,7 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
       piRunner: scriptedTerminatingToolSession({
         role: "navigator",
         toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-        details: { prose: "下一步" },
+        details: { prose: "下一步", ticketNumber: 1166 },
       }),
     });
     const nav = createNavigatorAttendance({

@@ -205,7 +205,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           capturedArgs = [...args];
@@ -236,6 +236,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
                 details: {
                   status: "converged",
                   note: "ok",
+                  ticketNumber: 1171,
                   auditNoReceipt: {
                     status: "no-receipt",
                     terminalToolCalled: false,
@@ -252,7 +253,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: { disposition: "advice", prose: "review next → reviewer" } },
+              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged", ticketNumber: 1171}, navigator: { disposition: "advice", prose: "review next → reviewer" } },
             },
             {
               type: "custom_message",
@@ -287,6 +288,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
               details: {
                 status: "converged",
                 note: "ok",
+                ticketNumber: 1171,
                 auditNoReceipt: {
                   status: "no-receipt",
                   terminalToolCalled: false,
@@ -385,13 +387,13 @@ test("runAkRole judge empty request does not invent semantic task content on the
         if (role === "notary" || role === "auditor") {
           return scriptedTerminatingToolSession({
             role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-            details: { status: "converged" },
+            details: { status: "converged", ticketNumber: 1171},
           })(args, options);
         }
         prompt = readUserDialogueStdin(String(options.stdin ?? ""));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
-        const details = { status: "converged" };
+        const details = { status: "converged", ticketNumber: 1171};
         await writeFile(
           join(sessionDir, "session.jsonl"),
           `${JSON.stringify({

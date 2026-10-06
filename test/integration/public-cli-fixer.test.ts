@@ -187,6 +187,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
           home,
           cwd: project,
           createRunId: () => runId,
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -205,7 +206,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
                 args: [...args],
                 sealedAcceptance: {
                   role: "fixer" as const,
-                  details: { status: "planned", report: `started despite ${label} prereq` },
+                  details: { status: "planned", report: `started despite ${label} prereq` , ticketNumber: 1171},
                 },
               };
             },
@@ -214,9 +215,10 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       );
       assert.equal(result.exitCode, 0, `${label} must still start`);
       const bookKey = resolveBookKeyFromGit(project);
-      const runDirectory = join(
-        home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`,
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const runDirectory =
+        (await findRunDirectoryById(home, runId))
+        ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`);
       await assert.rejects(
         () => access(join(runDirectory, "fix-packet.md")),
         (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
@@ -243,6 +245,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const receipt = {
         status: "planned" as const,
         report: "Plan: inspect root cause; diagnosis available if needed.",
+        ticketNumber: 1171,
       };
       const result = await runAkRole([
           "fixer", "--model", "test/caller-seat:high",
@@ -311,17 +314,11 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       // The submitted words live in history.jsonl; the terminal carries only the verdict.
       assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
       assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
-      await access(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          resolveBookKeyFromGit(project),
-          "unbound", "runs",
-          "run-cli-fixer-plan@fixer",
-          "current.json",
-        ),
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const planRunDirectory =
+        (await findRunDirectoryById(home, "run-cli-fixer-plan"))
+        ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-cli-fixer-plan@fixer");
+      await access(join(planRunDirectory, "current.json"));
     }
 
     {
@@ -665,7 +662,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
           if (args[args.indexOf("--ak-role") + 1] === "inspector") {
             return scriptedTerminatingToolSession({
               role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171},
             })(args, options);
           }
           const sessionFile = args[args.indexOf("--session") + 1]!;

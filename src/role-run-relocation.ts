@@ -43,6 +43,12 @@ const RUN_STATE_PAGE_FIELDS = [
   "sessionFile",
 ] as const;
 
+/** Typed principal session coordinates rewritten when the owning run leaf moves. */
+export const PRINCIPAL_SESSION_PATH_FIELDS = [
+  "sessionDirectory",
+  "sessionFile",
+] as const;
+
 const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
 const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 const OFFICER_POINTER_FIELDS = ["sessionFile", "runDirectory"] as const;
@@ -146,6 +152,41 @@ export function rewriteRunDirectoryPathFields(
   ]);
 }
 
+/** Principal session paths only — shared live + durable projection after a run move. */
+export function rewritePrincipalSessionPaths(
+  principal: Record<string, unknown>,
+  oldRunDirectory: string,
+  newRunDirectory: string,
+): void {
+  rewriteRunDirectoryPathFields(
+    principal,
+    PRINCIPAL_SESSION_PATH_FIELDS,
+    oldRunDirectory,
+    newRunDirectory,
+  );
+}
+
+/**
+ * Live turn request: move runDirectory and rewrite principal session paths in place.
+ * Callers that lack authority.seal use this; admitted refresh seals after the same rewrite.
+ */
+export function projectTurnRequestLiveRunDirectory(
+  request: {
+    runDirectory: string;
+    principal: { sessionDirectory?: string; sessionFile?: string };
+  },
+  newRunDirectory: string,
+): void {
+  const old = request.runDirectory;
+  if (old === newRunDirectory) return;
+  request.runDirectory = newRunDirectory;
+  rewritePrincipalSessionPaths(
+    request.principal as Record<string, unknown>,
+    old,
+    newRunDirectory,
+  );
+}
+
 /** In-place rewrite of selected fields against a rewrite set. */
 export function rewriteRunDirectoryPathFieldsAgainstRewrites(
   record: Record<string, unknown>,
@@ -227,7 +268,7 @@ export function rewriteAdmittedRoleRunPage(
   if (isRecord(page.principal)) {
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page.principal,
-      ["sessionDirectory", "sessionFile"],
+      PRINCIPAL_SESSION_PATH_FIELDS,
       rewrites,
     );
   }
@@ -447,7 +488,7 @@ export async function rewriteRoleRunDurablePages(input: {
       if (isRecord(page.principal)) {
         rewriteRunDirectoryPathFieldsAgainstRewrites(
           page.principal,
-          ["sessionDirectory", "sessionFile"],
+          PRINCIPAL_SESSION_PATH_FIELDS,
           rewrites,
         );
       }

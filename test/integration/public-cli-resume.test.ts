@@ -254,6 +254,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // #1171: bind before the publication-lock fault so relocate does not
+          // race the locked current.json plant.
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: host,
         },
@@ -268,14 +271,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(dispatches(), 1);
       assert.equal(result.terminal!.autoResumeCount, 0);
       const bookKey = resolveBookKeyFromGit(project);
-      const runDirectory = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "unbound", "runs",
-        `${runId}@judge`,
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const runDirectory =
+        (await findRunDirectoryById(home, runId))
+        ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
@@ -385,6 +384,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // #1171: EISDIR poison targets later audit/persist of run-state rows.
+          // Bind up front so post-host board discovery is not owed; damage still
+          // fails closed on the intended seam (not washed as unbound no-ticket).
+          boundTicketNumber: 1171,
           io: captured.io,
           roleTurnHost: {
             executeTurn: async (request) => {
@@ -407,14 +410,17 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(result.exitCode, 1);
       assert.equal(result.terminal, undefined);
       assert.equal(dispatches(), 1);
-      const runDirectory = join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "unbound", "runs",
-        `${runId}@judge`,
-      );
+      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+      const runDirectory =
+        (await findRunDirectoryById(home, runId))
+        ?? join(
+          home,
+          ".ak-roles",
+          "books",
+          resolveBookKeyFromGit(project),
+          "unbound", "runs",
+          `${runId}@judge`,
+        );
       await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
@@ -642,7 +648,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { status: "converged", note: "resumed ok" },
+                details: { status: "converged", note: "resumed ok", ticketNumber: 1171 },
               },
             })}\n`,
             "utf8",
@@ -652,7 +658,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             stderr: "",
             timedOut: false,
             args: [...args],
-            sealedAcceptance: { role: "judge", details: { status: "converged", note: "resumed ok" } },
+            sealedAcceptance: { role: "judge", details: { status: "converged", note: "resumed ok", ticketNumber: 1171 } },
           };
         },
         }),
@@ -665,13 +671,16 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
 
-    const admittedAfter = readCurrentSection(runDirectory, "admitted") as { attachments: Array<{ path: string }> };
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
+    const admittedAfter = readCurrentSection(liveRunDirectory, "admitted") as { attachments: Array<{ path: string }> };
     assert.equal(admittedAfter.attachments[0]!.path, attachmentSrc);
-    assert.equal(existsSync(join(runDirectory, "attachments")), false);
+    assert.equal(existsSync(join(liveRunDirectory, "attachments")), false);
 
-    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
+    const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
-    assert.equal(durable?.sessionFile, join(sessionDirectory, "session.jsonl"));
+    // Resume reopens the pre-relocate principal; seal ticketNumber then relocates.
+    assert.equal(durable?.sessionFile, join(liveRunDirectory, "session", "session.jsonl"));
     assert.deepEqual([...openedPrincipals], [
       join(sessionDirectory, "session.jsonl"),
     ]);
@@ -745,7 +754,7 @@ test("resume model override is temporary and does not rewrite persistent config"
               role: "toolResult",
               toolName: JUDGE_OUTPUT_TOOL_NAME,
               isError: false,
-              details: { status: "converged" },
+              details: { status: "converged", ticketNumber: 1171 },
             },
           })}\n`,
           "utf8",
@@ -843,7 +852,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                   role: "toolResult",
                   toolName: JUDGE_OUTPUT_TOOL_NAME,
                   isError: false,
-                  details: { status: "converged" },
+                  details: { status: "converged", ticketNumber: 1171 },
                 },
               })}\n`,
               "utf8",
@@ -853,7 +862,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
               stderr: "",
               timedOut: false,
               args: [...args],
-              sealedAcceptance: { role: "judge", details: { status: "converged" } },
+              sealedAcceptance: { role: "judge", details: { status: "converged", ticketNumber: 1171 } },
             };
           },
         }),
@@ -900,7 +909,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                     role: "toolResult",
                     toolName: JUDGE_OUTPUT_TOOL_NAME,
                     isError: false,
-                    details: { status: "converged" },
+                    details: { status: "converged", ticketNumber: 1171 },
                   },
                 })}\n`,
                 "utf8",
@@ -910,7 +919,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                 stderr: "",
                 timedOut: false,
                 args: [...args],
-                sealedAcceptance: { role: "judge", details: { status: "converged" } },
+                sealedAcceptance: { role: "judge", details: { status: "converged", ticketNumber: 1171 } },
               };
             },
           }),
@@ -1027,6 +1036,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => runId,
+      // #1171: bind up front so resume seal need not relocate under a held lease.
+      boundTicketNumber: 1171,
       io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -1049,14 +1060,10 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
     });
 
     const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const runDirectory =
+      (await findRunDirectoryById(home, runId))
+      ?? join(home, ".ak-roles", "books", bookKey, "1171", "runs", `${runId}@judge`);
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
     let savedRunState = "";
@@ -1095,7 +1102,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                         role: "toolResult",
                         toolName: JUDGE_OUTPUT_TOOL_NAME,
                         isError: false,
-                        details: { status: "converged", note: "resume despite live lease" },
+                        details: { status: "converged", note: "resume despite live lease", ticketNumber: 1171 },
                       },
                     })}\n`,
                     "utf8",
@@ -1107,13 +1114,14 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                     args: [...args],
                     sealedAcceptance: {
                       role: "judge",
-                      details: { status: "converged", note: "resume despite live lease" },
+                      details: { status: "converged", note: "resume despite live lease", ticketNumber: 1171 },
                     },
                   };
                 },
               })).executeTurn(request);
               if (request.activation.role === "judge") {
-                const statePath = join(runDirectory, "current.json");
+                // Poison the live admitted path (may already be ticket-bound).
+                const statePath = join(request.runDirectory, "current.json");
                 savedRunState = await readFile(statePath, "utf8");
                 await rm(statePath, { force: true });
                 await mkdir(statePath);
@@ -1126,7 +1134,9 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(dispatches, 1);
         assert.equal(resumed.exitCode, 0);
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-        const entries = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+        const liveRunDirectory =
+          (await findRunDirectoryById(home, runId)) ?? runDirectory;
+        const entries = (await readFile(join(liveRunDirectory, "session", "session.jsonl"), "utf8"))
           .trim()
           .split("\n")
           .filter(Boolean)
@@ -1142,9 +1152,11 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
     );
 
     // Shared lease acquire itself still fails closed for other authorized writers.
-    const first = await acquireRunWriterLease(runDirectory);
+    // #1171: resume seal may have relocated; lease checks use the live path.
+    const liveAfter = (await findRunDirectoryById(home, runId)) ?? runDirectory;
+    const first = await acquireRunWriterLease(liveAfter);
     await assert.rejects(
-      () => acquireRunWriterLease(runDirectory),
+      () => acquireRunWriterLease(liveAfter),
       (error: unknown) => error instanceof RunWriterLeaseHeldError,
     );
     await first.release();
@@ -1425,7 +1437,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
               role: "toolResult",
               toolName: JUDGE_OUTPUT_TOOL_NAME,
               isError: false,
-              details: { status: "converged", note: "principal ok" },
+              details: { status: "converged", note: "principal ok", ticketNumber: 1171 },
             },
           })}\n`,
           "utf8",
@@ -1435,14 +1447,16 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           stderr: "",
           timedOut: false,
           args: [...args],
-          sealedAcceptance: { role: "judge", details: { status: "converged", note: "principal ok" } },
+          sealedAcceptance: { role: "judge", details: { status: "converged", note: "principal ok", ticketNumber: 1171 } },
         };
       },
       }),
     });
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    const after = await readRoleRunState(runDirectory, principalAuthority);
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
+    const after = await readRoleRunState(liveRunDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
     assert.equal(after?.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
   });
@@ -1910,7 +1924,7 @@ test("public resume failures persist structured diagnostics", async () => {
             sessionDirectory === child.sessionDirectory || sessionDirectory === dispatchedChild.sessionDirectory,
             true,
           );
-          const details = { status: "converged" };
+          const details = { status: "converged", ticketNumber: 1171 };
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(sessionFile, `${JSON.stringify({
             type: "message",

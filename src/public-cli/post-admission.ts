@@ -6,6 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 
 import {
@@ -24,14 +25,15 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
-import { parseTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
+import { parseTicketNumber, readBoardTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
+import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 import {
   createReceiptDeliveryPolicy,
   deliveryLimitFromConfig,
 } from "../receipt-delivery-policy.ts";
-import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
+import { rewritePrincipalSessionPaths, rewriteRunDirectoryPathValue, rewriteAdmittedRoleRunPage } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
@@ -143,6 +145,148 @@ function projectRelocatedTurnIdentity(
       artifact.path = rewrite(artifact.path) as string;
     }
   }
+}
+
+/**
+ * #1171: after the host returns, re-locate the leg by run id (report-ticket may
+ * have moved it mid-turn in the tool process). Settlement and render use the
+ * live path; lease cleanup follows when the held path changed.
+ * Failure is not best-effort: a missing former path with no replacement must not
+ * settle or write back under the vanished unbound leaf (失败诚实宪法).
+ */
+export async function refreshAdmittedPlacementAfterHostTurn(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  heldLease?: { relocate(runDirectory: string): void },
+): Promise<RunDirectoryRelocation | undefined> {
+  const home = homeFromRunDirectory(admitted.runDirectory);
+  const found = await findRunDirectoryById(home, admitted.runId, admitted.bookKey, admitted.role);
+  if (found === undefined && !existsSync(admitted.runDirectory)) {
+    throw new Error(
+      `admitted run ${admitted.runId} missing after host turn; not found under ${home}`,
+    );
+  }
+  // Live identity first: later board-ticket read must not leave settlement on the
+  // pre-relocate path when facts are damaged (#1171 F4-R1).
+  let relocation: RunDirectoryRelocation | undefined;
+  if (found !== undefined && found !== admitted.runDirectory) {
+    const oldRunDirectory = admitted.runDirectory;
+    const coords = { ...authority.decode(admitted.principal) };
+    rewritePrincipalSessionPaths(
+      coords as Record<string, unknown>,
+      oldRunDirectory,
+      found,
+    );
+    const principal = authority.seal(coords);
+    rewriteAdmittedRoleRunPage(
+      admitted as unknown as Record<string, unknown>,
+      [{ oldRunDirectory, newRunDirectory: found }],
+    );
+    (admitted as { principal: typeof principal }).principal = principal;
+    heldLease?.relocate(found);
+    relocation = { oldRunDirectory, newRunDirectory: found };
+  }
+  // Board re-read discovers a ticket written mid-turn while still unbound
+  // (report-ticket board page). Already-bound identity needs no discovery —
+  // path relocate already used findRunDirectoryById. This is not damage
+  // recovery: when unbound, readBoardTicketNumber damage/non-ENOENT IO still
+  // propagates (失败诚实; notary: no damaged-control-plane → no-ticket wash).
+  if (admitted.ticketNumber === undefined) {
+    const boardTicket = await readBoardTicketNumber(found ?? admitted.runDirectory);
+    if (boardTicket !== undefined) {
+      (admitted as { ticketNumber?: number }).ticketNumber = boardTicket;
+    }
+  }
+  return relocation;
+}
+
+/** Apply a successful post-host placement refresh onto the live turn request. */
+function applyRefreshedPlacementToTurn(
+  request: RoleTurnRequest,
+  turnRequest: RoleTurnRequest,
+  admitted: AdmittedRoleInvocation,
+  refreshed: RunDirectoryRelocation,
+): RoleTurnRequest {
+  projectRelocatedTurnIdentity(request, {}, admitted, refreshed);
+  return {
+    ...turnRequest,
+    runDirectory: admitted.runDirectory,
+    principal: admitted.principal,
+  };
+}
+
+/**
+ * #1171: host throw after a started turn — one live placement refresh, then the
+ * one settlement authority (ADR 0080). Shared by first turn and 催交; never
+ * settle under a vanished unbound leaf.
+ */
+async function settleHostThrowAfterLivePlacementRefresh<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  admitted: A;
+  hostError: unknown;
+  /** False only when executeTurn itself threw; post-success refresh share this catch. */
+  hostTurnCompleted: boolean;
+  request: RoleTurnRequest;
+  turnRequest: RoleTurnRequest;
+  lease: RunWriterLease | undefined;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  persistRunState: boolean;
+  notePackageFault?: (diagnostic: string) => void | Promise<void>;
+  courtAttemptId?: string;
+}): Promise<{
+  settled: { exitCode: number; admitted: A; terminal: T };
+  turnRequest: RoleTurnRequest;
+}> {
+  let refreshError: unknown;
+  let turnRequest = input.turnRequest;
+  try {
+    const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+      input.admitted,
+      input.env.principalAuthority,
+      input.lease,
+    );
+    if (refreshed !== undefined) {
+      turnRequest = applyRefreshedPlacementToTurn(
+        input.request,
+        turnRequest,
+        input.admitted,
+        refreshed,
+      );
+    }
+  } catch (err) {
+    refreshError = err;
+  }
+  const processCancelName = processCancelSignalName(input.env.signal);
+  // Secondary hostThrow only when the host actually threw and refresh also failed.
+  // Package-side refresh failure must not borrow that label (#1171 F10).
+  const hostThrowSecondary =
+    refreshError !== undefined && input.hostTurnCompleted === false
+      ? { knownDetails: { hostThrow: describeCaughtError(input.hostError) } }
+      : {};
+  const settled = await settleAfterTurnStarted(
+    input.admitted,
+    withEngineDetourInvocationScope({
+      timedOut: false,
+      code: null,
+      stderr: "",
+      // Prefer the refresh failure when the live path is gone; otherwise the
+      // host throw remains the cause (失败诚实：不在旧 unbound 上结算写回).
+      ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
+      thrown: refreshError ?? input.hostError,
+      ...hostThrowSecondary,
+    }, input.request.invocationScopeId),
+    input.adapters,
+    input.env.principalAuthority,
+    input.io,
+    input.persistRunState,
+    input.notePackageFault,
+    input.courtAttemptId,
+  );
+  return { settled, turnRequest };
 }
 
 /** #855: process-cancel settlement never re-enters auto-resume. */
@@ -307,6 +451,23 @@ export type PostAdmissionEnv = {
    * keeps this env's autoResumeLimit; the counter is the only thing that moves.
    */
   unreadableReasksSpent?: number;
+  /**
+   * #1171: missing-ticket soft reasks already issued on this chain. Hard ceiling
+   * is one — still no ticket after that stays unbound with the sealed receipt.
+   * Budget only across rounds; not the current turn's settlement identity.
+   */
+  ticketReasksSpent?: number;
+  /**
+   * #1171 F2-R5: this turn is the one soft reask. Keep the sealed terminal face
+   * when it ends without a substitute seal. Not carried into audit continue.
+   */
+  softTicketReaskTurn?: true;
+  /**
+   * #1171 F2-R7: live ownership cell for this soft-reask nested chain.
+   * Created at soft-reask dispatch; settlement of that turn sets sealedSubstitute.
+   * Shared ref survives env spreads — not a second ledger.
+   */
+  softTicketReaskOwnership?: { sealedSubstitute: boolean };
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -1023,6 +1184,8 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcomeFor<A, T>): Promise<DispatchOutcomeFor<A, T>> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
+    // #1171: placement refresh runs once after each host return (below), before
+    // settlement — not again here. finishAfterTurn only binds/relocates sealed tickets.
     // #855: re-read cancel before committing the terminal and afterDispatch.
     // A signal after the history-first commit cannot retroactively erase it.
     // skipRunStateWrite: run-state
@@ -1069,15 +1232,35 @@ export async function dispatchPostAdmissionTurn<
       result.terminal === pendingTerminal
     ) {
       try {
+        // #1171 F2-R2 / F2-R3 (#419) / F2-R5: only the soft-reask turn itself
+        // preserves the sealed terminal face. ticketReasksSpent is budget across
+        // rounds — after audit continue, ordinary no-volume turns publish
+        // no_receipt honestly. previewOnly skips the terminal pointer;
+        // recordAttemptHistory still appends.
+        const softTicketReaskNoSeal =
+          pendingSettlement !== "sealed" && env.softTicketReaskTurn === true;
+        const noSealScope = softTicketReaskNoSeal
+          ? {
+              ...courtScope,
+              previewOnly: true as const,
+              recordAttemptHistory: true as const,
+            }
+          : { ...courtScope, recordAttemptHistory: true as const };
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
               { ...courtScope, recordAttemptHistory: true })
           : await attachRecordedSubmissions(admitted,
               await settleHostEndedNoReceipt(admitted, env.principalAuthority,
-                { ...courtScope, recordAttemptHistory: true }, receiptDelivery.issuedDeliveryRequests()) as T,
-              courtScope);
+                noSealScope, receiptDelivery.issuedDeliveryRequests()) as T,
+              noSealScope);
         if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
         result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
+        // #1171 F2-R7: ownership evidence at this soft-reask turn's seal —
+        // mutate the live ownership cell carried on env (survives spreads).
+        if (pendingSettlement === "sealed" && env.softTicketReaskTurn === true
+          && env.softTicketReaskOwnership !== undefined) {
+          env.softTicketReaskOwnership.sealedSubstitute = true;
+        }
         if (pendingSettlement === "sealed" && terminal.roleOutcome.kind === "accepted"
           && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
           try {
@@ -1223,6 +1406,7 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
+    let hostTurnCompleted = false;
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
       // host CLI's native resume. Nothing here may gate, redirect or reshape
@@ -1230,29 +1414,41 @@ export async function dispatchPostAdmissionTurn<
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
       result = await env.roleTurnHost.executeTurn(turnRequest);
-    } catch (error) {
-      const processCancelName = processCancelSignalName(env.signal);
-      const settled = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-          timedOut: false,
-          code: null,
-          stderr: "",
-          // The thrown value is the host's report. A cancel received on this
-          // call is a second fact; it must not become a new Error in its place.
-          ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
-          thrown: error,
-        }, request.invocationScopeId),
-        adapters,
+      hostTurnCompleted = true;
+      // #1171: one placement refresh before settlement, same try as executeTurn.
+      // Failure shares the catch below (refresh-then-settle + #855 cancel wrap).
+      const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+        admitted,
         env.principalAuthority,
+        lease,
+      );
+      if (refreshed !== undefined) {
+        turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
+      }
+    } catch (error) {
+      // #1171: one placement refresh before settlement — failure is a real cause,
+      // never catch-and-continue onto a vanished unbound leaf.
+      // Host throw and post-success refresh throw share this catch (#1171 F9).
+      const thrown = await settleHostThrowAfterLivePlacementRefresh({
+        admitted,
+        hostError: error,
+        hostTurnCompleted,
+        request,
+        turnRequest,
+        lease,
+        adapters,
+        env,
         io,
         persistRunState,
-        courtScope.notePackageFault,
-        courtScope.courtAttemptId,
-      );
+        notePackageFault: courtScope.notePackageFault,
+        ...(courtScope.courtAttemptId === undefined
+          ? {}
+          : { courtAttemptId: courtScope.courtAttemptId }),
+      });
+      turnRequest = thrown.turnRequest;
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
-          { ...settled, turnDispatched: true as const, ...deferredPersist },
+          { ...thrown.settled, turnDispatched: true as const, ...deferredPersist },
           env.signal,
         ),
       );
@@ -1289,6 +1485,7 @@ export async function dispatchPostAdmissionTurn<
       // that never reached the host.
       let deliveryResult: RoleTurnResult;
       let deliveryTurnRequest: RoleTurnRequest;
+      let deliveryHostTurnCompleted = false;
       try {
         // Host and the other axes already selected on this turn ride the
         // shared projection. The pre-projection request does not have them.
@@ -1306,28 +1503,48 @@ export async function dispatchPostAdmissionTurn<
         };
         receiptDelivery.recordDeliveryRequest();
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
+        deliveryHostTurnCompleted = true;
+        // Same single refresh-before-settle rule as the first turn (#1171):
+        // stay inside this try so cancel wrap is not dropped (#1171 F9 / #855).
+        const refreshed = await refreshAdmittedPlacementAfterHostTurn(
+          admitted,
+          env.principalAuthority,
+          lease,
+        );
+        if (refreshed !== undefined) {
+          turnRequest = applyRefreshedPlacementToTurn(request, turnRequest, admitted, refreshed);
+          deliveryTurnRequest = {
+            ...deliveryTurnRequest,
+            runDirectory: admitted.runDirectory,
+            principal: admitted.principal,
+          };
+        }
       } catch (error) {
         // 催交 cannot substitute for host failure recovery: a real failure with
         // its true cause, through the one settlement authority (ADR 0080).
-        // The turn started, so the caller's loop resumes instead of replaying
-        // the initial payload. The issued count survives that re-entry.
-        const settled = await settleAfterTurnStarted(
+        // Same refresh-before-settle seam as the first turn (#1171 F4-R1).
+        // Host throw and post-success refresh throw share this catch (#1171 F9).
+        const thrown = await settleHostThrowAfterLivePlacementRefresh({
           admitted,
-          withEngineDetourInvocationScope(
-            { timedOut: false, code: null, stderr: "", thrown: error },
-            request.invocationScopeId,
-          ),
+          hostError: error,
+          hostTurnCompleted: deliveryHostTurnCompleted,
+          request,
+          turnRequest,
+          lease,
           adapters,
-          env.principalAuthority,
+          env,
           io,
           persistRunState,
-          courtScope.notePackageFault,
-          courtScope.courtAttemptId,
-        );
+          notePackageFault: courtScope.notePackageFault,
+          ...(courtScope.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: courtScope.courtAttemptId }),
+        });
+        turnRequest = thrown.turnRequest;
         return await finishAfterTurn(
           withProcessCancelSkipAutoResume(
             {
-              ...settled,
+              ...thrown.settled,
               turnDispatched: true as const,
               ...deferredPersist,
             },

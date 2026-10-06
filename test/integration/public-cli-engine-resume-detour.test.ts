@@ -63,13 +63,16 @@ const SEAT_TERMINAL: Record<
   Seat,
   { readonly toolName: string; readonly details: Record<string, unknown> }
 > = {
-  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged" } },
-  coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof" } },
+  // #1171 / #1167: ordinary auto-resume cases carry ticketNumber so the soft
+  // missing-ticket reask does not steal the envelope-only continuation turn.
+  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged", ticketNumber: 1171 } },
+  coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof", ticketNumber: 1171 } },
   fixer: {
     toolName: FIXER_OUTPUT_TOOL_NAME,
     details: {
       status: "completed",
       report: "engine proof",
+      ticketNumber: 1171,
       classResults: [{
         name: "engine-resume",
         disposition: "completed",
@@ -84,19 +87,20 @@ const SEAT_TERMINAL: Record<
     // Minimal production ReviewerIntent (lens axes only; engine-detour does not assert amendments).
     details: {
       status: "completed",
+      ticketNumber: 1171,
     },
   },
   merger: {
     toolName: MERGER_OUTPUT_TOOL_NAME,
-    details: { status: "escalate", attemptId: "", diagnosis: "need escalate", report: "merger proof" },
+    details: { status: "escalate", attemptId: "", diagnosis: "need escalate", report: "merger proof", ticketNumber: 1171 },
   },
   countersign: {
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    details: { status: "converged" },
+    details: { status: "converged", ticketNumber: 1171 },
   },
   "gleaner-left": {
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-    details: { status: "completed", findings: [] },
+    details: { status: "completed", findings: [], ticketNumber: 1171 },
   },
 };
 

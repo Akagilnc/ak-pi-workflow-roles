@@ -16,6 +16,7 @@ import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
+import { registerReportTicketTool, REPORT_TICKET_TOOL_NAME } from "./report-ticket-tool.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -1790,6 +1791,11 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
+        // #1171: same registration mouth as submission tools; when-to-call is on the tool itself.
+        registerReportTicketTool(roleHost);
+        roleHost.setActiveTools([
+          ...new Set([...roleHost.getActiveTools(), REPORT_TICKET_TOOL_NAME]),
+        ]);
         roleReferenceMaterials = await dependencies.loadRoleReferenceMaterials?.(entry.role) ?? "";
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.

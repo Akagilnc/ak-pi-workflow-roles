@@ -211,7 +211,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 2) {
@@ -219,7 +219,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 3) {
@@ -227,7 +227,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -368,7 +368,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.deepEqual(
       second.terminal?.submissions,
-      [{ status: "pass", findings: [] }],
+      [{ status: "pass", findings: [], ticketNumber: 1171 }],
       "run-scoped submissions still present the first court's sealed pass",
     );
     assert.equal(turn, 3, "same-parent court must dispatch a real turn");
@@ -541,7 +541,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 2) {
@@ -549,21 +549,21 @@ test("#637/#987 public inspector: resume continues open-court settlement without
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 3) {
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
         return scriptedTerminatingToolSession({
           role: "inspector",
           toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [] },
+          details: { status: "pass", findings: [], ticketNumber: 1171 },
         })(extraArgs, options);
       },
     });
@@ -584,8 +584,11 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     assert.equal(first.exitCode, 0, "first sealed inspector must accept");
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
-    const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
+    // #1171: sealed ticketNumber relocates unbound → ticket; later resumes use the live path.
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const runDirectory =
+      (await findRunDirectoryById(home, runId)) ?? seen[0]!.runDirectory;
 
     // 2) Same-ticket distinct parent --source-run must mint (#747 / #1166).
     const crossParent = await runAkRole(["inspector", "--source-run", otherParentRunPath, "--attach", external],
@@ -633,7 +636,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     );
     assert.deepEqual(
       second.terminal?.submissions,
-      [{ status: "pass", findings: [] }],
+      [{ status: "pass", findings: [], ticketNumber: 1171 }],
       "run-scoped submissions still present the first court's sealed pass",
     );
     assert.equal(seen.length, 3);
@@ -953,7 +956,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
+        details: { status: "pass", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(inner, seen);
@@ -1046,7 +1049,7 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
       piRunner: scriptedTerminatingToolSession({
         role: "inspector",
         toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
+        details: { status: "pass", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(inner, seen);
@@ -1108,7 +1111,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
         return scriptedTerminatingToolSession({
           role: "inspector",
           toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: coderTurns === 1 ? "continue" : "converged", findings: [] },
+          details: { status: coderTurns === 1 ? "continue" : "converged", findings: [], ticketNumber: 1171 },
         })(args, options);
       },
     });
@@ -1137,7 +1140,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
         });
         try {
           execFileSync("git", ["-c", "user.name=Worker Test", "-c", "user.email=worker@test.invalid", "commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
-          await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted" });
+          await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted", ticketNumber: 1171 });
           const closed = await prepared.closeRound();
           assert.equal(closed.accepted, true);
           return { code: 0, stderr: "", timedOut: false };
@@ -1171,7 +1174,10 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     // volume — no task.md copy. No artifacts/, stderr.log, headless-*, run-state /
     // invocation / admitted-request json or .run-starts; no attachments/. The session
     // volume holds the host session (and the gate officer's own session volume).
-    const coderRunDirectory = seen.find((turn) => turn.kind === "initial")!.runDirectory;
+    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
+    const coderRunDirectory =
+      (await findRunDirectoryById(scratch.home, "run-worker-gate-resume-993"))
+      ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
       ["current.json", "history.jsonl", "log.jsonl", "session", "state.jsonl"],
@@ -1189,7 +1195,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(read.status, "present");
     assert.deepEqual(
       ((read as unknown as { body: { outcome: { payloads: unknown } } }).body.outcome.payloads),
-      [{ status: "completed", report: "work submitted" }],
+      [{ status: "completed", report: "work submitted", ticketNumber: 1171 }],
     );
     // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
     assert.deepEqual(
@@ -1199,8 +1205,8 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.deepEqual(
       (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(({ kind, accepted }) => ({ kind, accepted })),
       [
-        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
-        { kind: "accepted", accepted: { status: "completed", report: "work submitted" } },
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
+        { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
       ],
     );
   } finally {
@@ -1225,7 +1231,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
+        details: { status: "pass", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(sealHost, seen);
@@ -1324,7 +1330,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -1334,7 +1340,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -1346,7 +1352,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [] },
+          details: { status: "pass", findings: [], ticketNumber: 1171 },
         })(extraArgs, options);
       },
     });

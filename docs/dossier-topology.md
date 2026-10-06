@@ -30,7 +30,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 3. `navigator/`：游奕使跨票工作主体记录。
 4. `collector-handbook/`：仓库级通进司手册。
 
-归属判据是：删除一张票后仍有意义的记录才留在票外。属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
+归属判据是：删除一张票后仍有意义的记录才留在票外。属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言、报票号工具 `ak_report_ticket`，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
 
 ## 一条腿的五项（current.json、三个行文件、宿主原件）
 
@@ -95,7 +95,7 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 ## 边界
 
 - 本页只定义 `books/<book-key>/` 以下拓扑，不改变 ADR 0048 的家、簿、分簿键与 session 直写原则。
-- 票身份来自起居郎认票断言，或未绑定工作席 typed 回执中的票号自报；路径代码不从自然语言重判票号。
+- 票身份来自起居郎认票断言、报票号工具 `ak_report_ticket`，或未绑定工作席 typed 回执中的票号自报；路径代码不从自然语言重判票号。
 - 落盘调用方不选择目的地；唯一记录入口依身份和 run 所有权计算上述路径。
 - 太史分析目录不在本拓扑射程。
 - 存量卷宗不迁移：#1161 之前的 run 目录（十六个文件、逐次副本）不被读取，旧文件名在代码中不再被写入或读取；`src/book-topology-*.ts` 与 `scripts/migrate-book-topology.ts` 是 #852 的一次性迁移工具，其中提及旧名字处只服务存量迁移，不属于运行路径。

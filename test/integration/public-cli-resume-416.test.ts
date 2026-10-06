@@ -64,7 +64,7 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   });
 }
 /** Accepted judge details + sealedAcceptance for faux runners (S4 ledger-only settlement). */
-function acceptedJudge(details: Record<string, unknown> = { status: "converged" }) {
+function acceptedJudge(details: Record<string, unknown> = { status: "converged", ticketNumber: 1171 }) {
   return {
     write: (sessionFile: string) => writeFile(sessionFile, JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } }) + "\n", "utf8"),
     sealedAcceptance: { role: "judge" as const, details },
@@ -113,7 +113,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({status:"converged",note:"FIRST-ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
+        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({status:"converged",note:"FIRST-ok",ticketNumber:1171});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");

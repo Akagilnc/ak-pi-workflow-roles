@@ -1,30 +1,10 @@
 /**
  * Shared ACP MCP tools/list probe for envelope tests (#1166 J8).
- * One authority for socket list + token extraction — import, do not copy.
+ * Token extraction reuses mcp-tool-call — request method differs, rule does not (#1171 F6-R2).
  */
-import assert from "node:assert/strict";
 import { createConnection } from "node:net";
 
-import { isRecord } from "../../src/unknown-value.ts";
-
-export function mcpRelayToken(prepared: {
-  readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
-}): string {
-  const server = prepared.mcpServers[0];
-  assert.ok(server !== undefined, "prepared turn must expose MCP server");
-  const env = server.env;
-  assert.ok(Array.isArray(env), "mcp server env must be an array");
-  for (const entry of env) {
-    if (
-      isRecord(entry)
-      && entry.name === "AK_ACP_MCP_TOKEN"
-      && typeof entry.value === "string"
-    ) {
-      return entry.value;
-    }
-  }
-  assert.fail("AK_ACP_MCP_TOKEN missing from prepared MCP env");
-}
+export { mcpTokenFromPrepared as mcpRelayToken } from "./mcp-tool-call.ts";
 
 export async function listMcpToolNames(
   socketPath: string,

@@ -55,7 +55,9 @@ import { objectPayloads } from "../helpers/terminal-payload.ts";
 
 const ENGINE = "kimi";
 const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
-const JUDGE_ACCEPTED = { status: "converged" as const };
+// #1171: ordinary auto-resume tracers carry ticketNumber so soft reask does
+// not expand invocation-scope / toolCallId observations.
+const JUDGE_ACCEPTED = { status: "converged" as const, ticketNumber: 1171 };
 /** Non-ASCII stdout — UTF-8 byte length is the ticket metric (你好 = 6). */
 const ECHO_STDOUT = "你好";
 const ECHO_STDOUT_BYTES = Buffer.byteLength(ECHO_STDOUT, "utf8");

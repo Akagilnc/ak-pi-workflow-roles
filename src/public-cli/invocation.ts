@@ -52,7 +52,7 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  rewriteRunDirectoryPathFields,
+  rewriteAdmittedRoleRunPage,
 } from "../role-run-relocation.ts";
 import { readPageSync, renderCurrentSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
@@ -607,18 +607,10 @@ export async function relocateAdmittedRunToTicket(
   // render that may refuse (#1161 L1 / BASE order).
   heldLease?.relocate(target.runDirectory);
 
-  const admittedRecord = admitted as unknown as Record<string, unknown>;
-  rewriteRunDirectoryPathFields(
-    admittedRecord,
-    [
-      "runDirectory",
-      "mergerInputPath",
-    ],
-    oldRunDirectory,
-    target.runDirectory,
+  rewriteAdmittedRoleRunPage(
+    admitted as unknown as Record<string, unknown>,
+    [{ oldRunDirectory, newRunDirectory: target.runDirectory }],
   );
-  // #1165/#1168: caller file-flag paths stay as given. Obsolete copy fields
-  // (taskPath/packetPath) are not rewritten — stock volumes keep their bytes.
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   // current.json projects host.original from this run directory. Ownership is

@@ -403,6 +403,8 @@ test("ak-role resume continues merger with exact session", async () => {
           attemptId: runId,
           diagnosis: "Authority choice required after resume.",
           report: "Resumed merge still needs a decision.",
+          // #1171: resume tracer is ordinary continuation, not missing-ticket reask.
+          ticketNumber: 1171,
         };
         await writeFile(
           join(sessionDirectory, "session.jsonl"),

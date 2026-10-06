@@ -169,7 +169,7 @@ function officerSealHost(role: OfficerRole): RoleTurnHost {
     piRunner: scriptedTerminatingToolSession({
       role,
       toolName,
-      details: { status: "converged" },
+      details: { status: "converged", ticketNumber: 1166 },
     }),
   });
 }
@@ -244,6 +244,7 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
         runId: "01a0116600007000800000000000j001",
         details: {
           status: "converged" as const,
+          ticketNumber: 1166,
           findings: [{ id: "N1", path: PEER_PATH }],
           reason: "peer body with a path must pass through unchanged",
         },
@@ -256,6 +257,7 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
         runId: "01a0116600007000800000000000c001",
         details: {
           status: "completed" as const,
+          ticketNumber: 1166,
           report: "done",
           findings: [{ id: "C1", path: PEER_PATH }],
         },
@@ -349,11 +351,13 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
 
     const first = {
       status: "converged" as const,
+      ticketNumber: 1166,
       note: "first-copy",
       findings: [{ id: "A", path: PEER_PATH }],
     };
     const second = {
       status: "converged" as const,
+      ticketNumber: 1166,
       note: "second-copy-after-resubmit",
       findings: [{ id: "B", path: PEER_PATH }],
     };
@@ -369,8 +373,8 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
           notaryPrompts.push(request.continuation.prompt);
         }
         const details = notaryPrompts.length <= 1
-          ? { status: "continue", violations: ["rewrite"] }
-          : { status: "converged" };
+          ? { status: "continue", violations: ["rewrite"], ticketNumber: 1166 }
+          : { status: "converged", ticketNumber: 1166 };
         return roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -519,7 +523,7 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
         runId: "01a0116600007000800000000000da01",
       },
     ]) {
-      let captured: RoleTurnRequest | undefined;
+      let inspected: Awaited<ReturnType<typeof inspectLiveRequest>> | undefined;
       const result = await runAkRole(seat.argv, {
         packageRoot,
         home,
@@ -529,13 +533,13 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
           assert.equal(request.activation.role, seat.role);
-          captured = request;
+          // Observe startup while the turn is live, before ticket binding moves it.
+          inspected = await inspectLiveRequest(request, packageRoot);
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
       assert.equal(result.exitCode, 0);
-      assert.ok(captured);
-      const inspected = await inspectLiveRequest(captured, packageRoot);
+      assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
         identity: expectedIdentity,

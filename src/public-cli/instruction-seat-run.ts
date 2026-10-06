@@ -4,7 +4,10 @@
  * starts two ordinary single-axis runs here.
  */
 import { dirname, resolve } from "node:path";
+import { MISSING_TICKET_REASK_MATERIAL } from "../report-ticket-tool.ts";
 import { isUnboundRunDirectory, sessionFileOf } from "../role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
+import { readPackageMaterial } from "../session-opening-materials.ts";
 import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
@@ -26,7 +29,10 @@ import {
   latestQueuePayload,
   latestQueueStatus,
 } from "../submission-gate.ts";
-import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
+import {
+  isSafePositiveTicketNumber,
+  readBoardTicketNumber,
+} from "../run-ticket-number.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
@@ -173,10 +179,21 @@ function unreadablePostSubmissionStatus(
  * status: the caller presents the volumes already in hand and does not advance
  * review. ADR 0007 audit continues are not this shape.
  */
+/**
+ * Drop turn-scoped soft-reask identity; keep cross-turn budgets and ownership cell.
+ * #1171 F2-R5 / F2-R9: ordinary status reask and court continue must not inherit
+ * softTicketReaskTurn (that flag only governs the soft-reask turn's own settle).
+ */
+function withoutSoftTicketReaskTurn(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
+  const { softTicketReaskTurn: _softTicketReaskTurn, ...rest } = env;
+  return rest;
+}
+
 function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv | undefined {
   const spent = env.unreadableReasksSpent ?? 0;
   if (spent >= deliveryLimitFromConfig(env.autoResumeLimit)) return undefined;
-  return { ...env, unreadableReasksSpent: spent + 1 };
+  // Ordinary status reask: strip soft-reask turn identity; keep spent budget (#1171 F2-R9).
+  return { ...withoutSoftTicketReaskTurn(env), unreadableReasksSpent: spent + 1 };
 }
 
 /** Budget spent on an unreadable status. Distinct from "status is readable". */
@@ -268,6 +285,203 @@ async function reaskUnreadablePostSubmissionStatus(
     next,
     io,
   );
+}
+
+/**
+ * Soft-reask call outcome at the missing-ticket seam (#1171 F2-R6 / F2-R7).
+ * Ownership is decided here once from this nested chain's settlement evidence
+ * (soft-reask turn sealed → ownership cell; or returned terminal still carries volume);
+ * callers must not re-judge the same criterion.
+ */
+type SoftTicketReaskOutcome =
+  | { readonly kind: "none" }
+  | { readonly kind: "nested_owns"; readonly result: SeatRunResult }
+  | { readonly kind: "no_substitute"; readonly result: SeatRunResult };
+
+/**
+ * #1171: sealed submission still leaves the leg unbound → soft reask once.
+ * Does not reject the sealed receipt; exhaustion leaves unbound as filed.
+ * Reask copy lives in package resources (ADR 0073).
+ * #1171 F2-R7: ownership comes from this nested resume's settlement seam
+ * (softTicketReaskOwnership.sealedSubstitute set when the soft-reask turn itself seals),
+ * not full-leg sealed count / time-window deltas that can absorb another court's seal.
+ */
+async function reaskMissingTicketOnce(
+  admitted: AdmittedRoleInvocation,
+  terminal: TerminalResult | undefined,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SoftTicketReaskOutcome> {
+  if ((env.ticketReasksSpent ?? 0) >= 1) return { kind: "none" };
+  if (admitted.ticketNumber !== undefined) return { kind: "none" };
+  if (!isUnboundRunDirectory(admitted.runDirectory)) return { kind: "none" };
+  if (terminal?.roleOutcome.kind !== "accepted" && terminal?.roleOutcome.kind !== "audit_escalation") {
+    return { kind: "none" };
+  }
+  const payloads = terminal.roleOutcome.payloads ?? [];
+  if (payloads.length === 0) return { kind: "none" };
+  // Sealed-with-ticket skips via admitted.ticketNumber after bindSealedTicketNumber
+  // (post-admission). Do not re-parse payload.ticketNumber here — that would
+  // duplicate the existing ticket seam (#1171 notary: no rule copy).
+  const instruction = (await readPackageMaterial(MISSING_TICKET_REASK_MATERIAL)).trim();
+  // Spend budget and mark this turn as the soft reask (settlement identity).
+  // Ownership cell is set at that turn's settlement; env spreads keep the same
+  // ref through audit continue — see envForCourtContinue (#1171 F2-R5 / F2-R7).
+  const softTicketReaskOwnership = { sealedSubstitute: false };
+  const softReaskEnv: InstructionSeatRunEnv = {
+    ...env,
+    ticketReasksSpent: 1,
+    softTicketReaskTurn: true,
+    softTicketReaskOwnership,
+  };
+  const result = await runPublicInstructionSeatResume(
+    { runId: admitted.runId, summons: { instruction } },
+    softReaskEnv,
+    io,
+  );
+  if (
+    softTicketReaskOwnership.sealedSubstitute
+    || terminalCarriesSealedSubmission(result.terminal)
+  ) {
+    return { kind: "nested_owns", result };
+  }
+  return { kind: "no_substitute", result };
+}
+
+/** Court continue: keep cross-turn budgets + ownership cell; drop turn-scoped soft-reask identity. */
+function envForCourtContinue(env: InstructionSeatRunEnv): InstructionSeatRunEnv {
+  return { ...withoutSoftTicketReaskTurn(env), unreadableReasksSpent: 0 };
+}
+
+/** True when a terminal still carries a sealed accepted / audit_escalation volume. */
+function terminalCarriesSealedSubmission(terminal: TerminalResult | undefined): boolean {
+  const kind = terminal?.roleOutcome.kind;
+  if (kind !== "accepted" && kind !== "audit_escalation") return false;
+  return (terminal?.roleOutcome.payloads ?? []).length > 0;
+}
+
+/**
+ * #1171 F2-R2: kept original terminal may still name pre-relocate artifact
+ * paths after a report-only reask moved the leg. Project onto live admitted
+ * via the same rewrite seam post-admission uses after relocate.
+ */
+function projectKeptOriginalArtifactsOntoLiveAdmitted(
+  original: SeatRunResult,
+  kept: SeatRunResult,
+): void {
+  const oldRunDirectory = original.admitted?.runDirectory;
+  const newRunDirectory = kept.admitted?.runDirectory;
+  if (
+    oldRunDirectory === undefined
+    || newRunDirectory === undefined
+    || oldRunDirectory === newRunDirectory
+    || kept.terminal === undefined
+  ) {
+    return;
+  }
+  for (const artifact of kept.terminal.artifacts) {
+    artifact.path = rewriteRunDirectoryPathValue(
+      artifact.path,
+      oldRunDirectory,
+      newRunDirectory,
+    ) as string;
+  }
+}
+
+/**
+ * #1171 F2: missing-ticket reask did not seal a substitute — keep original
+ * terminal; take live placement from the reask when it relocated.
+ * #1171 F2-R1: silence / report-only stays on the original chain; a real host
+ * failure (nonzero exit) must be delivered honestly — do not wash it into the
+ * original accepted result. Sealed original volume remains on disk either way.
+ * #1171 F2-R2: after keep, project report artifact paths onto the live
+ * admitted directory so public result, durable face, and artifact refs agree.
+ * Substitute ownership is decided once at the soft-reask call seam (F2-R6);
+ * this helper only finishes the keep path.
+ */
+function mergeMissingTicketReaskKeepOriginal(
+  original: SeatRunResult,
+  ticketReask: SeatRunResult,
+): SeatRunResult {
+  if (ticketReask.exitCode !== 0) return ticketReask;
+  const admitted = ticketReask.admitted ?? original.admitted;
+  if (admitted === undefined) return { ...original };
+  const kept = { ...original, admitted };
+  projectKeptOriginalArtifactsOntoLiveAdmitted(original, kept);
+  return kept;
+}
+
+/**
+ * Post-submission status reask, then missing-ticket soft reask, then audit.
+ * #1171 F3: status exhaustion must not skip the one missing-ticket reask.
+ * #1171 F2: ticket reask without a substitute seal continues the original chain.
+ */
+async function continueAfterPostSubmissionGuards(
+  result: SeatRunResult,
+  admittedRole: PackagedRole,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+  held: readonly string[],
+): Promise<SeatRunResult> {
+  const live = result.admitted;
+  if (live === undefined) {
+    await presentOriginalVolume(held, result.terminal, io);
+    return result;
+  }
+  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
+    live,
+    result.terminal,
+    env,
+    io,
+  );
+  let afterStatus = result;
+  if (isUnreadableReaskExhausted(unreadableReask)) {
+    const terminal = result.terminal === undefined
+      ? undefined
+      : withUnsettledDirection(result.terminal);
+    afterStatus = terminal === undefined
+      ? { ...result, admitted: live }
+      : { ...result, admitted: live, terminal };
+    // Fall through: missing-ticket reask still owed on the original sealed volume.
+  } else if (unreadableReask !== undefined) {
+    return unreadableReask;
+  }
+  const forTicket = afterStatus.admitted ?? live;
+  // Ownership is decided once inside reaskMissingTicketOnce (#1171 F2-R6).
+  const softReask = await reaskMissingTicketOnce(
+    forTicket,
+    afterStatus.terminal ?? result.terminal,
+    env,
+    io,
+  );
+  if (softReask.kind === "nested_owns") {
+    // Nested resume already finished guards + audit/present for the substitute.
+    // Do not run a second outer settlement of the same public call (#1171 F2-R4b).
+    return softReask.result;
+  }
+  const continued = softReask.kind === "none"
+    ? afterStatus
+    : mergeMissingTicketReaskKeepOriginal(afterStatus, softReask.result);
+  const continuedAdmitted = continued.admitted ?? live;
+  // Spent budget rides the outer audit/continue chain (#1171 F2-R4a). Soft-reask
+  // settlement identity does not — ordinary continue turns publish no_receipt (#1171 F2-R5).
+  const continuedEnv = softReask.kind !== "none"
+    ? { ...env, ticketReasksSpent: 1 }
+    : env;
+  if (AUDITED_ROLES.has(admittedRole) && continued.terminal?.roleOutcome.kind === "accepted") {
+    return auditSubmittedRole(
+      { ...continued, admitted: continuedAdmitted },
+      continuedEnv,
+      io,
+    );
+  }
+  await presentOriginalVolume(
+    held,
+    continued.terminal,
+    io,
+    continuedAdmitted.runDirectory,
+  );
+  return { ...continued, admitted: continuedAdmitted };
 }
 
 function roleRecord(role: PackagedRole) {
@@ -523,25 +737,15 @@ async function dispatchAdmitted(
     });
   };
   const result = await execute(env);
-  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
-    admitted,
-    result.terminal,
+  // Prefer the live admitted object returned from the turn (may have relocated).
+  const live = result.admitted ?? admitted;
+  return continueAfterPostSubmissionGuards(
+    { ...result, admitted: live },
+    admitted.role,
     env,
     io,
+    held,
   );
-  if (isUnreadableReaskExhausted(unreadableReask)) {
-    const terminal = result.terminal === undefined
-      ? undefined
-      : withUnsettledDirection(result.terminal);
-    await presentOriginalVolume(held, terminal, io, admitted.runDirectory);
-    return terminal === undefined ? result : { ...result, terminal };
-  }
-  if (unreadableReask !== undefined) return unreadableReask;
-  if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
-    return auditSubmittedRole(result, env, io);
-  }
-  await presentOriginalVolume(held, result.terminal, io, admitted.runDirectory);
-  return result;
 }
 
 /**
@@ -797,9 +1001,9 @@ export async function runPublicInstructionSeat(
     const result = await runCountersignBody(parsed, env, {
       stdout: (value) => held.push(value), stderr: io.stderr,
     });
-    if (result.terminal?.roleOutcome.kind === "accepted") return auditSubmittedRole(result, env, io);
-    await presentOriginalVolume(held, result.terminal, io, result.admitted?.runDirectory);
-    return result;
+    // Same post-submission guards as every other seat (#1171 F8): missing-ticket
+    // soft reask once, then audit — no early return that skips the reask.
+    return continueAfterPostSubmissionGuards(result, "countersign", env, io, held);
   }
 
   if ("parallelLenses" in record && record.parallelLenses === true) {
@@ -1075,28 +1279,17 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
-    const unreadableReask = result.admitted === undefined
-      ? undefined
-      : await reaskUnreadablePostSubmissionStatus(
-        result.admitted,
-        result.terminal,
-        env,
-        io,
-      );
-    if (isUnreadableReaskExhausted(unreadableReask)) {
-      const terminal = result.terminal === undefined
-        ? undefined
-        : withUnsettledDirection(result.terminal);
-      await presentOriginalVolume(held, terminal, io, result.admitted?.runDirectory);
-      return terminal === undefined ? result : { ...result, terminal };
+    if (result.admitted === undefined) {
+      await presentOriginalVolume(held, result.terminal, io);
+      return result;
     }
-    if (unreadableReask !== undefined) return unreadableReask;
-    if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
-      && result.terminal?.roleOutcome.kind === "accepted") {
-      return auditSubmittedRole(result, env, io);
-    }
-    await presentOriginalVolume(held, result.terminal, io, result.admitted?.runDirectory);
-    return result;
+    return continueAfterPostSubmissionGuards(
+      result,
+      result.admitted.role,
+      env,
+      io,
+      held,
+    );
   };
   let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
   try {
@@ -1151,7 +1344,7 @@ async function queueConclusionFromChild(
   // Notary, auditor, and inspector have no seat-local status reask. This loop
   // is their one budget. The child resume keeps the caller's env so delivery,
   // failure recovery, and other reask loops stay separate.
-  let budgetEnv: InstructionSeatRunEnv = { ...env, unreadableReasksSpent: 0 };
+  let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
     const terminal = await trySettlePublicSeat(
       current,
@@ -1234,7 +1427,7 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume({
       runId: parentRunId,
       summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
-    }, { ...env, unreadableReasksSpent: 0 }, io);
+    }, envForCourtContinue(env), io);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1285,6 +1478,8 @@ async function auditSubmittedRole(
   resumedOfficer?: AdmittedRoleInvocation,
   passedReceipt?: unknown,
 ): Promise<SeatRunResult> {
+  // Ordinary audit chain: drop soft-reask turn identity; keep budgets/ownership (#1171 F2-R9).
+  env = withoutSoftTicketReaskTurn(env);
   const admitted = turn.admitted;
   if (admitted === undefined || !AUDITED_ROLES.has(admitted.role)
     || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
@@ -1329,10 +1524,13 @@ async function auditSubmittedRole(
     await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
     return turn;
   }
-  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const acceptedRow = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted");
-  const toolCallId = acceptedRow?.toolCallId;
-  if (toolCallId === undefined) throw new Error("accepted submission has no tool call identity");
+  // #1171 F2-R8: bind audit to the sealed identity carried on this turn's
+  // settlement terminal — never the whole-leg latest accepted row (another
+  // lawful public call may have sealed and passed台院 meanwhile).
+  const toolCallId = turn.terminal.submissionToolCallId;
+  if (toolCallId === undefined || toolCallId.length === 0) {
+    throw new Error("accepted submission has no tool call identity");
+  }
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
   const entries = admitted.role === "doctor"
     ? await readBoundSessionEntries(sessionFile)
@@ -1393,7 +1591,7 @@ async function auditSubmittedRole(
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
           runId: admitted.runId, summons: { instruction: readableGateItem(decision.receipt ?? decision.violations) },
-        }, { ...env, unreadableReasksSpent: 0 }, io);
+        }, envForCourtContinue(env), io);
       }
       if (decision.status === "received") {
         if (lastSummon?.terminal === undefined) {
@@ -1495,7 +1693,7 @@ async function auditSubmittedRole(
       return runPublicInstructionSeatResume({
         runId: admitted.runId,
         summons: { instruction: readableGateItem(chain.passes.at(-1)?.receipt) },
-      }, { ...env, unreadableReasksSpent: 0 }, io);
+      }, envForCourtContinue(env), io);
     }
     if (admitted.role === "secretariat") {
       const pass = chain.passes.at(-1);

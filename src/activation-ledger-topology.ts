@@ -46,6 +46,22 @@ export function tryHomeFromAkRolesPath(path: string): string | undefined {
 }
 
 /**
+ * Soft derive: book key owning a path under `.ak-roles/books/<bookKey>/…`.
+ * Same topology family as tryHomeFromAkRolesPath — no cross-book invent.
+ */
+export function tryBookKeyFromAkRolesPath(path: string): string | undefined {
+  const home = tryHomeFromAkRolesPath(path);
+  if (home === undefined || home.length === 0) return undefined;
+  const booksRoot = join(resolveActivationLedgerHome(home), "books");
+  const rel = relative(booksRoot, resolve(path));
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    return undefined;
+  }
+  const bookKey = rel.split(sep)[0];
+  return bookKey === undefined || bookKey === "" ? undefined : bookKey;
+}
+
+/**
  * Hard derive: package home owning a run/session path under `.ak-roles/`.
  * Fails typed when the path is not ledger topology (no HOME fallback).
  */

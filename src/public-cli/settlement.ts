@@ -189,6 +189,12 @@ export function ledgerReadScope(
   };
 }
 
+type SealedLedgerSettle = {
+  readonly outcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>;
+  /** Tool-call identity of the latest this-settle terminal row (#1171 F2-R8). */
+  readonly submissionToolCallId?: string;
+};
+
 function roleOutcomeFromRows(
   role: TerminalRoleName,
   rows: readonly {
@@ -197,8 +203,9 @@ function roleOutcomeFromRows(
     readonly accepted: unknown;
     readonly auditReceipt?: unknown;
     readonly auditOfficer?: unknown;
+    readonly toolCallId?: string;
   }[],
-): Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined {
+): SealedLedgerSettle | undefined {
   const mine = rows.filter((row) => row.role === role);
   // Terminal acceptance kind still only follows sealed / audit-escalation (#881):
   // correctable-rejection / infrastructure / candidate stay payloads, not acceptance.
@@ -211,23 +218,32 @@ function roleOutcomeFromRows(
   // keep that earlier receipt (#1057).
   const payloads = mine.map((row) => row.accepted);
   const latest = terminal[terminal.length - 1]!;
+  const submissionToolCallId =
+    typeof latest.toolCallId === "string" && latest.toolCallId.length > 0
+      ? latest.toolCallId
+      : undefined;
+  const belonging =
+    submissionToolCallId === undefined ? {} : { submissionToolCallId };
   if (latest.kind === "audit-escalation") {
     return {
-      kind: "audit_escalation", role, status: "audit_escalation", payloads,
-      ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
-        auditEscalationReceipt: latest.auditReceipt,
-        ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
-      } } : {}),
+      outcome: {
+        kind: "audit_escalation", role, status: "audit_escalation", payloads,
+        ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
+          auditEscalationReceipt: latest.auditReceipt,
+          ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
+        } } : {}),
+      },
+      ...belonging,
     };
   }
-  return { kind: "accepted", role, payloads };
+  return { outcome: { kind: "accepted", role, payloads }, ...belonging };
 }
 
 async function sealedLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
   scope?: SettlementCourtScope,
-): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+): Promise<SealedLedgerSettle | undefined> {
   const home = sealedLedgerHome(admitted);
   // #879: when court scope is present, roleOutcome is this-court original only —
   // never last-wins over an undivided historical array, and never falls back to
@@ -1450,8 +1466,8 @@ async function settleSealedSeat(
   },
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
-  if (roleOutcome === undefined || (options.acceptedOnly && roleOutcome.kind !== "accepted")) {
+  const settled = await sealedLedgerOutcome(admitted, admitted.role, scope);
+  if (settled === undefined || (options.acceptedOnly && settled.outcome.kind !== "accepted")) {
     return undefined;
   }
   const read = await readLawfulSettlementEntries(coordinates.sessionFile);
@@ -1462,7 +1478,14 @@ async function settleSealedSeat(
       `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
     );
   }
-  return finishLawfulSeat(admitted, coordinates, entriesOf(read), roleOutcome, scope);
+  return finishLawfulSeat(
+    admitted,
+    coordinates,
+    entriesOf(read),
+    settled.outcome,
+    scope,
+    settled.submissionToolCallId,
+  );
 }
 
 async function finishLawfulSeat(
@@ -1471,6 +1494,7 @@ async function finishLawfulSeat(
   entries: readonly SessionEntry[],
   roleOutcome: TerminalRoleOutcome,
   scope: SettlementCourtScope | undefined,
+  submissionToolCallId?: string,
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
@@ -1480,6 +1504,9 @@ async function finishLawfulSeat(
     navigator: extractNavigatorFact(entries),
     artifacts,
     runId: admitted.runId,
+    ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
+      ? {}
+      : { submissionToolCallId }),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
   return attachRecordedSubmissions(admitted, terminal, scope);
 }

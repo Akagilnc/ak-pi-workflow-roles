@@ -359,6 +359,8 @@ test("ak-role resume continues countersign on the exact session", async () => {
           return scriptedCountersignSession({
             status: "converged",
             note: "RESUMED-续署",
+            // #1171: ordinary resume continuation, not missing-ticket reask.
+            ticketNumber: 1171,
           })(args, options);
         }),
       }),
@@ -398,6 +400,8 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        // #1171: this tracer is sealed resume, not missing-ticket soft reask.
+        boundTicketNumber: 1171,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -665,6 +669,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           packageRoot,
           cwd: project,
           io: cap.io,
+          // #1171: #843 residual tracer is not the missing-ticket soft reask case.
+          boundTicketNumber: 1171,
           ...(createRunId === undefined ? {} : { createRunId }),
           roleTurnHost: countersignScriptedHost(piRunner),
         }),
