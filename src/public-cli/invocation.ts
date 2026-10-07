@@ -1937,7 +1937,10 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Load the admitted section written at admission (Navigator work-context seam). */
+/**
+ * Load the admitted section written at admission (Navigator work-context seam).
+ * Missing / wrong-shape → undefined. Control-plane read faults propagate (#1187 F2).
+ */
 export async function loadAdmittedJudgeRequest(
   runDirectory: string,
 ): Promise<{
@@ -1945,24 +1948,21 @@ export async function loadAdmittedJudgeRequest(
   instructionEmpty: boolean;
   attachments: readonly AdmittedAttachment[];
 } | undefined> {
-  try {
-    const record = readPageSync(runDirectory, "admitted");
-    if (record === undefined) return undefined;
-    if (!packagedPublicInstructionSubject(record.role)) return undefined;
-    if (typeof record.instruction !== "string") return undefined;
-    if (typeof record.instructionEmpty !== "boolean") return undefined;
-    if (!Array.isArray(record.attachments)) return undefined;
-    const attachments = record.attachments
-      .map((item) => normalizeAdmittedAttachment(item))
-      .filter((item): item is AdmittedAttachment => item !== undefined);
-    return {
-      instruction: record.instruction,
-      instructionEmpty: record.instructionEmpty,
-      attachments,
-    };
-  } catch {
-    return undefined;
-  }
+  const record = readPageSync(runDirectory, "admitted");
+  if (record === undefined) return undefined;
+  if (!packagedPublicInstructionSubject(record.role)) return undefined;
+  if (typeof record.instruction !== "string") return undefined;
+  if (typeof record.instructionEmpty !== "boolean") return undefined;
+  if (!Array.isArray(record.attachments)) return undefined;
+  const attachments = record.attachments
+    .map((item) => normalizeAdmittedAttachment(item))
+    .filter((item): item is AdmittedAttachment => item !== undefined);
+  return {
+    instruction: record.instruction,
+    instructionEmpty: record.instructionEmpty,
+    attachments,
+  };
+
 }
 
 export type AdmitFixerInvocationOptions = {

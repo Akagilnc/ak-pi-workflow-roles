@@ -55,8 +55,9 @@ test("#1160 prepare runs model from parent start; settle picks byStatus without 
     assert.equal(fed.role, "coder");
     assert.equal(fed.phase, "apply");
     assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
-    assert.equal(fed.subject, "Fix issue 28");
-    assert.equal(fed.authority, "owner decision");
+    // #1187: auto prepare is identity-only — parent dispatch must not ride along.
+    assert.equal("subject" in fed, false);
+    assert.equal("authority" in fed, false);
     assert.equal(typeof fed.invocationId, "string");
     assert.equal("status" in fed, false, "prepare does not know the outcome yet");
 
@@ -413,8 +414,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
       role: "coder",
       phase: "apply",
       subjectKey: "/repo/.ak/work/issues/28",
-      subject: "Fix issue 28",
-      authority: "owner decision",
+
       modelSettingPath: setting,
       createSession: createNativeNavigatorSessionFactory({
         summonPublicRole: async (options) => {
@@ -597,8 +597,7 @@ test("#1160 native public session carries materials and byStatus originals", asy
       role: "coder",
       phase: "apply",
       subjectKey: `${root}/.ak/work`,
-      subject: "#1160 original user task",
-      authority: "#1160 original user task",
+
       modelSettingPath: setting,
       createSession: createNativeNavigatorSessionFactory({
         hostRunResumable: async () => false,
@@ -606,8 +605,11 @@ test("#1160 native public session carries materials and byStatus originals", asy
           const argvText = typeof options.argv[0] === "string" ? options.argv[0] : "";
           const fed = JSON.parse(argvText) as Record<string, unknown>;
           assert.equal(fed.kind, "prepare");
-          assert.equal(fed.subject, "#1160 original user task");
-          assert.equal(fed.authority, "#1160 original user task");
+          // #1187: nested public prepare carries identity, not parent task prose.
+          assert.equal("subject" in fed, false);
+          assert.equal("authority" in fed, false);
+          assert.equal(typeof fed.subjectKey, "string");
+          assert.equal(typeof fed.role, "string");
           return {
             exitCode: 0,
             runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpub@navigator"),

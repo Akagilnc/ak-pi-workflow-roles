@@ -74,19 +74,6 @@ import { isRecord } from "./unknown-value.ts";
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
 
-/**
- * Role-input document bytes win verbatim over work-root file authority when non-empty.
- * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
- */
-export function resolveNavigatorAuthorityMaterial(
-  roleInput: string | undefined,
-  fileAuthority: string | undefined,
-): string | undefined {
-  if (roleInput !== undefined && roleInput.trim() !== "") return roleInput;
-  if (fileAuthority !== undefined && fileAuthority.trim() !== "") return fileAuthority;
-  return undefined;
-}
-
 /** Every public role is a lawful navigator route target (#675 — no nested-only seats). */
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY
   .map(({ role, phases }) => ({ role, phases }));
@@ -101,10 +88,9 @@ export type NavigatorSettlement =
 
 export type NavigatorSubjectProvenance = "placeholder" | "role_input" | "user_prompt";
 
+/** #1187: auto prepare identity only — no subject/authority material fields. */
 export type NavigatorWorkContext = {
   subjectKey: string;
-  subject: string;
-  authority: string;
   subjectProvenance: NavigatorSubjectProvenance;
   contextError?: unknown;
 };
@@ -153,8 +139,6 @@ export type NavigatorAttendanceOptions = {
   subjectKey: string;
   createSession: NavigatorSessionFactory;
   modelSettingPath?: string;
-  subject: string;
-  authority: string;
   contextError?: unknown;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
@@ -277,8 +261,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
-  let subject = options.subject;
-  let authority = options.authority;
+  // #1187: auto prepare is identity-only (role/phase/subjectKey).
   let contextError = options.contextError;
   /** Parallel-prepare result: status-keyed prose picked at settle (#1160). */
   let preparedAdvice: PreparedNavigatorAdvice | undefined;
@@ -322,12 +305,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
    */
   const loadMaterialsAndSession = async (invocationId: string): Promise<NavigatorPreparationSession> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
-    if (typeof authority !== "string" || authority.trim() === "") {
-      throw navigatorUnavailableError(
-        "context",
-        new Error("controlling authority content was not supplied as typed work context"),
-      );
-    }
+    // #1187: prepare runs from identity (role/phase/subjectKey). Parent dispatch
+    // and authority copies are not required materials for the auto prepare round.
     const modelPromise = (async () => {
       try {
         const resolved = await resolveNavigatorSeatSelection(options.context);
@@ -413,16 +392,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
     const activeSession = await loadMaterialsAndSession(invocationId);
     // #1160: parallel prepare from parent start — model runs now; settle only picks.
-    // Pass already-loaded subject/authority so the prepare run can judge progress
-    // (ticket text lives in those materials when present — no path invention).
+    // #1187: identity only. Parent dispatch / authority copies stay off this wire;
+    // navigator reads ticket and station records itself when needed.
     const request = JSON.stringify({
       kind: "prepare",
       role: options.role,
       phase: options.phase,
       invocationId,
       subjectKey,
-      subject,
-      authority,
     });
     try {
       try {
@@ -520,8 +497,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
-      subject = next.subject;
-      authority = next.authority;
       contextError = next.contextError;
       return closing;
     },

@@ -180,8 +180,7 @@ test("dispose during pending createSession drains the created session without pr
       role: "coder",
       phase: "apply",
       subjectKey: "/repo/.ak/work/issues/28",
-      subject: "Fix issue 28",
-      authority: "owner decision",
+
       modelSettingPath: setting,
       createSession: async () => {
         markCreateStarted();
@@ -229,8 +228,7 @@ test("attendance dispose settles session close rejection on the caller", async (
         role: "coder",
         phase: "apply",
         subjectKey: "/repo/.ak/work/issues/28",
-        subject: "Fix issue 28",
-        authority: "owner decision",
+
         modelSettingPath: setting,
         createSession: async () => ({
           async prompt() {
@@ -277,8 +275,7 @@ test("resumed setModel session failures preserve typed source and cause", async 
       role: "judge",
       phase: null,
       subjectKey: "/repo/.ak/work/issues/28",
-      subject: "task",
-      authority: "authority",
+
       modelSettingPath: setting,
       createSession: async ({ tool }) => {
         created = true;
