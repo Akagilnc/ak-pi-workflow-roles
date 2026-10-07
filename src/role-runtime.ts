@@ -467,7 +467,7 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; deliveryRequestLimit?: number; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; contextError?: unknown; invocationId: string; deliveryRequestLimit?: number; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
@@ -1185,22 +1185,15 @@ export function createRoleRuntimeExtension(
         // Soft session_start placeholders (no materials yet) recover here; hard
         // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
-          // Navigator's own input bootstrap, not a rewrite of another role's
-          // output payload (#836 targets the latter): the human's own raw
-          // prompt bytes, copied verbatim into Navigator's work context when
-          // nothing else has supplied a subject yet.
+          // Navigator's own input bootstrap (#836): human prompt bytes key the
+          // identity when nothing else has supplied a concrete subject yet.
+          // Auto prepare stays identity-only — no subject/authority material copy.
           const subject = prompt.trim();
           if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
-            const priorAuthority = navigatorWorkContext.authority;
-            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
-              ? priorAuthority
-              : subject;
             navigatorWorkContext = {
               subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
-              subject,
-              authority,
               subjectProvenance,
             };
             await navigatorAttendance.setWorkContext(navigatorWorkContext);
@@ -1712,7 +1705,7 @@ export function createRoleRuntimeExtension(
           if (dependencies.loadNavigatorWorkContext === undefined) {
             const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             contextError = new Error("Navigator work context loader is not configured");
-            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+            work = { subjectKey: fallbackSubjectKey, subjectProvenance: "placeholder" };
           } else {
             try {
               work = await dependencies.loadNavigatorWorkContext({
@@ -1726,7 +1719,7 @@ export function createRoleRuntimeExtension(
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
               contextError = navigatorUnavailableError("context", error);
               const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-              work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
+              work = { subjectKey: fallbackSubjectKey, subjectProvenance: "placeholder" };
             }
           }
           navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
@@ -1765,8 +1758,6 @@ export function createRoleRuntimeExtension(
             role: entry.role,
             phase: invocationPhase,
             subjectKey: work.subjectKey,
-            subject: work.subject,
-            authority: work.authority,
             invocationId,
             deliveryRequestLimit: deliveryLimit,
             ...(contextError === undefined ? {} : { contextError }),

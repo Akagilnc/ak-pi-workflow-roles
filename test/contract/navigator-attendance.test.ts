@@ -414,8 +414,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
       role: "coder",
       phase: "apply",
       subjectKey: "/repo/.ak/work/issues/28",
-      subject: "Fix issue 28",
-      authority: "owner decision",
+
       modelSettingPath: setting,
       createSession: createNativeNavigatorSessionFactory({
         summonPublicRole: async (options) => {
@@ -598,8 +597,7 @@ test("#1160 native public session carries materials and byStatus originals", asy
       role: "coder",
       phase: "apply",
       subjectKey: `${root}/.ak/work`,
-      subject: "#1160 original user task",
-      authority: "#1160 original user task",
+
       modelSettingPath: setting,
       createSession: createNativeNavigatorSessionFactory({
         hostRunResumable: async () => false,

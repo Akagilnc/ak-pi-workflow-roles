@@ -13,10 +13,8 @@ import type { Message } from "@earendil-works/pi-ai";
 
 import {
   registerNavigatorModelCommand,
-  resolveNavigatorAuthorityMaterial,
 } from "../src/navigator-attendance.ts";
 import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../src/navigator-work-context.ts";
-export { resolveNavigatorAuthorityMaterial };
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {

@@ -29,7 +29,7 @@ import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
+import { loadNavigatorWorkContext } from "../../extensions/role-runtime.ts";
 import type { RoleEnvelopeHost, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
@@ -77,7 +77,7 @@ test("shared accepted submission binds settled attendance before public extracti
       createRoleRuntimeExtension({
         loadRoleSoul: async () => "JUDGE LAW",
         loadNavigatorWorkContext: async () => ({
-          subjectKey: `${runDir}/work`, subject: "work", authority: "authority",
+          subjectKey: `${runDir}/work`,
           subjectProvenance: "role_input" as const,
         }),
         createNavigatorAttendance: (options) => {
@@ -132,15 +132,8 @@ test("settlement rejection still records an accepted closure with unavailable at
   assert.equal(extractNavigatorFact([{ type: "custom", ...entries[0]! }] as never).disposition, "unavailable");
 });
 
-test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
-  assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
-  assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", undefined), "packet authority\n");
-  assert.equal(resolveNavigatorAuthorityMaterial(undefined, "file authority\n"), "file authority\n");
-  assert.equal(resolveNavigatorAuthorityMaterial("   \n", "file authority\n"), "file authority\n");
-  assert.equal(resolveNavigatorAuthorityMaterial(undefined, undefined), undefined);
-  assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
-
-  await withTempRoot("navigator-input-authority-", async (root) => {
+test("#1187 identity-only work context: role-input path starts prepare; authority files are not materials", async () => {
+  await withTempRoot("navigator-input-identity-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
     return withPrimaryAwareCleanup(
@@ -150,8 +143,7 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     await mkdir(workRoot, { recursive: true });
     // #1168: fixer no longer has a packet input flag; use merger's remaining input path.
     const inputPath = resolve(workRoot, "merger-input.json");
-    const inputBytes = "# Merger materials\n\nCourt-binding authority for issue 91.\n";
-    await writeFile(inputPath, inputBytes, "utf8");
+    await writeFile(inputPath, "# Merger materials\n", "utf8");
 
     const sessionCtx = (cwd: string, sessionDir: string) => ({
       cwd,
@@ -161,38 +153,30 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     const mergerCtx = sessionCtx(workRoot, resolve(workRoot, "runs/merger/session"));
     const judgeCtx = sessionCtx(workRoot, resolve(workRoot, "runs/judge/session"));
 
-    // 1) role input, no work-root files → authority = input bytes
+    // Role-input path present → identity starts prepare; no material fields.
     const inputOnly = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
-    assert.equal(inputOnly.authority, inputBytes);
-    assert.equal(inputOnly.subject, inputBytes);
     assert.equal(inputOnly.subjectProvenance, "role_input");
+    assert.equal("subject" in inputOnly, false);
+    assert.equal("authority" in inputOnly, false);
+    assert.ok(inputOnly.subjectKey.length > 0);
 
-    // 2) both present → input wins
-    await writeFile(resolve(workRoot, "authority.md"), "work-root file authority\n", "utf8");
-    const both = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
-    assert.equal(both.authority, inputBytes);
-    assert.notEqual(both.authority, "work-root file authority\n");
-
-    // 3) valid input + unreadable/directory authority.md still succeeds verbatim (true short-circuit)
-    await rm(resolve(workRoot, "authority.md"));
+    // Directory authority.md must not poison identity-only load (was EISDIR under old material path).
     await mkdir(resolve(workRoot, "authority.md"), { recursive: true });
     const withDirectoryAuthority = await loadNavigatorWorkContext(mergerPi, { context: mergerCtx, role: "merger" });
-    assert.equal(withDirectoryAuthority.authority, inputBytes);
-    assert.equal(withDirectoryAuthority.subject, inputBytes);
     assert.equal(withDirectoryAuthority.subjectProvenance, "role_input");
+    assert.equal("authority" in withDirectoryAuthority, false);
 
-    // 4) no input (judge with only -p) + files present → files still used (主刀 flow)
+    // Authority file alone is not a prepare trigger — no role input → soft placeholder.
     await rm(resolve(workRoot, "authority.md"), { recursive: true, force: true });
     await writeFile(resolve(workRoot, "authority.md"), "work-root file authority\n", "utf8");
     const filesOnly = await loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" });
-    assert.equal(filesOnly.authority, "work-root file authority\n");
     assert.equal(filesOnly.subjectProvenance, "placeholder");
+    assert.equal("authority" in filesOnly, false);
 
-    // 5) neither at session_start → soft placeholder (bare -p prompt arrives later)
+    // Neither → soft placeholder (bare -p prompt arrives later).
     await rm(resolve(workRoot, "authority.md"));
     const neither = await loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" });
     assert.equal(neither.subjectProvenance, "placeholder");
-    assert.equal(neither.authority, "");
     assert.equal("contextError" in neither, false);
         },
       async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
@@ -409,7 +393,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       const events: any[] = [];
       const nav = createNavigatorAttendance({
         context: context(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
-        subject: "work", authority: "owner decision",
         createSession: harness.factory,
         modelSettingPath: setting,
         onEvent: async (event) => { events.push(event); } });
@@ -432,7 +415,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
     const events: any[] = [];
     const nav = createNavigatorAttendance({
       context: context(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
-      subject: "work", authority: "Controlling authority names coder apply next.",
       createSession: harness.factory,
       modelSettingPath: setting,
       onEvent: async (event) => { events.push(event); } });
@@ -512,8 +494,6 @@ test("#1187 empty authority still prepares from identity alone", async () => {
       role: "judge",
       phase: null,
       subjectKey: "/repo/.ak/work",
-      subject: "work subject: /repo/.ak/work",
-      authority: "",
       modelSettingPath: setting,
       createSession: harness.factory,
       onEvent: async (event) => { events.push(event); } });
@@ -560,8 +540,8 @@ test("public admitted section starts identity-only prepare context; missing/malf
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(runDir), role: "judge" });
     // #1187: non-empty public admission starts prepare by identity; parent prose is not material.
     assert.equal(loaded.subjectProvenance, "role_input");
-    assert.equal(loaded.authority, "");
-    assert.equal(loaded.subject, `work subject: ${loaded.subjectKey}`);
+    assert.equal("subject" in loaded, false);
+    assert.equal("authority" in loaded, false);
     assert.ok(loaded.subjectKey.length > 0);
     // Parent admitted instruction remains on the parent role surface.
     const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
@@ -577,15 +557,22 @@ test("public admitted section starts identity-only prepare context; missing/malf
         error.unavailableCause === "context",
     );
 
-    // Malformed admitted request JSON → same context classification.
+    // Malformed control-plane state.jsonl → context classification with real cause retained (#1187 F2).
     const badRun = join(root, "bad-run");
     await mkdir(badRun, { recursive: true });
-    // Whole-file corruption: current.json is the single carrier of the admitted section.
-    await writeFile(join(badRun, "current.json"), "{not-json", "utf8");
+    await writeFile(join(badRun, "state.jsonl"), "{not-a-sitian-row}\n", "utf8");
     await assert.rejects(
       () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(badRun), role: "judge" }),
-      (error: unknown) =>
-        error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
+      (error: unknown) => {
+        if (!(error instanceof NavigatorUnavailableError) || error.unavailableSource !== "context") {
+          return false;
+        }
+        const original = error.originalCause;
+        const detail = original instanceof Error
+          ? original.message
+          : (typeof original === "string" ? original : error.message);
+        return detail.includes("state.jsonl") && detail.includes("malformed");
+      },
     );
 
     // Structurally invalid admitted request (role without public-instruction subject) → context unavailable.
@@ -612,8 +599,8 @@ test("public admitted section starts identity-only prepare context; missing/malf
       attachments: [] });
     const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(emptyRun), role: "judge" });
     assert.equal(empty.subjectProvenance, "placeholder");
-    assert.equal(empty.authority, "");
-    assert.equal(empty.subject, `work subject: ${empty.subjectKey}`);
+    assert.equal("subject" in empty, false);
+    assert.equal("authority" in empty, false);
         },
       async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
@@ -686,8 +673,6 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           }),
           loadNavigatorWorkContext: async () => ({
             subjectKey: `${runDir}/work`,
-            subject: "work",
-            authority: "authority",
             subjectProvenance: "role_input" as const,
           }),
           createNavigatorAttendance: () => {
@@ -868,8 +853,6 @@ test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", 
     const events: any[] = [];
     let liveNav: Awaited<ReturnType<typeof createNavigatorAttendance>> | undefined;
     let observedWork: {
-      subject?: string;
-      authority?: string;
       subjectKey?: string;
       subjectProvenance?: string;
     } | undefined;
@@ -887,8 +870,6 @@ test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", 
           ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
         });
         observedWork = {
-          subject: work.subject,
-          authority: work.authority,
           subjectKey: work.subjectKey,
           subjectProvenance: work.subjectProvenance,
         };
@@ -902,8 +883,6 @@ test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", 
           role: options.role,
           phase: options.phase,
           subjectKey: options.subjectKey,
-          subject: options.subject,
-          authority: options.authority,
           invocationId: options.invocationId,
           ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
           ...(options.deliveryRequestLimit === undefined
@@ -1019,8 +998,7 @@ test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", 
 
     assert.ok(observedWork, "public entry must load navigator work context");
     assert.equal(observedWork.subjectProvenance, "role_input");
-    assert.equal(observedWork.authority, "");
-    assert.equal(observedWork.subject, `work subject: ${observedWork.subjectKey}`);
+    assert.ok(typeof observedWork.subjectKey === "string" && observedWork.subjectKey.length > 0);
 
     assert.ok(prepareWire, "auto prepare must have produced a structured request");
     assert.equal(prepareWire.kind, "prepare");
@@ -1065,26 +1043,23 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
       appendEntry() {} };
 
     let latestContext: {
-      subject?: string;
-      authority?: string;
+      subjectKey?: string;
       subjectProvenance?: string;
       contextError?: unknown;
     } = {};
     let prepareCalls = 0;
     const setContexts: Array<Record<string, unknown>> = [];
+    const placeholderKey = join(home, ".ak/work");
 
     createPiRoleRuntimeExtension({
       loadRoleSoul: async () => "JUDGE LAW",
       // Production soft miss: session_start has no materials yet (no throw/poison).
       loadNavigatorWorkContext: async () => ({
-        subjectKey: join(home, ".ak/work"),
-        subject: `work subject: ${join(home, ".ak/work")}`,
-        authority: "",
+        subjectKey: placeholderKey,
         subjectProvenance: "placeholder" as const }),
       createNavigatorAttendance: (options) => {
         latestContext = {
-          subject: options.subject,
-          authority: options.authority,
+          subjectKey: options.subjectKey,
           subjectProvenance: "placeholder",
           contextError: options.contextError };
         return {
@@ -1092,15 +1067,13 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
             prepareCalls += 1;
           },
           setWorkContext(next: {
-            subject: string;
-            authority: string;
+            subjectKey: string;
             subjectProvenance: string;
             contextError?: unknown;
           }) {
             setContexts.push({ ...next });
             latestContext = {
-              subject: next.subject,
-              authority: next.authority,
+              subjectKey: next.subjectKey,
               subjectProvenance: next.subjectProvenance,
               contextError: next.contextError };
           },
@@ -1125,15 +1098,16 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
     await emit("session_start", {}, ctx);
 
     assert.equal(latestContext.contextError, undefined, "soft miss must not install contextError");
-    assert.equal(latestContext.authority, "");
+    assert.equal(latestContext.subjectProvenance, "placeholder");
     assert.equal(prepareCalls, 0, "placeholder context must not warm-prepare");
 
     const prompt = "Adjudicate the attached materials for issue 11 developer seam.";
     await emit("before_agent_start", { systemPrompt: "BASE", prompt }, ctx);
 
-    assert.equal(latestContext.subject, prompt);
-    assert.equal(latestContext.authority, prompt);
     assert.equal(latestContext.subjectProvenance, "user_prompt");
+    assert.equal(typeof latestContext.subjectKey, "string");
+    assert.equal("subject" in (setContexts[0] ?? {}), false);
+    assert.equal("authority" in (setContexts[0] ?? {}), false);
     assert.equal(prepareCalls, 1, "recovered concrete context must prepare");
     assert.ok(setContexts.length >= 1);
   });
@@ -1144,8 +1118,6 @@ async function withNavigatorInfraGraceEnvelope(
   options: {
     readonly prefix: string;
     readonly runName: string;
-    readonly subject: string;
-    readonly authority: string;
   },
   run: (harness: {
     readonly handlers: Map<string, (event: unknown, ctx: unknown) => unknown>;
@@ -1233,8 +1205,6 @@ async function withNavigatorInfraGraceEnvelope(
         // Concrete subject starts parallel prepare on session_start; grace aborts
         // that hung nest at settle — settle itself does not start a model round (#1160).
         subjectKey: `${runDir}/work`,
-        subject: options.subject,
-        authority: options.authority,
         subjectProvenance: "role_input" as const,
       }),
       createNavigatorAttendance: (attendanceOptions) =>
@@ -1243,8 +1213,6 @@ async function withNavigatorInfraGraceEnvelope(
           role: attendanceOptions.role,
           phase: attendanceOptions.phase,
           subjectKey: attendanceOptions.subjectKey,
-          subject: attendanceOptions.subject,
-          authority: attendanceOptions.authority,
           invocationId: attendanceOptions.invocationId,
           ...(attendanceOptions.contextError === undefined
             ? {}
@@ -1294,8 +1262,6 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
       {
         prefix: "ak-nav-infra-grace-",
         runName: "judge-infra-grace",
-        subject: "infra grace subject",
-        authority: "infra grace authority",
       },
       async ({ handlers, sent, ctx, seenSignal, summonStarted, nestStopped }) => {
         await handlers.get("session_start")?.({}, ctx);

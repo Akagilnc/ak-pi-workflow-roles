@@ -74,19 +74,6 @@ import { isRecord } from "./unknown-value.ts";
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
 
-/**
- * Role-input document bytes win verbatim over work-root file authority when non-empty.
- * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
- */
-export function resolveNavigatorAuthorityMaterial(
-  roleInput: string | undefined,
-  fileAuthority: string | undefined,
-): string | undefined {
-  if (roleInput !== undefined && roleInput.trim() !== "") return roleInput;
-  if (fileAuthority !== undefined && fileAuthority.trim() !== "") return fileAuthority;
-  return undefined;
-}
-
 /** Every public role is a lawful navigator route target (#675 — no nested-only seats). */
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY
   .map(({ role, phases }) => ({ role, phases }));
@@ -101,10 +88,9 @@ export type NavigatorSettlement =
 
 export type NavigatorSubjectProvenance = "placeholder" | "role_input" | "user_prompt";
 
+/** #1187: auto prepare identity only — no subject/authority material fields. */
 export type NavigatorWorkContext = {
   subjectKey: string;
-  subject: string;
-  authority: string;
   subjectProvenance: NavigatorSubjectProvenance;
   contextError?: unknown;
 };
@@ -153,8 +139,6 @@ export type NavigatorAttendanceOptions = {
   subjectKey: string;
   createSession: NavigatorSessionFactory;
   modelSettingPath?: string;
-  subject: string;
-  authority: string;
   contextError?: unknown;
   /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
   invocationId?: string;
@@ -277,8 +261,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
-  // #1187: auto prepare is identity-only — subject/authority options are accepted
-  // for call-site compatibility but are not attendance materials or local state.
+  // #1187: auto prepare is identity-only (role/phase/subjectKey).
   let contextError = options.contextError;
   /** Parallel-prepare result: status-keyed prose picked at settle (#1160). */
   let preparedAdvice: PreparedNavigatorAdvice | undefined;
