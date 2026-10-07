@@ -28,7 +28,6 @@ import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import {
   isSafePositiveTicketNumber,
   parseTicketNumber,
-  readDeclaredTicketNumber,
 } from "./run-ticket-number.ts";
 import {
   durableSessionPointer,
@@ -1160,15 +1159,8 @@ export function createRoleRuntimeExtension(
       return pendingNavigatorPresentation?.event;
     };
     projectClosedSubmission = async (closed, context) => {
-      // #1183: typed sealed receipt is identity acquisition — same mid-turn
-      // bind/relocate seam as ak_report_ticket. Host return must not be the
-      // first placement (dossier-topology: 取得 typed 票身份后整体归位).
-      const sealedTicket = isRecord(closed.accepted)
-        ? readDeclaredTicketNumber(closed.accepted.ticketNumber)
-        : undefined;
-      if (sealedTicket !== undefined) {
-        await reportTicketFromHostContext(context, sealedTicket);
-      }
+      // #1183: typed ticket identity is acquired on the ledger seam when params
+      // are first read — not here after seal. Closure only projects lifecycle.
       await projectClosedSubmissionLifecycle(
         closed,
         context,

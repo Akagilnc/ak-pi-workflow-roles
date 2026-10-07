@@ -224,7 +224,9 @@ export async function prepareRoleEnvelope(options: {
         );
       }
       projectTurnRequestLiveRunDirectory(mutableRequest, next, principalAuthority);
-      sessionFile = sessionFileOf(next);
+      // Live write handle = same host-authority coords as the resealed principal
+      // (#1183). Never rebuild default session.jsonl over a non-default seal.
+      sessionFile = principalAuthority.decode(mutableRequest.principal).sessionFile;
     },
   });
   const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {

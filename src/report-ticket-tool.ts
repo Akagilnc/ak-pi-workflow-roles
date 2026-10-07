@@ -20,6 +20,7 @@ import {
   type AdmittedRoleInvocation,
 } from "./public-cli/invocation.ts";
 import { isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-path-rewrite.ts";
 import { readPageSync } from "./run-dossier.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import { isRecord } from "./unknown-value.ts";
@@ -128,6 +129,11 @@ export async function reportTicketFromHostContext(
   // Live handles belong with rename ownership — before derived renderCurrentSync
   // (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
   const applyLiveHandles = (nextDirectory: string): void => {
+    // Capture live session handle before ownership transfer. After relocate the
+    // write handle must share host-authority coords with the principal (#1183):
+    // project the prior path onto the new leaf — never rebuild default
+    // session.jsonl over a non-default seal (and do not trust a setter rebuild).
+    const priorSessionFile = context.sessionManager.getSessionFile?.();
     (context as { runDirectory?: string }).runDirectory = nextDirectory;
     // Same-leg spawn env only (#1171 F1): never overwrite another leg's ambient
     // AK_ROLE_RUN_DIR in a shared process. HostContext is the per-turn authority
@@ -135,8 +141,12 @@ export async function reportTicketFromHostContext(
     if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
       process.env.AK_ROLE_RUN_DIR = nextDirectory;
     }
-    // Native host rebind only — SessionManager has no setSessionDir; appends follow sessionFile.
-    context.sessionManager.setSessionFile?.(sessionFileOf(nextDirectory));
+    const projectedSessionFile = typeof priorSessionFile === "string" && priorSessionFile.trim() !== ""
+      ? rewriteRunDirectoryPathValue(priorSessionFile, runDirectory, nextDirectory)
+      : sessionFileOf(nextDirectory);
+    if (typeof projectedSessionFile === "string") {
+      context.sessionManager.setSessionFile?.(projectedSessionFile);
+    }
   };
   const relocation = alreadyPlaced
     ? undefined
