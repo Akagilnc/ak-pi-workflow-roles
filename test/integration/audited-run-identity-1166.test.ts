@@ -121,6 +121,7 @@ async function inspectLiveRequest(
       dependencies: createRoleRuntimeDependencies(packageRootPath),
       socketPath,
       sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+      principalAuthority: piDurablePrincipalAuthority,
     });
     try {
       const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);

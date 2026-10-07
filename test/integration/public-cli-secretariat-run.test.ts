@@ -121,8 +121,13 @@ function courtDiaristWithDetails(
       loadSoul: async () => "起居郎职分（测试装载）",
     }).activate();
     assert.ok(registered);
-    const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
-    const sessionFile = argvFlagValue(args, "--session") ?? "";
+    // #1183: typed ticket assertion relocates mid-accept. Follow live leaf on
+    // HostContext + spawn env/session args so scripted seal does not recreate
+    // the pre-relocate unbound path (dual leaf / ambiguous run id).
+    const initialRunDir = options.env.AK_ROLE_RUN_DIR ?? "";
+    assert.ok(initialRunDir);
+    let liveRunDirectory = initialRunDir;
+    let liveSessionFile = argvFlagValue(args, "--session") ?? "";
     const result = await registered.execute(
       "call_diarist",
       details,
@@ -132,10 +137,23 @@ function courtDiaristWithDetails(
         cwd: options.cwd,
         mode: "json",
         model: undefined,
-        runDirectory: runDir,
+        get runDirectory() {
+          return liveRunDirectory;
+        },
+        set runDirectory(next: string) {
+          if (typeof next !== "string" || next.trim() === "") return;
+          liveRunDirectory = next;
+          liveSessionFile = join(next, "session", "session.jsonl");
+          if (options.env.AK_ROLE_RUN_DIR === initialRunDir) {
+            options.env.AK_ROLE_RUN_DIR = next;
+          }
+        },
         sessionManager: {
-          getSessionFile: () => sessionFile,
-          getSessionDir: () => dirname(sessionFile),
+          getSessionFile: () => liveSessionFile,
+          getSessionDir: () => dirname(liveSessionFile),
+          setSessionFile: (path: string) => {
+            liveSessionFile = path;
+          },
           getEntries: () => [],
           getLeafEntry: () => undefined,
           getLeafId: () => null,
@@ -143,11 +161,16 @@ function courtDiaristWithDetails(
         abort() {},
       } as HostContext,
     );
+    const liveArgs = args.map((token, index) => {
+      if (args[index - 1] === "--session") return liveSessionFile;
+      if (args[index - 1] === "--session-dir") return dirname(liveSessionFile);
+      return token;
+    });
     return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: registered.name,
       details: result.details ?? details,
-    })(args, options);
+    })(liveArgs, options);
   };
 }
 
@@ -349,7 +372,8 @@ function secretariatHostDrivingRealTools(input: {
           socketPath: join(socketDir, "mcp.sock"),
           listTerminatingToolOnMcp: false,
           sessionFile: coords.sessionFile,
-        });
+          principalAuthority: piDurablePrincipalAuthority,
+    });
         try {
           while (nextStep < input.steps.length) {
             const step = input.steps[nextStep++]!;
@@ -930,8 +954,17 @@ async function adapterBoundaryCase(input: {
       projectRoot: project,
       runId: "01a0adp969-0000-7000-8000-000000000001",
       role: "secretariat",
+      bookKey: "test-book",
+      runDirectory,
     });
-    seedCurrentSection(runDirectory, "invocation", { ticketNumber: 924, role: "secretariat" });
+    seedCurrentSection(runDirectory, "invocation", {
+      ticketNumber: 924,
+      role: "secretariat",
+      runId: "01a0adp969-0000-7000-8000-000000000001",
+      bookKey: "test-book",
+      projectRoot: project,
+      runDirectory,
+    });
 
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
@@ -970,7 +1003,8 @@ async function adapterBoundaryCase(input: {
         socketPath: join(socketDir, "mcp.sock"),
         listTerminatingToolOnMcp: input.hostName === "grok-build",
         sessionFile,
-      });
+        principalAuthority: piDurablePrincipalAuthority,
+    });
 
     if (input.hostName === "grok-build") {
       const description = lookupHostDescription("grok-build");

@@ -221,7 +221,8 @@ async function engineMaterialNames(request: RoleTurnRequest): Promise<readonly s
     dependencies: createRoleRuntimeDependencies(packageRoot),
     socketPath: `/tmp/ak-engine-resume-${randomUUID()}.sock`,
     sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-  });
+    principalAuthority: piDurablePrincipalAuthority,
+    });
   try {
     return prepared.systemPrompt.materials
       .filter((material): material is Record<string, unknown> =>

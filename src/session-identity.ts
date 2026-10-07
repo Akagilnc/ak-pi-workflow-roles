@@ -29,6 +29,7 @@ export function createSessionIdentityAuthority(
   const runDirectoryOf = (principal: DurablePrincipal): string =>
     dirname(authority.decode(principal).sessionDirectory);
   return {
+    principalAuthority: authority,
     resolveSessionFile(principal) {
       return authority.decode(principal).sessionFile;
     },

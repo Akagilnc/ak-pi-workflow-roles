@@ -21,6 +21,7 @@ import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:
 import { basename, join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
+import { projectRenderedPagePaths } from "./role-run-path-rewrite.ts";
 import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
@@ -176,7 +177,16 @@ function render(
   const whole: Record<string, unknown> = {};
   for (const section of ["invocation", "admitted", "runState", "terminal"] as const) {
     const page = lastPayloadOfKind(state, PAGE_ROW_KIND[section]);
-    if (page !== undefined) whole[section] = page;
+    if (page === undefined) continue;
+    // #1183: location fields track the directory being rendered; fact rows stay put.
+    if (
+      (section === "invocation" || section === "admitted" || section === "runState")
+      && isRecord(page)
+    ) {
+      whole[section] = projectRenderedPagePaths(page, runDirectory);
+    } else {
+      whole[section] = page;
+    }
   }
   let latest: Record<string, unknown> | undefined;
   for (const row of history) {

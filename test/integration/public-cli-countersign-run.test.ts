@@ -11,7 +11,7 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile, readFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -1122,25 +1122,54 @@ function courtPipelinePiRunner(
         getAllTools: () =>
           registered === undefined ? [] : [{ name: registered.name }],
       } as unknown as RoleHost;
-      const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
+      const initialRunDir = options.env.AK_ROLE_RUN_DIR ?? "";
+      assert.ok(initialRunDir);
+      let liveRunDirectory = initialRunDir;
+      let liveSessionFile = argvFlagValue(args, "--session") ?? "";
       const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
         });
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
         const params = { status: "completed", ticketNumber: ticketAssertion, sessions: [] };
+      // #1183: mid-accept typed ticket relocate — follow live leaf so scripted
+      // seal does not recreate the pre-relocate unbound path.
       const accepted = await registered.execute(
         "call_diarist_1",
         params,
         undefined,
         undefined,
-        { runDirectory: runDir } as HostContext,
+        {
+          get runDirectory() {
+            return liveRunDirectory;
+          },
+          set runDirectory(next: string) {
+            if (typeof next !== "string" || next.trim() === "") return;
+            liveRunDirectory = next;
+            liveSessionFile = join(next, "session", "session.jsonl");
+            if (options.env.AK_ROLE_RUN_DIR === initialRunDir) {
+              options.env.AK_ROLE_RUN_DIR = next;
+            }
+          },
+          sessionManager: {
+            getSessionFile: () => liveSessionFile,
+            getSessionDir: () => dirname(liveSessionFile),
+            setSessionFile: (path: string) => {
+              liveSessionFile = path;
+            },
+          },
+        } as HostContext,
       );
+      const liveArgs = args.map((token, index) => {
+        if (args[index - 1] === "--session") return liveSessionFile;
+        if (args[index - 1] === "--session-dir") return dirname(liveSessionFile);
+        return token;
+      });
       return scriptedTerminatingToolSession({
         role: "diarist",
         toolName: DIARIST_OUTPUT_TOOL_NAME,
         details: accepted.details,
-      })(args, options);
+      })(liveArgs, options);
     }
     return scriptedCountersignSession(countersignDetails)(args, options);
   };

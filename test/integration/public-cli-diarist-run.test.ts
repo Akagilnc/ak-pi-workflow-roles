@@ -29,7 +29,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { roleRunPlacement } from "../../src/role-run-placement.ts";
+import { roleRunPlacement, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
 import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
@@ -147,16 +147,16 @@ function diaristEnvelopeRunner(
       getAllTools: () =>
         registered === undefined ? [] : [{ name: registered.name }],
     } as unknown as RoleHost;
-    const runDir = options.env.AK_ROLE_RUN_DIR;
-    assert.ok(runDir);
-    const sessionDir = join(runDir, "session");
-    const sessionFile = join(sessionDir, "session.jsonl");
-    await mkdir(sessionDir, { recursive: true });
+    const initialRunDir = options.env.AK_ROLE_RUN_DIR;
+    assert.ok(initialRunDir);
+    let liveRunDirectory = initialRunDir;
+    let liveSessionFile = sessionFileOf(liveRunDirectory);
+    await mkdir(sessionDirectoryOf(liveRunDirectory), { recursive: true });
     // Resume turns share the same ticket-run session. Do not truncate prior
     // run-owned records (ak_run_attempt_history) that settlement already appended.
-    const sessionAlreadyPresent = existsSync(sessionFile);
+    const sessionAlreadyPresent = existsSync(liveSessionFile);
     if (!sessionAlreadyPresent) {
-      await writeFile(sessionFile, "");
+      await writeFile(liveSessionFile, "");
     }
     // The production composition: the submission ledger wraps the output tool, so an
     // accepted call leaves its sealed row even if the host turn then fails.
@@ -167,11 +167,23 @@ function diaristEnvelopeRunner(
     await runtime.activate();
     assert.ok(registered, "diarist envelope registered no output tool");
 
+    // #1183: mid-turn ticket relocate (bounds-reask identity) updates HostContext
+    // like production report-ticket — session handles and env must follow.
     const ctx = {
-      runDirectory: runDir,
+      get runDirectory() {
+        return liveRunDirectory;
+      },
+      set runDirectory(next: string) {
+        if (typeof next !== "string" || next.trim() === "") return;
+        liveRunDirectory = next;
+        liveSessionFile = sessionFileOf(next);
+      },
       sessionManager: {
-        getSessionDir: () => sessionDir,
-        getSessionFile: () => sessionFile,
+        getSessionDir: () => sessionDirectoryOf(liveRunDirectory),
+        getSessionFile: () => liveSessionFile,
+        setSessionFile: (path: string) => {
+          liveSessionFile = path;
+        },
       },
     } as HostContext;
 
@@ -212,12 +224,23 @@ function diaristEnvelopeRunner(
     if (behavior?.afterAdmit === "throw") {
       throw new Error("host turn failed after diarist board bind");
     }
+    // Keep the faux host argv/env on the live leaf after mid-turn relocate.
+    // Ledger already sealed under that leaf during registered.execute — do not
+    // emit sealedAcceptance, or roleTurnHostFromLegacyPiRunner would seal again
+    // via the parent spawn env (still the pre-relocate unbound path) and leave
+    // two leaves for the same run id (#1183).
+    const liveArgs = args.map((token, index) => {
+      if (args[index - 1] === "--session") return liveSessionFile;
+      if (args[index - 1] === "--session-dir") return sessionDirectoryOf(liveRunDirectory);
+      return token;
+    });
     return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
       details: accepted.details,
       sessionWriteMode: sessionAlreadyPresent ? "append" : "replace",
-    })(args, options);
+      seal: false,
+    })(liveArgs, options);
   };
 }
 

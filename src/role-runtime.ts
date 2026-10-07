@@ -16,12 +16,19 @@ import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
-import { registerReportTicketTool, REPORT_TICKET_TOOL_NAME } from "./report-ticket-tool.ts";
+import {
+  registerReportTicketTool,
+  reportTicketFromHostContext,
+  REPORT_TICKET_TOOL_NAME,
+} from "./report-ticket-tool.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
-import { isSafePositiveTicketNumber, parseTicketNumber } from "./run-ticket-number.ts";
+import {
+  isSafePositiveTicketNumber,
+  parseTicketNumber,
+} from "./run-ticket-number.ts";
 import {
   durableSessionPointer,
   resolveBookKeyFromGit,
@@ -859,11 +866,17 @@ export function createDiaristRoleRuntime(
         const status = submitted?.status;
         if (status !== "completed") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
-        const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        // The ticket binds in the public call's own process after the turn, from the sealed
-        // ticketNumber (settlement seam); this leg never writes the run's current.json.
+        // #1183: typed ticket assertion is identity acquisition — one mid-turn
+        // bind/relocate here, before seal / reask / infra outcome branches.
+        // Reuses ak_report_ticket seam; already-placed is a no-op. Host return
+        // must not be the first placement (dossier-topology).
+        if (ticketNumber !== undefined) {
+          await reportTicketFromHostContext(ctx, ticketNumber);
+        }
+        // Live leaf after possible relocate (commit reads history under runDirectory).
+        const coords = readDiaristRunCoordinates(ctx);
         // Strict-schema hosts emit ticketSessions: null for a single ticket.
         const multiTicket = submitted?.ticketSessions != null;
         const singleSessions = submitted && !multiTicket
@@ -1145,13 +1158,17 @@ export function createRoleRuntimeExtension(
       await pending;
       return pendingNavigatorPresentation?.event;
     };
-    projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
-      closed,
-      context,
-      navigatorPhase(roleHost, closed.role),
-      () => receiptDelivery.recordAccepted(),
-      settleNavigatorProjection,
-    );
+    projectClosedSubmission = async (closed, context) => {
+      // #1183: typed ticket identity is acquired on the ledger seam when params
+      // are first read — not here after seal. Closure only projects lifecycle.
+      await projectClosedSubmissionLifecycle(
+        closed,
+        context,
+        navigatorPhase(roleHost, closed.role),
+        () => receiptDelivery.recordAccepted(),
+        settleNavigatorProjection,
+      );
+    };
     roleHost.on("input", (_event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };

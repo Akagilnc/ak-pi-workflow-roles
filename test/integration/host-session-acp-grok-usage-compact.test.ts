@@ -18,6 +18,7 @@ import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 type Ledger = ReturnType<typeof createTempPackageHomeLedger>;
 
@@ -63,6 +64,7 @@ function createHost(input: {
       },
       async bind() {},
       resolveSessionFile: () => input.ledger.sessionFile,
+      principalAuthority: piDurablePrincipalAuthority,
     },
     connect: async () => input.connection,
     prepare: async () => ({

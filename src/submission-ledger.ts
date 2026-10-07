@@ -19,7 +19,9 @@ import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic } from "./package-contracts/terminating-infrastructure.ts";
+import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
 
@@ -554,6 +556,15 @@ export function createSubmissionLedgerHost(
       host.registerTool({
         ...tool,
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
+          // #1183: valid typed ticket on the submission is identity acquisition —
+          // bind/relocate once here, before reask / ledger restore / seal outcomes.
+          // Host return must not be the first placement (dossier-topology).
+          const typedTicket = isRecord(params)
+            ? readDeclaredTicketNumber(params.ticketNumber)
+            : undefined;
+          if (typedTicket !== undefined) {
+            await reportTicketFromHostContext(context, typedTicket);
+          }
           const runId = runIdentity(context);
           const attemptId = attemptIdentity(context, runId);
           const state = await stateFor(context, runId);

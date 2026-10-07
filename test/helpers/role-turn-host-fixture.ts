@@ -47,6 +47,7 @@ export async function capturePreparedEnvelope(request: RoleTurnRequest): Promise
     dependencies: createRoleRuntimeDependencies(packageRoot),
     socketPath: `/tmp/ak-capture-${randomUUID()}.sock`,
     sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+    principalAuthority: piDurablePrincipalAuthority,
   });
   try {
     return {
@@ -96,6 +97,7 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
         socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,
         listTerminatingToolOnMcp: false,
         sessionFile: input.principalAuthority.decode(request.principal).sessionFile,
+        principalAuthority: input.principalAuthority,
       });
       try {
         return await driveExternalRoleTurnRounds(prepared, request, {

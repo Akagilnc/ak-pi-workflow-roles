@@ -382,7 +382,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             // MCP advertises tool.parameters; prepared.jsonSchema is the headless
             // draft-07 stamp of that clone — record the delivered parameters face.
             const { $schema: _headlessStamp, ...deliveredSchema } = prepared.jsonSchema;
-            await recordTurnDelivery(await syncTurnRequestLivePlacement(request), {
+            await recordTurnDelivery(await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority), {
               systemPrompt: systemPromptOverride,
               outputSchema: deliveredSchema,
             }, "acp-host");
@@ -503,7 +503,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         outcome = { ...facts, ...(knownFailure === undefined ? {} : { knownFailure }) };
       }
       if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
-        const live = await trySyncTurnRequestLivePlacement(request);
+        const live = await trySyncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority);
         if ("runDirectory" in live) {
           try {
             copyAndRecordHostDossier({

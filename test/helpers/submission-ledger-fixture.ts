@@ -5,10 +5,30 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
+
+/**
+ * #1183: ledger-mouth place may move the leaf while the faux in-process spawn
+ * env copy still names the unbound path. Prefer the live leaf and write it back
+ * onto env so later ForSpawn calls do not recreate a hollow unbound twin.
+ */
+async function spawnRunDirectoryFromEnv(env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const recorded = env.AK_ROLE_RUN_DIR;
+  if (typeof recorded !== "string" || recorded.length === 0) return undefined;
+  const home =
+    typeof env.HOME === "string" && env.HOME.length > 0 ? env.HOME : undefined;
+  if (home === undefined) return recorded;
+  const live = await resolveLiveRunDirectoryPath(recorded, home);
+  if (live !== undefined && live !== recorded) {
+    env.AK_ROLE_RUN_DIR = live;
+    return live;
+  }
+  return recorded;
+}
 
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
@@ -134,8 +154,8 @@ export async function sealAcceptedSubmissionForSpawn(input: {
   readonly outputDetails?: unknown;
   readonly toolCallId?: string;
 }): Promise<void> {
-  const runDirectory = input.env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory !== "string" || runDirectory.length === 0) return;
+  const runDirectory = await spawnRunDirectoryFromEnv(input.env);
+  if (runDirectory === undefined) return;
   const runId = runIdFromRunDirectory(runDirectory);
   if (runId === undefined) {
     throw new Error("sealed submission requires admitted run identity from runDirectory");
@@ -163,6 +183,8 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
   });
+  // Place may have moved during ledger execute — keep the spawn env on the live leaf.
+  await spawnRunDirectoryFromEnv(input.env);
 }
 
 /**
@@ -203,8 +225,8 @@ export async function recordNonSealedSubmissionForSpawn(input: {
   readonly executeError: unknown;
   readonly toolCallId?: string;
 }): Promise<void> {
-  const runDirectory = input.env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory !== "string" || runDirectory.length === 0) return;
+  const runDirectory = await spawnRunDirectoryFromEnv(input.env);
+  if (runDirectory === undefined) return;
   const runId = runIdFromRunDirectory(runDirectory);
   if (runId === undefined) {
     throw new Error("non-sealed submission requires admitted run identity from runDirectory");
@@ -229,4 +251,6 @@ export async function recordNonSealedSubmissionForSpawn(input: {
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
   });
+  // Place may have moved during ledger execute — keep the spawn env on the live leaf.
+  await spawnRunDirectoryFromEnv(input.env);
 }

@@ -171,6 +171,7 @@ const waitForPointer = setInterval(() => {
         },
         async bind(_principal, id) { bound = id; },
         resolveSessionFile: () => join(root, "session", "session.jsonl"),
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async (request) => ({
         mcpServers: [{ name: "ak-probe", command: "/usr/bin/node", args: ["relay.mjs"] }],
@@ -438,6 +439,7 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async () => ({
         mcpServers: [],
@@ -521,6 +523,7 @@ process.exit(1);
           bound = id;
         },
         resolveSessionFile: () => sessionParent,
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async (request) => ({
         mcpServers: [],
@@ -608,7 +611,7 @@ process.exit(0);
       hostName: "codex",
       binary: fakeBin,
       env: { CODEX_HOME: join(ledger.runDirectory, ".codex") },
-      sessionIdentity: { async load() { return undefined; }, async bind() {}, resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl") },
+      sessionIdentity: { async load() { return undefined; }, async bind() {}, resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"), principalAuthority: piDurablePrincipalAuthority },
       prepare: async () => ({
         mcpServers: [],
         systemPrompt: { body: "system", materials: [] },
@@ -790,6 +793,7 @@ ${options.protocolScript}
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => join(root, "session", "session.jsonl"),
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async (request) => ({
         mcpServers: [],

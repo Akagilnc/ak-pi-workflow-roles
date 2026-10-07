@@ -25,7 +25,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { runLogPayloads, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 /** Stage one pending attendance so session_shutdown will book a package entry. */
 function withStagedShutdownAttendance(
@@ -137,6 +137,7 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
       dependencies: createRoleRuntimeDependencies(packageRoot),
       socketPath,
       sessionFile,
+      principalAuthority: piDurablePrincipalAuthority,
     });
     try {
       await poisonSessionFileWrite(sessionFile);
@@ -161,6 +162,16 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
       }, null, 2)}\n`,
     );
     const runsPath = await seedDoctorIssueRuns(home, "probe", 959);
+    // #1183: sealed ticketNumber relocates mid-turn — durable admission pages required.
+    const durable = {
+      role: "doctor",
+      runId: "run-959",
+      bookKey: "probe",
+      projectRoot: packageRoot,
+      runDirectory,
+    } as const;
+    seedCurrentSection(runDirectory, "admitted", durable);
+    seedCurrentSection(runDirectory, "invocation", durable);
     const base = createRoleRuntimeDependencies(packageRoot);
     const prepared = await prepareRoleEnvelope({
       request: {
@@ -177,6 +188,7 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
       dependencies: base,
       socketPath,
       sessionFile,
+      principalAuthority: piDurablePrincipalAuthority,
     });
     try {
       await poisonSessionFileWrite(sessionFile);
@@ -219,7 +231,8 @@ process.exit(0);
           request,
           dependencies: withStagedShutdownAttendance(createRoleRuntimeDependencies(packageRoot), request.runDirectory),
           socketPath, sessionFile,
-        });
+          principalAuthority: piDurablePrincipalAuthority,
+    });
         return {
           ...prepared,
           async dispose() {

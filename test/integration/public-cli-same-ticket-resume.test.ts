@@ -1137,7 +1137,8 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
           socketPath: join(socketDirectory, "mcp.sock"),
           listTerminatingToolOnMcp: false,
           sessionFile,
-        });
+          principalAuthority: piDurablePrincipalAuthority,
+    });
         try {
           execFileSync("git", ["-c", "user.name=Worker Test", "-c", "user.email=worker@test.invalid", "commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
           await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted", ticketNumber: 1171 });

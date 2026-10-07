@@ -18,6 +18,7 @@ import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 const description: HeadlessHostDescription = Object.freeze({
   protocol: "claude-print",
@@ -108,6 +109,7 @@ process.stdout.write(JSON.stringify({
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async () => ({
         mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
@@ -205,6 +207,7 @@ process.stdout.write(JSON.stringify({
           async load() { return undefined; },
           async bind() {},
           resolveSessionFile: () => sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
         },
         prepare: async () => ({
           mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],

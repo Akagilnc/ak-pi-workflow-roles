@@ -937,6 +937,7 @@ test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", 
           socketPath: `/tmp/ak-nav-1187-${randomUUID()}.sock`,
           listTerminatingToolOnMcp: false,
           sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
         });
         try {
           // Lifecycle already called prepare during session_start — only finish it.

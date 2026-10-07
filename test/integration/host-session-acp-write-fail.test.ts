@@ -12,6 +12,7 @@ import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/ro
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 function request(runDirectory: string, home: string): RoleTurnRequest {
   return {
@@ -69,6 +70,7 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
           async load() { return undefined; },
           async bind() {},
           resolveSessionFile: () => sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
         },
         connect: async () => connection,
         prepare: async () => ({

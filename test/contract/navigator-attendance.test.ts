@@ -27,6 +27,7 @@ import {
 } from "../helpers/navigator-attendance-kit.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 test("#1160 prepare runs model from parent start; settle picks byStatus without a second round", async () => {
   await withTempRoot("navigator-attendance-", async (root) => {
@@ -395,6 +396,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
         async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => join(root, "session", "session.jsonl"),
+        principalAuthority: piDurablePrincipalAuthority,
       },
       prepare: async () => ({
         mcpServers: [],

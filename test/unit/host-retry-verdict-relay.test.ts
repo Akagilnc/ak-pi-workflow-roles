@@ -12,6 +12,7 @@ import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/ro
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 /** Opaque payload — not a production free-text template under test. */
 const OPAQUE_RETRY_MESSAGE = JSON.stringify({
@@ -60,6 +61,7 @@ async function captureAcpResumePrompts(runDirectory: string, retryMessage: strin
       },
       async bind() {},
       resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
     },
     connect: async () => connection,
     prepare: async () => ({

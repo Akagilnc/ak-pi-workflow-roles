@@ -119,7 +119,8 @@ async function runJudge(
           socketPath: join(socketDir, "mcp.sock"),
           listTerminatingToolOnMcp: false,
           sessionFile: coords.sessionFile,
-        });
+          principalAuthority: piDurablePrincipalAuthority,
+    });
         try {
           await prepared.ingestStructuredOutput(verdict);
           const closed = await prepared.closeRound();
