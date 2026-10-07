@@ -18,6 +18,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -29,13 +30,14 @@ import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
-import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleEnvelopeHost, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
   sessionHarness,
   attendance,
   settleWithAdvice,
   prepareWithAdvice,
+  completeAutoPrepare,
   byStatusAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -47,6 +49,11 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { randomUUID } from "node:crypto";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
+import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../../src/navigator-work-context.ts";
 
 test("shared accepted submission binds settled attendance before public extraction; prior activation cannot deliver late", async () => {
   await withTempRoot("navigator-bound-closure-", async (home) => {
@@ -833,140 +840,198 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
 });
 
 test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", async () => {
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
-  const { loadNavigatorWorkContext: loadHostNeutralNavigatorWorkContext } =
-    await import("../../src/navigator-work-context.ts");
 
-  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  try {
-    const parentDispatch = "Canonical nonblank prose Judge request for navigation.";
-    await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
-      await mkdir(join(home, ".ak-roles"), { recursive: true });
-      await writeFile(
-        join(home, ".ak-roles", "public-cli.json"),
-        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-      );
-      const setting = join(home, "model.json");
-      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+  const parentDispatch = "Canonical nonblank prose Judge request for navigation.";
+  await withActivationHome({ prefix: "ak-nav-public-entry-" }, async ({ home }) => {
+    const { runAkRole } = await import("../../src/public-cli/cli.ts");
+    await runAkRole(
+      ["config", "set",
+        "judge", "test/caller-seat:high",
+        "navigator", "provider/model",
+        "notary", "test/caller-seat:high",
+        "auditor", "test/caller-seat:high",
+        "gatekeeper", "test/caller-seat:high",
+      ],
+      { packageRoot, home, io: { stdout() {}, stderr() {} } },
+    );
 
-      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-admitted");
-      await mkdir(join(runDir, "session"), { recursive: true });
-      seedCurrentSection(runDir, "admitted", {
-        role: "judge",
-        runId: "judge-admitted",
-        instruction: parentDispatch,
-        instructionEmpty: false,
-        attachments: [],
-      });
-      process.env.AK_ROLE_RUN_DIR = runDir;
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedRoleRepo(project);
 
-      const harness = sessionHarness();
-      const events: any[] = [];
-      let liveNav: Awaited<ReturnType<typeof createNavigatorAttendance>> | undefined;
-      let observedWork: { subject?: string; authority?: string; subjectKey?: string; subjectProvenance?: string } | undefined;
-      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-      const pi = {
-        registerFlag() {},
-        getFlag(name: string) {
-          return name === "ak-role" ? "judge" : undefined;
-        },
-        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-          handlers.set(name, handler);
-        },
-        registerTool() {},
-        getAllTools() {
-          return [];
-        },
-        setActiveTools() {},
-        getActiveTools() { return []; },
-        appendEntry() {} };
+    const setting = join(home, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
-      const envelopeHost: RoleEnvelopeHost = {
-        host: pi as RoleHost,
-        appendEntry: pi.appendEntry,
-        sendMessage() {},
-        startKeepalive() {},
-        stopKeepalive() {} };
-      createRoleRuntimeExtension({
-        loadRoleSoul: async () => "JUDGE LAW",
-        // Production loader — public entry identity path, not a parallel mock.
-        loadNavigatorWorkContext: async (options) => {
-          const work = await loadHostNeutralNavigatorWorkContext({
-            context: options.context,
-            role: options.role,
-            ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
-          });
-          observedWork = {
-            subject: work.subject,
-            authority: work.authority,
-            subjectKey: work.subjectKey,
-            subjectProvenance: work.subjectProvenance,
-          };
-          return work;
-        },
-        createNavigatorAttendance: (options) => {
-          liveNav = createNavigatorAttendance({
-            context: { ...(options.context as object), home } as never,
-            role: options.role,
-            phase: options.phase,
-            subjectKey: options.subjectKey,
-            subject: options.subject,
-            authority: options.authority,
-            invocationId: options.invocationId,
-            ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
-            modelSettingPath: setting,
-            createSession: harness.factory,
-            onEvent: async (event, report) => {
-              events.push(event);
-              await options.onEvent?.(event, report);
+    const harness = sessionHarness();
+    const events: any[] = [];
+    let liveNav: Awaited<ReturnType<typeof createNavigatorAttendance>> | undefined;
+    let observedWork: {
+      subject?: string;
+      authority?: string;
+      subjectKey?: string;
+      subjectProvenance?: string;
+    } | undefined;
+    let prepareWire: Record<string, unknown> | undefined;
+
+    const baseDeps = createRoleRuntimeDependencies(packageRoot);
+    const deps = {
+      ...baseDeps,
+      loadNavigatorWorkContext: async (
+        options: Parameters<NonNullable<typeof baseDeps.loadNavigatorWorkContext>>[0],
+      ) => {
+        const work = await loadHostNeutralNavigatorWorkContext({
+          context: options.context,
+          role: options.role,
+          ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
+        });
+        observedWork = {
+          subject: work.subject,
+          authority: work.authority,
+          subjectKey: work.subjectKey,
+          subjectProvenance: work.subjectProvenance,
+        };
+        return work;
+      },
+      createNavigatorAttendance: (
+        options: Parameters<NonNullable<typeof baseDeps.createNavigatorAttendance>>[0],
+      ) => {
+        liveNav = createNavigatorAttendance({
+          context: { ...(options.context as object), home } as never,
+          role: options.role,
+          phase: options.phase,
+          subjectKey: options.subjectKey,
+          subject: options.subject,
+          authority: options.authority,
+          invocationId: options.invocationId,
+          ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+          ...(options.deliveryRequestLimit === undefined
+            ? {}
+            : { deliveryRequestLimit: options.deliveryRequestLimit }),
+          modelSettingPath: setting,
+          createSession: harness.factory,
+          onEvent: async (event, report) => {
+            events.push(event);
+            await options.onEvent?.(event, report);
+          },
+        });
+        return liveNav;
+      },
+    };
+
+    const officerHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const roleIndex = args.indexOf("--ak-role");
+        const role = roleIndex >= 0 ? args[roleIndex + 1] : undefined;
+        if (role === "notary" || role === "auditor") {
+          return scriptedTerminatingToolSession({
+            role,
+            toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged", ticketNumber: 1187 },
+          })(args, options);
+        }
+        throw new Error(`unexpected officer role: ${String(role)}`);
+      },
+    });
+
+    const host: RoleTurnHost = {
+      async executeTurn(request) {
+        if (request.activation.role !== "judge") {
+          return officerHost.executeTurn(request);
+        }
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: deps,
+          socketPath: `/tmp/ak-nav-1187-${randomUUID()}.sock`,
+          listTerminatingToolOnMcp: false,
+          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        });
+        try {
+          // Lifecycle already called prepare during session_start — only finish it.
+          assert.ok(liveNav, "public entry must construct Navigator attendance");
+          assert.ok(
+            liveNav.isPreparing() || harness.isPromptParked() || harness.prompts() > 0,
+            "shared lifecycle must auto-start prepare before the test finishes it",
+          );
+          await completeAutoPrepare(liveNav, harness, byStatusAdvice({
+            converged: "交卷送大理寺",
+            escalate: "按诊断重跑",
+          }));
+          if (prepareWire === undefined) {
+            const preparePrompt = harness.promptTexts().find((text) => {
+              try { return (JSON.parse(text) as { kind?: string }).kind === "prepare"; }
+              catch { return false; }
+            });
+            assert.equal(typeof preparePrompt, "string", "auto prepare must emit structured request");
+            prepareWire = JSON.parse(preparePrompt ?? "") as Record<string, unknown>;
+          }
+
+          return await driveExternalRoleTurnRounds(prepared, request, {
+            roundLimitName: "StructuredOutputRoundLimit",
+            currentSessionId: () => undefined,
+            async runRound() {
+              await prepared.ingestStructuredOutput({
+                status: "converged",
+                ticketNumber: 1187,
+                evidence: { checks: [{ name: "receipt", passed: true }] },
+              });
+              return { status: "delivered" as const };
             },
           });
-          return liveNav;
-        },
-      })(envelopeHost);
+        } finally {
+          await prepared.dispose?.();
+        }
+      },
+    };
 
-      const sessionDir = join(runDir, "session");
-      const sessionManager = SessionManager.create(home, sessionDir);
-      await handlers.get("session_start")?.({}, {
-        cwd: home,
-        runDirectory: runDir,
-        sessionManager,
-        abort() {},
-      });
+    const { stdout, stderr, io } = captureIo();
+    const result = await runPublicInstructionSeat(
+      [parentDispatch],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: host,
+        hostAdapters: [
+          { name: "pi" as const, create: () => ({ ok: true as const, host }) },
+          { name: "codex" as const, create: () => ({ ok: true as const, host }) },
+        ],
+        createRunId: () => "01a118700-0000-7000-8000-0000000judge",
+      },
+      io,
+      "judge",
+      (args) => parsePublicSeatArgv("judge", args),
+    );
+    assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
 
-      assert.ok(observedWork, "public entry must load navigator work context");
-      assert.equal(observedWork.subjectProvenance, "role_input");
-      assert.equal(observedWork.authority, "");
-      assert.equal(observedWork.subject, `work subject: ${observedWork.subjectKey}`);
-      assert.ok(liveNav, "public entry must construct Navigator attendance");
+    // Public admission wrote the caller's dispatch onto the parent run.
+    const runDirectory = result.admitted?.runDirectory;
+    assert.ok(typeof runDirectory === "string" && runDirectory.length > 0);
+    const admitted = await loadAdmittedJudgeRequest(runDirectory);
+    assert.equal(admitted?.instruction, parentDispatch);
 
-      // Parent admitted instruction remains the parent role's own dispatch surface.
-      const admitted = await loadAdmittedJudgeRequest(runDir);
-      assert.equal(admitted?.instruction, parentDispatch);
+    assert.ok(observedWork, "public entry must load navigator work context");
+    assert.equal(observedWork.subjectProvenance, "role_input");
+    assert.equal(observedWork.authority, "");
+    assert.equal(observedWork.subject, `work subject: ${observedWork.subjectKey}`);
 
-      // Complete the parallel prepare started by shared lifecycle (#1160).
-      await prepareWithAdvice(liveNav, harness, byStatusAdvice({
-        converged: "交卷送大理寺",
-        escalate: "按诊断重跑",
-      }));
-      assert.equal(harness.prompts(), 1, "auto prepare must open from public entry");
-      const fed = JSON.parse(harness.promptTexts()[0] ?? "") as Record<string, unknown>;
-      assert.equal(fed.kind, "prepare");
-      assert.equal(fed.role, "judge");
-      assert.equal(fed.subjectKey, observedWork.subjectKey);
-      assert.equal("subject" in fed, false);
-      assert.equal("authority" in fed, false);
+    assert.ok(prepareWire, "auto prepare must have produced a structured request");
+    assert.equal(prepareWire.kind, "prepare");
+    assert.equal(prepareWire.role, "judge");
+    assert.equal(prepareWire.subjectKey, observedWork.subjectKey);
+    assert.equal("subject" in prepareWire, false);
+    assert.equal("authority" in prepareWire, false);
 
-      await liveNav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
-      assert.equal(events[0]?.disposition, "advice");
-      assert.equal(events[0]?.prose, "交卷送大理寺");
-    });
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-  }
+    // byStatus pick from the auto-prepared batch after parent accepted settlement.
+    assert.equal(events.some((event) => event.disposition === "advice" && event.prose === "交卷送大理寺"), true);
+  });
 });
 
 test("bare developer prompt recovers Navigator work context poisoned at session_start", async () => {

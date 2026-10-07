@@ -203,3 +203,16 @@ export async function prepareWithAdvice(
   await completeParkedPrepare(nav, harness, body, toolCallId);
   void before;
 }
+
+/**
+ * #1187: finish a prepare the shared lifecycle already started.
+ * Does not call nav.prepare() — that would mask missing auto-start.
+ */
+export async function completeAutoPrepare(
+  nav: { isPreparing(): boolean },
+  harness: ReturnType<typeof sessionHarness>,
+  body: unknown = proseAdvice(),
+  toolCallId = "prepare",
+): Promise<void> {
+  await completeParkedPrepare(nav, harness, body, toolCallId);
+}
