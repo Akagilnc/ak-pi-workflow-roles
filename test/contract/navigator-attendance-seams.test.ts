@@ -557,21 +557,31 @@ test("public admitted section starts identity-only prepare context; missing/malf
         error.unavailableCause === "context",
     );
 
-    // Malformed control-plane state.jsonl → context classification with real cause retained (#1187 F2).
+    // Damaged control-plane state.jsonl → context classification; originalCause is the bare read fault (#1187 F2).
+    // Expectation comes from the live control-plane read — no frozen diagnostic keywords, no wrapper-message substitute.
     const badRun = join(root, "bad-run");
     await mkdir(badRun, { recursive: true });
     await writeFile(join(badRun, "state.jsonl"), "{not-a-sitian-row}\n", "utf8");
+    let expectedCause: unknown;
+    try {
+      await loadAdmittedJudgeRequest(badRun);
+      assert.fail("damaged state.jsonl must make the admitted control-plane read throw");
+    } catch (error) {
+      expectedCause = error;
+    }
     await assert.rejects(
       () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(badRun), role: "judge" }),
       (error: unknown) => {
         if (!(error instanceof NavigatorUnavailableError) || error.unavailableSource !== "context") {
           return false;
         }
-        const original = error.originalCause;
-        const detail = original instanceof Error
-          ? original.message
-          : (typeof original === "string" ? original : error.message);
-        return detail.includes("state.jsonl") && detail.includes("malformed");
+        // originalCause must be retained; wrapper message must not stand in for it.
+        if (error.originalCause === undefined || error.originalCause === null) return false;
+        if (error.originalCause instanceof Error && expectedCause instanceof Error) {
+          return error.originalCause.name === expectedCause.name
+            && error.originalCause.message === expectedCause.message;
+        }
+        return error.originalCause === expectedCause;
       },
     );
 
