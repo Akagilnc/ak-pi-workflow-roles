@@ -156,7 +156,12 @@ async function completeParkedPrepare(
   body: unknown,
   toolCallId: string,
 ): Promise<void> {
-  await waitForEventLoop(() => harness.isPromptParked() && harness.tool() !== undefined);
+  // Prepare may finish without parking (context failure drained, no-op). Reuse
+  // isPreparing — never hang waiting for a prompt that will not open (#1187).
+  await waitForEventLoop(
+    () => !nav.isPreparing() || (harness.isPromptParked() && harness.tool() !== undefined),
+  );
+  if (!harness.isPromptParked() || harness.tool() === undefined) return;
   await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
   harness.release();
   await waitForEventLoop(() => !nav.isPreparing());

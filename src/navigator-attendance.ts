@@ -277,8 +277,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
-  let subject = options.subject;
-  let authority = options.authority;
+  // #1187: auto prepare is identity-only — subject/authority options are accepted
+  // for call-site compatibility but are not attendance materials or local state.
   let contextError = options.contextError;
   /** Parallel-prepare result: status-keyed prose picked at settle (#1160). */
   let preparedAdvice: PreparedNavigatorAdvice | undefined;
@@ -514,8 +514,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
-      subject = next.subject;
-      authority = next.authority;
       contextError = next.contextError;
       return closing;
     },

@@ -524,86 +524,7 @@ test("#1187 empty authority still prepares from identity alone", async () => {
   });
 });
 
-test("#1187 public auto prepare drops parent dispatch while admitted instruction stays intact", async () => {
-  await withTempRoot("navigator-no-parent-dispatch-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-
-    const runDir = join(root, "run-public-judge");
-    await mkdir(join(runDir, "session"), { recursive: true });
-    const parentDispatch = [
-      "#1843 御史台 correctness 审查",
-      "复杂度是重点、功能次要",
-      "MING_SIM_CLAUDE_BIN=/usr/bin/false",
-    ].join("\n");
-    seedCurrentSection(runDir, "admitted", {
-      role: "judge",
-      runId: "run-judge-1",
-      instruction: parentDispatch,
-      instructionEmpty: false,
-      attachments: [],
-    });
-
-    const work = await loadNavigatorWorkContext(
-      { getFlag: () => undefined },
-      {
-        context: {
-          cwd: root,
-          runDirectory: runDir,
-          sessionManager: { getSessionDir: () => join(runDir, "session") },
-        } as never,
-        role: "judge",
-      },
-    );
-    assert.equal(work.subjectProvenance, "role_input");
-    assert.equal(work.subject.includes(parentDispatch), false);
-    assert.equal(work.authority.includes("MING_SIM_CLAUDE_BIN"), false);
-
-    // Parent admitted instruction remains the parent role's own dispatch surface.
-    const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
-    const admitted = await loadAdmittedJudgeRequest(runDir);
-    assert.equal(admitted?.instruction, parentDispatch);
-
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = createNavigatorAttendance({
-      context: { cwd: root, home: root } as never,
-      role: "judge",
-      phase: null,
-      subjectKey: work.subjectKey,
-      subject: work.subject,
-      authority: work.authority,
-      modelSettingPath: setting,
-      createSession: harness.factory,
-      onEvent: async (event) => { events.push(event); },
-    });
-    await prepareWithAdvice(nav, harness, byStatusAdvice({
-      converged: "交卷送大理寺",
-      escalate: "按诊断重跑",
-    }));
-    const fed = JSON.parse(harness.promptTexts()[0] ?? "") as Record<string, unknown>;
-    assert.equal(fed.kind, "prepare");
-    assert.equal(fed.role, "judge");
-    assert.equal(fed.subjectKey, work.subjectKey);
-    assert.equal("subject" in fed, false);
-    assert.equal("authority" in fed, false);
-    const wire = harness.promptTexts()[0] ?? "";
-    assert.equal(wire.includes(parentDispatch), false);
-    assert.equal(wire.includes("MING_SIM_CLAUDE_BIN"), false);
-    assert.equal(wire.includes("复杂度是重点"), false);
-
-    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
-    assert.equal(events[0]?.disposition, "advice");
-    assert.equal(events[0]?.prose, "交卷送大理寺");
-  });
-});
-
-test("public admitted section projects typed subject/authority; missing/malformed stay source=context", async () => {
+test("public admitted section starts identity-only prepare context; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
     return withPrimaryAwareCleanup(
@@ -630,12 +551,15 @@ test("public admitted section projects typed subject/authority; missing/malforme
 
     delete process.env.AK_ROLE_RUN_DIR;
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(runDir), role: "judge" });
-    // #1187: public admitted instruction starts prepare by identity; parent prose is not material.
-    assert.equal(loaded.subject.includes(prose), false);
-    assert.equal(loaded.authority.includes(prose), false);
-    assert.equal(loaded.authority, "");
+    // #1187: non-empty public admission starts prepare by identity; parent prose is not material.
     assert.equal(loaded.subjectProvenance, "role_input");
+    assert.equal(loaded.authority, "");
+    assert.equal(loaded.subject, `work subject: ${loaded.subjectKey}`);
     assert.ok(loaded.subjectKey.length > 0);
+    // Parent admitted instruction remains on the parent role surface.
+    const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
+    const admitted = await loadAdmittedJudgeRequest(runDir);
+    assert.equal(admitted?.instruction, prose);
 
     // Missing admitted request → typed context unavailable (not model/session/transport).
     await assert.rejects(
@@ -682,7 +606,7 @@ test("public admitted section projects typed subject/authority; missing/malforme
     const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(emptyRun), role: "judge" });
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");
-    assert.equal(empty.subject.includes(prose), false);
+    assert.equal(empty.subject, `work subject: ${empty.subjectKey}`);
         },
       async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
@@ -908,18 +832,40 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
   }
 });
 
-test("host-neutral envelope drives shared registration and session lifecycle", async () => {
+test("#1187 public entry keeps parent dispatch; auto prepare is identity-only", async () => {
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+  const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
+  const { loadNavigatorWorkContext: loadHostNeutralNavigatorWorkContext } =
+    await import("../../src/navigator-work-context.ts");
 
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
-    const prose = "Admitted instruction prose observed by Navigator attendance.";
+    const parentDispatch = "Canonical nonblank prose Judge request for navigation.";
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
+      await mkdir(join(home, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(home, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      );
+      const setting = join(home, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
       const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-admitted");
       await mkdir(join(runDir, "session"), { recursive: true });
+      seedCurrentSection(runDir, "admitted", {
+        role: "judge",
+        runId: "judge-admitted",
+        instruction: parentDispatch,
+        instructionEmpty: false,
+        attachments: [],
+      });
       process.env.AK_ROLE_RUN_DIR = runDir;
-      let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
+
+      const harness = sessionHarness();
+      const events: any[] = [];
+      let liveNav: Awaited<ReturnType<typeof createNavigatorAttendance>> | undefined;
+      let observedWork: { subject?: string; authority?: string; subjectKey?: string; subjectProvenance?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
       const pi = {
         registerFlag() {},
@@ -945,37 +891,77 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         stopKeepalive() {} };
       createRoleRuntimeExtension({
         loadRoleSoul: async () => "JUDGE LAW",
-        loadNavigatorWorkContext: async () => ({
-          subjectKey: `${runDir}/work`,
-          subject: prose,
-          authority: prose,
-          subjectProvenance: "role_input" }),
+        // Production loader — public entry identity path, not a parallel mock.
+        loadNavigatorWorkContext: async (options) => {
+          const work = await loadHostNeutralNavigatorWorkContext({
+            context: options.context,
+            role: options.role,
+            ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
+          });
+          observedWork = {
+            subject: work.subject,
+            authority: work.authority,
+            subjectKey: work.subjectKey,
+            subjectProvenance: work.subjectProvenance,
+          };
+          return work;
+        },
         createNavigatorAttendance: (options) => {
-          observed = {
+          liveNav = createNavigatorAttendance({
+            context: { ...(options.context as object), home } as never,
+            role: options.role,
+            phase: options.phase,
+            subjectKey: options.subjectKey,
             subject: options.subject,
             authority: options.authority,
-            subjectKey: options.subjectKey };
-          return {
-            prepare() {},
-            setWorkContext() {},
-            warmHelp() {},
-            isPreparing: () => false,
-            settle: async () => {},
-            dispose() {} };
-        } })(envelopeHost);
+            invocationId: options.invocationId,
+            ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+            modelSettingPath: setting,
+            createSession: harness.factory,
+            onEvent: async (event, report) => {
+              events.push(event);
+              await options.onEvent?.(event, report);
+            },
+          });
+          return liveNav;
+        },
+      })(envelopeHost);
 
       const sessionDir = join(runDir, "session");
-      await mkdir(sessionDir, { recursive: true });
       const sessionManager = SessionManager.create(home, sessionDir);
       await handlers.get("session_start")?.({}, {
         cwd: home,
+        runDirectory: runDir,
         sessionManager,
-        abort() {} });
+        abort() {},
+      });
 
-      assert.ok(observed, "Navigator attendance must be constructed");
-      assert.equal(observed.subject, prose);
-      assert.equal(observed.authority, prose);
-      assert.ok(String(observed.subjectKey).length > 0);
+      assert.ok(observedWork, "public entry must load navigator work context");
+      assert.equal(observedWork.subjectProvenance, "role_input");
+      assert.equal(observedWork.authority, "");
+      assert.equal(observedWork.subject, `work subject: ${observedWork.subjectKey}`);
+      assert.ok(liveNav, "public entry must construct Navigator attendance");
+
+      // Parent admitted instruction remains the parent role's own dispatch surface.
+      const admitted = await loadAdmittedJudgeRequest(runDir);
+      assert.equal(admitted?.instruction, parentDispatch);
+
+      // Complete the parallel prepare started by shared lifecycle (#1160).
+      await prepareWithAdvice(liveNav, harness, byStatusAdvice({
+        converged: "交卷送大理寺",
+        escalate: "按诊断重跑",
+      }));
+      assert.equal(harness.prompts(), 1, "auto prepare must open from public entry");
+      const fed = JSON.parse(harness.promptTexts()[0] ?? "") as Record<string, unknown>;
+      assert.equal(fed.kind, "prepare");
+      assert.equal(fed.role, "judge");
+      assert.equal(fed.subjectKey, observedWork.subjectKey);
+      assert.equal("subject" in fed, false);
+      assert.equal("authority" in fed, false);
+
+      await liveNav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+      assert.equal(events[0]?.disposition, "advice");
+      assert.equal(events[0]?.prose, "交卷送大理寺");
     });
   } finally {
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
