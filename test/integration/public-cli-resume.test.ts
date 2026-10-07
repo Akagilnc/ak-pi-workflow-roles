@@ -1719,16 +1719,22 @@ test("public resume failures persist structured diagnostics", async () => {
         const sessionFile = join(sessionDirectory, "session.jsonl");
         await mkdir(sessionDirectory, { recursive: true });
         if (input.session) await writeFile(sessionFile, "\n", "utf8");
-        seedCurrentSection(runDirectory, "invocation", {});
-        seedCurrentSection(runDirectory, "admitted", {
+        // #1183: ledger mouth places on typed ticketNumber — durable identity pages required.
+        const durable = {
           role: input.role,
+          runId: input.runId,
+          bookKey,
+          projectRoot: input.projectRoot,
+          runDirectory,
           instruction: "x",
           instructionEmpty: false,
-          attachments: [],
+          attachments: [] as const,
           ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
           ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
-        });
+        };
+        seedCurrentSection(runDirectory, "invocation", durable);
+        seedCurrentSection(runDirectory, "admitted", durable);
         await markRunAdmitted({
           role: input.role,
           runId: input.runId,

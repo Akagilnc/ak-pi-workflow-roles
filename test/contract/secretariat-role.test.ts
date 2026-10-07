@@ -12,6 +12,7 @@ import {
   readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
@@ -196,19 +197,31 @@ test("secretariat tool finishes before audit on every host",
       const runDirectory = `${root}/.ak-roles/books/fixture/unbound/runs/run-ledger@secretariat`;
       mkdirSync(`${runDirectory}/session`, { recursive: true });
       writeFileSync(`${runDirectory}/session/session.jsonl`, "");
+      // #1183: ledger mouth places on typed ticketNumber — durable admission pages required.
+      const durable = {
+        role: "secretariat",
+        runId: "run-ledger",
+        bookKey: "fixture",
+        projectRoot: root,
+        runDirectory,
+      } as const;
+      seedCurrentSection(runDirectory, "admitted", durable);
+      seedCurrentSection(runDirectory, "invocation", durable);
+      let sessionFile = `${runDirectory}/session/session.jsonl`;
       const context = {
         cwd: root,
         mode: "json",
         model: undefined,
         runDirectory,
-      host: "pi",
+        host: "pi",
         sessionManager: {
           getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
           getLeafEntry: () => undefined,
           getLeafId: () => null,
           getEntries: () => [],
-          getSessionDir: () => `${runDirectory}/session`,
-          getSessionFile: () => `${runDirectory}/session/session.jsonl`,
+          getSessionDir: () => `${context.runDirectory}/session`,
+          getSessionFile: () => sessionFile,
+          setSessionFile(next: string) { sessionFile = next; },
         },
         abort() {},
       };
