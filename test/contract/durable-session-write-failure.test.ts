@@ -36,8 +36,6 @@ function withStagedShutdownAttendance(
     ...base,
     loadNavigatorWorkContext: async () => ({
       subjectKey: `${runDirectory}/work`,
-      subject: "shutdown drain subject",
-      authority: "shutdown drain authority",
       subjectProvenance: "role_input" as const,
     }),
     createNavigatorAttendance: async (options) => {
