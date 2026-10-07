@@ -867,9 +867,17 @@ export function createDiaristRoleRuntime(
         const status = submitted?.status;
         if (status !== "completed") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
-        const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
+        // #1183: typed ticket assertion is identity acquisition — one mid-turn
+        // bind/relocate here, before seal / reask / infra outcome branches.
+        // Reuses ak_report_ticket seam; already-placed is a no-op. Host return
+        // must not be the first placement (dossier-topology).
+        if (ticketNumber !== undefined) {
+          await reportTicketFromHostContext(ctx, ticketNumber);
+        }
+        // Live leaf after possible relocate (commit reads history under runDirectory).
+        const coords = readDiaristRunCoordinates(ctx);
         // Strict-schema hosts emit ticketSessions: null for a single ticket.
         const multiTicket = submitted?.ticketSessions != null;
         const singleSessions = submitted && !multiTicket
@@ -880,18 +888,7 @@ export function createDiaristRoleRuntime(
           : singleSessions === undefined
             ? undefined
             : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
-        /**
-         * #1183: bounds reask never reaches projectClosure (correctable-rejection).
-         * A valid typed ticket assertion still acquires identity — relocate before
-         * throwing so host return is not the first placement. Successful seal keeps
-         * the shared projectClosedSubmission seam (do not double-move here).
-         */
-        const relocateAssertedTicketBeforeReask = async (): Promise<void> => {
-          if (ticketNumber === undefined) return;
-          await reportTicketFromHostContext(ctx, ticketNumber);
-        };
         if (ticketSessions === undefined) {
-          await relocateAssertedTicketBeforeReask();
           throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
         }
         try {
@@ -904,12 +901,8 @@ export function createDiaristRoleRuntime(
         } catch (error) {
           // Bound/session input failures → reask via typed identity (not message prefix).
           // Unexpected infrastructure keeps its own identity (do not wash).
-          if (error instanceof ParentQueueReaskError) {
-            await relocateAssertedTicketBeforeReask();
-            throw error;
-          }
+          if (error instanceof ParentQueueReaskError) throw error;
           if (error instanceof TicketProvenanceInputError) {
-            await relocateAssertedTicketBeforeReask();
             throw new ParentQueueReaskError(
               `${DIARIST_BOUNDS_REASK}\n${error.message}`,
             );

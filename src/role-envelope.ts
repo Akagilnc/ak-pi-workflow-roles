@@ -96,8 +96,8 @@ export async function prepareRoleEnvelope(options: {
   readonly sessionFile?: string;
   /**
    * Host authority that sealed request.principal. Required for mid-turn run
-   * relocate to reseal opaque principal wire (#1183); absent keeps live
-   * sessionManager/runDirectory only and never mutates opaque principal.
+   * relocate to reseal opaque principal wire (#1183); absent throws on relocate
+   * rather than mutating opaque principal or inventing a host-specific bypass.
    */
   readonly principalAuthority?: import("./host-contracts.ts").DurablePrincipalAuthority;
 }): Promise<PreparedRoleTurn> {
