@@ -35,6 +35,8 @@ import {
   sessionHarness,
   attendance,
   settleWithAdvice,
+  prepareWithAdvice,
+  byStatusAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { flushEventLoopTurns, packageRoot, seedGitRepository, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
@@ -487,32 +489,118 @@ test("#959 package does not keep a prior-advice ledger; host session owns contin
     );
   });
 });
-test("empty authority at prepare is honest context unavailable", async () => {
+test("#1187 empty authority still prepares from identity alone", async () => {
   await withTempRoot("navigator-empty-authority-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: context(),
+      context: context(root),
       role: "judge",
       phase: null,
       subjectKey: "/repo/.ak/work",
       subject: "work subject: /repo/.ak/work",
       authority: "",
       modelSettingPath: setting,
-      createSession: async () => {
-        throw new Error("session must not open without authority");
-      },
+      createSession: harness.factory,
       onEvent: async (event) => { events.push(event); } });
-    nav.prepare();
+    await prepareWithAdvice(nav, harness, { prose: "下一步送大理寺" });
+    assert.equal(harness.prompts(), 1, "identity-only prepare must open the model round");
+    const fed = JSON.parse(harness.promptTexts()[0] ?? "") as Record<string, unknown>;
+    assert.equal(fed.kind, "prepare");
+    assert.equal(fed.role, "judge");
+    assert.equal(fed.subjectKey, "/repo/.ak/work");
+    assert.equal("subject" in fed, false);
+    assert.equal("authority" in fed, false);
     await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
-    assert.equal(events.length, 1);
-    assert.equal(events[0].disposition, "unavailable");
-    assert.equal(events[0].unavailableSource, "context");
-    assert.equal(events[0].unavailableCause, "context");
-    assert.equal(events[0].prose, undefined);
-    assert.notEqual(events[0].unavailableReason, undefined);
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "下一步送大理寺");
+  });
+});
+
+test("#1187 public auto prepare drops parent dispatch while admitted instruction stays intact", async () => {
+  await withTempRoot("navigator-no-parent-dispatch-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    const runDir = join(root, "run-public-judge");
+    await mkdir(join(runDir, "session"), { recursive: true });
+    const parentDispatch = [
+      "#1843 御史台 correctness 审查",
+      "复杂度是重点、功能次要",
+      "MING_SIM_CLAUDE_BIN=/usr/bin/false",
+    ].join("\n");
+    seedCurrentSection(runDir, "admitted", {
+      role: "judge",
+      runId: "run-judge-1",
+      instruction: parentDispatch,
+      instructionEmpty: false,
+      attachments: [],
     });
+
+    const work = await loadNavigatorWorkContext(
+      { getFlag: () => undefined },
+      {
+        context: {
+          cwd: root,
+          runDirectory: runDir,
+          sessionManager: { getSessionDir: () => join(runDir, "session") },
+        } as never,
+        role: "judge",
+      },
+    );
+    assert.equal(work.subjectProvenance, "role_input");
+    assert.equal(work.subject.includes(parentDispatch), false);
+    assert.equal(work.authority.includes("MING_SIM_CLAUDE_BIN"), false);
+
+    // Parent admitted instruction remains the parent role's own dispatch surface.
+    const { loadAdmittedJudgeRequest } = await import("../../src/public-cli/invocation.ts");
+    const admitted = await loadAdmittedJudgeRequest(runDir);
+    assert.equal(admitted?.instruction, parentDispatch);
+
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: { cwd: root, home: root } as never,
+      role: "judge",
+      phase: null,
+      subjectKey: work.subjectKey,
+      subject: work.subject,
+      authority: work.authority,
+      modelSettingPath: setting,
+      createSession: harness.factory,
+      onEvent: async (event) => { events.push(event); },
+    });
+    await prepareWithAdvice(nav, harness, byStatusAdvice({
+      converged: "交卷送大理寺",
+      escalate: "按诊断重跑",
+    }));
+    const fed = JSON.parse(harness.promptTexts()[0] ?? "") as Record<string, unknown>;
+    assert.equal(fed.kind, "prepare");
+    assert.equal(fed.role, "judge");
+    assert.equal(fed.subjectKey, work.subjectKey);
+    assert.equal("subject" in fed, false);
+    assert.equal("authority" in fed, false);
+    const wire = harness.promptTexts()[0] ?? "";
+    assert.equal(wire.includes(parentDispatch), false);
+    assert.equal(wire.includes("MING_SIM_CLAUDE_BIN"), false);
+    assert.equal(wire.includes("复杂度是重点"), false);
+
+    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "交卷送大理寺");
+  });
 });
 
 test("public admitted section projects typed subject/authority; missing/malformed stay source=context", async () => {
@@ -542,8 +630,10 @@ test("public admitted section projects typed subject/authority; missing/malforme
 
     delete process.env.AK_ROLE_RUN_DIR;
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(runDir), role: "judge" });
-    assert.equal(loaded.subject, prose);
-    assert.equal(loaded.authority, prose);
+    // #1187: public admitted instruction starts prepare by identity; parent prose is not material.
+    assert.equal(loaded.subject.includes(prose), false);
+    assert.equal(loaded.authority.includes(prose), false);
+    assert.equal(loaded.authority, "");
     assert.equal(loaded.subjectProvenance, "role_input");
     assert.ok(loaded.subjectKey.length > 0);
 

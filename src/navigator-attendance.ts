@@ -322,12 +322,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
    */
   const loadMaterialsAndSession = async (invocationId: string): Promise<NavigatorPreparationSession> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
-    if (typeof authority !== "string" || authority.trim() === "") {
-      throw navigatorUnavailableError(
-        "context",
-        new Error("controlling authority content was not supplied as typed work context"),
-      );
-    }
+    // #1187: prepare runs from identity (role/phase/subjectKey). Parent dispatch
+    // and authority copies are not required materials for the auto prepare round.
     const modelPromise = (async () => {
       try {
         const resolved = await resolveNavigatorSeatSelection(options.context);
@@ -413,16 +409,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
     const activeSession = await loadMaterialsAndSession(invocationId);
     // #1160: parallel prepare from parent start — model runs now; settle only picks.
-    // Pass already-loaded subject/authority so the prepare run can judge progress
-    // (ticket text lives in those materials when present — no path invention).
+    // #1187: identity only. Parent dispatch / authority copies stay off this wire;
+    // navigator reads ticket and station records itself when needed.
     const request = JSON.stringify({
       kind: "prepare",
       role: options.role,
       phase: options.phase,
       invocationId,
       subjectKey,
-      subject,
-      authority,
     });
     try {
       try {

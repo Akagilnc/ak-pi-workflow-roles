@@ -11,7 +11,6 @@ import { loadDoctorCase } from "./doctor-evidence.ts";
 import { isEnoent } from "./unknown-value.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import {
-  navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   navigatorUnavailableError,
   resolveNavigatorAuthorityMaterial,
@@ -86,11 +85,15 @@ export async function loadNavigatorWorkContext(
       );
     }
     if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
-      const prose = admitted.instruction;
-      subjectProvenance = "role_input";
-      subject = prose;
-      subjectKey = navigatorSubjectKey(subjectRoot, prose, subjectProvenance);
-      return { subjectKey, subject, authority: prose, subjectProvenance };
+      // #1187: non-empty public admission starts parallel prepare by identity.
+      // Parent instruction remains the parent role's own dispatch; auto navigator
+      // does not receive that prose (or a duplicate authority copy) as material.
+      return {
+        subjectKey: subjectRoot,
+        subject: `work subject: ${subjectRoot}`,
+        authority: "",
+        subjectProvenance: "role_input",
+      };
     }
     return {
       subjectKey: subjectRoot,
