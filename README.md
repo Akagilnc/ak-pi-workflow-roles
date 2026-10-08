@@ -103,7 +103,7 @@ ak-role collector --model <provider/model[:thinking]> --pr 42 --request-manifest
 # fixer
 ak-role fixer --model <provider/model[:thinking]> --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 
-# doctor
+# doctor  (pending redesign — kept, not maintained as a ledger reader)
 ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this retained case."
 
 # merger
@@ -131,7 +131,7 @@ ak-role diarist --model <provider/model[:thinking]> "整理 #582、#583 自上�
 # countersign request example
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
-# analyst
+# analyst  (pending redesign — kept, not maintained as a ledger reader)
 ak-role analyst
 
 # Resume request example; audit continuation: ADR 0003
