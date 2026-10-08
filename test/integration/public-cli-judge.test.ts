@@ -77,6 +77,10 @@ test("S1: judge escalate public CLI keeps decisionGate options on typed payload 
           const details = {
             status: "escalate",
             decisionGate: { question: "请二选一", options },
+            // #1198: review-seat summary + full text both external-readable.
+            summary: "judge short conclusion",
+            note: "full judge note remains",
+            findings: ["detail finding remains"],
           };
           await writeFile(
             join(sessionDir, "session.jsonl"),
@@ -101,6 +105,9 @@ test("S1: judge escalate public CLI keeps decisionGate options on typed payload 
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
     const payload = objectPayloads(result.terminal.roleOutcome)[0] ?? {};
     assert.deepEqual(payload.decisionGate, { question: "请二选一", options });
+    assert.equal(payload.summary, "judge short conclusion");
+    assert.equal(payload.note, "full judge note remains");
+    assert.deepEqual(payload.findings, ["detail finding remains"]);
   });
 });
 
