@@ -133,7 +133,7 @@ const execFileAsync = promisify(execFile);
 export type PublicSummonResult = {
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
-  /** Independent officer/role run directory (正本); parent books pointer only. */
+  /** Independent officer/role run directory (正本). Parent does not book a copy (#1195). */
   readonly runDirectory?: string;
   /** Offline diagnostics from nested CLI (structural rejection text). */
   readonly stderr?: string;
@@ -741,7 +741,7 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via parentRunPath (#969 / #987). */
+/** Gate officer summons: notary/auditor via --source-run; inspector/countersign via parentRunPath (#969 / #987). */
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
@@ -778,9 +778,10 @@ export async function summonGateOfficer(options: {
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
-  // #1195: ticket-court notary (countersign source) does not preload the parent
-  // body — identity binds via --source-run; judgment is self-fetched after the
-  // independent clauses table. Other officers / non-countersign sources unchanged.
+  // #1195 full-blind ticket-court notary (countersign source): do not preload the
+  // parent body. Identity binds via --source-run; the notary reads the live ticket
+  // and ledger itself and never opens the countersign verdict (fac9d5ec / sys-opt4).
+  // Other officers / non-countersign sources still receive the parent submission body.
   let gateReviewInstruction: string | undefined;
   if (options.reask === undefined && options.submission !== undefined) {
     const { isTicketCourtCountersignSource } = await import("./run-terminal-artifacts.ts");
