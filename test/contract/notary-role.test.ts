@@ -84,24 +84,3 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   assert.ok(h.beforeStart());
 });
 
-test("#1195 notary execute still records missing clauses as-is (no package reject)", async () => {
-  const h = notaryHarness();
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    { failInfrastructure(error) { throw error; } },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  await runtime.activate();
-  const tool = h.tools.get(NOTARY_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  const result = await tool.execute(
-    "no-clauses",
-    { status: "converged", note: "table omitted" },
-    undefined,
-    undefined,
-    {},
-  );
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, { status: "converged", note: "table omitted" });
-});

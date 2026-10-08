@@ -99,25 +99,6 @@ test("review officers expose one shared output tool; court seats share clauses s
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "converged" }), true);
 });
 
-test("#1195 countersign execute still records missing clauses as-is (no package reject)", async () => {
-  const h = countersignHarness();
-  await createCountersignRoleRuntime(
-    h.roleHost as never,
-    { loadSoul: async () => "LAW" },
-  ).activate();
-  const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  const result = await tool.execute(
-    "no-clauses",
-    { status: "converged", note: "table omitted" },
-    undefined,
-    undefined,
-    {},
-  );
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, { status: "converged", note: "table omitted" });
-});
-
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
   const h = countersignHarness();
   const runtime = createCountersignRoleRuntime(
@@ -154,17 +135,28 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
 
-  const result = await tool.execute(
+  const withFindings = await tool.execute(
     "one",
     { status: "continue", findings: ["x"] },
     undefined,
     undefined,
     {},
   );
-  assert.equal(result.terminate, true);
+  assert.equal(withFindings.terminate, true);
   assert.equal(
-    (result.details as { status: string }).status,
+    (withFindings.details as { status: string }).status,
     "continue",
   );
-  assert.deepEqual(result.content, []);
+  assert.deepEqual(withFindings.content, []);
+
+  // #1195: generation declares clauses; package still records a missing table as-is.
+  const withoutClauses = await tool.execute(
+    "no-clauses",
+    { status: "converged" },
+    undefined,
+    undefined,
+    {},
+  );
+  assert.equal(withoutClauses.terminate, true);
+  assert.deepEqual(withoutClauses.details, { status: "converged" });
 });
