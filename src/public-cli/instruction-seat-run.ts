@@ -1722,12 +1722,9 @@ async function auditSubmittedRole(
       if (terminal === undefined) throw new Error("escalated audit has no terminal result");
       // #1195: ticket-court escalate carries parent 给事中原表 on the returned
       // 符宝郎 terminal so outer capturing IO (secretariat nest) still presents both.
-      if (admitted.role === "countersign" && turn.terminal !== undefined) {
-        const parentPayloads = turn.terminal.roleOutcome.kind === "accepted"
-          || turn.terminal.roleOutcome.kind === "audit_escalation"
-          ? turn.terminal.roleOutcome.payloads ?? []
-          : [];
-        const parentReceipt = parentPayloads.at(-1);
+      // Entry already narrowed turn.terminal to accepted — do not re-branch kinds.
+      if (admitted.role === "countersign") {
+        const parentReceipt = turn.terminal.roleOutcome.payloads?.at(-1);
         if (parentReceipt !== undefined) {
           terminal = withParentCourtTerminalFact(terminal, {
             factKey: SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
