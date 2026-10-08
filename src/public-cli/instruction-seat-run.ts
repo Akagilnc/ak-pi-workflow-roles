@@ -217,20 +217,13 @@ async function presentOriginalVolume(
   for (const value of held) io.stdout(value);
 }
 
-/** Runtime fact beside the original volume. Payloads stay as submitted. */
-function withUnsettledDirection(
-  parent: TerminalResult,
-  officer?: TerminalResult,
-): TerminalResult {
+/**
+ * Mark this leg's terminal that subsequent audit did not settle a queue word.
+ * Other-seat receipts / run ids stay on those runs — not copied here (#1195).
+ */
+function withUnsettledDirection(parent: TerminalResult): TerminalResult {
   const outcome = parent.roleOutcome;
   if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return parent;
-  const officerOutcome = officer?.roleOutcome;
-  const officerPayloads = officer?.submissions !== undefined && officer.submissions.length > 0
-    ? officer.submissions
-    : officerOutcome !== undefined && officerOutcome.kind !== "no_receipt"
-      ? officerOutcome.payloads ?? []
-      : [];
-
   return {
     ...parent,
     roleOutcome: {
@@ -239,9 +232,6 @@ function withUnsettledDirection(
         ...(outcome.decisiveFacts ?? {}),
         directionUnsettled: true,
         subsequentAudit: "incomplete",
-        ...(officerOutcome === undefined ? {} : { officerRole: officerOutcome.role }),
-        ...(officer?.runId === undefined ? {} : { officerRunId: officer.runId }),
-        ...(officerPayloads.length === 0 ? {} : { officerPayloads }),
       },
     },
   };
@@ -254,15 +244,17 @@ function heldUnreadableTerminal(terminal: TerminalResult | undefined): boolean {
   return typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status);
 }
 
-async function presentUnsettledAudit(
-  parent: TerminalResult,
-  officer: TerminalResult | undefined,
+/**
+ * Present the actual audit seat's volume for an unreadable conclusion (ADR 0055).
+ * Parent is not given a copy of the officer receipt (#1195).
+ */
+async function presentUnsettledOfficer(
+  officer: TerminalResult,
   io: CliIo,
   runDirectory: string,
 ): Promise<TerminalResult> {
-  const terminal = withUnsettledDirection(parent, officer);
+  const terminal = withUnsettledDirection(officer);
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, runDirectory);
-  if (officer !== undefined) await presentTerminal(officer, { ...io, omitFailureStderrDiagnostic: true }, runDirectory);
   return terminal;
 }
 
@@ -1399,23 +1391,19 @@ export async function continueParentAfterChild(
   const resolved = await queueConclusionFromChild(child, env, io);
   if (resolved !== undefined && "stop" in resolved) {
     const stopped = resolved.stop;
+    // Unreadable child conclusion stays on that seat — resume 审核席本人 (ADR 0055 / #1195).
     if (
       stopped.exitCode === 0
       && heldUnreadableTerminal(stopped.terminal)
       && stopped.terminal !== undefined
+      && stopped.admitted !== undefined
     ) {
-      const parentTerminal = await trySettlePublicSeat(
-        admitted,
-        env.principalAuthority,
-        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
+      const terminal = await presentUnsettledOfficer(
+        stopped.terminal,
+        io,
+        stopped.admitted.runDirectory,
       );
-      if (
-        parentTerminal?.roleOutcome.kind === "accepted"
-        || parentTerminal?.roleOutcome.kind === "audit_escalation"
-      ) {
-        const terminal = await presentUnsettledAudit(parentTerminal, stopped.terminal, io, admitted.runDirectory);
-        return { exitCode: 0, admitted, terminal };
-      }
+      return { exitCode: 0, admitted: stopped.admitted, terminal };
     }
     return stopped;
   }
@@ -1577,9 +1565,14 @@ async function auditSubmittedRole(
         if (lastSummon?.terminal === undefined) {
           throw new Error("doctor audit kept an unreadable reply with no terminal");
         }
-        if (turn.terminal === undefined) throw new Error("doctor submission has no terminal");
-        const terminal = await presentUnsettledAudit(turn.terminal, lastSummon.terminal, io, admitted.runDirectory);
-        return { exitCode: 0, admitted, terminal };
+        const officerAdmitted = lastSummon.admitted;
+        const officerDir = officerAdmitted?.runDirectory ?? lastSummon.runDirectory ?? admitted.runDirectory;
+        const terminal = await presentUnsettledOfficer(lastSummon.terminal, io, officerDir);
+        return {
+          exitCode: 0,
+          ...(officerAdmitted === undefined ? { admitted } : { admitted: officerAdmitted }),
+          terminal,
+        };
       }
       if (decision.status !== "converged") {
         if (lastSummon?.terminal !== undefined) {
@@ -1645,11 +1638,19 @@ async function auditSubmittedRole(
       }
     }
     if (chain.status === "needs_reask") {
-      const officerTerminal = chain.passes.at(-1)?.terminal;
+      const pass = chain.passes.at(-1);
+      const officerTerminal = pass?.terminal;
       if (officerTerminal === undefined) throw new Error("unreadable audit has no terminal result");
-      if (turn.terminal === undefined) throw new Error("audited submission has no terminal");
-      const terminal = await presentUnsettledAudit(turn.terminal, officerTerminal, io, admitted.runDirectory);
-      return { exitCode: 0, admitted, terminal };
+      const officerRunId = pass?.runId
+        ?? (pass?.runDirectory === undefined ? undefined : runIdFromRunDirectory(pass.runDirectory));
+      if (officerRunId === undefined) throw new Error("unreadable audit has no resumable run identity");
+      const officer = await loadResumablePublicRole(env.home, officerRunId, env.principalAuthority);
+      const terminal = await presentUnsettledOfficer(
+        officerTerminal,
+        io,
+        officer.admitted.runDirectory,
+      );
+      return { exitCode: 0, admitted: officer.admitted, terminal };
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);

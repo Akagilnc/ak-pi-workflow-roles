@@ -294,8 +294,6 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    /** Durable custom entry names this officer for 给事中 projection (#1195). */
-    durableOfficerEntry: true,
     /** Court reask replaces the initial prompt. Otherwise the fixed kickoff. */
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
@@ -317,8 +315,6 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "court-materials",
-    /** Durable custom entry names this officer. */
-    durableOfficerEntry: true,
     sameParent: "none",
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
@@ -669,15 +665,6 @@ export function packagedAuditToolName(role: string): string | undefined {
   const record = packagedRoleMetadata(role);
   if (record === undefined || !("auditTool" in record)) return undefined;
   return record.auditTool;
-}
-
-/** Durable officer entry whose name is the seat role. */
-export function packagedDurableOfficerEntry(officer: unknown): boolean {
-  return typeof officer === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
-    "durableOfficerEntry" in record
-    && record.durableOfficerEntry === true
-    && record.role === officer
-  );
 }
 
 /** Admitted-request role whose navigator subject is the public instruction. */

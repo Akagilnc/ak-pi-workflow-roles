@@ -15,8 +15,7 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { bookDirectOfficerRunPointer, DIRECT_OFFICER_RUN_POINTER_KIND, OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
-import { sessionFileOf } from "../../src/role-run-placement.ts";
+import { DIRECT_OFFICER_RUN_POINTER_KIND, OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
@@ -335,12 +334,13 @@ test("analyst gate-cycles via runAnalyst: shared submission pointer retains offi
       toolName: "ak_submission_output",
       args: { status: "continue", findings: ["finding"] },
     }), "utf8");
-    // The production pointer producer books the officer into the parent's current.json.
-    bookDirectOfficerRunPointer({
-      parentSessionFile: sessionFileOf(runDirectory),
-      officer: "inspector",
-      sessionFile,
-    });
+    // Historical archive sample (production no longer writes pointers — #1195).
+    reportRunRecord(
+      runDirectory,
+      OFFICER_POINTER_RECORD_KIND,
+      { version: 1, kind: DIRECT_OFFICER_RUN_POINTER_KIND, officer: "inspector", sessionFile },
+      "submission-gate",
+    );
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const leg = gateSection(result.page).legs.find((item) => item.runId === GATE_JUDGE_RUN);
     assert.ok(leg);

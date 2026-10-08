@@ -1,8 +1,7 @@
 /**
  * Medium #753 / #821 / #879 gate-officer resume accounting (FS / real officer entry).
  * Unit coverage: test/unit/gate-officer-resume-accounting.test.ts
- * - Multiple pointers to one officer session must not multiply rounds (#753).
- * - Direct officer pointer booking: the latest history officer-pointer record per officer wins (#753).
+ * - Multiple archived pointers to one officer session must not multiply rounds (#753).
  * - Officer seat host is not parent invocation host (#821).
  * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
@@ -17,10 +16,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
-import { OFFICER_POINTER_RECORD_KIND, readBookedOfficerPointers } from "../../src/archivist-record-pointer.ts";
-import { bookDirectOfficerRunPointer } from "../../src/archivist-record-pointer.ts";
-import { sessionFileOf } from "../../src/role-run-placement.ts";
-import { writeSectionSync } from "../../src/run-dossier.ts";
+import { OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
@@ -106,38 +102,6 @@ test("#753 multiple pointers to same officer session count seals once each", asy
       rounds.map((r) => r.findingsCount),
       [1, 1, 1],
     );
-  });
-});
-
-test("#753 bookDirectOfficerRunPointer upserts one slot per officer", async () => {
-  await withTempRoot("ak-gate-pointer-upsert-", async (root) => {
-    const parentRun = parentRunDirectory(root);
-    const parentSession = sessionFileOf(parentRun);
-    const firstSession = join(root, "officer-a", "session", "session.jsonl");
-    const secondSession = join(root, "officer-b", "session", "session.jsonl");
-
-    bookDirectOfficerRunPointer({
-      parentSessionFile: parentSession,
-      officer: "notary",
-      sessionFile: firstSession,
-      runDirectory: join(root, "officer-a"),
-    });
-    bookDirectOfficerRunPointer({
-      parentSessionFile: parentSession,
-      officer: "notary",
-      sessionFile: secondSession,
-      runDirectory: join(root, "officer-b"),
-    });
-
-    const booked = await readBookedOfficerPointers(parentRun);
-    assert.deepEqual(Object.keys(booked), ["notary"]);
-    const body = booked.notary as { sessionFile: string; runDirectory?: string };
-    assert.equal(body.sessionFile, secondSession);
-    assert.equal(body.runDirectory, join(root, "officer-b"));
-
-    // The public call's next current.json write projects the same latest pointer.
-    writeSectionSync(parentRun, "runState", { phase: "settled" });
-    assert.deepEqual(readCurrentSection(parentRun, "officers"), { notary: body });
   });
 });
 
