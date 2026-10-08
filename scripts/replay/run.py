@@ -70,6 +70,8 @@ def main():
         cmd.append(instr)
         out = f"{kit}/out-{tag}.jsonl"
     else:
+        if a.schema:
+            sys.exit("--schema applies to codex legs only (pi legs take the receipt shape from the host extension)")
         sess = f"{kit}/pisess-{tag}"
         shutil.rmtree(sess, ignore_errors=True); os.makedirs(sess)
         model = f"{a.provider or meta['provider']}/{a.model or meta['model']}"
