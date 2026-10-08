@@ -17,6 +17,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
+import { persistAdmittedAuditedSubmissionToolCallId } from "./public-cli/invocation.ts";
 import {
   GatekeeperDecisionError,
   officerConclusionReask,
@@ -143,6 +144,25 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
+    // #1195 option 1: officer admitted-request records the parent seal under audit.
+    const officerRunDirectory =
+      typeof projected.summoned?.runDirectory === "string"
+      && projected.summoned.runDirectory.trim() !== ""
+        ? projected.summoned.runDirectory
+        : projected.summoned?.admitted?.runDirectory;
+    if (
+      officerRunDirectory !== undefined
+      && options.toolCallId.trim() !== ""
+      && (
+        gatekeeper.status === "converged"
+        || gatekeeper.status === "continue"
+        || gatekeeper.status === "escalate"
+        || gatekeeper.status === "needs_reask"
+        || gatekeeper.status === "transport_failure"
+      )
+    ) {
+      persistAdmittedAuditedSubmissionToolCallId(officerRunDirectory, options.toolCallId);
+    }
     if (gatekeeper.status === "converged") {
       return {
         status: "converged",

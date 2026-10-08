@@ -32,7 +32,6 @@ import {
   sealAcceptedSubmission,
   sealAcceptedSubmissionForSpawn,
 } from "./submission-ledger-fixture.ts";
-import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Capture prepareRoleEnvelope surfaces then dispose — shared public-entry probe. */
 export async function capturePreparedEnvelope(request: RoleTurnRequest): Promise<{
@@ -253,50 +252,31 @@ export function scriptedTerminatingToolSession(input: {
   const acceptedText = input.acceptedText ?? `${input.role} output accepted`;
   const sessionWriteMode = input.sessionWriteMode ?? "replace";
   const sessionDetails = input.outputDetails ?? input.details;
-  return async (extraArgs, spawnOptions) => {
+  const rows = [
+    sessionUserMessageRow("user-1", "kickoff", 1),
+    ...sessionToolExchangeRows({
+      stem: "1",
+      parentId: "user-1",
+      callId: toolCallId,
+      toolName: input.toolName,
+      details: sessionDetails,
+      body: acceptedText,
+      isError,
+      n: 2,
+    }),
+    ...(seal ? [{
+      type: "custom",
+      customType: "ak-role-submission-closure",
+      data: { toolName: input.toolName, isError: false, details: sessionDetails },
+      id: "closure-1",
+      parentId: "result-1",
+      timestamp: sessionRowTime(3).iso,
+    }] : []),
+  ];
+  return async (extraArgs) => {
     const sessionFile = argvFlagValue(extraArgs, "--session");
     assert.ok(sessionFile);
-    // Prefer real user-dialogue stdin (parent seal body / 御答) so session rows
-    // match production gateReviewInstruction delivery (#1195 belonging checks).
-    const dialogue =
-      spawnOptions?.stdin !== undefined && spawnOptions.stdin.trim() !== ""
-        ? readUserDialogueStdin(spawnOptions.stdin)
-        : "kickoff";
-    const userText = dialogue.length > 0 ? dialogue : "kickoff";
-    let prior = "";
-    try {
-      prior = await readFile(sessionFile, "utf8");
-    } catch {
-      prior = "";
-    }
-    // Keep prior user turns on resume so belonging can see the parent seal body
-    // that preceded 御答 / reask turns (replace would wipe it).
-    const stem = prior.trim() === "" ? "1" : `r${Date.now()}`;
-    const userId = `user-${stem}`;
-    const n = prior.trim() === "" ? 1 : 10;
-    const rows = [
-      sessionUserMessageRow(userId, userText, n),
-      ...sessionToolExchangeRows({
-        stem,
-        parentId: userId,
-        callId: prior.trim() === "" ? toolCallId : `${toolCallId}_${stem}`,
-        toolName: input.toolName,
-        details: sessionDetails,
-        body: acceptedText,
-        isError,
-        n: n + 1,
-      }),
-      ...(seal ? [{
-        type: "custom" as const,
-        customType: "ak-role-submission-closure",
-        data: { toolName: input.toolName, isError: false, details: sessionDetails },
-        id: `closure-${stem}`,
-        parentId: `result-${stem}`,
-        timestamp: sessionRowTime(n + 2).iso,
-      }] : []),
-    ];
-    const mode = prior.trim() === "" ? sessionWriteMode : "append";
-    await writeSessionJsonl(sessionFile, rows, mode);
+    await writeSessionJsonl(sessionFile, rows, sessionWriteMode);
     return {
       code: 0,
       timedOut: false,

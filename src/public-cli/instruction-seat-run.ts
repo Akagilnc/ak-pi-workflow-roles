@@ -47,7 +47,9 @@ import {
   appendCallerFileFlagPaths,
   buildInstructionTransportPrompt,
   materializeCountersignInvocation,
+  persistAdmittedAuditedSubmissionToolCallId,
   persistAdmittedSourceRunPath,
+  readAdmittedAuditedSubmissionToolCallId,
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
@@ -1418,9 +1420,9 @@ export async function continueParentAfterChild(
         { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      // Live child only counts when its own session reviewed this parent seal body
-      // — never a prior seal's officer coating a newer parent submission (#1195 P1).
-      const live = await liveChildForCurrentParentSeal(
+      // Live child only when admitted-request.auditedSubmissionToolCallId matches
+      // the parent seal under audit (#1195 option 1 / owner 00644146).
+      const live = liveChildForCurrentParentSeal(
         terminal,
         resolved.admitted,
         latestQueuePayload(resolved.terminal),
@@ -1443,63 +1445,21 @@ export async function continueParentAfterChild(
   return result;
 }
 
-/** Flatten one session message content field to comparable text. */
-function sessionMessageText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return readableGateItem(content);
-  const parts: string[] = [];
-  for (const part of content) {
-    if (typeof part === "string") {
-      parts.push(part);
-      continue;
-    }
-    if (!isRecord(part)) continue;
-    if (typeof part.text === "string") parts.push(part.text);
-    else if (part.type === "text" && typeof part.text === "string") parts.push(part.text);
-  }
-  return parts.join("");
-}
-
 /**
- * Officer session user turns that carried the parent seal body (gateReviewInstruction).
- * 御答 resume prompts are other user turns — membership is content equality with the
- * current parent accepted payload, not run birth time (#1195 P1).
+ * Hand continueParentAfterChild's live child to audit only when the child's own
+ * admitted-request records this parent seal's toolCallId (#1195 option 1).
+ * Read failures propagate — never wash into "no match".
  */
-async function officerSessionReviewedParentBody(
-  officerRunDirectory: string,
-  parentAcceptedBody: string,
-): Promise<boolean> {
-  if (parentAcceptedBody.trim() === "") return false;
-  let entries: Awaited<ReturnType<typeof readBoundSessionEntries>>;
-  try {
-    entries = await readBoundSessionEntries(sessionFileOf(officerRunDirectory));
-  } catch {
-    return false;
-  }
-  for (const entry of entries) {
-    if (entry.type !== "message") continue;
-    const message = isRecord(entry.message) ? entry.message : undefined;
-    if (message?.role !== "user") continue;
-    if (sessionMessageText(message.content) === parentAcceptedBody) return true;
-  }
-  return false;
-}
-
-/**
- * Hand continueParentAfterChild's live child to audit only when that child's own
- * session reviewed the parent seal currently under audit (dialogue body match).
- */
-async function liveChildForCurrentParentSeal(
+function liveChildForCurrentParentSeal(
   parentTerminal: TerminalResult,
   child: AdmittedRoleInvocation,
   receipt: unknown,
-): Promise<{ readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined> {
+): { readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined {
   if (receipt === undefined) return undefined;
-  if (parentTerminal.roleOutcome.kind !== "accepted") return undefined;
-  const accepted = parentTerminal.roleOutcome.payloads?.at(-1);
-  if (accepted === undefined) return undefined;
-  const body = readableGateItem(accepted);
-  if (!(await officerSessionReviewedParentBody(child.runDirectory, body))) return undefined;
+  const parentSealId = parentTerminal.submissionToolCallId?.trim() ?? "";
+  if (parentSealId === "") return undefined;
+  const childSealId = readAdmittedAuditedSubmissionToolCallId(child.runDirectory);
+  if (childSealId !== parentSealId) return undefined;
   return { officer: child, receipt };
 }
 
@@ -1627,6 +1587,10 @@ async function auditSubmittedRole(
             ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
           });
           lastSummon = summoned;
+          const officerDir = summoned.runDirectory ?? summoned.admitted?.runDirectory;
+          if (officerDir !== undefined && toolCallId.length > 0) {
+            persistAdmittedAuditedSubmissionToolCallId(officerDir, toolCallId);
+          }
           return summoned;
         },
       });
