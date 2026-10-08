@@ -315,7 +315,9 @@ function projectOfficerTerminal(
   }
   if (outcome.kind === "accepted") {
     // #1195: nested incomplete audit (directionUnsettled) must not be read as a
-    // parent-payload converged — that washes the inner unreadability (#ADR 0055).
+    // parent-payload converged — that washes the inner unreadability (ADR 0055).
+    // Keep nested officer runId when present; requireSubmissionGate must not reask
+    // this outer officer about the inner seat's missing status.
     if (outcome.decisiveFacts?.directionUnsettled === true) {
       const officerPayloads = outcome.decisiveFacts.officerPayloads;
       const fromOfficer = Array.isArray(officerPayloads) && officerPayloads.length > 0
@@ -324,15 +326,18 @@ function projectOfficerTerminal(
       const receipt = fromOfficer !== undefined
         ? fromOfficer
         : thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
-      return withOfficerRunId(
-        {
-          status: "needs_reask",
-          officer,
-          receipt,
-          receivedStatus: receivedDiscriminator(receipt, "status"),
-        },
-        summoned,
-      );
+      const nestedRunId =
+        typeof outcome.decisiveFacts.officerRunId === "string"
+          && outcome.decisiveFacts.officerRunId.trim() !== ""
+          ? outcome.decisiveFacts.officerRunId
+          : undefined;
+      return {
+        status: "needs_reask" as const,
+        officer,
+        receipt,
+        receivedStatus: receivedDiscriminator(receipt, "status"),
+        ...(nestedRunId === undefined ? {} : { runId: nestedRunId }),
+      };
     }
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded. It may interpret a receipt
