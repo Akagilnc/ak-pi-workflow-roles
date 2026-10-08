@@ -534,8 +534,10 @@ async function loadLedgerPeerBody(
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
  * (#1166 / ADR 0085 / ADR 0087): explicit reask → non-empty caller dispatch →
  * source-only ledger peer body. Identity stays in startup materials.
+ * #1195: ticket-court notary skips peer-body preload (countersign source only).
  */
 async function resolveReviewSeatDialogueBody(input: {
+  readonly role?: string;
   readonly reask?: string;
   readonly callerInstruction?: string;
   readonly sourceRunPath?: string;
@@ -548,6 +550,10 @@ async function resolveReviewSeatDialogueBody(input: {
   if (caller.length > 0) return caller;
   const sourceRunPath = input.sourceRunPath?.trim() ?? "";
   if (sourceRunPath === "") return undefined;
+  if (input.role === "notary") {
+    const { isTicketCourtCountersignSource } = await import("../run-terminal-artifacts.ts");
+    if (isTicketCourtCountersignSource(sourceRunPath)) return undefined;
+  }
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }
 
@@ -567,6 +573,7 @@ async function resolveInitialPrompt(
     const sourceRunPath = admittedSourceRunPath(admitted);
     const reask = env.reviewReask ?? env.gateReviewInstruction;
     const body = await resolveReviewSeatDialogueBody({
+      role: admitted.role,
       ...(reask === undefined ? {} : { reask }),
       callerInstruction: admitted.instruction,
       ...(sourceRunPath === "" ? {} : { sourceRunPath }),
@@ -865,9 +872,11 @@ async function sameParentDialogue(
   fallback: { readonly instruction: string; readonly instructionEmpty: boolean },
   sourceRunPath: string,
   projectRoot: string,
+  role: string,
 ): Promise<{ readonly instruction: string; readonly instructionEmpty: boolean }> {
   const reask = env.reviewReask ?? env.gateReviewInstruction;
   const body = await resolveReviewSeatDialogueBody({
+    role,
     ...(reask === undefined ? {} : { reask }),
     callerInstruction: fallback.instruction,
     sourceRunPath,
@@ -1051,6 +1060,7 @@ export async function runPublicInstructionSeat(
         },
         sourceDirectory,
         projectRoot,
+        role,
       )),
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
@@ -1096,6 +1106,7 @@ export async function runPublicInstructionSeat(
           },
           parentRunPath,
           projectRoot,
+          role,
         )),
         attachmentPaths: parsed.attachmentPaths ?? [],
       };
@@ -1134,6 +1145,7 @@ export async function runPublicInstructionSeat(
         { instruction: "", instructionEmpty: true },
         source.runDirectory,
         projectRoot,
+        role,
       )),
     };
     resolvedNotarySource = source;
