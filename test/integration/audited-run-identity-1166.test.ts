@@ -43,7 +43,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,
@@ -102,52 +102,62 @@ async function inspectLiveRequest(
 }> {
   const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-live-"));
   const socketPath = join(socketDir, "mcp.sock");
-  const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
-  const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-  if (request.activation.role === "auditor") {
-    const admitted = readCurrentSection(request.runDirectory, "admitted");
-    const subject =
-      typeof admitted.auditorSubject === "string" && admitted.auditorSubject.trim() !== ""
-        ? admitted.auditorSubject
-        : "judge";
-    process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
-    if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
-      process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
-    }
-  }
-  try {
-    const prepared = await prepareRoleEnvelope({
-      request,
-      dependencies: createRoleRuntimeDependencies(packageRootPath),
-      socketPath,
-      sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-      principalAuthority: piDurablePrincipalAuthority,
-    });
-    try {
-      const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
-      const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
-      let toolNames: string[] | undefined;
+  let priorSubject: string | undefined;
+  let priorSource: string | undefined;
+  let envMutated = false;
+  // After the temp root exists, body + env restore + rm share primary-aware cleanup
+  // (cleanup failure alone fails; primary failure is not erased).
+  return withPrimaryAwareCleanup(
+    async () => {
       if (request.activation.role === "auditor") {
-        toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+        priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+        priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+        const admitted = readCurrentSection(request.runDirectory, "admitted");
+        const subject =
+          typeof admitted.auditorSubject === "string" && admitted.auditorSubject.trim() !== ""
+            ? admitted.auditorSubject
+            : "judge";
+        process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
+        envMutated = true;
+        if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+          process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
+        }
       }
-      return {
-        prompt: prepared.prompt,
-        identities,
-        pathMaterials,
-        ...(toolNames === undefined ? {} : { toolNames }),
-      };
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (request.activation.role === "auditor") {
+      const prepared = await prepareRoleEnvelope({
+        request,
+        dependencies: createRoleRuntimeDependencies(packageRootPath),
+        socketPath,
+        sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
+      });
+      try {
+        const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
+        const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
+        let toolNames: string[] | undefined;
+        if (request.activation.role === "auditor") {
+          toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+        }
+        return {
+          prompt: prepared.prompt,
+          identities,
+          pathMaterials,
+          ...(toolNames === undefined ? {} : { toolNames }),
+        };
+      } finally {
+        await prepared.dispose?.();
+      }
+    },
+    async () => {
+      if (!envMutated) return;
       if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
       if (priorSource === undefined) delete process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
       else process.env.AK_ROLE_AUDITOR_SOURCE_RUN = priorSource;
-    }
-    await rm(socketDir, { recursive: true, force: true }).catch(() => undefined);
-  }
+    },
+    async () => {
+      await rm(socketDir, { recursive: true, force: true });
+    },
+  );
 }
 
 async function configureOfficerSeats(home: string, roles: readonly string[]): Promise<void> {
