@@ -1438,16 +1438,24 @@ export async function continueParentAfterChild(
 }
 
 /**
- * Gate already satisfied for this routing turn only when continueParentAfterChild
- * (or equivalent) handed the live converged child for that officer. Parent-side
- * officer pointers / other-seat final copies are not consulted (#1195).
+ * Gate already satisfied for this routing turn when continueParentAfterChild
+ * (or equivalent) handed the live converged child for that officer, or — for a
+ * multi-gate chain — an earlier gate before that live child (ADR 0003 remaining
+ * gates). Parent-side officer pointers are not consulted (#1195).
  */
 function officerSatisfiedByLiveChild(
   officer: GateOfficer,
   resumedOfficer: AdmittedRoleInvocation | undefined,
   passedReceipt: unknown,
+  /** Ordered officers of this parent's gate chain; earlier than live child = done. */
+  chainOrder?: readonly GateOfficer[],
 ): boolean {
-  return resumedOfficer?.role === officer && passedReceipt !== undefined;
+  if (resumedOfficer === undefined || passedReceipt === undefined) return false;
+  if (resumedOfficer.role === officer) return true;
+  if (chainOrder === undefined) return false;
+  const childIndex = chainOrder.indexOf(resumedOfficer.role as GateOfficer);
+  const officerIndex = chainOrder.indexOf(officer);
+  return childIndex >= 0 && officerIndex >= 0 && officerIndex < childIndex;
 }
 
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
@@ -1530,8 +1538,8 @@ async function auditSubmittedRole(
     },
     abort() {},
   };
-  const gateSatisfied = (officer: GateOfficer) =>
-    officerSatisfiedByLiveChild(officer, resumedOfficer, passedReceipt);
+  const gateSatisfied = (officer: GateOfficer, chainOrder?: readonly GateOfficer[]) =>
+    officerSatisfiedByLiveChild(officer, resumedOfficer, passedReceipt, chainOrder);
   if (admitted.role === "doctor") {
     if (!gateSatisfied("auditor")) {
       let lastSummon: PublicSummonResult | undefined;
@@ -1608,8 +1616,11 @@ async function auditSubmittedRole(
         },
       });
     if (admitted.role === "judge") {
+      // 符宝郎 then 审刑院 — resume a later seat skips already-passed earlier gates (ADR 0003).
+      const judgeGateOrder = ["notary", "auditor"] as const satisfies readonly GateOfficer[];
       chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) => gateSatisfied(gateOfficerForSubject(subject)),
+        gateAlreadyConverged: async (subject) =>
+          gateSatisfied(gateOfficerForSubject(subject), judgeGateOrder),
         runGate,
       });
     } else {
