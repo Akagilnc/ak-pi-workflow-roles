@@ -19,7 +19,6 @@ import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
-import { readHistoryRowsSync, readStateRowsSync } from "../run-dossier.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
@@ -1419,10 +1418,9 @@ export async function continueParentAfterChild(
         { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      // Live child only counts for the parent seal it was summoned under — never a
-      // prior seal's officer coating a newer parent submission (#1195 P1).
-      const live = liveChildForCurrentParentSeal(
-        admitted.runDirectory,
+      // Live child only counts when its own session reviewed this parent seal body
+      // — never a prior seal's officer coating a newer parent submission (#1195 P1).
+      const live = await liveChildForCurrentParentSeal(
         terminal,
         resolved.admitted,
         latestQueuePayload(resolved.terminal),
@@ -1445,81 +1443,63 @@ export async function continueParentAfterChild(
   return result;
 }
 
-/**
- * ISO timestamps on sitian rows compare lexicographically.
- * Window for one parent sealed toolCallId: [sealAt, nextSealAt).
- */
-function parentSealWindow(
-  parentRunDirectory: string,
-  toolCallId: string,
-): { readonly start: string; readonly end?: string } | undefined {
-  let start: string | undefined;
-  let end: string | undefined;
-  for (const row of readHistoryRowsSync(parentRunDirectory)) {
-    if (row.kind !== "sealed") continue;
-    const payload = isRecord(row.payload) ? row.payload : undefined;
-    const ts = typeof row.timestamp === "string" ? row.timestamp : undefined;
-    if (ts === undefined || payload === undefined) continue;
-    const sealedId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
-    if (start === undefined) {
-      if (sealedId === toolCallId) start = ts;
+/** Flatten one session message content field to comparable text. */
+function sessionMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return readableGateItem(content);
+  const parts: string[] = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      parts.push(part);
       continue;
     }
-    if (sealedId !== toolCallId) {
-      end = ts;
-      break;
-    }
+    if (!isRecord(part)) continue;
+    if (typeof part.text === "string") parts.push(part.text);
+    else if (part.type === "text" && typeof part.text === "string") parts.push(part.text);
   }
-  return start === undefined ? undefined : { start, ...(end === undefined ? {} : { end }) };
-}
-
-/** Earliest durable timestamp on a run (admitted/invocation state rows, else history). */
-function runEarliestTimestamp(runDirectory: string): string | undefined {
-  for (const row of readStateRowsSync(runDirectory)) {
-    if (row.kind !== "admitted-request" && row.kind !== "invocation" && row.kind !== "run-state") {
-      continue;
-    }
-    if (typeof row.timestamp === "string" && row.timestamp.trim() !== "") return row.timestamp;
-  }
-  for (const row of readHistoryRowsSync(runDirectory)) {
-    if (typeof row.timestamp === "string" && row.timestamp.trim() !== "") return row.timestamp;
-  }
-  return undefined;
+  return parts.join("");
 }
 
 /**
- * True when the officer run began inside the parent seal window for toolCallId.
- * Cross-submission resume of an older officer must not pass a newer parent seal.
+ * Officer session user turns that carried the parent seal body (gateReviewInstruction).
+ * 御答 resume prompts are other user turns — membership is content equality with the
+ * current parent accepted payload, not run birth time (#1195 P1).
  */
-function officerRunBelongsToParentSeal(
-  parentRunDirectory: string,
-  toolCallId: string,
+async function officerSessionReviewedParentBody(
   officerRunDirectory: string,
-): boolean {
-  const window = parentSealWindow(parentRunDirectory, toolCallId);
-  const started = runEarliestTimestamp(officerRunDirectory);
-  if (window === undefined || started === undefined) return false;
-  if (started < window.start) return false;
-  if (window.end !== undefined && started >= window.end) return false;
-  return true;
+  parentAcceptedBody: string,
+): Promise<boolean> {
+  if (parentAcceptedBody.trim() === "") return false;
+  let entries: Awaited<ReturnType<typeof readBoundSessionEntries>>;
+  try {
+    entries = await readBoundSessionEntries(sessionFileOf(officerRunDirectory));
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const message = isRecord(entry.message) ? entry.message : undefined;
+    if (message?.role !== "user") continue;
+    if (sessionMessageText(message.content) === parentAcceptedBody) return true;
+  }
+  return false;
 }
 
 /**
- * Hand continueParentAfterChild's live child to audit only when that child belongs
- * to the parent seal currently under audit.
+ * Hand continueParentAfterChild's live child to audit only when that child's own
+ * session reviewed the parent seal currently under audit (dialogue body match).
  */
-function liveChildForCurrentParentSeal(
-  parentRunDirectory: string,
+async function liveChildForCurrentParentSeal(
   parentTerminal: TerminalResult,
   child: AdmittedRoleInvocation,
   receipt: unknown,
-): { readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined {
+): Promise<{ readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined> {
   if (receipt === undefined) return undefined;
-  const toolCallId = parentTerminal.submissionToolCallId;
-  if (toolCallId === undefined || toolCallId.length === 0) return undefined;
-  if (!officerRunBelongsToParentSeal(parentRunDirectory, toolCallId, child.runDirectory)) {
-    return undefined;
-  }
+  if (parentTerminal.roleOutcome.kind !== "accepted") return undefined;
+  const accepted = parentTerminal.roleOutcome.payloads?.at(-1);
+  if (accepted === undefined) return undefined;
+  const body = readableGateItem(accepted);
+  if (!(await officerSessionReviewedParentBody(child.runDirectory, body))) return undefined;
   return { officer: child, receipt };
 }
 
