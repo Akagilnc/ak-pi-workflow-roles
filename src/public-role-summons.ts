@@ -741,7 +741,10 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector/countersign via parentRunPath (#969 / #987). */
+/**
+ * Gate officer summons. Argv / parentRunPath assembly is sole-sourced from
+ * packagedGateSummon(officer) — not restated seat-by-seat here.
+ */
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
