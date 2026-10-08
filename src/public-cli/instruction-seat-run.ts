@@ -235,6 +235,35 @@ function withUnsettledDirection(
   const outcome = parent.roleOutcome;
   if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return parent;
   const officerOutcome = officer?.roleOutcome;
+
+  // #1195: nested incomplete already named the real audit seat and its original
+  // volume — pass those facts outward (原话过手). Do not replace them with the
+  // intermediate officer's own submissions/runId.
+  if (
+    officerOutcome?.kind === "accepted"
+    && officerOutcome.decisiveFacts?.directionUnsettled === true
+  ) {
+    const nested = officerOutcome.decisiveFacts;
+    const nestedPayloads = Array.isArray(nested.officerPayloads) ? nested.officerPayloads : [];
+    return {
+      ...parent,
+      roleOutcome: {
+        ...outcome,
+        decisiveFacts: {
+          ...(outcome.decisiveFacts ?? {}),
+          directionUnsettled: true,
+          subsequentAudit:
+            typeof nested.subsequentAudit === "string" ? nested.subsequentAudit : "incomplete",
+          ...(typeof nested.officerRole === "string" ? { officerRole: nested.officerRole } : {}),
+          ...(typeof nested.officerRunId === "string" && nested.officerRunId.trim() !== ""
+            ? { officerRunId: nested.officerRunId }
+            : {}),
+          ...(nestedPayloads.length > 0 ? { officerPayloads: nestedPayloads } : {}),
+        },
+      },
+    };
+  }
+
   const officerPayloads = officer?.submissions !== undefined && officer.submissions.length > 0
     ? officer.submissions
     : officerOutcome !== undefined && officerOutcome.kind !== "no_receipt"

@@ -203,9 +203,19 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.roleOutcome.kind === "accepted" && result.roleOutcome.decisiveFacts !== undefined) {
     if (result.roleOutcome.decisiveFacts.directionUnsettled === true) {
       lines.push("fact\tdirectionUnsettled\ttrue");
-      const subsequent = result.roleOutcome.decisiveFacts.subsequentAudit;
-      if (typeof subsequent === "string") {
-        lines.push(`fact\tsubsequentAudit\t${encodeTerminalField(subsequent)}`);
+      // #1195: incomplete nested audit seat identity + original volume must ride
+      // the public face (not only the unfinished flag).
+      for (const key of [
+        "subsequentAudit",
+        "officerRole",
+        "officerRunId",
+        "officerPayloads",
+      ] as const) {
+        const value = result.roleOutcome.decisiveFacts[key];
+        if (value === undefined) continue;
+        const rendered =
+          typeof value === "string" ? value : serializeThrownValue(value);
+        lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
       }
     }
     for (const key of ["countersignTerminal", "notaryTerminal"] as const) {
