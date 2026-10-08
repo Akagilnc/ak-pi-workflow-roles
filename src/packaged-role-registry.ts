@@ -323,8 +323,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    /** Project the durable 符宝郎 officer entry onto the shared accepted-tool settlement (#1195). */
-    projectNotaryTerminal: true,
     gateStageLabel: "给事中",
     /** Gate summon carries the parent payload as the instruction and a parent run id. */
     gateSummon: "parent-instruction",
@@ -346,8 +344,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    /** Project the durable 给事中 officer entry onto the shared accepted-tool settlement. */
-    projectCountersignTerminal: true,
     activationFlags: [
       { field: "ticketNumber" },
     ],

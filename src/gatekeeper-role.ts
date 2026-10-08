@@ -314,6 +314,30 @@ function projectOfficerTerminal(
     );
   }
   if (outcome.kind === "accepted") {
+    // Nested incomplete audit must not be read as a parent-payload converged —
+    // that washes the inner unreadability (ADR 0055 / #1195). Resume the actual
+    // audit seat; do not treat outer payloads as a gate pass.
+    if (outcome.decisiveFacts?.directionUnsettled === true) {
+      const officerPayloads = outcome.decisiveFacts.officerPayloads;
+      const fromOfficer = Array.isArray(officerPayloads) && officerPayloads.length > 0
+        ? officerPayloads[officerPayloads.length - 1]
+        : undefined;
+      const receipt = fromOfficer !== undefined
+        ? fromOfficer
+        : thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
+      const nestedRunId =
+        typeof outcome.decisiveFacts.officerRunId === "string"
+        && outcome.decisiveFacts.officerRunId.trim() !== ""
+          ? outcome.decisiveFacts.officerRunId
+          : undefined;
+      return {
+        status: "needs_reask" as const,
+        officer,
+        receipt,
+        receivedStatus: receivedDiscriminator(receipt, "status"),
+        ...(nestedRunId === undefined ? {} : { runId: nestedRunId }),
+      };
+    }
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded. It may interpret a receipt
     // lacking its own status, never substitute for a missing receipt.

@@ -1345,18 +1345,13 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
       ["original-volume"],
       `${reask}: parent inspector structured report is original, not foreign`,
     );
-    const inspectorPointers = historyPayloads<{
-      officer?: string;
-      submissionToolCallId?: string;
-    }>(live!, "officer-pointer").filter((row) => row.officer === "inspector");
-    assert.ok(
-      inspectorPointers.some((row) => row.submissionToolCallId === "call_fixer_foreign_court"),
-      `${reask}: foreign pass was booked`,
-    );
+    // #1195: parent no longer books officer-pointer copies; gate uses live summons.
+    const inspectorPointers = historyPayloads<{ officer?: string }>(live!, "officer-pointer")
+      .filter((row) => row.officer === "inspector");
     assert.equal(
-      inspectorPointers.at(-1)?.submissionToolCallId,
-      "call_fixer_original",
-      `${reask}: latest officer pointer binds original seal, not foreign`,
+      inspectorPointers.length,
+      0,
+      `${reask}: parent must not book officer-pointer rows`,
     );
   }
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.

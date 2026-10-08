@@ -15,19 +15,16 @@
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { bookDirectOfficerRunPointer } from "./archivist-record-pointer.ts";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
   officerConclusionReask,
   projectGatekeeperRun,
   type SubmissionGateHostActions,
-  type GatekeeperResult,
   type GatekeeperSubject,
   type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
-import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { receivedDiscriminator } from "./submission-errors.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
@@ -53,8 +50,6 @@ export function latestQueuePayload(terminal: TerminalResult | undefined): unknow
   const payloads = outcome.payloads ?? [];
   return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
 }
-import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
-
 import { isRecord } from "./unknown-value.ts";
 
 /**
@@ -91,47 +86,9 @@ export function createDefaultGateOfficerSummon(options: {
 }
 
 /**
- * Book a typed pointer in the parent run's current.json officers section.
- * Offline mocks without a real session leave no nested volume (lawful zero).
- */
-function bookDirectOfficerPointer(
-  context: ExtensionContext | HostContext,
-  officer: GateOfficer,
-  result: GatekeeperResult,
-  summoned: PublicSummonResult,
-  toolCallId: string,
-): void {
-  if (
-    result.status !== "converged"
-    && result.status !== "continue"
-    && result.status !== "escalate"
-    && result.status !== "needs_reask"
-    && result.status !== "transport_failure"
-  ) {
-    return;
-  }
-  const parentFile = context.sessionManager?.getSessionFile?.();
-  if (typeof parentFile !== "string" || parentFile.trim() === "") return;
-  const sessionFile = sessionFileFromPublicSummon(summoned);
-  if (sessionFile === undefined) {
-    // No independent 正本 to point at — do not synthesize a parallel session.
-    return;
-  }
-  bookDirectOfficerRunPointer({
-    parentSessionFile: parentFile,
-    officer,
-    sessionFile,
-    ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
-      ? { runDirectory: summoned.runDirectory }
-      : {}),
-    ...(toolCallId.trim() === "" ? {} : { submissionToolCallId: toolCallId }),
-  });
-}
-
-/**
- * Pass snapshot returned to the parent seat (#969).
- * Carries officer receipt + nested runId so seat settlement can project the
- * public terminal without a second authority.
+ * Pass snapshot returned to the parent seat.
+ * Carries officer receipt + nested runId from the actual officer volume.
+ * Parent does not book officer pointers or project other-seat finals (#1195).
  */
 export type SubmissionGateOutcome = {
   readonly status: ReviewQueueWord | "needs_reask";
@@ -144,11 +101,12 @@ export type SubmissionGateOutcome = {
 };
 
 /**
- * Shared envelope: project gate, book officer pointer, map onto host actions.
+ * Shared envelope: project gate, map onto host actions.
  * A real converged / continue / escalate returns immediately. An unreadable
  * conclusion reasks that officer against the configured ceiling; exhaustion
  * returns the receipt actually received.
- * On converged, returns the officer snapshot (receipt + nested runId) for seat projection.
+ * Nested incomplete (directionUnsettled) surfaces immediately — resume the
+ * actual audit seat, never convert into a reask of the outer officer (ADR 0055).
  */
 export async function requireSubmissionGate(options: {
   readonly context: ExtensionContext | HostContext;
@@ -184,20 +142,6 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
-    // Envelope-owned pointer book. Failure is host infrastructure — single face.
-    if (projected.summoned !== undefined) {
-      try {
-        bookDirectOfficerPointer(
-          options.context,
-          projected.officer,
-          gatekeeper,
-          projected.summoned,
-          options.toolCallId,
-        );
-      } catch (error) {
-        options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-      }
-    }
     if (gatekeeper.status === "converged") {
       return {
         status: "converged",
@@ -210,8 +154,8 @@ export async function requireSubmissionGate(options: {
           && projected.summoned.runDirectory.trim() !== ""
           ? { runDirectory: projected.summoned.runDirectory }
           : {}),
-        // #1195: carry nested officer terminal so the parent public face can
-        // re-present the original volume (nested summon uses capturing IO).
+        // Keep the officer terminal for escalate / unsettled surfaces; parent
+        // finals do not project other-seat tables (#1195).
         ...(projected.summoned?.terminal === undefined
           ? {}
           : { terminal: projected.summoned.terminal }),
@@ -228,7 +172,12 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      if (reasksSpent >= reaskLimit) {
+      // Nested incomplete already exhausted the inner seat's own reask. Surface it;
+      // do not convert into a reask of this outer officer (ADR 0055 / #1195).
+      const nestedIncomplete =
+        projected.summoned?.terminal?.roleOutcome.kind === "accepted"
+        && projected.summoned.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true;
+      if (nestedIncomplete || reasksSpent >= reaskLimit) {
         return {
           status: "needs_reask",
           officer: projected.officer,
@@ -268,8 +217,7 @@ export async function requireSubmissionGate(options: {
           && projected.summoned.runDirectory.trim() !== ""
           ? { runDirectory: projected.summoned.runDirectory }
           : {}),
-        // #1195: keep the nested terminal (incl. parent court facts attached on
-        // the escalate path) so outer parents do not re-settle and drop them.
+        // Keep the actual officer terminal so callers resume that seat.
         ...(projected.summoned?.terminal === undefined
           ? {}
           : { terminal: projected.summoned.terminal }),

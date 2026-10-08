@@ -698,8 +698,7 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
     // Peer body would differ across resubmits; blind dialogue stays empty both times.
     assert.notEqual(readableGateItem(first), readableGateItem(second));
 
-    // #1195 P2: both court tables ride the public final seam — parent payloads
-    // stay 给事中; nested 符宝郎 original receipt + runId project beside them.
+    // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");
     assert.equal(finalResult.terminal.roleOutcome.role, "countersign");
     assert.equal(finalResult.terminal.roleOutcome.kind, "accepted");
@@ -707,17 +706,10 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
       ? finalResult.terminal.roleOutcome.payloads ?? []
       : [];
     assert.deepEqual(parentPayloads.at(-1), second);
-    const notaryTerminal = finalResult.terminal.roleOutcome.decisiveFacts
-      ?.notaryTerminal as
-      | { receipt?: unknown; runId?: string }
-      | undefined;
-    assert.ok(notaryTerminal, "accepted terminal must project notaryTerminal");
-    assert.deepEqual(notaryTerminal.receipt, {
-      status: "converged",
-      ticketNumber: 1195,
-      clauses: second.clauses,
-    });
-    assert.equal(typeof notaryTerminal.runId, "string");
-    assert.ok((notaryTerminal.runId as string).length > 0);
+    assert.equal(
+      finalResult.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
+      undefined,
+      "parent final must not project notaryTerminal",
+    );
   });
 });
