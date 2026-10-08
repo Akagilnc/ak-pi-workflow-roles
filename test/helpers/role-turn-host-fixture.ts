@@ -101,8 +101,9 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
         sessionFile: input.principalAuthority.decode(request.principal).sessionFile,
         principalAuthority: input.principalAuthority,
       });
-      input.onPrepared?.({ jsonSchema: prepared.jsonSchema });
       try {
+        // Keep observe callback inside dispose coverage (#1198).
+        input.onPrepared?.({ jsonSchema: prepared.jsonSchema });
         return await driveExternalRoleTurnRounds(prepared, request, {
           roundLimitName: "StructuredOutputRoundLimit",
           currentSessionId: () => undefined,
