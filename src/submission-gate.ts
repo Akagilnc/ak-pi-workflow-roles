@@ -18,6 +18,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import { persistAdmittedAuditedSubmissionToolCallId } from "./public-cli/invocation.ts";
+import { readRunParentPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import {
   GatekeeperDecisionError,
   officerConclusionReask,
@@ -27,10 +28,37 @@ import {
   type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { receivedDiscriminator } from "./submission-errors.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
+
+/**
+ * Directory of the seat this gate actually summoned — not a nested escalate
+ * terminal that public-role-summons may surface on runDirectory (#1195).
+ * Walk sourceRunPath upward until role matches the summoned officer.
+ */
+async function directoryForSummonedOfficer(
+  officer: GateOfficer,
+  summoned: PublicSummonResult,
+): Promise<string | undefined> {
+  if (summoned.admitted?.role === officer) {
+    return summoned.admitted.runDirectory;
+  }
+  let dir =
+    typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
+      ? summoned.runDirectory
+      : summoned.admitted?.runDirectory;
+  for (let hop = 0; hop < 8 && dir !== undefined; hop += 1) {
+    const identity = await readRoleRunIdentity(dir);
+    if (identity?.role === officer) return dir;
+    const parent = await readRunParentPath(dir);
+    if (parent === undefined || parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
 
 /** Received discriminator of the latest payload, retained verbatim for re-ask. */
 export function latestQueueStatus(terminal: TerminalResult | undefined): unknown {
@@ -144,14 +172,10 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
-    // #1195 option 1: officer admitted-request records the parent seal under audit.
-    const officerRunDirectory =
-      typeof projected.summoned?.runDirectory === "string"
-      && projected.summoned.runDirectory.trim() !== ""
-        ? projected.summoned.runDirectory
-        : projected.summoned?.admitted?.runDirectory;
+    // #1195 option 1: record parent seal on the summoned seat's admitted-request
+    // (not a nested lower terminal that may ride summoned.runDirectory).
     if (
-      officerRunDirectory !== undefined
+      projected.summoned !== undefined
       && options.toolCallId.trim() !== ""
       && (
         gatekeeper.status === "converged"
@@ -161,7 +185,13 @@ export async function requireSubmissionGate(options: {
         || gatekeeper.status === "transport_failure"
       )
     ) {
-      persistAdmittedAuditedSubmissionToolCallId(officerRunDirectory, options.toolCallId);
+      const officerRunDirectory = await directoryForSummonedOfficer(
+        projected.officer,
+        projected.summoned,
+      );
+      if (officerRunDirectory !== undefined) {
+        persistAdmittedAuditedSubmissionToolCallId(officerRunDirectory, options.toolCallId);
+      }
     }
     if (gatekeeper.status === "converged") {
       return {
