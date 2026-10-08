@@ -143,14 +143,14 @@ function lastPagePayload(
 
 /**
  * Latest officer-pointer payload per officer from already-decoded history rows.
- * Sole reducer for the "last booking wins per officer" rule (#753 / #1161 officers).
+ * Sole reducer for the "last booking wins per officer" rule on archived rows
+ * (#753 / #1161; historical decode only — #1195 does not project into current.json).
  * A booked officer-pointer row with a non-object payload or non-string officer is
  * damaged topology — never silently omitted into lawful zero rounds (#1161 O1).
  * Absence of any officer-pointer row remains lawful empty.
  * Invalid input is a TypeError (same class as other dossier illegal payloads).
  * Control readers (`readBookedOfficerPointers`) let this throw into the existing
- * auditor-roles unreadable seam; `render` catches only that TypeError and marks
- * `history.jsonl` unreadable so other reachable facts stay in current.json.
+ * auditor-roles unreadable seam.
  */
 export function latestOfficerPointersFromRecords(
   records: readonly { readonly kind?: unknown; readonly payload?: unknown }[],

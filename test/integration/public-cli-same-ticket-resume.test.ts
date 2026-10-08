@@ -1187,10 +1187,10 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
       (await readdir(join(coderRunDirectory, "session"))).sort(),
       ["session.jsonl"],
     );
-    // The analyst's reader finds the summoned inspector through the officer pointer the
-    // gate booked, and counts its rounds from that officer's own session.
+    // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
+    // this parent are lawful zero. Gate still summoned inspector (asserted above).
     const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
-    assert.deepEqual(rounds.map(({ officer, status }) => ({ officer, status })), [{ officer: "inspector", status: "converged" }]);
+    assert.deepEqual(rounds, []);
     // The terminal as the analyst reads it carries the submitted payloads, taken from history.
     const read = readRunTerminal(coderRunDirectory);
     assert.equal(read.status, "present");

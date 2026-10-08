@@ -1,7 +1,8 @@
 /**
  * Shared submissionGate path for review officers (ADR 0018 / #675 / #753).
- * Owns officer-pointer book + host abort/non-pass faces + review queue loop.
- * Role modules only project via projectGatekeeperRun / runGatekeeper — no book, no catch.
+ * Owns host abort/non-pass faces + review queue loop. Does not book parent-side
+ * officer pointers or project other-seat finals (#1195).
+ * Role modules only project via projectGatekeeperRun / runGatekeeper — no catch.
  *
  * Public continuation after submission settlement (#753 / #756 / #750):
  *   accepted submission → summon officer → read conclusion field
