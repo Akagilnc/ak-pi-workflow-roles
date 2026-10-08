@@ -6,7 +6,7 @@ no tests; the caller who uses it fixes it.
 
 ```
 scripts/replay/replay-run.sh freeze <run-dir> [--cut <ISO>] [--head <sha>]
-scripts/replay/replay-run.sh run    <kit> <arm> <n> [--sys <edited sys.txt>] [--effort low|medium|high]
+scripts/replay/replay-run.sh run    <kit> <arm> <n> [--sys <edited sys.txt>] [--schema <edited schema.json>] [--effort low|medium|high]
 scripts/replay/replay-run.sh show   <kit> [<arm>]
 scripts/replay/replay-run.sh clean  <kit>
 ```
@@ -28,7 +28,8 @@ Limits: pi legs have no sandbox (`node_modules` is a symlink into the real check
 `gh` called by absolute path is not intercepted); codex legs are network-blocked by the
 sandbox. Hosts other than codex and pi are refused at freeze time.
 
-Treatment arm: copy `sys.txt`, edit the Soul/law text inside it, pass it with `--sys`.
+Treatment arm: copy `sys.txt`, edit the Soul/law text inside it, pass it with `--sys`; a treatment that changes the receipt shape copies `schema.json` and passes `--schema`.
+The run the seat audited (admitted `sourceRunPath`) is frozen into `run/` beside it and the prompt repointed there, so audit seats (notary, auditor) read the audited verdict from the kit.
 When `sysKind` is `missing-turn-delivery`, pass `--sys` with an experimental prompt — the
 kit does not invent one. Coder/fixer runs may still carry extra phase/task blocks beyond
 what a single turn-delivery row holds; hand-build `--sys` there when needed.
