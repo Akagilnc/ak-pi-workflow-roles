@@ -63,6 +63,8 @@ def main():
                "-c", f"model_reasoning_effort={a.effort or meta.get('thinking') or 'medium'}",
                "-c", f'model_instructions_file="{sysfile}"']
         schema = os.path.abspath(a.schema) if a.schema else f"{kit}/schema.json"
+        if a.schema and not os.path.exists(schema):
+            sys.exit(f"--schema not found: {schema}")  # an explicit treatment schema must not silently fall away
         if os.path.exists(schema):
             cmd += ["--output-schema", schema]
         cmd.append(instr)
