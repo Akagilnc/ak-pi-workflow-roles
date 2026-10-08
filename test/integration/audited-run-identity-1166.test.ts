@@ -721,3 +721,131 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
     assert.ok((notaryTerminal.runId as string).length > 0);
   });
 });
+
+/**
+ * #1195 P1: after a prior pass, a new parent seal whose notary reply lacks status
+ * must not coat the new final with the old notaryTerminal.converged pass fact.
+ */
+test("#1195 resubmit with unreadable notary does not project prior pass as current", async () => {
+  await withTempRoot("ak-1195-stale-", async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await configureOfficerSeats(home, ["notary", "countersign", "diarist"]);
+
+    const passBody = {
+      status: "converged" as const,
+      ticketNumber: 1195,
+      clauses: [
+        {
+          clause: "first pass",
+          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
+          derivation: "Q2(a)",
+        },
+      ],
+    };
+    const resubmitBody = {
+      status: "converged" as const,
+      ticketNumber: 1195,
+      clauses: [
+        {
+          clause: "second seal",
+          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
+          derivation: "resubmit",
+        },
+      ],
+    };
+    const runId = "01a0119500007000800000000000c002";
+    let parentSeals = 0;
+    let notaryCalls = 0;
+
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "notary") {
+        notaryCalls += 1;
+        const details = notaryCalls === 1
+          ? {
+            status: "converged",
+            ticketNumber: 1195,
+            clauses: passBody.clauses,
+          }
+          : {
+            // Unreadable this round — no queue status.
+            ticketNumber: 1195,
+            note: "missing status",
+            clauses: passBody.clauses,
+          };
+        return roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details,
+          }),
+        }).executeTurn(request);
+      }
+      parentSeals += 1;
+      const body = parentSeals === 1 ? passBody : resubmitBody;
+      const { sessionDirectory, sessionFile } =
+        piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      // Keep prior officer bookings across seals — last-wins must not coat the new seal.
+      if (parentSeals === 1) await writeFile(sessionFile, "", "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd,
+        home,
+        runId,
+        runDirectory: request.runDirectory,
+        role: "countersign",
+        details: body,
+        toolCallId: `countersign-1195-stale-${parentSeals}`,
+        ...(request.courtAttemptId === undefined
+          ? {}
+          : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+
+    const first = await runAkRole(
+      ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        io: captureIo().io,
+        credentials: CREDENTIALS,
+        roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
+      },
+    );
+    assert.equal(first.exitCode, 0);
+    assert.ok(first.terminal?.roleOutcome.decisiveFacts?.notaryTerminal);
+
+    const second = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", runId, "resubmit after prior pass"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        io: captureIo().io,
+        credentials: CREDENTIALS,
+        roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
+      },
+    );
+    assert.equal(second.exitCode, 0);
+    assert.ok(second.terminal);
+    assert.equal(second.terminal.roleOutcome.kind, "accepted");
+    // Incomplete inner gate must surface; prior pass must not coat this seal.
+    assert.equal(
+      second.terminal.roleOutcome.decisiveFacts?.directionUnsettled,
+      true,
+      "unreadable notary must leave directionUnsettled",
+    );
+    assert.equal(
+      second.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
+      undefined,
+      "prior notaryTerminal.converged must not project onto the new seal",
+    );
+    assert.ok(notaryCalls >= 2, "notary must re-run on the new parent seal");
+  });
+});
