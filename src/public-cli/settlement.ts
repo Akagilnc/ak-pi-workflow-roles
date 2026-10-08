@@ -1710,9 +1710,8 @@ function officerTerminalFromEntries(
   }[],
   entryType: string,
   /** #1195: only the booking that belongs to this parent submission may project. */
-  submissionToolCallId: string,
+  submissionToolCallId?: string,
 ): OfficerTerminalFact | undefined {
-  if (submissionToolCallId.length === 0) return undefined;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (entry?.type !== "custom") continue;
@@ -1724,11 +1723,13 @@ function officerTerminalFromEntries(
     if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
     if (data.receipt === undefined) continue;
     // Cross-turn last-wins is forbidden: a prior pass must not coat a new seal.
-    const booked =
-      typeof data.submissionToolCallId === "string" && data.submissionToolCallId.trim() !== ""
-        ? data.submissionToolCallId
-        : undefined;
-    if (booked !== submissionToolCallId) continue;
+    if (submissionToolCallId !== undefined && submissionToolCallId.length > 0) {
+      const booked =
+        typeof data.submissionToolCallId === "string" && data.submissionToolCallId.trim() !== ""
+          ? data.submissionToolCallId
+          : undefined;
+      if (booked !== submissionToolCallId) continue;
+    }
     const runId =
       typeof data.runId === "string" && data.runId.trim() !== ""
         ? data.runId

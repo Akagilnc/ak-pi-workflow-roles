@@ -228,13 +228,7 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      // #1195 / ADR 0055: nested incomplete (directionUnsettled) already exhausted
-      // the inner audit seat's own reask. Surface it; do not convert into a reask
-      // of this outer officer (resume 审核席本人, 不得打回父席).
-      const nestedIncomplete =
-        projected.summoned?.terminal?.roleOutcome.kind === "accepted"
-        && projected.summoned.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true;
-      if (nestedIncomplete || reasksSpent >= reaskLimit) {
+      if (reasksSpent >= reaskLimit) {
         return {
           status: "needs_reask",
           officer: projected.officer,
