@@ -506,6 +506,15 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       (countersignTerminal.runId as string).length > 0,
       "nested runId must be non-empty",
     );
+    // #1195: nested 符宝郎原表 rides the outer secretariat final beside 给事中.
+    const notaryTerminal = result.terminal.roleOutcome.decisiveFacts
+      ?.notaryTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(notaryTerminal, "accepted secretariat terminal must project notaryTerminal");
+    assert.deepEqual(notaryTerminal.receipt, { status: "converged" });
+    assert.equal(typeof notaryTerminal.runId, "string");
+    assert.ok((notaryTerminal.runId as string).length > 0);
     // Shared gate entered twice (bounce then pass); nested 符宝郎 on 给事中.
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
@@ -627,6 +636,14 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
     assert.equal(result.terminal?.roleOutcome.role, "notary");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(objectPayloads(result.terminal.roleOutcome).at(-1), receipt);
+    // #1195: parent 给事中原表 travels on the escalating 符宝郎 terminal through nested IO.
+    const parentCountersign = result.terminal?.roleOutcome.decisiveFacts
+      ?.countersignTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(parentCountersign, "notary escalate terminal must carry countersignTerminal");
+    assert.deepEqual(parentCountersign.receipt, { status: "converged", ticketNumber: 924 });
+    assert.equal(typeof parentCountersign.runId, "string");
     const parentDirectory = await findRunDirectoryById(home, "01a0sec1021-nst-7000-8000-000000000001", undefined, "secretariat");
     assert.ok(parentDirectory);
     assert.equal((await readRoleRunIdentity(parentDirectory))?.state, "terminal");

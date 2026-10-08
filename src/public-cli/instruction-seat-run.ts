@@ -17,7 +17,10 @@ import { receivedDiscriminator } from "../submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "../review-submission.ts";
 import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
-import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
+import {
+  SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
+  SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+} from "../secretariat-contracts.ts";
 import { COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE } from "../countersign-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
@@ -89,6 +92,8 @@ import {
   presentStructuralRejection,
   readBoundSessionEntries,
   attachPostAuditCountersignFact,
+  nestedCourtFactsFromOfficerTerminal,
+  withParentCourtTerminalFact,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -1569,10 +1574,6 @@ async function auditSubmittedRole(
     officer,
     toolCallId,
   });
-  /** #1195: nested officer terminal from this gate turn, for public dual present. */
-  let nestedOfficerForPresent:
-    | { readonly terminal: TerminalResult; readonly runDirectory?: string }
-    | undefined;
   if (admitted.role === "doctor") {
     if (!await passedThisSubmission("auditor")) {
       let lastSummon: PublicSummonResult | undefined;
@@ -1697,16 +1698,32 @@ async function auditSubmittedRole(
           ? undefined : runIdFromRunDirectory(escalation.runDirectory));
       if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
       const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority);
-      const terminal = await trySettlePublicSeat(
-        officer.admitted,
-        env.principalAuthority,
-        { ...await readCurrentCourt(officer.admitted.runDirectory), ...packageFaultScope(officer.admitted, env, io) },
-      );
+      // Prefer the nested terminal already returned (may carry parent court facts
+      // from an inner escalate). Re-settle only when the gate did not keep it.
+      let terminal = escalation?.terminal;
+      if (terminal === undefined) {
+        terminal = await trySettlePublicSeat(
+          officer.admitted,
+          env.principalAuthority,
+          { ...await readCurrentCourt(officer.admitted.runDirectory), ...packageFaultScope(officer.admitted, env, io) },
+        );
+      }
       if (terminal === undefined) throw new Error("escalated audit has no terminal result");
-      // #1195: ticket-court escalate presents parent 给事中原表 then 符宝郎上呈,
-      // so the caller can hand both original volumes to the owner without re-running.
+      // #1195: ticket-court escalate carries parent 给事中原表 on the returned
+      // 符宝郎 terminal so outer capturing IO (secretariat nest) still presents both.
       if (admitted.role === "countersign" && turn.terminal !== undefined) {
-        await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+        const parentPayloads = turn.terminal.roleOutcome.kind === "accepted"
+          || turn.terminal.roleOutcome.kind === "audit_escalation"
+          ? turn.terminal.roleOutcome.payloads ?? []
+          : [];
+        const parentReceipt = parentPayloads.at(-1);
+        if (parentReceipt !== undefined) {
+          terminal = withParentCourtTerminalFact(terminal, {
+            factKey: SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
+            receipt: parentReceipt,
+            runId: admitted.runId,
+          });
+        }
       }
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.admitted.runDirectory);
       return { exitCode: 0, admitted: officer.admitted, terminal };
@@ -1721,9 +1738,13 @@ async function auditSubmittedRole(
       const pass = chain.passes.at(-1);
       const receipt = pass?.receipt ?? passedReceipt;
       if (receipt !== undefined) {
+        // #1195: carry nested 符宝郎表 already on the countersign terminal through
+        // the durable booking so outer secretariat projection presents both courts.
+        const nestedFacts = nestedCourtFactsFromOfficerTerminal(pass?.terminal);
         await env.sessionAppender(env.principalAuthority, admitted.principal, SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
           officer: "countersign", receipt,
           ...(officerRunId === undefined ? {} : { runId: officerRunId }),
+          ...(nestedFacts === undefined ? {} : nestedFacts),
         });
       }
     }
@@ -1735,12 +1756,6 @@ async function auditSubmittedRole(
           officer: "notary", receipt,
           ...(officerRunId === undefined ? {} : { runId: officerRunId }),
         });
-      }
-      if (pass?.terminal !== undefined) {
-        nestedOfficerForPresent = {
-          terminal: pass.terminal,
-          ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
-        };
       }
     }
   }
@@ -1756,14 +1771,5 @@ async function auditSubmittedRole(
   );
   turn = { ...turn, terminal };
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-  // #1195: nested 符宝郎 original volume was captured under nested IO; re-present
-  // on the public face so both court tables ride the existing final seam.
-  if (nestedOfficerForPresent !== undefined) {
-    await presentTerminal(
-      nestedOfficerForPresent.terminal,
-      { ...io, omitFailureStderrDiagnostic: true },
-      nestedOfficerForPresent.runDirectory ?? admitted.runDirectory,
-    );
-  }
   return turn;
 }

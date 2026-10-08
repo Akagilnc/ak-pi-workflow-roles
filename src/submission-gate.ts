@@ -268,6 +268,11 @@ export async function requireSubmissionGate(options: {
           && projected.summoned.runDirectory.trim() !== ""
           ? { runDirectory: projected.summoned.runDirectory }
           : {}),
+        // #1195: keep the nested terminal (incl. parent court facts attached on
+        // the escalate path) so outer parents do not re-settle and drop them.
+        ...(projected.summoned?.terminal === undefined
+          ? {}
+          : { terminal: projected.summoned.terminal }),
       };
     }
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary

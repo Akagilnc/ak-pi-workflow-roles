@@ -166,13 +166,16 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
     const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
     assert.equal(booked.length, 1, "the officer run is booked once in the parent history");
     assert.equal((booked[0]!.payload as { officer?: string }).officer, "countersign");
-    assert.deepEqual(outcome, {
-      status: "escalate",
-      officer: "countersign",
-      receipt,
-      runId: "01a0cs969-esc-7000-8000-000000000099",
-      runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
-    });
+    assert.equal(outcome?.status, "escalate");
+    assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "countersign");
+    assert.deepEqual(outcome && "receipt" in outcome ? outcome.receipt : undefined, receipt);
+    assert.equal(outcome && "runId" in outcome ? outcome.runId : undefined, "01a0cs969-esc-7000-8000-000000000099");
+    assert.equal(
+      outcome && "runDirectory" in outcome ? outcome.runDirectory : undefined,
+      "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
+    );
+    // #1195: escalate keeps the nested terminal so outer parents retain attached facts.
+    assert.ok(outcome && "terminal" in outcome && outcome.terminal !== undefined);
   }),
 );
 

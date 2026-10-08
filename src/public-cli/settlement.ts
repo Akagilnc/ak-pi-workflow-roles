@@ -52,7 +52,6 @@ import {
 import {
   COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE,
   COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY,
-  type CountersignNotaryTerminalFact,
 } from "../countersign-contracts.ts";
 import {
   findLatestDurablePackagedRoleTerminal,
@@ -1636,13 +1635,17 @@ async function trySettleAcceptedSeatTerminalResult(
     "projectCountersignTerminal" in record
     && record.projectCountersignTerminal === true
   ) {
-    return applySecretariatCountersignTerminal(admitted, authority, settled, scope);
+    return applyOfficerTerminalProjection(
+      admitted, authority, settled, scope, SECRETARIAT_OFFICER_PROJECTION,
+    );
   }
   if (
     "projectNotaryTerminal" in record
     && record.projectNotaryTerminal === true
   ) {
-    return applyCountersignNotaryTerminal(admitted, authority, settled, scope);
+    return applyOfficerTerminalProjection(
+      admitted, authority, settled, scope, COUNTERSIGN_OFFICER_PROJECTION,
+    );
   }
   return settled;
 }
@@ -1657,24 +1660,60 @@ export async function trySettlePublicSeat(
 }
 
 /**
- * #969 seat projection sole authority: 给事中 terminal (署|上呈) booked as a
- * durable custom entry (envelope-safe) — ledger accepted stays LLM params (#836).
+ * #969 / #1195 shared seat projection: nested officer terminal booked as a durable
+ * custom entry (envelope-safe) — ledger accepted stays LLM params (#836).
  * Never scan toolResult rows: those are memory-only on headless/ACP (#617/#959).
  * Receipt bytes stay original; nested runId rides beside them.
- * Caller must only apply this when the terminal-defining submission actually
- * produced the officer entry (gate-bound converged, or 给事中 audit_escalation).
+ * One authority for every parent→officer pair; seat diffs are data, not a second flow.
  */
-function countersignTerminalFromEntries(
+type OfficerTerminalFact = {
+  readonly receipt: unknown;
+  readonly runId?: string;
+  /**
+   * Deeper court tables already projected on the officer terminal (#1195:
+   * notary under countersign, carried through secretariat booking).
+   */
+  readonly nestedFacts?: Readonly<
+    Record<string, { readonly receipt: unknown; readonly runId?: string }>
+  >;
+};
+
+type OfficerProjectionSpec = {
+  readonly entryType: string;
+  readonly factKey: string;
+  /** Payload discriminator that must be converged for accepted projection. */
+  readonly statusKey: string;
+  readonly faultLabel: string;
+  /** #969: 给事中上呈 rewrites public payloads to the officer receipt. */
+  readonly auditEscalationUsesOfficerPayloads?: boolean;
+};
+
+function nestedOfficerFactFromUnknown(
+  value: unknown,
+): { readonly receipt: unknown; readonly runId?: string } | undefined {
+  if (!isRecord(value) || value.receipt === undefined) return undefined;
+  const runId =
+    typeof value.runId === "string" && value.runId.trim() !== ""
+      ? value.runId
+      : undefined;
+  return {
+    receipt: value.receipt,
+    ...(runId === undefined ? {} : { runId }),
+  };
+}
+
+function officerTerminalFromEntries(
   entries: readonly {
     type?: string;
     customType?: string;
     data?: unknown;
   }[],
-): import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact | undefined {
+  entryType: string,
+): OfficerTerminalFact | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (entry?.type !== "custom") continue;
-    if (entry.customType !== SECRETARIAT_GATE_OFFICER_ENTRY_TYPE) continue;
+    if (entry.customType !== entryType) continue;
     const data =
       isRecord(entry.data)
         ? (entry.data as Record<string, unknown>)
@@ -1685,20 +1724,34 @@ function countersignTerminalFromEntries(
       typeof data.runId === "string" && data.runId.trim() !== ""
         ? data.runId
         : undefined;
+    const nestedFacts: Record<
+      string,
+      { readonly receipt: unknown; readonly runId?: string }
+    > = {};
+    // #1195: optional deeper court tables booked beside the officer receipt.
+    const notary = nestedOfficerFactFromUnknown(data[COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY]);
+    if (notary !== undefined) nestedFacts[COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY] = notary;
+    if (isRecord(data.nestedFacts)) {
+      for (const [key, value] of Object.entries(data.nestedFacts)) {
+        const fact = nestedOfficerFactFromUnknown(value);
+        if (fact !== undefined) nestedFacts[key] = fact;
+      }
+    }
     return {
       receipt: data.receipt,
       ...(runId === undefined ? {} : { runId }),
+      ...(Object.keys(nestedFacts).length === 0 ? {} : { nestedFacts }),
     };
   }
   return undefined;
 }
 
-function withCountersignTerminalFact(
+function withOfficerTerminalFacts(
   roleOutcome: Extract<
     import("./terminal.ts").TerminalRoleOutcome,
     { kind: "accepted" | "audit_escalation" }
   >,
-  officer: import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact,
+  facts: Readonly<Record<string, { readonly receipt: unknown; readonly runId?: string }>>,
 ): typeof roleOutcome {
   const prior =
     roleOutcome.decisiveFacts !== undefined && isRecord(roleOutcome.decisiveFacts)
@@ -1708,39 +1761,50 @@ function withCountersignTerminalFact(
     ...roleOutcome,
     decisiveFacts: {
       ...prior,
-      [SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY]: officer,
+      ...facts,
     },
   };
 }
 
-/**
- * Terminal-defining secretariat submission owns officer projection.
- * Last readable secretariatStatus on accepted payloads decides: only gate-bound
- * converged projects a prior durable officer entry. Parent escalate bypasses the
- * gate and must not inherit a stale pass entry from an earlier turn (#969).
- */
-function acceptedSecretariatDefinesOfficerProjection(
+/** Last readable statusKey on accepted payloads decides gate-bound projection. */
+function acceptedDefinesOfficerProjection(
   roleOutcome: Extract<
     import("./terminal.ts").TerminalRoleOutcome,
     { kind: "accepted" }
   >,
+  statusKey: string,
 ): boolean {
   const payloads = roleOutcome.payloads ?? [];
   for (let index = payloads.length - 1; index >= 0; index -= 1) {
     const payload = payloads[index];
     if (!isRecord(payload)) continue;
-    const status = payload.secretariatStatus;
+    const status = payload[statusKey];
     if (typeof status !== "string") continue;
     return status === "converged";
   }
   return false;
 }
 
-async function applySecretariatCountersignTerminal(
+function projectionFactsFromOfficer(
+  spec: OfficerProjectionSpec,
+  officer: OfficerTerminalFact,
+): Record<string, { readonly receipt: unknown; readonly runId?: string }> {
+  const primary = {
+    receipt: officer.receipt,
+    ...(officer.runId === undefined ? {} : { runId: officer.runId }),
+  };
+  return {
+    [spec.factKey]: primary,
+    ...(officer.nestedFacts ?? {}),
+  };
+}
+
+async function applyOfficerTerminalProjection(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   settled: TerminalResult,
-  scope?: SettlementCourtScope,
+  scope: SettlementCourtScope | undefined,
+  spec: OfficerProjectionSpec,
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   let entries: SessionEntry[] = [];
@@ -1751,159 +1815,67 @@ async function applySecretariatCountersignTerminal(
       await noteSettlementFault(
         admitted.runDirectory,
         scope,
-        `secretariat officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
+        `${spec.faultLabel} officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
       );
     }
     return settled;
   }
-  const officer = countersignTerminalFromEntries(entries);
+  const officer = officerTerminalFromEntries(entries, spec.entryType);
   if (officer === undefined) return settled;
+  const facts = projectionFactsFromOfficer(spec, officer);
 
-  // 给事中上呈: public payloads = officer receipt; runId + receipt fact beside.
-  // This kind is produced only when beforeAccept booked the officer entry.
-  if (settled.roleOutcome.kind === "audit_escalation") {
+  // Officer escalate face: public payloads = officer receipt; facts beside.
+  if (
+    settled.roleOutcome.kind === "audit_escalation"
+    && spec.auditEscalationUsesOfficerPayloads === true
+  ) {
     return {
       ...settled,
-      roleOutcome: withCountersignTerminalFact(
+      roleOutcome: withOfficerTerminalFacts(
         {
           ...settled.roleOutcome,
           payloads: [officer.receipt],
         },
-        officer,
+        facts,
       ),
     };
   }
 
-  // Pass (署): keep 中书省 payloads; present 给事中 判词 + runId via decisiveFacts.
+  // Pass (署): keep parent payloads; present officer 原表 + runId via decisiveFacts.
   // Parent escalate accepted terminal must not project a stale prior pass entry.
   if (settled.roleOutcome.kind === "accepted") {
-    if (!acceptedSecretariatDefinesOfficerProjection(settled.roleOutcome)) {
+    if (!acceptedDefinesOfficerProjection(settled.roleOutcome, spec.statusKey)) {
       return settled;
     }
     return {
       ...settled,
-      roleOutcome: withCountersignTerminalFact(settled.roleOutcome, officer),
+      roleOutcome: withOfficerTerminalFacts(settled.roleOutcome, facts),
     };
   }
 
   return settled;
 }
 
-/**
- * #1195 seat projection: nested 符宝郎 terminal booked as a durable custom entry
- * on 给事中. Parallel to #969 secretariat↔countersign — receipt bytes stay original;
- * nested runId rides beside them. Only gate-bound converged projects the entry.
- */
-function notaryTerminalFromEntries(
-  entries: readonly {
-    type?: string;
-    customType?: string;
-    data?: unknown;
-  }[],
-): CountersignNotaryTerminalFact | undefined {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type !== "custom") continue;
-    if (entry.customType !== COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE) continue;
-    const data =
-      isRecord(entry.data)
-        ? (entry.data as Record<string, unknown>)
-        : undefined;
-    if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
-    if (data.receipt === undefined) continue;
-    const runId =
-      typeof data.runId === "string" && data.runId.trim() !== ""
-        ? data.runId
-        : undefined;
-    return {
-      receipt: data.receipt,
-      ...(runId === undefined ? {} : { runId }),
-    };
-  }
-  return undefined;
-}
+const SECRETARIAT_OFFICER_PROJECTION: OfficerProjectionSpec = {
+  entryType: SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+  factKey: SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
+  statusKey: "secretariatStatus",
+  faultLabel: "secretariat",
+  auditEscalationUsesOfficerPayloads: true,
+};
 
-function withNotaryTerminalFact(
-  roleOutcome: Extract<
-    import("./terminal.ts").TerminalRoleOutcome,
-    { kind: "accepted" | "audit_escalation" }
-  >,
-  officer: CountersignNotaryTerminalFact,
-): typeof roleOutcome {
-  const prior =
-    roleOutcome.decisiveFacts !== undefined && isRecord(roleOutcome.decisiveFacts)
-      ? roleOutcome.decisiveFacts
-      : {};
-  return {
-    ...roleOutcome,
-    decisiveFacts: {
-      ...prior,
-      [COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY]: officer,
-    },
-  };
-}
-
-/** Only gate-bound countersign converged projects a prior durable notary entry. */
-function acceptedCountersignDefinesOfficerProjection(
-  roleOutcome: Extract<
-    import("./terminal.ts").TerminalRoleOutcome,
-    { kind: "accepted" }
-  >,
-): boolean {
-  const payloads = roleOutcome.payloads ?? [];
-  for (let index = payloads.length - 1; index >= 0; index -= 1) {
-    const payload = payloads[index];
-    if (!isRecord(payload)) continue;
-    const status = payload.status;
-    if (typeof status !== "string") continue;
-    return status === "converged";
-  }
-  return false;
-}
-
-async function applyCountersignNotaryTerminal(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  settled: TerminalResult,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  let entries: SessionEntry[] = [];
-  try {
-    entries = await readBoundSessionEntries(coordinates.sessionFile);
-  } catch (error) {
-    if (!isEnoent(error)) {
-      await noteSettlementFault(
-        admitted.runDirectory,
-        scope,
-        `countersign officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
-    return settled;
-  }
-  const officer = notaryTerminalFromEntries(entries);
-  if (officer === undefined) return settled;
-
-  // Pass (署): keep 给事中 payloads; present 符宝郎 原表 + runId via decisiveFacts.
-  // Parent escalate bypasses the gate and must not inherit a stale prior pass entry.
-  if (settled.roleOutcome.kind === "accepted") {
-    if (!acceptedCountersignDefinesOfficerProjection(settled.roleOutcome)) {
-      return settled;
-    }
-    return {
-      ...settled,
-      roleOutcome: withNotaryTerminalFact(settled.roleOutcome, officer),
-    };
-  }
-
-  return settled;
-}
+const COUNTERSIGN_OFFICER_PROJECTION: OfficerProjectionSpec = {
+  entryType: COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE,
+  factKey: COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY,
+  statusKey: "status",
+  faultLabel: "countersign",
+};
 
 /**
- * After the audit gate returns, attach the nested officer fact onto the
+ * After the audit gate returns, attach nested officer fact(s) onto the
  * terminal this turn already settled. Does not publish again — a second publish
  * would settle the same attempt twice.
- * #969 secretariat→countersign; #1195 countersign→notary.
+ * #969 secretariat→countersign; #1195 countersign→notary (and nested under secretariat).
  */
 export async function attachPostAuditCountersignFact(
   admitted: AdmittedRoleInvocation,
@@ -1912,12 +1884,64 @@ export async function attachPostAuditCountersignFact(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
   if (admitted.role === "secretariat") {
-    return applySecretariatCountersignTerminal(admitted, authority, terminal, scope);
+    return applyOfficerTerminalProjection(
+      admitted, authority, terminal, scope, SECRETARIAT_OFFICER_PROJECTION,
+    );
   }
   if (admitted.role === "countersign") {
-    return applyCountersignNotaryTerminal(admitted, authority, terminal, scope);
+    return applyOfficerTerminalProjection(
+      admitted, authority, terminal, scope, COUNTERSIGN_OFFICER_PROJECTION,
+    );
   }
   return terminal;
+}
+
+/**
+ * #1195: lift deeper court tables already on an officer terminal into the durable
+ * booking payload so outer parents (e.g. secretariat) can project them.
+ */
+export function nestedCourtFactsFromOfficerTerminal(
+  terminal: TerminalResult | undefined,
+): Readonly<Record<string, { readonly receipt: unknown; readonly runId?: string }>> | undefined {
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined || outcome.kind === "no_receipt" || outcome.kind === "failure") {
+    return undefined;
+  }
+  const facts = outcome.decisiveFacts;
+  if (facts === undefined || !isRecord(facts)) return undefined;
+  const nested: Record<string, { readonly receipt: unknown; readonly runId?: string }> = {};
+  for (const key of [COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY, SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY]) {
+    const fact = nestedOfficerFactFromUnknown(facts[key]);
+    if (fact !== undefined) nested[key] = fact;
+  }
+  return Object.keys(nested).length === 0 ? undefined : nested;
+}
+
+/**
+ * #1195: when a nested officer escalates, attach the parent court original onto
+ * the returned officer terminal so outer capturing IO still carries both tables.
+ */
+export function withParentCourtTerminalFact(
+  officerTerminal: TerminalResult,
+  parent: {
+    readonly factKey: string;
+    readonly receipt: unknown;
+    readonly runId?: string;
+  },
+): TerminalResult {
+  const outcome = officerTerminal.roleOutcome;
+  if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") {
+    return officerTerminal;
+  }
+  return {
+    ...officerTerminal,
+    roleOutcome: withOfficerTerminalFacts(outcome, {
+      [parent.factKey]: {
+        receipt: parent.receipt,
+        ...(parent.runId === undefined ? {} : { runId: parent.runId }),
+      },
+    }),
+  };
 }
 
 /**
