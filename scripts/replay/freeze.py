@@ -6,7 +6,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
-  run/<run>/     the replayed run itself truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
+  run/<run>/     the replayed run and the run it audits (admitted sourceRunPath), each truncated at the cut (current.json (rendered from the truncated rows), history.jsonl, state.jsonl, log.jsonl, session/)
   sys.txt        frozen system prompt when a turn-delivery row recorded one; otherwise notice-only (gap)
   schema.json    headless output schema when turn-delivery recorded one; omitted on gap
   instr.txt      admitted transport prompt (instruction + caller file-flag paths)
@@ -43,8 +43,9 @@ def project_admitted_instruction(adm, tool_dir):
     return p.stdout.decode("utf-8")
 
 SUPPORTED_HOSTS = ("codex", "pi")
-NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态，"
-          "仅从 {records} 读取，不读现场票目录；`gh issue view {num}` 返回的是当时的票面。照常审、照常交卷。\n</frozen_replay_notice>\n\n")
+NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录与它指向的源卷都已冻结在 {cut} 时的状态："
+          "起居录只从 {records} 读，源卷只开它里面指向的 {sources}/ 副本（自行开卷补齐陛下原话照常，开的是这份副本）；"
+          "被审 run 与本 run 的卷宗在 {runs}/ 下；不读现场票目录、现场账本与现场源卷；`gh issue view {num}` 返回的是当时的票面。照常审、照常交卷。\n</frozen_replay_notice>\n\n")
 
 def sh(*cmd, cwd=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
@@ -223,83 +224,101 @@ def main():
 
     # The run's own directory keeps growing after the cut (later verdicts, ledger rows). Freeze a
     # copy truncated at the cut and point every prompt reference at it.
-    frozen_run = f"{kit}/run/{os.path.basename(run)}"
-    os.makedirs(f"{frozen_run}/session", exist_ok=True)
+    # The audited run (admitted sourceRunPath: countersign → notary, judge → auditor …) is frozen the
+    # same way, so the leg finds the audited verdict inside the kit instead of the live ledger.
+    targets = [run]
+    source_run = adm.get("sourceRunPath")
+    if isinstance(source_run, str) and source_run != run and os.path.exists(f"{source_run}/state.jsonl"):
+        targets.append(os.path.abspath(source_run))
+    frozen_of = {t: f"{kit}/run/{os.path.basename(t)}" for t in targets}
+    frozen_run = frozen_of[run]
     home = os.path.expanduser("~")
     def repoint(text):
-        for live, frozen in ((records_src, f"{kit}/records.jsonl"), (run, frozen_run)):
+        for live, frozen in ((records_src, f"{kit}/records.jsonl"), *frozen_of.items()):
             text = text.replace(live, frozen)
             if live.startswith(home):  # historical command text often spells the home as ~
                 text = text.replace("~" + live[len(home):], frozen)
         return text
-    # Top-level role inputs (e.g. merger-input.json) freeze with the run.
-    # #1168: do not copy obsolete dispatch copies into a new replay kit.
-    _skip_run_files = {
-        "current.json", "history.jsonl", "state.jsonl", "log.jsonl",
-        "task.md", "fix-packet.md", "prerequisites.json",
-    }
-    for name in sorted(os.listdir(run)):
-        src_path = f"{run}/{name}"
-        if not os.path.isfile(src_path) or name in _skip_run_files:
-            continue  # dossier files are rebuilt truncated below; obsolete copies stay put
-        try:
-            with open(src_path, encoding="utf-8") as f:
-                text = f.read()
-            with open(f"{frozen_run}/{name}", "w", encoding="utf-8") as f:
-                f.write(repoint(text))
-        except UnicodeDecodeError:
-            shutil.copy(src_path, f"{frozen_run}/{name}")
-    # #1169: do not carry attachments/ into a new replay kit (concept deleted;
-    # stock volumes may still have the directory — leave them in place).
-    def kept_rows(rel):
-        return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
-    kept_history = kept_rows("history.jsonl")
-    for rel in ("history.jsonl", "state.jsonl", "log.jsonl"):
-        rows = kept_history if rel == "history.jsonl" else kept_rows(rel)
-        if rows or os.path.exists(f"{run}/{rel}"):
-            with open(f"{frozen_run}/{rel}", "w") as f:
-                for r in rows:
-                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
-    # current.json is the package's own rendering of the three truncated row files: nothing recorded
-    # after the cut survives, and identity, admission and terminal are the last rows at or before it.
-    p = subprocess.run(["node", "--import", "tsx", "-e",
-                        "import('" + os.path.abspath(f"{a.tool_dir}/../../src/run-dossier.ts") + "').then((m) => m.renderCurrentSync(process.argv[1]))",
-                        frozen_run], cwd=os.path.abspath(f"{a.tool_dir}/../.."), text=True, capture_output=True)
-    if p.returncode != 0:
-        sys.exit(f"rendering the frozen current.json failed:\n{p.stderr}")
-    kept_sealed = [r for r in kept_history if r.get("kind") == "sealed"]
-    payloads_before = [(r.get("payload") or {}).get("accepted") for r in kept_sealed if (r.get("payload") or {}).get("accepted") is not None]
-    sealed_before = len(payloads_before)
-    # The host original (codex / claude single file, grok directory) up to the cut.
-    session_dir = f"{run}/session"
-    for name in (os.listdir(session_dir) if os.path.isdir(session_dir) else []):
-        path = f"{session_dir}/{name}"
-        if name in ("codex.jsonl", "claude.jsonl") and os.path.isfile(path):
-            os.makedirs(f"{frozen_run}/session", exist_ok=True)
-            with open(f"{frozen_run}/session/{name}", "w") as out, open(path) as src:
-                for line in src:
-                    try:
-                        ts = json.loads(line).get("timestamp") if line.strip() else None
-                    except (json.JSONDecodeError, AttributeError):
-                        ts = None
-                    if ts and iso(ts) > cut:
-                        break
-                    out.write(line if line.endswith("\n") else line + "\n")
-        elif name == "grok-build" and os.path.isdir(path):
-            os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
-            for leaf in os.listdir(path):
-                shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
-    # session.jsonl only here — log.jsonl was already truncated with the other row files above.
-    if os.path.exists(f"{run}/session/session.jsonl"):
+    def freeze_run_dir(run, frozen_run):
+        """One run directory truncated at the cut: row files, rendered current.json, host original, session.jsonl."""
         os.makedirs(f"{frozen_run}/session", exist_ok=True)
-        with open(f"{frozen_run}/session/session.jsonl", "w") as f:
-            for r in jsonl(f"{run}/session/session.jsonl"):
-                if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
-                    f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+        # Top-level role inputs (e.g. merger-input.json) freeze with the run.
+        # #1168: do not copy obsolete dispatch copies into a new replay kit.
+        _skip_run_files = {
+            "current.json", "history.jsonl", "state.jsonl", "log.jsonl",
+            "task.md", "fix-packet.md", "prerequisites.json",
+        }
+        for name in sorted(os.listdir(run)):
+            src_path = f"{run}/{name}"
+            if not os.path.isfile(src_path) or name in _skip_run_files:
+                continue  # dossier files are rebuilt truncated below; obsolete copies stay put
+            try:
+                with open(src_path, encoding="utf-8") as f:
+                    text = f.read()
+                with open(f"{frozen_run}/{name}", "w", encoding="utf-8") as f:
+                    f.write(repoint(text))
+            except UnicodeDecodeError:
+                shutil.copy(src_path, f"{frozen_run}/{name}")
+        # #1169: do not carry attachments/ into a new replay kit (concept deleted;
+        # stock volumes may still have the directory — leave them in place).
+        def kept_rows(rel):
+            return [r for r in jsonl(f"{run}/{rel}") if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
+        kept_history = kept_rows("history.jsonl")
+        for rel in ("history.jsonl", "state.jsonl", "log.jsonl"):
+            rows = kept_history if rel == "history.jsonl" else kept_rows(rel)
+            if rows or os.path.exists(f"{run}/{rel}"):
+                with open(f"{frozen_run}/{rel}", "w") as f:
+                    for r in rows:
+                        f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+        # current.json is the package's own rendering of the three truncated row files: nothing recorded
+        # after the cut survives, and identity, admission and terminal are the last rows at or before it.
+        p = subprocess.run(["node", "--import", "tsx", "-e",
+                            "import('" + os.path.abspath(f"{a.tool_dir}/../../src/run-dossier.ts") + "').then((m) => m.renderCurrentSync(process.argv[1]))",
+                            frozen_run], cwd=os.path.abspath(f"{a.tool_dir}/../.."), text=True, capture_output=True)
+        if p.returncode != 0:
+            sys.exit(f"rendering the frozen current.json failed:\n{p.stderr}")
+        kept_sealed = [r for r in kept_history if r.get("kind") == "sealed"]
+        payloads_before = [(r.get("payload") or {}).get("accepted") for r in kept_sealed if (r.get("payload") or {}).get("accepted") is not None]
+        sealed_before = len(payloads_before)
+        # The host original (codex / claude single file, grok directory) up to the cut.
+        session_dir = f"{run}/session"
+        for name in (os.listdir(session_dir) if os.path.isdir(session_dir) else []):
+            path = f"{session_dir}/{name}"
+            if name in ("codex.jsonl", "claude.jsonl") and os.path.isfile(path):
+                os.makedirs(f"{frozen_run}/session", exist_ok=True)
+                with open(f"{frozen_run}/session/{name}", "w") as out, open(path) as src:
+                    for line in src:
+                        try:
+                            ts = json.loads(line).get("timestamp") if line.strip() else None
+                        except (json.JSONDecodeError, AttributeError):
+                            ts = None
+                        if ts and iso(ts) > cut:
+                            break
+                        out.write(line if line.endswith("\n") else line + "\n")
+            elif name == "grok-build" and os.path.isdir(path):
+                os.makedirs(f"{frozen_run}/session/grok-build", exist_ok=True)
+                for leaf in os.listdir(path):
+                    shutil.copy(f"{path}/{leaf}", f"{frozen_run}/session/grok-build/{leaf}")
+        # session.jsonl only here — log.jsonl was already truncated with the other row files above.
+        if os.path.exists(f"{run}/session/session.jsonl"):
+            os.makedirs(f"{frozen_run}/session", exist_ok=True)
+            with open(f"{frozen_run}/session/session.jsonl", "w") as f:
+                for r in jsonl(f"{run}/session/session.jsonl"):
+                    if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
+                        f.write(repoint(json.dumps(r, ensure_ascii=False)) + "\n")
+
+        return sealed_before, kept_history
+
+    sealed_before, kept_history = None, []
+    for t in targets:
+        n_sealed, rows = freeze_run_dir(t, frozen_of[t])
+        if t == run:
+            sealed_before, kept_history = n_sealed, rows  # the replayed run's rows feed the prompt below
 
     # #1169: do not mint kit/pointer.md from stock attachments/ copies.
 
-    notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
+    notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl",
+                           sources=f"{kit}/sources", runs=f"{kit}/run")
     # Prompt and schema come only from turn-delivery rows at or before the cut (#1161).
     # Missing material is a declared gap — never reconstructed.
     delivered_row = next((r for r in reversed(kept_history) if r.get("kind") == "turn-delivery"), None)

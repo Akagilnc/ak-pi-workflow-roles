@@ -16,6 +16,7 @@ def main():
     ap.add_argument("--instr", help="instruction text instead of <kit>/instr.txt")
     ap.add_argument("--effort", help="codex reasoning effort (default: run's thinking)")
     ap.add_argument("--model", help="model id (default: run's model)")
+    ap.add_argument("--schema", help="output schema for this leg (default: kit/schema.json) — treatment arms that change the receipt shape")
     ap.add_argument("--provider", help="pi provider (default: run's provider)")
     ap.add_argument("--thinking", help="pi thinking level (default: run's thinking)")
     ap.add_argument("--host", choices=["codex", "pi"], help="override host (default: run's host)")
@@ -61,11 +62,16 @@ def main():
         cmd = ["codex", "exec", "--json", *sandbox, "-m", a.model or meta["model"],
                "-c", f"model_reasoning_effort={a.effort or meta.get('thinking') or 'medium'}",
                "-c", f'model_instructions_file="{sysfile}"']
-        if os.path.exists(f"{kit}/schema.json"):
-            cmd += ["--output-schema", f"{kit}/schema.json"]
+        schema = os.path.abspath(a.schema) if a.schema else f"{kit}/schema.json"
+        if a.schema and not os.path.exists(schema):
+            sys.exit(f"--schema not found: {schema}")  # an explicit treatment schema must not silently fall away
+        if os.path.exists(schema):
+            cmd += ["--output-schema", schema]
         cmd.append(instr)
         out = f"{kit}/out-{tag}.jsonl"
     else:
+        if a.schema:
+            sys.exit("--schema applies to codex legs only (pi legs take the receipt shape from the host extension)")
         sess = f"{kit}/pisess-{tag}"
         shutil.rmtree(sess, ignore_errors=True); os.makedirs(sess)
         model = f"{a.provider or meta['provider']}/{a.model or meta['model']}"
