@@ -659,7 +659,7 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
     });
 
     const firstIo = captureIo();
-    const firstResult = await runAkRole(
+    let finalResult = await runAkRole(
       ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
       {
         packageRoot,
@@ -671,14 +671,14 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
         roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
       },
     );
-    assert.equal(firstResult.exitCode, 0, firstIo.stderr.join(""));
+    assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
     assert.ok(notaryPrompts.length >= 1);
     assert.equal(notaryPrompts[0], "");
     assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
 
     if (notaryPrompts.length < 2) {
       const resumeIo = captureIo();
-      const resumed = await runAkRole(
+      finalResult = await runAkRole(
         ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
         {
           packageRoot,
@@ -689,7 +689,7 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
           roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
         },
       );
-      assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
+      assert.equal(finalResult.exitCode, 0, resumeIo.stderr.join(""));
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
@@ -697,5 +697,27 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
     // Peer body would differ across resubmits; blind dialogue stays empty both times.
     assert.notEqual(readableGateItem(first), readableGateItem(second));
+
+    // #1195 P2: both court tables ride the public final seam — parent payloads
+    // stay 给事中; nested 符宝郎 original receipt + runId project beside them.
+    assert.ok(finalResult.terminal, "public final terminal must exist");
+    assert.equal(finalResult.terminal.roleOutcome.role, "countersign");
+    assert.equal(finalResult.terminal.roleOutcome.kind, "accepted");
+    const parentPayloads = finalResult.terminal.roleOutcome.kind === "accepted"
+      ? finalResult.terminal.roleOutcome.payloads ?? []
+      : [];
+    assert.deepEqual(parentPayloads.at(-1), second);
+    const notaryTerminal = finalResult.terminal.roleOutcome.decisiveFacts
+      ?.notaryTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(notaryTerminal, "accepted terminal must project notaryTerminal");
+    assert.deepEqual(notaryTerminal.receipt, {
+      status: "converged",
+      ticketNumber: 1195,
+      clauses: second.clauses,
+    });
+    assert.equal(typeof notaryTerminal.runId, "string");
+    assert.ok((notaryTerminal.runId as string).length > 0);
   });
 });

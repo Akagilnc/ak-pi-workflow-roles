@@ -188,6 +188,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_submission_output",
     settlement: "accepted",
+    durableOfficerEntry: true,
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
     navigatorSubject: "source-run",
@@ -210,6 +211,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_submission_output",
     settlement: "accepted",
+    projectNotaryTerminal: true,
     gateStageLabel: "给事中",
     gateSummon: "parent-instruction",
     activationFlags: [

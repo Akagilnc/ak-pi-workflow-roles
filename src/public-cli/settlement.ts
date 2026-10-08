@@ -50,6 +50,11 @@ import {
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
 } from "../secretariat-contracts.ts";
 import {
+  COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE,
+  COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY,
+  type CountersignNotaryTerminalFact,
+} from "../countersign-contracts.ts";
+import {
   findLatestDurablePackagedRoleTerminal,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
 } from "../navigator-invocation-identity.ts";
@@ -1626,15 +1631,20 @@ async function trySettleAcceptedSeatTerminalResult(
   }
   const settled = await settleSealedSeat(admitted, authority, scope, { acceptedOnly: false });
   const record = packagedRoleMetadata(admitted.role);
+  if (settled === undefined || record === undefined) return settled;
   if (
-    settled === undefined
-    || record === undefined
-    || !("projectCountersignTerminal" in record)
-    || record.projectCountersignTerminal !== true
+    "projectCountersignTerminal" in record
+    && record.projectCountersignTerminal === true
   ) {
-    return settled;
+    return applySecretariatCountersignTerminal(admitted, authority, settled, scope);
   }
-  return applySecretariatCountersignTerminal(admitted, authority, settled, scope);
+  if (
+    "projectNotaryTerminal" in record
+    && record.projectNotaryTerminal === true
+  ) {
+    return applyCountersignNotaryTerminal(admitted, authority, settled, scope);
+  }
+  return settled;
 }
 
 /** One settlement dispatch. The registry `settlement` leaf selects the path. */
@@ -1780,9 +1790,120 @@ async function applySecretariatCountersignTerminal(
 }
 
 /**
- * After the audit gate returns, attach the secretariat officer fact onto the
+ * #1195 seat projection: nested 符宝郎 terminal booked as a durable custom entry
+ * on 给事中. Parallel to #969 secretariat↔countersign — receipt bytes stay original;
+ * nested runId rides beside them. Only gate-bound converged projects the entry.
+ */
+function notaryTerminalFromEntries(
+  entries: readonly {
+    type?: string;
+    customType?: string;
+    data?: unknown;
+  }[],
+): CountersignNotaryTerminalFact | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "custom") continue;
+    if (entry.customType !== COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE) continue;
+    const data =
+      isRecord(entry.data)
+        ? (entry.data as Record<string, unknown>)
+        : undefined;
+    if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
+    if (data.receipt === undefined) continue;
+    const runId =
+      typeof data.runId === "string" && data.runId.trim() !== ""
+        ? data.runId
+        : undefined;
+    return {
+      receipt: data.receipt,
+      ...(runId === undefined ? {} : { runId }),
+    };
+  }
+  return undefined;
+}
+
+function withNotaryTerminalFact(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" | "audit_escalation" }
+  >,
+  officer: CountersignNotaryTerminalFact,
+): typeof roleOutcome {
+  const prior =
+    roleOutcome.decisiveFacts !== undefined && isRecord(roleOutcome.decisiveFacts)
+      ? roleOutcome.decisiveFacts
+      : {};
+  return {
+    ...roleOutcome,
+    decisiveFacts: {
+      ...prior,
+      [COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY]: officer,
+    },
+  };
+}
+
+/** Only gate-bound countersign converged projects a prior durable notary entry. */
+function acceptedCountersignDefinesOfficerProjection(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" }
+  >,
+): boolean {
+  const payloads = roleOutcome.payloads ?? [];
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const payload = payloads[index];
+    if (!isRecord(payload)) continue;
+    const status = payload.status;
+    if (typeof status !== "string") continue;
+    return status === "converged";
+  }
+  return false;
+}
+
+async function applyCountersignNotaryTerminal(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  settled: TerminalResult,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  let entries: SessionEntry[] = [];
+  try {
+    entries = await readBoundSessionEntries(coordinates.sessionFile);
+  } catch (error) {
+    if (!isEnoent(error)) {
+      await noteSettlementFault(
+        admitted.runDirectory,
+        scope,
+        `countersign officer read failed beside lawful terminal: ${describeErrorIdentity(error)}`,
+      );
+    }
+    return settled;
+  }
+  const officer = notaryTerminalFromEntries(entries);
+  if (officer === undefined) return settled;
+
+  // Pass (署): keep 给事中 payloads; present 符宝郎 原表 + runId via decisiveFacts.
+  // Parent escalate bypasses the gate and must not inherit a stale prior pass entry.
+  if (settled.roleOutcome.kind === "accepted") {
+    if (!acceptedCountersignDefinesOfficerProjection(settled.roleOutcome)) {
+      return settled;
+    }
+    return {
+      ...settled,
+      roleOutcome: withNotaryTerminalFact(settled.roleOutcome, officer),
+    };
+  }
+
+  return settled;
+}
+
+/**
+ * After the audit gate returns, attach the nested officer fact onto the
  * terminal this turn already settled. Does not publish again — a second publish
  * would settle the same attempt twice.
+ * #969 secretariat→countersign; #1195 countersign→notary.
  */
 export async function attachPostAuditCountersignFact(
   admitted: AdmittedRoleInvocation,
@@ -1790,8 +1911,13 @@ export async function attachPostAuditCountersignFact(
   terminal: TerminalResult,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  if (admitted.role !== "secretariat") return terminal;
-  return applySecretariatCountersignTerminal(admitted, authority, terminal, scope);
+  if (admitted.role === "secretariat") {
+    return applySecretariatCountersignTerminal(admitted, authority, terminal, scope);
+  }
+  if (admitted.role === "countersign") {
+    return applyCountersignNotaryTerminal(admitted, authority, terminal, scope);
+  }
+  return terminal;
 }
 
 /**

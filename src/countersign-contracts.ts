@@ -10,6 +10,24 @@ import { isRecord } from "./unknown-value.ts";
 
 export const COUNTERSIGN_OUTPUT_TOOL_NAME = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
+/**
+ * #1195 durable custom entry: nested 符宝郎 terminal (署|上呈) for seat settlement
+ * projection on 给事中. Receipt bytes stay original; nested runId rides beside them.
+ * Parallel to SECRETARIAT_GATE_OFFICER_ENTRY_TYPE (#969).
+ */
+export const COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE =
+  "ak-countersign-gate-officer" as const;
+
+/** Decisive-facts key for nested 符宝郎 terminal on public Countersign settlement. */
+export const COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY = "notaryTerminal" as const;
+
+export type CountersignNotaryTerminalFact = {
+  /** Officer receipt original bytes — never rewritten. */
+  readonly receipt: unknown;
+  /** Nested 符宝郎 runId when known. */
+  readonly runId?: string;
+};
+
 export type CountersignVerdict =
   | { status: "converged"; note?: string; evidence?: unknown }
   | {

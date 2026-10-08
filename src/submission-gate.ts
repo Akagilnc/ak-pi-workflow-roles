@@ -206,6 +206,15 @@ export async function requireSubmissionGate(options: {
         ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
           ? { runId: gatekeeper.runId }
           : {}),
+        ...(typeof projected.summoned?.runDirectory === "string"
+          && projected.summoned.runDirectory.trim() !== ""
+          ? { runDirectory: projected.summoned.runDirectory }
+          : {}),
+        // #1195: carry nested officer terminal so the parent public face can
+        // re-present the original volume (nested summon uses capturing IO).
+        ...(projected.summoned?.terminal === undefined
+          ? {}
+          : { terminal: projected.summoned.terminal }),
       };
     }
     if (gatekeeper.status === "continue") {
