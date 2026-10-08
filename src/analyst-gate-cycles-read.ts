@@ -1,5 +1,6 @@
 /**
- * Sole reader for gate-cycle facts of the officers pointed at from current.json `officers`.
+ * Sole reader for gate-cycle facts of archived officer-pointer history rows
+ * (decoded via readOfficerPointers; parent current.json no longer projects officers — #1195).
  *
  * Consumer: Analyst sole ledger scan (classifyScopedRun). Metric families must
  * not open a second disk scan — they consume retained facts.
@@ -8,7 +9,7 @@
  * the current gatekeeper/inspector/notary English face. Projection always uses
  * the current English officer identity (inspector | notary).
  *
- * Absent `officers` section → empty rounds (lawful zero). A pointer whose
+ * No archived pointers → empty rounds (lawful zero). A pointer whose
  * officer session fails canonical read/parse must fail loudly (never silently under-count).
  * An accepted gate terminating receipt (isError:false pair on dispatch/officer
  * tool) whose required typed facts are unusable — status, dispatch officer, or
@@ -414,10 +415,10 @@ function pairGateRounds(
 }
 
 /**
- * Read and pair gate-cycle rounds from the officer pointers booked in one
- * run's current.json `officers` section; each pointer names the independent
- * officer session 正本. Absent section → [] (lawful zero). A damaged pointer or
- * officer session propagates — damaged topology must not wash to zero rounds.
+ * Read and pair gate-cycle rounds from archived officer-pointer history on one
+ * parent run; each pointer names the independent officer session 正本.
+ * No pointers → [] (lawful zero). A damaged pointer or officer session propagates
+ * — damaged topology must not wash to zero rounds.
  *
  * Pass `parentSessionFile` to keep only rounds whose attempt binding names that parent.
  */

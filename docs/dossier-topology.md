@@ -45,8 +45,9 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 | `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
 | `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 的 `body` 不含各轮交卷原文，只带所属结算追加进 `history.jsonl` 的 `attempt-history` 行 identity（`attemptHistoryIdentity`）及所属庭 `courtAttemptId`（便于非记次重投影从 `state.jsonl` 历史终局取回指针，不读整腿最新终局、不按原文猜），读者凭 identity 取原文，不按席位取最后一条 | 最后一条 `terminal` |
 | `submission` | `latest`：最新一次封存的交卷原文 | 最后一条 `sealed` |
-| `officers` | 本腿传召的官员腿指针，每官一格 | 各官最后一条 `officer-pointer` |
 | `host` | `sessions[<host>]` 宿主会话 id（按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（宿主原件现在的路径：最近一次复制落在哪个文件名，就取本腿目录 `session/` 下该名；腿归位到票目录后仍指向归位后的原件） | `state.jsonl` 的 `host-session-id` 行；`log.jsonl` 的 `host-session`（`native-session-copy`）行 |
+
+父腿当前卷不再生成 `officers` 区（#1195）：审官结论读该审官自己的卷。历史 `officer-pointer` 行仍可在 `history.jsonl` 中留档并只读解码（太史等）；不迁移旧 books，未来渲染亦不复制该层。
 
 公开调用读自己的事实时读的是这些行（最后一行），不读渲染。
 
@@ -57,7 +58,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 - 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
 - 原续跑记录：`attempt-history`（每个派发的回合一行）。
 - `turn-delivery`：宿主每实际起跑一次，发出的系统提示与输出 schema 一行（催交回合各算一次；pi 取最后一个 `before_agent_start` 处理器留下的提示）。写失败只申报、不拦起跑。
-- `officer-pointer`：闸传召官员腿的指针，一行。
+- `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）；不投影进父腿 `current.json`。
 
 ### `state.jsonl`——状态事实行
 
