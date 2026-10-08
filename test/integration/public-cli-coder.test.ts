@@ -45,12 +45,22 @@ test("public coder accepts an unreadable status before routing it back for re-su
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    // #1198: missing summary stays accepted; overlong summary kept as submitted.
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
-    const corrected = { status: "planned", report: { unvalidated: true }, ticketNumber: 1171 };
+    const corrected = {
+      status: "planned",
+      report: { unvalidated: true },
+      ticketNumber: 1171,
+      summary: "x".repeat(200),
+    };
+    let handedSchema: unknown;
     const structuredHost = roleTurnHostFromStructuredOutputRounds({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       submissions: [unreadable, corrected],
+      onPrepared: ({ jsonSchema }) => {
+        handedSchema = jsonSchema;
+      },
     });
     let runDirectory = "";
     const roleTurnHost = {
@@ -74,6 +84,19 @@ test("public coder accepts an unreadable status before routing it back for re-su
     );
 
     assert.equal(result.exitCode, 0);
+    // Public entry hands the host a schema that declares optional summary (#1198).
+    assert.ok(handedSchema !== null && typeof handedSchema === "object");
+    const schema = handedSchema as {
+      properties?: Record<string, { description?: unknown }>;
+      required?: unknown;
+    };
+    const summaryProperty = schema.properties?.summary;
+    assert.ok(summaryProperty !== undefined);
+    assert.equal(typeof summaryProperty.description, "string");
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((key): key is string => typeof key === "string")
+      : [];
+    assert.equal(required.includes("summary"), false);
     // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
     // #1171: corrected seal carries ticketNumber → live path may leave the first-seen unbound dir.
     const liveDirectory =
@@ -85,6 +108,8 @@ test("public coder accepts an unreadable status before routing it back for re-su
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
+    assert.equal(Object.hasOwn(unreadable, "summary"), false);
+    assert.equal((submissions[1]?.accepted as { summary?: unknown }).summary, corrected.summary);
   });
 });
 
@@ -215,6 +240,7 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     const receipt = {
       status: "completed" as const,
       report: "Alternate host sealed through production ledger producer.",
+      summary: "coder short conclusion",
       ticketNumber: 1171,
     };
     const { io, stdout, stderr } = captureIo();

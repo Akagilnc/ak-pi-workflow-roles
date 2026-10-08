@@ -85,6 +85,8 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
   readonly packageRoot: string;
   readonly principalAuthority: DurablePrincipalAuthority;
   readonly submissions: readonly unknown[];
+  /** Observe the structured contract the public entry hands the host (#1198). */
+  readonly onPrepared?: (prepared: { readonly jsonSchema: unknown }) => void;
 }): RoleTurnHost {
   // Shared across executeTurn calls so a public post-submission resume can
   // consume the next scripted receipt (#1057), not replay submissions[0].
@@ -100,6 +102,8 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
         principalAuthority: input.principalAuthority,
       });
       try {
+        // Keep observe callback inside dispose coverage (#1198).
+        input.onPrepared?.({ jsonSchema: prepared.jsonSchema });
         return await driveExternalRoleTurnRounds(prepared, request, {
           roundLimitName: "StructuredOutputRoundLimit",
           currentSessionId: () => undefined,

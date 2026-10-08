@@ -48,10 +48,11 @@ const infrastructureFailureDeclarationSchema = Type.Object(
 );
 
 /**
- * Compose declarations shared by terminating output tools: infrastructure failure
- * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true)
- * with the base schema's properties plus the shared declaration. Incoming required
- * keys that still exist are kept; every other key stays optional.
+ * Compose declarations shared by terminating output tools: infrastructure failure,
+ * the optional role-asserted ticket identity, and the optional seat-written conclusion
+ * summary (#1198). Returns an open object (additionalProperties: true) with the base
+ * schema's properties plus the shared declarations. Incoming required keys that still
+ * exist are kept; every other key stays optional.
  * Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
@@ -68,6 +69,16 @@ export function withTerminatingOutputDeclarations<
             ticketNumber: Type.Unknown({
               description:
                 "可选本票号。尚未绑定时由角色在既有回执中申报（正整数、数字串或前导 #N；归位只读本字段）。",
+            }),
+          }
+        : {}
+    ),
+    ...(
+      baseProperties?.summary === undefined
+        ? {
+            summary: Type.Unknown({
+              description:
+                "本席自行填写的一两句、20–50 字结论摘要。可选；不因缺失或超长拒收、截断或代填。",
             }),
           }
         : {}
