@@ -90,8 +90,9 @@ test("public coder accepts an unreadable status before routing it back for re-su
       properties?: Record<string, { description?: unknown }>;
       required?: unknown;
     };
-    assert.ok(schema.properties !== undefined && Object.hasOwn(schema.properties, "summary"));
-    assert.equal(typeof schema.properties.summary.description, "string");
+    const summaryProperty = schema.properties?.summary;
+    assert.ok(summaryProperty !== undefined);
+    assert.equal(typeof summaryProperty.description, "string");
     const required = Array.isArray(schema.required)
       ? schema.required.filter((key): key is string => typeof key === "string")
       : [];
