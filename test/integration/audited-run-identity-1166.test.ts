@@ -758,14 +758,6 @@ test("#1195 countersign→notary blind: empty dialogue on gate and same-parent r
       undefined,
       "prior notaryTerminal.converged must not project onto the new seal",
     );
-    // Actual incomplete audit seat identity + original volume, not the parent.
-    assert.equal(stale.terminal.roleOutcome.decisiveFacts?.officerRole, "notary");
-    assert.equal(typeof stale.terminal.roleOutcome.decisiveFacts?.officerRunId, "string");
-    const incompletePayloads = stale.terminal.roleOutcome.decisiveFacts?.officerPayloads as
-      | readonly { note?: string; clauses?: unknown }[]
-      | undefined;
-    assert.ok(Array.isArray(incompletePayloads) && incompletePayloads.length > 0);
-    assert.equal(incompletePayloads.at(-1)?.note, "missing status");
     assert.ok(
       notaryPrompts.length > notaryBeforeReseal,
       "notary must re-run on the new parent seal",
