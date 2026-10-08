@@ -19,6 +19,7 @@ import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
+import { readHistoryRowsSync, readStateRowsSync } from "../run-dossier.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
@@ -1418,13 +1419,20 @@ export async function continueParentAfterChild(
         { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      // Live child conclusion for this routing turn — not a parent-side pointer copy (#1195).
+      // Live child only counts for the parent seal it was summoned under — never a
+      // prior seal's officer coating a newer parent submission (#1195 P1).
+      const live = liveChildForCurrentParentSeal(
+        admitted.runDirectory,
+        terminal,
+        resolved.admitted,
+        latestQueuePayload(resolved.terminal),
+      );
       return auditSubmittedRole(
         { exitCode: 0, admitted, terminal },
         env,
         io,
-        resolved.admitted,
-        latestQueuePayload(resolved.terminal),
+        live?.officer,
+        live?.receipt,
       );
     }
     return runPublicInstructionSeatResume({
@@ -1438,10 +1446,88 @@ export async function continueParentAfterChild(
 }
 
 /**
+ * ISO timestamps on sitian rows compare lexicographically.
+ * Window for one parent sealed toolCallId: [sealAt, nextSealAt).
+ */
+function parentSealWindow(
+  parentRunDirectory: string,
+  toolCallId: string,
+): { readonly start: string; readonly end?: string } | undefined {
+  let start: string | undefined;
+  let end: string | undefined;
+  for (const row of readHistoryRowsSync(parentRunDirectory)) {
+    if (row.kind !== "sealed") continue;
+    const payload = isRecord(row.payload) ? row.payload : undefined;
+    const ts = typeof row.timestamp === "string" ? row.timestamp : undefined;
+    if (ts === undefined || payload === undefined) continue;
+    const sealedId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
+    if (start === undefined) {
+      if (sealedId === toolCallId) start = ts;
+      continue;
+    }
+    if (sealedId !== toolCallId) {
+      end = ts;
+      break;
+    }
+  }
+  return start === undefined ? undefined : { start, ...(end === undefined ? {} : { end }) };
+}
+
+/** Earliest durable timestamp on a run (admitted/invocation state rows, else history). */
+function runEarliestTimestamp(runDirectory: string): string | undefined {
+  for (const row of readStateRowsSync(runDirectory)) {
+    if (row.kind !== "admitted-request" && row.kind !== "invocation" && row.kind !== "run-state") {
+      continue;
+    }
+    if (typeof row.timestamp === "string" && row.timestamp.trim() !== "") return row.timestamp;
+  }
+  for (const row of readHistoryRowsSync(runDirectory)) {
+    if (typeof row.timestamp === "string" && row.timestamp.trim() !== "") return row.timestamp;
+  }
+  return undefined;
+}
+
+/**
+ * True when the officer run began inside the parent seal window for toolCallId.
+ * Cross-submission resume of an older officer must not pass a newer parent seal.
+ */
+function officerRunBelongsToParentSeal(
+  parentRunDirectory: string,
+  toolCallId: string,
+  officerRunDirectory: string,
+): boolean {
+  const window = parentSealWindow(parentRunDirectory, toolCallId);
+  const started = runEarliestTimestamp(officerRunDirectory);
+  if (window === undefined || started === undefined) return false;
+  if (started < window.start) return false;
+  if (window.end !== undefined && started >= window.end) return false;
+  return true;
+}
+
+/**
+ * Hand continueParentAfterChild's live child to audit only when that child belongs
+ * to the parent seal currently under audit.
+ */
+function liveChildForCurrentParentSeal(
+  parentRunDirectory: string,
+  parentTerminal: TerminalResult,
+  child: AdmittedRoleInvocation,
+  receipt: unknown,
+): { readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined {
+  if (receipt === undefined) return undefined;
+  const toolCallId = parentTerminal.submissionToolCallId;
+  if (toolCallId === undefined || toolCallId.length === 0) return undefined;
+  if (!officerRunBelongsToParentSeal(parentRunDirectory, toolCallId, child.runDirectory)) {
+    return undefined;
+  }
+  return { officer: child, receipt };
+}
+
+/**
  * Gate already satisfied for this routing turn when continueParentAfterChild
- * (or equivalent) handed the live converged child for that officer, or — for a
- * multi-gate chain — an earlier gate before that live child (ADR 0003 remaining
- * gates). Parent-side officer pointers are not consulted (#1195).
+ * handed a live converged child that belongs to this parent seal, or — for a
+ * multi-gate chain on that same seal — an earlier gate before that child
+ * (ADR 0003 remaining gates). Parent-side officer pointers are not consulted (#1195).
  */
 function officerSatisfiedByLiveChild(
   officer: GateOfficer,

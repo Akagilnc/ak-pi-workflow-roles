@@ -440,3 +440,52 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads?.at(-1), next);
   });
 });
+
+test("#1195 cross-submission resume of prior auditor does not skip new seal's notary", async () => {
+  const next = { status: "converged", mark: 9, ticketNumber: 1171 } as const;
+  let notaryCalls = 0;
+  let auditorCalls = 0;
+  await runJudge(async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") {
+      notaryCalls += 1;
+      // First parent seal: notary passes. Second seal: notary escalates and stays open.
+      return officer("notary", notaryCalls === 1
+        ? { status: "converged", mark: 2 }
+        : { status: "escalate", mark: 20 })(args, options);
+    }
+    if (role === "auditor") {
+      auditorCalls += 1;
+      // First seal's auditor escalates; resume later converges. Must not coat seal 2.
+      return officer("auditor", auditorCalls === 1
+        ? { status: "escalate", mark: 4 }
+        : { status: "converged", mark: 5 })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
+    assertEscalationPresented(observed, "auditor", { status: "escalate", mark: 4 });
+    const oldAuditorRunId = observed.first.terminal?.runId;
+    assert.equal(typeof oldAuditorRunId, "string");
+    // New parent seal B while old auditor is still escalated.
+    const second = await observed.resumeRun(observed.parentRunId, "new review");
+    assert.equal(second.exitCode, 0);
+    assert.equal(notaryCalls, 2, "second seal must enter notary");
+    assert.equal(second.terminal?.roleOutcome.role, "notary");
+    assert.equal(
+      (second.terminal?.roleOutcome.kind === "accepted"
+        ? second.terminal.roleOutcome.payloads?.at(-1) as { status?: string } | undefined
+        : undefined)?.status,
+      "escalate",
+    );
+    // Resume seal-1 auditor; must not settle seal-2 as fully audited (no judge accepted).
+    const afterOld = await observed.resumeRun(oldAuditorRunId!, RULING);
+    assert.equal(afterOld.exitCode, 0);
+    assert.equal(auditorCalls, 2, "old auditor resume converges once");
+    assert.ok(notaryCalls >= 2, "seal-2 still has its own notary path");
+    assert.notEqual(
+      afterOld.terminal?.roleOutcome.role,
+      "judge",
+      "prior auditor must not finish a foreign parent seal as accepted",
+    );
+  });
+});
