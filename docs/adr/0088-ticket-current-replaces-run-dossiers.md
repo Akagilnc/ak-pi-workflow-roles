@@ -1,6 +1,6 @@
 # 票一张 current，腿只留宿主原件
 
-Status: proposed（2026-10-08 陛下口头拍定各项，待亲审本文）
+Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197）
 
 名词三个：**进度**＝`current.jsonl`，**回执**＝`receipts/`，**会话**＝`sessions/`。
 
