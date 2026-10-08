@@ -1709,8 +1709,6 @@ function officerTerminalFromEntries(
     data?: unknown;
   }[],
   entryType: string,
-  /** #1195: only the booking that belongs to this parent submission may project. */
-  submissionToolCallId?: string,
 ): OfficerTerminalFact | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -1722,14 +1720,6 @@ function officerTerminalFromEntries(
         : undefined;
     if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
     if (data.receipt === undefined) continue;
-    // Cross-turn last-wins is forbidden: a prior pass must not coat a new seal.
-    if (submissionToolCallId !== undefined && submissionToolCallId.length > 0) {
-      const booked =
-        typeof data.submissionToolCallId === "string" && data.submissionToolCallId.trim() !== ""
-          ? data.submissionToolCallId
-          : undefined;
-      if (booked !== submissionToolCallId) continue;
-    }
     const runId =
       typeof data.runId === "string" && data.runId.trim() !== ""
         ? data.runId
@@ -1825,12 +1815,7 @@ async function applyOfficerTerminalProjection(
     }
     return settled;
   }
-  // No submission identity → no officer projection (never last-wins across seals).
-  const submissionToolCallId = settled.submissionToolCallId;
-  if (submissionToolCallId === undefined || submissionToolCallId.length === 0) {
-    return settled;
-  }
-  const officer = officerTerminalFromEntries(entries, spec.entryType, submissionToolCallId);
+  const officer = officerTerminalFromEntries(entries, spec.entryType);
   if (officer === undefined) return settled;
   const facts = projectionFactsFromOfficer(spec, officer);
 

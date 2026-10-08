@@ -1755,7 +1755,6 @@ async function auditSubmittedRole(
         await env.sessionAppender(env.principalAuthority, admitted.principal, SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
           officer: "countersign", receipt,
           ...(officerRunId === undefined ? {} : { runId: officerRunId }),
-          submissionToolCallId: toolCallId,
           ...(nestedFacts === undefined ? {} : nestedFacts),
         });
       }
@@ -1767,7 +1766,6 @@ async function auditSubmittedRole(
         await env.sessionAppender(env.principalAuthority, admitted.principal, COUNTERSIGN_GATE_OFFICER_ENTRY_TYPE, {
           officer: "notary", receipt,
           ...(officerRunId === undefined ? {} : { runId: officerRunId }),
-          submissionToolCallId: toolCallId,
         });
       }
     }
