@@ -1728,15 +1728,10 @@ function officerTerminalFromEntries(
       string,
       { readonly receipt: unknown; readonly runId?: string }
     > = {};
-    // #1195: optional deeper court tables booked beside the officer receipt.
+    // #1195: deeper court tables are booked as top-level keys beside the officer
+    // receipt (instruction-seat-run spreads nestedCourtFactsFromOfficerTerminal).
     const notary = nestedOfficerFactFromUnknown(data[COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY]);
     if (notary !== undefined) nestedFacts[COUNTERSIGN_NOTARY_TERMINAL_FACT_KEY] = notary;
-    if (isRecord(data.nestedFacts)) {
-      for (const [key, value] of Object.entries(data.nestedFacts)) {
-        const fact = nestedOfficerFactFromUnknown(value);
-        if (fact !== undefined) nestedFacts[key] = fact;
-      }
-    }
     return {
       receipt: data.receipt,
       ...(runId === undefined ? {} : { runId }),

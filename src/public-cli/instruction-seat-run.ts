@@ -1440,7 +1440,16 @@ export async function continueParentAfterChild(
         { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted, latestQueuePayload(resolved.terminal));
+      // #1195: pass the officer's full terminal (not only latest payload) so already-passed
+      // gate re-entry can still book nested court tables (e.g. notary under countersign).
+      return auditSubmittedRole(
+        { exitCode: 0, admitted, terminal },
+        env,
+        io,
+        resolved.admitted,
+        latestQueuePayload(resolved.terminal),
+        resolved.terminal,
+      );
     }
     return runPublicInstructionSeatResume({
       runId: parentRunId,
@@ -1495,6 +1504,8 @@ async function auditSubmittedRole(
   io: CliIo,
   resumedOfficer?: AdmittedRoleInvocation,
   passedReceipt?: unknown,
+  /** #1195: full officer terminal when gate already converged on a prior summon. */
+  passedOfficerTerminal?: TerminalResult,
 ): Promise<SeatRunResult> {
   // Ordinary audit chain: drop soft-reask turn identity; keep budgets/ownership (#1171 F2-R9).
   env = withoutSoftTicketReaskTurn(env);
@@ -1740,7 +1751,10 @@ async function auditSubmittedRole(
       if (receipt !== undefined) {
         // #1195: carry nested 符宝郎表 already on the countersign terminal through
         // the durable booking so outer secretariat projection presents both courts.
-        const nestedFacts = nestedCourtFactsFromOfficerTerminal(pass?.terminal);
+        // Fresh gate pass uses pass.terminal; already-passed 御答接回 uses passedOfficerTerminal.
+        const nestedFacts = nestedCourtFactsFromOfficerTerminal(
+          pass?.terminal ?? passedOfficerTerminal,
+        );
         await env.sessionAppender(env.principalAuthority, admitted.principal, SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
           officer: "countersign", receipt,
           ...(officerRunId === undefined ? {} : { runId: officerRunId }),

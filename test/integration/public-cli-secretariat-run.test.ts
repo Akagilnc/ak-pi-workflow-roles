@@ -611,6 +611,26 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
+    // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final still
+    // projects the nested 符宝郎原表 (already-passed gate must not drop it).
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const resumedCountersign = resumed.terminal?.roleOutcome.decisiveFacts
+      ?.countersignTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(resumedCountersign, "resumed secretariat must project countersignTerminal");
+    assert.deepEqual(resumedCountersign.receipt, {
+      status: "converged",
+      note: "署",
+      ticketNumber: 924,
+    });
+    const resumedNotary = resumed.terminal?.roleOutcome.decisiveFacts
+      ?.notaryTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(resumedNotary, "resumed secretariat must project notaryTerminal after 御答接回");
+    assert.deepEqual(resumedNotary.receipt, { status: "converged" });
+    assert.equal(typeof resumedNotary.runId, "string");
   });
 });
 
