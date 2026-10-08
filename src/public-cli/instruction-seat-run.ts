@@ -14,7 +14,7 @@ import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "..
 import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from "../gatekeeper-role.ts";
 import { receivedDiscriminator } from "../submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "../review-submission.ts";
-import { runJudgeGates } from "../judge-role.ts";
+import { JUDGE_GATES, runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
@@ -1616,8 +1616,8 @@ async function auditSubmittedRole(
         },
       });
     if (admitted.role === "judge") {
-      // 符宝郎 then 审刑院 — resume a later seat skips already-passed earlier gates (ADR 0003).
-      const judgeGateOrder = ["notary", "auditor"] as const satisfies readonly GateOfficer[];
+      // Same order as runJudgeGates — sole source JUDGE_GATES + gateOfficerForSubject.
+      const judgeGateOrder = JUDGE_GATES.map(gateOfficerForSubject);
       chain = await runJudgeGates({
         gateAlreadyConverged: async (subject) =>
           gateSatisfied(gateOfficerForSubject(subject), judgeGateOrder),
