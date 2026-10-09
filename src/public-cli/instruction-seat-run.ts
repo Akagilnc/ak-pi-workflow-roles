@@ -504,8 +504,8 @@ export function buildInstructionSeatTurnRequest(
 
 /**
  * Direct review-seat call: reconnect ledger peer-body delivery (ADR 0085 / #1166).
- * Gate summons already ride gateReviewInstruction; direct --source-run must not
- * leave a blank fixed-kickoff.
+ * Gate summons already ride gateReviewInstruction; direct --source-run falls
+ * through the shared dialogue resolver (notary: fixed dispatch).
  */
 async function loadLedgerPeerBody(
   sourceRunDirectory: string,
@@ -901,16 +901,27 @@ async function runCountersignBody(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
+  const projectRoot = resolve(parsed.project ?? env.cwd);
   const gateParentRunPath =
     typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
       ? env.parentRunPath
       : undefined;
   if (gateParentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
+    // #1208 C1: same shared dialogue resolver as every other same-parent seat.
+    const dialogue = await sameParentDialogue(
+      env,
+      {
+        instruction: parsed.instruction ?? "",
+        instructionEmpty: (parsed.instruction ?? "").length === 0,
+      },
+      gateParentRunPath,
+      projectRoot,
+      "countersign",
+    );
     const resumed = await resumeSameParentInstructionSeat({
       env,
       io,
-      projectRoot: resolve(parsed.project ?? env.cwd),
+      projectRoot,
       role: "countersign",
       parentRunPath: gateParentRunPath,
       ...(isSafePositiveTicketNumber(env.boundTicketNumber)
@@ -918,8 +929,8 @@ async function runCountersignBody(
         : {}),
       summons: {
         sourceRunPath: gateParentRunPath,
-        instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.length === 0,
+        instruction: dialogue.instruction,
+        instructionEmpty: dialogue.instructionEmpty,
         // #1166 J11: same-parent resume delivers this call's file-flag paths
         // through the shared summons → appendCallerFileFlagPaths rule.
         attachmentPaths: parsed.attachmentPaths ?? [],
@@ -957,14 +968,10 @@ async function runCountersignBody(
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
-      // #1166 J11: review-body branch must merge the same file-flag delivery as
-      // resolveInitialPrompt / resumeTurnRequestProjectionOptions — never body alone.
-      const reviewBody = env.reviewReask ?? env.gateReviewInstruction;
+      // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
-        prompt: reviewBody !== undefined
-          ? appendCallerFileFlagPaths(reviewBody, admitted.attachments)
-          : buildInstructionTransportPrompt(admitted),
+        prompt: await resolveInitialPrompt(admitted, env),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({

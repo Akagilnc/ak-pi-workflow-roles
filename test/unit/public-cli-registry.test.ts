@@ -189,7 +189,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_submission_output",
     settlement: "accepted",
     reaskPrompt: true,
-    transportPrompt: "fixed-kickoff",
     navigatorSubject: "source-run",
     gateStageLabel: "符宝郎",
     gateSummon: "source-run",
@@ -209,6 +208,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_submission_output",
     settlement: "accepted",
+    reaskPrompt: true,
     gateStageLabel: "给事中",
     gateSummon: "parent-instruction",
     activationFlags: [

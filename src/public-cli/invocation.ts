@@ -1839,7 +1839,7 @@ type InstructionTransportSource = {
 
 function admittedTransportPromptKind(
   admitted: InstructionTransportSource,
-): "instruction" | "fixed-kickoff" | "baseline" | "skill-args" {
+): "instruction" | "baseline" | "skill-args" {
   if (admitted.role === undefined) return "instruction";
   const record = packagedRoleMetadata(admitted.role);
   if (record !== undefined && "transportPrompt" in record) return record.transportPrompt;
@@ -1870,19 +1870,15 @@ export function appendCallerFileFlagPaths(
 
 /**
  * One initial prompt transport. The registry `transportPrompt` leaf selects
- * a fixed kickoff, a bound baseline, or skill args. Absent means the caller
- * instruction plus caller file-flag paths (ADR 0087).
+ * a bound baseline or skill args. Absent means the caller instruction plus
+ * caller file-flag paths (ADR 0087). Notary dialogue is owned by
+ * resolveReviewSeatDialogueBody (fixed dispatch), not an empty transport leaf.
  * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(
   admitted: InstructionTransportSource,
 ): string {
   const kind = admittedTransportPromptKind(admitted);
-  if (kind === "fixed-kickoff") {
-    // #1166 / ADR 0087: audited-run identity rides startup materials; dialogue
-    // prompt is peer body / reask only — never a package-computed directory path.
-    return "";
-  }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
       throw new Error("baseline transport prompt is missing the bound revision");
