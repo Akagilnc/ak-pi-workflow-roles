@@ -29,7 +29,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { NOTARY_FIXED_DISPATCH } from "../../src/public-role-summons.ts";
+import { NOTARY_FIXED_DISPATCH } from "../../src/public-cli/instruction-seat-run.ts";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";

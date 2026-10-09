@@ -30,9 +30,6 @@ import { isRecord, errorText } from "./unknown-value.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
-/** Owner-approved fixed Notary dispatch (2026-10-09); never the parent verdict. */
-export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
-
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
 
 export type PublicSummonRole =
@@ -728,18 +725,16 @@ export async function summonGateOfficer(options: {
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
   // #1195 ticket-court notary (countersign source): do not preload the parent body.
-  // Identity binds via --source-run; the notary reads the ticket and verdict itself.
-  // It receives the owner-approved fixed dispatch instead of an empty prompt
-  // (codex rejects empty stdin). Other sources still receive the parent body.
+  // Identity binds via --source-run; the notary reads the ticket and verdict itself
+  // and its dispatch comes from resolveReviewSeatDialogueBody.
+  // Other officers / non-countersign sources still receive the parent submission body.
   let gateReviewInstruction: string | undefined;
   if (options.reask === undefined && options.submission !== undefined) {
     const { isTicketCourtCountersignSource } = await import("./run-terminal-artifacts.ts");
     const blindTicketCourt =
       options.officer === "notary"
       && isTicketCourtCountersignSource(options.sourceRunDirectory);
-    if (blindTicketCourt) {
-      gateReviewInstruction = NOTARY_FIXED_DISPATCH;
-    } else {
+    if (!blindTicketCourt) {
       const { readableGateItem } = await import("./readable-gate-item.ts");
       gateReviewInstruction = readableGateItem(options.submission);
     }
