@@ -17,9 +17,13 @@ export const BASH_RECEIPT_HEAD_BYTES = 1024;
 
 const TAP_VERSION_LINE = /^TAP version \d+/m;
 const TAP_TESTS_FOOTER = /^# tests \d+/m;
-/** node:test form-language footer; authoritative pass/fail (cancelled/skip/todo are separate lines). */
-const TAP_PASS_FOOTER = /^# pass (\d+)\s*$/gm;
-const TAP_FAIL_FOOTER = /^# fail (\d+)\s*$/gm;
+/**
+ * node:test root summary block (after the plan, once per document).
+ * Full contiguous block only — lone `# pass`/`# fail` lines are stdout/stderr comments
+ * (`# ${line}`), not counts (node lib/internal/test_runner/reporter/tap.js).
+ */
+const NODE_TEST_SUMMARY_BLOCK =
+  /^# tests \d+\s*\r?\n# suites \d+\s*\r?\n# pass (\d+)\s*\r?\n# fail (\d+)\s*\r?\n# cancelled \d+\s*\r?\n# skipped \d+\s*\r?\n# todo \d+\s*\r?\n# duration_ms \d+(?:\.\d+)?\s*$/gm;
 
 type StructuredBashContent = {
   output?: unknown;
@@ -113,14 +117,15 @@ function sliceNotOkSourceBlocks(text: string): string[] {
   return blocks;
 }
 
-/** Sum node:test `# pass N` / `# fail N` footers across the output (multi-doc runs included). */
+/** Sum node:test root summary blocks (`# pass`/`# fail` inside each); multi-doc = one block each. */
 function nodeTestFooterPassFail(text: string): { pass: number; fail: number } {
   let pass = 0;
   let fail = 0;
-  TAP_PASS_FOOTER.lastIndex = 0;
-  for (const match of text.matchAll(TAP_PASS_FOOTER)) pass += Number(match[1]);
-  TAP_FAIL_FOOTER.lastIndex = 0;
-  for (const match of text.matchAll(TAP_FAIL_FOOTER)) fail += Number(match[1]);
+  NODE_TEST_SUMMARY_BLOCK.lastIndex = 0;
+  for (const match of text.matchAll(NODE_TEST_SUMMARY_BLOCK)) {
+    pass += Number(match[1]);
+    fail += Number(match[2]);
+  }
   return { pass, fail };
 }
 
