@@ -2,21 +2,24 @@
  * Pi-only bash tool_result presentation (#1206).
  *
  * Ordinary bash receipts at/above 10 KiB keep head 1 KiB + tail to the bound,
- * spill full text to a file, and foot the omitted counts + full path.
- * node:test TAP is summarized to pass/fail counts and each not-ok block.
+ * spill proven full text to a file, and foot the omitted counts + full path.
+ * node:test TAP uses `# pass`/`# fail` footer counts + each not-ok block.
+ * Without a structured full-text fact, the native receipt is left unchanged.
  * read/grep and non-bash tools are out of scope.
  */
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Parser } from "tap-parser";
 
 export const BASH_RECEIPT_THRESHOLD_BYTES = 10 * 1024;
 export const BASH_RECEIPT_HEAD_BYTES = 1024;
 
 const TAP_VERSION_LINE = /^TAP version \d+/m;
 const TAP_TESTS_FOOTER = /^# tests \d+/m;
+/** node:test form-language footer; authoritative pass/fail (cancelled/skip/todo are separate lines). */
+const TAP_PASS_FOOTER = /^# pass (\d+)\s*$/gm;
+const TAP_FAIL_FOOTER = /^# fail (\d+)\s*$/gm;
 
 type StructuredBashContent = {
   output?: unknown;
@@ -64,16 +67,6 @@ function asStructuredBash(value: unknown): StructuredBashContent | undefined {
   return value as StructuredBashContent;
 }
 
-/** Pi appends this exact suffix from exit_code on non-zero exits; strip only by that fact. */
-function commandOutputFromReceipt(receiptText: string, structured: StructuredBashContent | undefined): string {
-  const code = structured?.exit_code;
-  if (typeof code === "number" && code !== 0) {
-    const suffix = `\n\nCommand exited with code ${code}`;
-    if (receiptText.endsWith(suffix)) return receiptText.slice(0, -suffix.length);
-  }
-  return receiptText;
-}
-
 function statusSuffixFromFacts(structured: StructuredBashContent | undefined): string {
   const code = structured?.exit_code;
   if (typeof code === "number" && code !== 0) {
@@ -82,18 +75,9 @@ function statusSuffixFromFacts(structured: StructuredBashContent | undefined): s
   return "";
 }
 
-function splitTapDocuments(text: string): string[] {
-  const starts: number[] = [];
-  const re = /^TAP version \d+/gm;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) starts.push(match.index);
-  if (starts.length === 0) return [text];
-  return starts.map((start, i) => text.slice(start, starts[i + 1] ?? text.length));
-}
-
 /**
  * Source-original not-ok regions (not-ok line + optional YAML diagnostic).
- * Bounds follow the TAP diagnostic form; counts come from tap-parser, not this slice.
+ * Bounds follow the TAP diagnostic form; counts come from node:test footer lines, not this slice.
  */
 function sliceNotOkSourceBlocks(text: string): string[] {
   const lines = text.split("\n");
@@ -129,24 +113,19 @@ function sliceNotOkSourceBlocks(text: string): string[] {
   return blocks;
 }
 
-function summarizeNodeTestTap(text: string): { pass: number; fail: number; summaryText: string } {
+/** Sum node:test `# pass N` / `# fail N` footers across the output (multi-doc runs included). */
+function nodeTestFooterPassFail(text: string): { pass: number; fail: number } {
   let pass = 0;
   let fail = 0;
-  for (const doc of splitTapDocuments(text)) {
-    const parser = new Parser();
-    const walk = (node: Parser): void => {
-      node.on("assert", (result) => {
-        // node:test classification: skip/todo are not pass/fail; suites are not tests.
-        if (result.skip || result.todo) return;
-        if (result.diag?.type === "suite") return;
-        if (result.ok) pass++;
-        else fail++;
-      });
-      node.on("child", (child) => walk(child));
-    };
-    walk(parser);
-    parser.end(doc);
-  }
+  TAP_PASS_FOOTER.lastIndex = 0;
+  for (const match of text.matchAll(TAP_PASS_FOOTER)) pass += Number(match[1]);
+  TAP_FAIL_FOOTER.lastIndex = 0;
+  for (const match of text.matchAll(TAP_FAIL_FOOTER)) fail += Number(match[1]);
+  return { pass, fail };
+}
+
+function summarizeNodeTestTap(text: string): { pass: number; fail: number; summaryText: string } {
+  const { pass, fail } = nodeTestFooterPassFail(text);
   const notOkBlocks = sliceNotOkSourceBlocks(text);
   const lines = [`${pass} pass／${fail} fail`];
   if (notOkBlocks.length > 0) {
@@ -230,11 +209,14 @@ async function writeFullOutput(fullText: string): Promise<string> {
   return path;
 }
 
-async function resolveFullCommandOutput(input: {
-  receiptText: string;
+/**
+ * Only proven full command output. Native abort/timeout wraps a possibly truncated
+ * receipt with empty details and no structuredContent — that is not full text (R4).
+ */
+async function resolveProvenFullCommandOutput(input: {
   existingFullOutputPath?: string;
   structured?: StructuredBashContent;
-}): Promise<{ fullText: string; fullOutputPath?: string; usedExisting: boolean }> {
+}): Promise<{ fullText: string; fullOutputPath?: string; usedExisting: boolean } | undefined> {
   const existing = input.existingFullOutputPath;
   if (typeof existing === "string" && existing.trim() !== "") {
     // F1: read failure propagates; pi tool_result runner records it and keeps the original result.
@@ -253,10 +235,7 @@ async function resolveFullCommandOutput(input: {
     return { fullText: structured.output, usedExisting: false };
   }
 
-  return {
-    fullText: commandOutputFromReceipt(input.receiptText, structured),
-    usedExisting: false,
-  };
+  return undefined;
 }
 
 export type PiBashToolResultContentPart =
@@ -304,14 +283,16 @@ export async function presentPiBashToolResult(
   const structured = asStructuredBash(event.structuredContent);
   const statusSuffix = statusSuffixFromFacts(structured);
 
-  const resolved = await resolveFullCommandOutput({
-    receiptText,
+  const resolved = await resolveProvenFullCommandOutput({
     ...(existingFullOutputPath === undefined ? {} : { existingFullOutputPath }),
     ...(structured === undefined ? {} : { structured }),
   });
+  // No structured full-text fact (native exception path, etc.): keep the native receipt.
+  if (resolved === undefined) return undefined;
+
   const fullText = resolved.fullText;
 
-  // TAP is an independent approved path: always summarize when the command output is TAP.
+  // TAP is an independent approved path: always summarize when the proven full output is TAP.
   if (isNodeTestTap(fullText)) {
     const summarized = summarizeNodeTestTap(fullText);
     const path = resolved.usedExisting && resolved.fullOutputPath
