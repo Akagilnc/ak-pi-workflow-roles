@@ -3,7 +3,7 @@
  * Lawful explicit releases: converged | continue | escalate.
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "./review-submission.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, courtReviewSubmissionSchema } from "./review-submission.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
@@ -25,7 +25,8 @@ export const NOTARY_TICKET_FLAG = {
   },
 } as const;
 
-export const notaryOutputSchema = reviewSubmissionSchema;
+/** #1195: generation-required clauses; package still records missing tables as-is. */
+export const notaryOutputSchema = courtReviewSubmissionSchema;
 
 export type NotarySourceRunLocator = {
   readonly runDirectory: string;

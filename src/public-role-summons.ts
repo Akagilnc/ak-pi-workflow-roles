@@ -114,6 +114,7 @@ export type PublicSummonRequest = {
    * the host session — not a package-built advice ledger.
    */
   readonly resumeRunId?: string;
+  readonly resumeRunDirectory?: string;
   /**
    * Nested court station child (default true): omit Navigator auto-attendance
    * and use station-child resume. Ordinary public-equivalent legs (dual-lens
@@ -133,7 +134,7 @@ const execFileAsync = promisify(execFile);
 export type PublicSummonResult = {
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
-  /** Independent officer/role run directory (正本); parent books pointer only. */
+  /** Independent officer/role run directory (正本). Parent does not book a copy (#1195). */
   readonly runDirectory?: string;
   /** Offline diagnostics from nested CLI (structural rejection text). */
   readonly stderr?: string;
@@ -467,7 +468,11 @@ export async function summonPublicRole(
     ) => Promise<{
       exitCode: number;
       terminal?: TerminalResult;
-      admitted?: { readonly runDirectory?: string };
+      admitted?: {
+        readonly runDirectory?: string;
+        readonly runId?: string;
+        readonly role?: string;
+      };
     }>,
   ) {
     let parsedArgv!: TParsed;
@@ -494,7 +499,11 @@ export async function summonPublicRole(
   let result: {
     exitCode: number;
     terminal?: TerminalResult;
-    admitted?: { readonly runDirectory?: string };
+    admitted?: {
+      readonly runDirectory?: string;
+      readonly runId?: string;
+      readonly role?: string;
+    };
   };
   if (resumeRunId !== undefined) {
     const instruction = options.argv[0] ?? "";
@@ -502,6 +511,7 @@ export async function summonPublicRole(
       runPublicInstructionSeatResume(
         {
           runId: resumeRunId,
+          ...(options.resumeRunDirectory === undefined ? {} : { runDirectory: options.resumeRunDirectory }),
           summons: {
             instruction,
             instructionEmpty: instruction.length === 0,
@@ -520,16 +530,21 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // Secretariat can return its preliminary diarist's escalation verbatim.
-  // The terminal's independent run, not the officer, is the gate pointer.
-  const runDirectory = result.terminal !== undefined
+  // Nested escalate may present a lower terminal; prefer that seat's admitted
+  // runDirectory when already in hand — do not re-resolve bare runId across books (#1195).
+  let runDirectory = result.admitted?.runDirectory;
+  if (
+    result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"
-    ? await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
+    && result.admitted?.runId !== result.terminal.runId
+  ) {
+    // Compatibility surface with no admitted locator for that terminal.
+    runDirectory = await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
       home,
       result.terminal.runId,
-    )
-    : result.admitted?.runDirectory;
+    ) ?? runDirectory;
+  }
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
@@ -669,7 +684,10 @@ export async function summonParallelReviewerLenses(options: {
   };
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via parentRunPath (#969 / #987). */
+/**
+ * Gate officer summons. Argv / parentRunPath assembly is sole-sourced from
+ * packagedGateSummon(officer) — not restated seat-by-seat here.
+ */
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
@@ -706,10 +724,20 @@ export async function summonGateOfficer(options: {
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
+  // #1195 full-blind ticket-court notary (countersign source): do not preload the
+  // parent body. Identity binds via --source-run; the notary reads the live ticket
+  // and ledger itself and never opens the countersign verdict (fac9d5ec / sys-opt4).
+  // Other officers / non-countersign sources still receive the parent submission body.
   let gateReviewInstruction: string | undefined;
   if (options.reask === undefined && options.submission !== undefined) {
-    const { readableGateItem } = await import("./readable-gate-item.ts");
-    gateReviewInstruction = readableGateItem(options.submission);
+    const { isTicketCourtCountersignSource } = await import("./run-terminal-artifacts.ts");
+    const blindTicketCourt =
+      options.officer === "notary"
+      && isTicketCourtCountersignSource(options.sourceRunDirectory);
+    if (!blindTicketCourt) {
+      const { readableGateItem } = await import("./readable-gate-item.ts");
+      gateReviewInstruction = readableGateItem(options.submission);
+    }
   }
   const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
   const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);

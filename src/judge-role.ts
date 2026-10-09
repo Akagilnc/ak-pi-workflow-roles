@@ -13,7 +13,7 @@ export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
 
 /** The only judge audit order: 符宝郎, then 审刑院. */
-const JUDGE_GATES: readonly GatekeeperSubject[] = [
+export const JUDGE_GATES: readonly GatekeeperSubject[] = [
   { kind: "judge_draft" },
   { kind: "judge_compliance" },
 ];

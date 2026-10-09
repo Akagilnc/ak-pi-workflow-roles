@@ -205,7 +205,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     presentSettled: "always",
     summonResume: false,
     admission: "court-materials",
-    durableOfficerEntry: true,
     sameParent: "none",
     phases: [null],
     outputTool: "ak_submission_output",
@@ -228,7 +227,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_secretariat_output",
     settlement: "accepted",
-    projectCountersignTerminal: true,
     activationFlags: [
       { field: "ticketNumber" },
     ],

@@ -2,14 +2,18 @@ import { basename, join } from "node:path";
 import { isRecord } from "./unknown-value.ts";
 import { latestOfficerPointersFromRecords, RUN_HISTORY_FILE } from "./run-dossier.ts";
 import { OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
-import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
+import { readSitianRecords } from "./sitian-facade.ts";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
-import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import { parseRunLeaf, runDirectoryOfSessionFile } from "./role-run-placement.ts";
 
-/** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
+/**
+ * Historical parent-side pointer shape (ADR 0079 / #675).
+ * Production no longer writes these (#1195); retained only so analysts can read
+ * already-archived officer volumes. New runs leave officers empty (lawful zero).
+ */
 export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as const;
 
 export type DirectOfficerRunPointer = {
@@ -20,48 +24,12 @@ export type DirectOfficerRunPointer = {
   readonly sessionFile: string;
   /** Officer run directory when known. */
   readonly runDirectory?: string;
-  /**
-   * Parent submission tool call this officer run was summoned for.
-   * Absent on pointers booked before that binding existed.
-   */
-  readonly submissionToolCallId?: string;
 };
 
 /** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
 export { OFFICER_POINTER_RECORD_KIND };
 
-/**
- * Book a typed pointer as one history record of the parent run; the settlement
- * seam projects the latest per officer into current.json `officers`.
- * Never fabricates user/assistant/toolResult rows (#675).
- *
- * Latest record wins per officer under one parent (#753 gate-round accounting):
- * a same-parent re-summons supersedes the earlier pointer instead of adding a
- * second one that re-scans the full officer session and multiplies gate-cycle counts.
- */
-export function bookDirectOfficerRunPointer(options: {
-  readonly parentSessionFile: string;
-  readonly officer: "inspector" | "notary" | "auditor" | "countersign";
-  readonly sessionFile: string;
-  readonly runDirectory?: string;
-  readonly submissionToolCallId?: string;
-}): DirectOfficerRunPointer {
-  const submissionToolCallId = options.submissionToolCallId?.trim() ?? "";
-  const pointer: DirectOfficerRunPointer = {
-    version: 1,
-    kind: DIRECT_OFFICER_RUN_POINTER_KIND,
-    officer: options.officer,
-    sessionFile: options.sessionFile,
-    ...(options.runDirectory !== undefined && options.runDirectory.trim() !== ""
-      ? { runDirectory: options.runDirectory }
-      : {}),
-    ...(submissionToolCallId === "" ? {} : { submissionToolCallId }),
-  };
-  reportRunRecord(runDirectoryOfSessionFile(options.parentSessionFile), OFFICER_POINTER_RECORD_KIND, pointer, "submission-gate");
-  return pointer;
-}
-
-/** Shared strict pointer IO; internal audit wraps unreadability as a re-summons. */
+/** Decode one archived pointer; relocates session/run paths when the leaf moved. */
 export async function resolveOfficerPointer(
   raw: unknown,
   parentRunDirectory: string,
@@ -69,7 +37,6 @@ export async function resolveOfficerPointer(
   sessionFile: string;
   officer?: DirectOfficerRunPointer["officer"];
   runDirectory?: string;
-  submissionToolCallId?: string;
 }> {
   const where = `${parentRunDirectory} officers`;
   if (!isRecord(raw) || raw.kind !== DIRECT_OFFICER_RUN_POINTER_KIND || raw.version !== 1) {
@@ -87,21 +54,18 @@ export async function resolveOfficerPointer(
   const leaf = parseRunLeaf(basename(recordedRunDirectory));
   const parentIdentity = await readRoleRunIdentity(parentRunDirectory);
   if (leaf !== undefined && parentIdentity !== undefined) {
-    const currentRunDirectory = await findRunDirectoryById(
-      homeFromRunDirectory(parentRunDirectory), leaf.runId, parentIdentity.bookKey, leaf.role,
+    const currentRunDirectory = await resolveLiveRunDirectoryPath(
+      recordedRunDirectory, homeFromRunDirectory(parentRunDirectory), parentIdentity.bookKey,
     );
     if (currentRunDirectory !== undefined) {
       sessionFile = rewriteRunDirectoryPathValue(sessionFile, recordedRunDirectory, currentRunDirectory) as string;
       if (runDirectory !== undefined) runDirectory = currentRunDirectory;
     }
   }
-  const submissionToolCallId = typeof raw.submissionToolCallId === "string"
-    && raw.submissionToolCallId.trim() !== "" ? raw.submissionToolCallId : undefined;
   return {
     sessionFile,
     ...(officer === undefined ? {} : { officer }),
     ...(runDirectory === undefined ? {} : { runDirectory }),
-    ...(submissionToolCallId === undefined ? {} : { submissionToolCallId }),
   };
 }
 
@@ -126,22 +90,4 @@ export async function readOfficerPointers(parentRunDirectory: string): Promise<r
   return Promise.all(
     Object.keys(officers).sort().map((name) => resolveOfficerPointer(officers[name], parentRunDirectory)),
   );
-}
-
-/** Missing or unreadable is not a pass: the internal audit caller re-runs the gate. */
-export async function readDirectOfficerRunPointer(
-  parentSessionFile: string,
-  officer: DirectOfficerRunPointer["officer"],
-): Promise<DirectOfficerRunPointer | undefined> {
-  try {
-    const parentRunDirectory = runDirectoryOfSessionFile(parentSessionFile);
-    const pointer = await resolveOfficerPointer(
-      (await readBookedOfficerPointers(parentRunDirectory))[officer],
-      parentRunDirectory,
-    );
-    if (pointer.officer !== officer) return undefined;
-    return { ...pointer, officer, version: 1, kind: DIRECT_OFFICER_RUN_POINTER_KIND };
-  } catch {
-    return undefined;
-  }
 }

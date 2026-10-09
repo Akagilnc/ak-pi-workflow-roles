@@ -61,11 +61,18 @@ export function runIdFromNavigatorDirectory(runDirectory: string): string | unde
  * unknown id or principal unavailable — not resumable. Any other disk role
  * is not this navigator host run. Other throws propagate. Never reads stderr prose.
  */
-export async function navigatorHostRunResumable(home: string, runId: string): Promise<boolean> {
+export async function navigatorHostRunResumable(
+  home: string,
+  runId: string,
+  runDirectory?: string,
+): Promise<boolean> {
   const { piDurablePrincipalAuthority } = await import("./pi/durable-principal.ts");
   const { loadResumablePublicRole } = await import("./public-cli/run-lifecycle.ts");
   try {
-    const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    const loaded = await loadResumablePublicRole(
+      home, runId, piDurablePrincipalAuthority,
+      runDirectory === undefined ? undefined : { runDirectory },
+    );
     return isNavigatorSeat(loaded.admitted.role);
   } catch (error) {
     if (error instanceof CliUsageError) return false;
@@ -79,6 +86,7 @@ export type NavigatorPublicSummon = (options: {
   readonly cwd: string;
   readonly home?: string;
   readonly resumeRunId?: string;
+  readonly resumeRunDirectory?: string;
   /** Shared-lifecycle cancel forwarded from HostContext.signal (#675 / #959). */
   readonly signal?: AbortSignal;
   /** #1160 attendance auto byStatus prepare — host mounts structured schema. */
@@ -95,7 +103,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
   /** Test/composition inject — production leaves unset and uses public-role-summons. */
   readonly summonPublicRole?: NavigatorPublicSummon;
   /** Test inject — production uses navigatorHostRunResumable (typed CLI load). */
-  readonly hostRunResumable?: (home: string, runId: string) => Promise<boolean>;
+  readonly hostRunResumable?: (home: string, runId: string, runDirectory?: string) => Promise<boolean>;
 }): NavigatorSessionFactory {
   return async ({ context, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
@@ -105,8 +113,8 @@ export function createNativeNavigatorSessionFactory(deps?: {
     let noReceipt: Partial<NoReceiptLifecycleFacts> | undefined;
     let routePlaybookReadFailure: string | undefined;
     let disposed = false;
-    /** In-factory host run id for CLI resume within this attendance lifetime. */
-    let hostRunId: string | undefined;
+    /** Existing in-memory host continuity, retaining the directory already selected. */
+    let hostRun: { runId: string; runDirectory: string } | undefined;
 
     const summon: NavigatorPublicSummon = deps?.summonPublicRole
       ?? (async (options) => {
@@ -130,7 +138,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // Admission after every await: dispose during preflight must not start summon
           // (ADR 0018 / #959 — legal HostContext may omit signal).
           if (disposed) return;
-          const resumeRunId = hostRunId;
+          const resumeRunId = hostRun?.runId;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
@@ -153,12 +161,16 @@ export function createNativeNavigatorSessionFactory(deps?: {
             if (disposed) return;
             summoned = await summon(baseSummon);
           } else {
-            const canResume = await resumable(summonHome, resumeRunId);
+            const canResume = await resumable(summonHome, resumeRunId, hostRun?.runDirectory);
             if (disposed) return;
             if (canResume) {
-              summoned = await summon({ ...baseSummon, resumeRunId });
+              summoned = await summon({
+                ...baseSummon,
+                resumeRunId,
+                ...(hostRun === undefined ? {} : { resumeRunDirectory: hostRun.runDirectory }),
+              });
             } else {
-              hostRunId = undefined;
+              hostRun = undefined;
               summoned = await summon(baseSummon);
             }
           }
@@ -217,7 +229,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             const nextRunId = runIdFromNavigatorDirectory(runDirectory);
             if (nextRunId !== undefined) {
               // In-memory only for this attendance lifetime (#1178) — no side-branch pointer ledger.
-              hostRunId = nextRunId;
+              hostRun = { runId: nextRunId, runDirectory };
             }
           }
 

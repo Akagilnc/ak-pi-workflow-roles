@@ -32,7 +32,7 @@ export { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
 /** Sections of `current.json` that are a whole page appended as one row. */
 export type CurrentSection = "invocation" | "admitted" | "runState" | "terminal";
 /** Sections rendered from rows other seams append. */
-export type DerivedSection = "host" | "submission" | "officers";
+export type DerivedSection = "host" | "submission";
 
 /** The row kind of each whole-page section: the name of the file it replaced. */
 const PAGE_ROW_KIND: Readonly<Record<CurrentSection, string>> = {
@@ -143,14 +143,14 @@ function lastPagePayload(
 
 /**
  * Latest officer-pointer payload per officer from already-decoded history rows.
- * Sole reducer for the "last booking wins per officer" rule (#753 / #1161 officers).
+ * Sole reducer for the "last booking wins per officer" rule on archived rows
+ * (#753 / #1161; historical decode only — #1195 does not project into current.json).
  * A booked officer-pointer row with a non-object payload or non-string officer is
  * damaged topology — never silently omitted into lawful zero rounds (#1161 O1).
  * Absence of any officer-pointer row remains lawful empty.
  * Invalid input is a TypeError (same class as other dossier illegal payloads).
  * Control readers (`readBookedOfficerPointers`) let this throw into the existing
- * auditor-roles unreadable seam; `render` catches only that TypeError and marks
- * `history.jsonl` unreadable so other reachable facts stay in current.json.
+ * auditor-roles unreadable seam.
  */
 export function latestOfficerPointersFromRecords(
   records: readonly { readonly kind?: unknown; readonly payload?: unknown }[],
@@ -195,18 +195,9 @@ function render(
       latest = { toolCallId: payload.toolCallId, role: payload.role, accepted: payload.accepted, at: row.timestamp };
     }
   }
-  // Control readers still fail closed via latestOfficerPointersFromRecords.
-  // Render must keep other reachable facts and surface damage on the existing
-  // file unreadable seam — never abort the whole current.json (#1161 O1).
-  // Catch only the reducer's known TypeError; unknown throws stay unknown
-  // (never wash into malformed by free-text message).
-  let officers: Readonly<Record<string, unknown>> = {};
-  try {
-    officers = latestOfficerPointersFromRecords(history);
-  } catch (error) {
-    if (!(error instanceof TypeError)) throw error;
-    if (unreadable[RUN_HISTORY_FILE] === undefined) unreadable[RUN_HISTORY_FILE] = "malformed";
-  }
+  // #1195: parent current.json no longer projects officers from officer-pointer
+  // history. Archive rows stay in history.jsonl; analysts decode via
+  // readOfficerPointers / latestOfficerPointersFromRecords — not this render.
   const sessions: Record<string, unknown> = {};
   for (const row of state) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
@@ -226,7 +217,6 @@ function render(
   if (typeof original === "string") original = join(runDirectory, "session", basename(original));
   whole.host = { sessions, ...(original === undefined ? {} : { original }) };
   whole.submission = latest === undefined ? {} : { latest };
-  whole.officers = officers;
   if (Object.keys(unreadable).length > 0) whole.unreadable = unreadable;
   return whole;
 }
@@ -274,8 +264,6 @@ export function renderCurrentSync(runDirectory: string): void {
       if (file.fault !== undefined) unreadable[name] = file.fault;
       else if (file.diagnostics !== undefined && file.diagnostics.length > 0) unreadable[name] = "malformed";
     }
-    // Render may add officer-pointer TypeError damage onto the same unreadable map;
-    // declare after render so that cause enters the existing diagnostics/unreadable seam.
     const whole = render(runDirectory, history.rows, state.rows, log.rows, unreadable);
     for (const [name, code] of Object.entries(unreadable)) {
       const key = `${runDirectory}\0${name}`;

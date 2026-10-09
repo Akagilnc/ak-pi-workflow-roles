@@ -336,8 +336,8 @@ export type AnalystReadableRunFacts = {
    */
   readonly models: readonly string[];
   /**
-   * Paired gate-cycle rounds of the officers booked in current.json (#446).
-   * No officers booked → empty (lawful zero rounds).
+   * Paired gate-cycle rounds from archived officer-pointer history (#446 / #1195).
+   * No pointers → empty (lawful zero rounds).
    * A damaged officer pointer or session → leg unreadable (`auditor-roles` source).
    */
   readonly gateCycles: readonly AnalystGateCycleRound[];

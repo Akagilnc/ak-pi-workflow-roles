@@ -486,26 +486,10 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       "the first typed ticket remains the run identity after reviewer resubmission");
     // The public-entry leg at rest carries none of the retired dossier files (#1161).
     assertNoRetiredDossierFiles(join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`));
-    // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
-    const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
-      ?.countersignTerminal as
-      | { receipt?: unknown; runId?: string }
-      | undefined;
-    assert.ok(countersignTerminal, "accepted terminal must project countersignTerminal");
-    assert.deepEqual(countersignTerminal.receipt, {
-      status: "converged",
-      note: "署",
-      ticketNumber: 924,
-    });
-    assert.equal(
-      typeof countersignTerminal.runId,
-      "string",
-      "accepted terminal must carry nested 给事中 runId",
-    );
-    assert.ok(
-      (countersignTerminal.runId as string).length > 0,
-      "nested runId must be non-empty",
-    );
+    // #1195: 中书省 public final holds this leg only; court tables stay on their own runs.
+    const factsOut = result.terminal.roleOutcome.decisiveFacts;
+    assert.equal(factsOut?.countersignTerminal, undefined, "parent final must not project countersignTerminal");
+    assert.equal(factsOut?.notaryTerminal, undefined, "parent final must not project notaryTerminal");
     // Shared gate entered twice (bounce then pass); nested 符宝郎 on 给事中.
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
@@ -602,6 +586,20 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
+    // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
+    // 中书省 own volume only — no other-seat projection.
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");
+    assert.equal(
+      resumed.terminal?.roleOutcome.decisiveFacts?.countersignTerminal,
+      undefined,
+      "resumed secretariat must not project countersignTerminal",
+    );
+    assert.equal(
+      resumed.terminal?.roleOutcome.decisiveFacts?.notaryTerminal,
+      undefined,
+      "resumed secretariat must not project notaryTerminal",
+    );
   });
 });
 
@@ -627,6 +625,12 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
     assert.equal(result.terminal?.roleOutcome.role, "notary");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(objectPayloads(result.terminal.roleOutcome).at(-1), receipt);
+    // #1195: escalating 符宝郎 terminal is that seat's own volume — no parent court copy.
+    assert.equal(
+      result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal,
+      undefined,
+      "notary escalate terminal must not carry parent countersignTerminal",
+    );
     const parentDirectory = await findRunDirectoryById(home, "01a0sec1021-nst-7000-8000-000000000001", undefined, "secretariat");
     assert.ok(parentDirectory);
     assert.equal((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
@@ -734,11 +738,16 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       1,
       "only prior converged enters secretariat_verdict; escalate skips",
     );
-    // Stale prior 给事中署 must not project onto parent-escalate terminal.
+    // Parent escalate terminal is 中书省 own volume; no other-seat projection at all.
     assert.equal(
       result.terminal.roleOutcome.decisiveFacts?.countersignTerminal,
       undefined,
-      "parent escalate terminal must not project prior countersignTerminal",
+      "parent escalate terminal must not project countersignTerminal",
+    );
+    assert.equal(
+      result.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
+      undefined,
+      "parent escalate terminal must not project notaryTerminal",
     );
   });
 });

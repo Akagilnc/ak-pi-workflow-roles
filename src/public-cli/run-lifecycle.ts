@@ -9,12 +9,14 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
+import { existsSync } from "node:fs";
 import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
+  tryBookKeyFromAkRolesPath,
 } from "../activation-ledger-topology.ts";
 import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
@@ -36,6 +38,7 @@ import {
 } from "../packaged-role-registry.ts";
 import {
   admittedReviewerBaseFault,
+  admittedSourceRunPath,
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
@@ -95,6 +98,12 @@ export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
   readonly runId: string;
+  /**
+   * When already known (gate pass / same-ticket locator), load this directory
+   * instead of re-resolving runId across every book (#1195).
+   * Explicit public `ak-role resume <runId>` leaves this unset.
+   */
+  readonly runDirectory?: string;
   /** Present when the caller supplied the post-runId argv (including empty string). */
   readonly message?: string;
   /**
@@ -185,10 +194,7 @@ function parseSameTicketSummonsMaterials(
   const attachmentPaths = Array.isArray(record.attachmentPaths)
     ? record.attachmentPaths.filter((p): p is string => typeof p === "string")
     : undefined;
-  const sourceRunPath =
-    typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
-      ? record.sourceRunPath
-      : undefined;
+  const sourceRunPath = admittedSourceRunPath(record);
   let sourceRun: NotarySourceRunLocator | undefined;
   if (
     isRecord(record.sourceRun)
@@ -854,7 +860,8 @@ export async function acquireRunWriterLease(
 
 /**
  * Locate a Role run directory by run ID under the ledger books home.
- * Returns undefined when the ID is unknown.
+ * A supplied directory is checked against the ID and retained without a book walk.
+ * Returns undefined when the bare ID is unknown.
  * Walk surface = listBookRunDirectories (flat legacy + subject-tree).
  * Collects every match under the supplied book/role filters: zero → undefined,
  * one → path, many → loud ambiguity (never readdir-first).
@@ -864,7 +871,17 @@ export async function findRunDirectoryById(
   runId: string,
   onlyBookKey?: string,
   onlyRole?: string,
+  knownRunDirectory?: string,
 ): Promise<string | undefined> {
+  if (typeof knownRunDirectory === "string" && knownRunDirectory.trim() !== "") {
+    const parsed = parseRunLeaf(basename(knownRunDirectory));
+    if (parsed === undefined || parsed.runId !== runId) {
+      throw new CliUsageError(
+        `run directory does not match run id ${runId}: ${knownRunDirectory}`,
+      );
+    }
+    return knownRunDirectory;
+  }
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
   const booksRoot = join(ledgerHome, "books");
@@ -885,6 +902,19 @@ export async function findRunDirectoryById(
   );
 }
 
+/** Keep an existing placement; rediscover only after its recorded path disappeared. */
+export async function resolveLiveRunDirectoryPath(
+  recordedPath: string,
+  home: string,
+  onlyBookKey?: string,
+): Promise<string | undefined> {
+  if (existsSync(recordedPath)) return recordedPath;
+  const parsed = parseRunLeaf(basename(recordedPath));
+  const bookKey = onlyBookKey ?? tryBookKeyFromAkRolesPath(recordedPath);
+  if (parsed === undefined || bookKey === undefined) return undefined;
+  return findRunDirectoryById(home, parsed.runId, bookKey, parsed.role);
+}
+
 /**
  * Parent-run binding on a retained officer run (#747 / #1166).
  * Typed sourceRunPath only — instruction bytes are never a path protocol.
@@ -894,11 +924,7 @@ export async function readRunParentPath(
   runDirectory: string,
 ): Promise<string | undefined> {
   const record = readPageSync(runDirectory, "admitted");
-  if (record === undefined) return undefined;
-  if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
-    return record.sourceRunPath;
-  }
-  return undefined;
+  return admittedSourceRunPath(record);
 }
 
 /**
@@ -942,6 +968,22 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly parentRunPath: string;
   readonly ticketNumber?: number;
 }): Promise<string | undefined> {
+  const found = await findLatestRunForSeatTicket(input);
+  return found?.runId;
+}
+
+/**
+ * Latest retained seat run under one book/parent (and optional ticket), with its
+ * directory — callers that already scoped the search must not drop the path and
+ * re-resolve runId across every book (#1195).
+ */
+export async function findLatestRunForSeatTicket(input: {
+  readonly home: string;
+  readonly bookKey: string;
+  readonly role: RoleRunRecord["role"];
+  readonly parentRunPath: string;
+  readonly ticketNumber?: number;
+}): Promise<{ readonly runId: string; readonly runDirectory: string } | undefined> {
   if (input.parentRunPath.trim() === "") {
     return undefined;
   }
@@ -956,7 +998,7 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  let best: string | undefined;
+  let best: { readonly runId: string; readonly runDirectory: string } | undefined;
   for (const runDirectory of runDirectories) {
     const parsed = parseRunLeaf(basename(runDirectory));
     if (parsed === undefined || parsed.role !== input.role) continue;
@@ -966,7 +1008,7 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (!await retainedRunPathsMatch(parentPath, input.parentRunPath, input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
-    if (best === undefined || runId > best) best = runId;
+    if (best === undefined || runId > best.runId) best = { runId, runDirectory };
   }
   return best;
 }
@@ -1036,12 +1078,13 @@ async function loadResumableRunRecord(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  knownRunDirectory?: string,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
-  const runDirectory = await findRunDirectoryById(home, runId);
+  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -1156,9 +1199,7 @@ async function loadResumableRunRecord(
         }
       }
       // Notary — admitted source-run locator identity (#633 resume).
-      if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
-        sourceRunPath = record.sourceRunPath;
-      }
+      sourceRunPath = admittedSourceRunPath(record);
       if (
         isRecord(record.sourceRun)
       ) {
@@ -1261,16 +1302,9 @@ async function loadResumableRunRecord(
       );
     }
   }
-  const sourceRunLeaf = parseRunLeaf(basename(sourceRunPath ?? ""));
-  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf?.runId;
-  const referencedRole = sourceRun?.role ?? sourceRunLeaf?.role;
-  if (referencedRunId !== undefined && referencedRunId !== "") {
-    const currentSourceRunDirectory = await findRunDirectoryById(
-      home,
-      referencedRunId,
-      run.bookKey,
-      referencedRole,
-    );
+  const recordedSourceDirectory = sourceRunPath ?? sourceRun?.runDirectory;
+  if (recordedSourceDirectory !== undefined) {
+    const currentSourceRunDirectory = await resolveLiveRunDirectoryPath(recordedSourceDirectory, home, run.bookKey);
     if (currentSourceRunDirectory !== undefined) {
       sourceRunPath = currentSourceRunDirectory;
       if (sourceRun !== undefined) {
@@ -1348,8 +1382,9 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
 export async function peekRoleRunRole(
   home: string,
   runId: string,
+  options?: { readonly runDirectory?: string },
 ): Promise<PackagedRole | undefined> {
-  const runDirectory = await findRunDirectoryById(home, runId);
+  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, options?.runDirectory);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
@@ -1369,8 +1404,14 @@ export async function loadResumablePublicRole(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  options?: { readonly runDirectory?: string },
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
+  const loaded = await loadResumableRunRecord(
+    home,
+    runId,
+    authority,
+    options?.runDirectory,
+  );
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 
@@ -1393,25 +1434,31 @@ function admitResumedRole(loaded: {
   const base = resumedBaseAdmitted(loaded);
   switch (record.admission) {
     case "instruction": {
+      // Restore sourceRunPath whenever the admitted page has it (auditor/inspector/…).
+      // Downstream continueParent / seal-id belonging needs this fact (#1195).
+      const withSource =
+        fields.sourceRunPath === undefined
+          ? base
+          : { ...base, sourceRunPath: fields.sourceRunPath };
       if (packagedResumeSourcePath(role)) {
         const admitted: AdmittedInspectorInvocation = {
           role: "inspector",
-          ...base,
-          ...(fields.sourceRunPath === undefined
-            ? {}
-            : { sourceRunPath: fields.sourceRunPath }),
+          ...withSource,
         };
         return admitted;
       }
       return {
         role,
-        ...base,
+        ...withSource,
       } as AdmittedRoleInvocation;
     }
     case "court-materials": {
       const admitted: AdmittedCountersignInvocation = {
         role: "countersign",
         ...base,
+        ...(fields.sourceRunPath === undefined
+          ? {}
+          : { sourceRunPath: fields.sourceRunPath }),
       };
       return admitted;
     }

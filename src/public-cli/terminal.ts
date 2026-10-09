@@ -196,9 +196,9 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
-  // Accepted volumes do not dump decisiveFacts unless a failed attempt is
-  // recorded. The unsettled-direction fact still has to be visible on its own.
-  // audit_escalation already dumps every decisiveFact below.
+  // Accepted volumes do not dump internal decisiveFacts unless recorded.
+  // Other-seat finals stay on those runs (#1195); only unsettled-direction is
+  // visible here. audit_escalation already dumps every decisiveFact below.
   if (
     result.roleOutcome.kind === "accepted"
     && result.roleOutcome.decisiveFacts?.directionUnsettled === true

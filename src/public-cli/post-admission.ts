@@ -6,12 +6,12 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 
 import {
   buildAutoResumeContinuationPrompt,
   findRunDirectoryById,
+  resolveLiveRunDirectoryPath,
   readRoleRunState,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
@@ -148,7 +148,7 @@ function projectRelocatedTurnIdentity(
 }
 
 /**
- * #1171: after the host returns, re-locate the leg by run id (report-ticket may
+ * #1171: after the host returns, follow the leg's placement (report-ticket may
  * have moved it mid-turn in the tool process). Settlement and render use the
  * live path; lease cleanup follows when the held path changed.
  * Failure is not best-effort: a missing former path with no replacement must not
@@ -160,8 +160,8 @@ export async function refreshAdmittedPlacementAfterHostTurn(
   heldLease?: { relocate(runDirectory: string): void },
 ): Promise<RunDirectoryRelocation | undefined> {
   const home = homeFromRunDirectory(admitted.runDirectory);
-  const found = await findRunDirectoryById(home, admitted.runId, admitted.bookKey, admitted.role);
-  if (found === undefined && !existsSync(admitted.runDirectory)) {
+  const found = await resolveLiveRunDirectoryPath(admitted.runDirectory, home);
+  if (found === undefined) {
     throw new Error(
       `admitted run ${admitted.runId} missing after host turn; not found under ${home}`,
     );
@@ -169,7 +169,7 @@ export async function refreshAdmittedPlacementAfterHostTurn(
   // Live identity first: later board-ticket read must not leave settlement on the
   // pre-relocate path when facts are damaged (#1171 F4-R1).
   let relocation: RunDirectoryRelocation | undefined;
-  if (found !== undefined && found !== admitted.runDirectory) {
+  if (found !== admitted.runDirectory) {
     const oldRunDirectory = admitted.runDirectory;
     const coords = { ...authority.decode(admitted.principal) };
     rewritePrincipalSessionPaths(
@@ -188,11 +188,11 @@ export async function refreshAdmittedPlacementAfterHostTurn(
   }
   // Board re-read discovers a ticket written mid-turn while still unbound
   // (report-ticket board page). Already-bound identity needs no discovery —
-  // path relocate already used findRunDirectoryById. This is not damage
+  // placement refresh already followed the retained path. This is not damage
   // recovery: when unbound, readBoardTicketNumber damage/non-ENOENT IO still
   // propagates (失败诚实; notary: no damaged-control-plane → no-ticket wash).
   if (admitted.ticketNumber === undefined) {
-    const boardTicket = await readBoardTicketNumber(found ?? admitted.runDirectory);
+    const boardTicket = await readBoardTicketNumber(found);
     if (boardTicket !== undefined) {
       (admitted as { ticketNumber?: number }).ticketNumber = boardTicket;
     }
@@ -2111,10 +2111,11 @@ async function pointExistingRunFailure(
   authority: DurablePrincipalAuthority,
   io: CliIo,
   thrown: unknown,
+  knownRunDirectory?: string,
 ): Promise<boolean> {
   let foundRunDirectory: string | undefined;
   try {
-    foundRunDirectory = await findRunDirectoryById(home, runId);
+    foundRunDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
   } catch {
     return false;
   }
@@ -2143,8 +2144,9 @@ export async function presentLocatedResumeFailure(
   authority: DurablePrincipalAuthority,
   io: CliIo,
   thrown: unknown,
+  knownRunDirectory?: string,
 ): Promise<boolean> {
-  return await pointExistingRunFailure(home, runId, authority, io, thrown);
+  return await pointExistingRunFailure(home, runId, authority, io, thrown, knownRunDirectory);
 }
 
 function writeResumeFailurePointer(io: CliIo, errorPath: string): void {

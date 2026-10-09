@@ -13,8 +13,14 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { judgeVerdictSchema } from "../../src/judge-role.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME, auditorOutputSchema } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME, notaryOutputSchema } from "../../src/notary-contracts.ts";
-import { REVIEW_QUEUE_WORDS, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../../src/review-submission.ts";
+import {
+  REVIEW_QUEUE_WORDS,
+  REVIEW_SUBMISSION_OUTPUT_TOOL_NAME,
+  courtReviewSubmissionSchema,
+  reviewSubmissionSchema,
+} from "../../src/review-submission.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
+import { roleSubmissionDeclaration } from "../../src/role-submission-declarations.ts";
 
 /** Shared mock host harness for the Countersign runtime. */
 function countersignHarness() {
@@ -55,17 +61,42 @@ test("validateRecordedCountersignOutput recognizes 署/封驳/上呈 read-only �
   assert.throws(() => validateRecordedCountersignOutput(null));
 });
 
-test("review officers expose one shared output tool and receipt schema", () => {
+test("review officers expose one shared output tool; court seats share clauses schema", () => {
   assert.deepEqual(
     [COUNTERSIGN_OUTPUT_TOOL_NAME, JUDGE_OUTPUT_TOOL_NAME, NOTARY_OUTPUT_TOOL_NAME, AUDITOR_OUTPUT_TOOL_NAME, INSPECTOR_OUTPUT_TOOL_NAME],
     [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
   );
-  assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
+  // #1195: countersign + notary use court schema with required clauses; other review seats stay on shared review schema.
+  assert.equal(countersignVerdictSchema, courtReviewSubmissionSchema);
+  assert.equal(notaryOutputSchema, courtReviewSubmissionSchema);
+  assert.ok([judgeVerdictSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
+  assert.equal(roleSubmissionDeclaration("countersign").parameters, courtReviewSubmissionSchema);
+  assert.equal(roleSubmissionDeclaration("notary").parameters, courtReviewSubmissionSchema);
   for (const word of REVIEW_QUEUE_WORDS) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
+    assert.equal(
+      Value.Check(courtReviewSubmissionSchema, {
+        status: word,
+        clauses: [{ clause: "c", ownerUuid: null, derivation: "无原话" }],
+      }),
+      true,
+      word,
+    );
   }
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
   assert.equal(Value.Check(reviewSubmissionSchema, {}), false);
+  // Generation declaration requires clauses on court seats.
+  assert.equal(Value.Check(courtReviewSubmissionSchema, { status: "converged" }), false);
+  assert.equal(
+    Value.Check(courtReviewSubmissionSchema, {
+      status: "converged",
+      clauses: [{ clause: "c", ownerUuid: "u", derivation: "d" }],
+      extra: true,
+    }),
+    true,
+  );
+  // Other review seats do not require clauses.
+  assert.equal(Value.Check(reviewSubmissionSchema, { status: "converged" }), true);
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
@@ -104,17 +135,28 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
 
-  const result = await tool.execute(
+  const withFindings = await tool.execute(
     "one",
     { status: "continue", findings: ["x"] },
     undefined,
     undefined,
     {},
   );
-  assert.equal(result.terminate, true);
+  assert.equal(withFindings.terminate, true);
   assert.equal(
-    (result.details as { status: string }).status,
+    (withFindings.details as { status: string }).status,
     "continue",
   );
-  assert.deepEqual(result.content, []);
+  assert.deepEqual(withFindings.content, []);
+
+  // #1195: generation declares clauses; package still records a missing table as-is.
+  const withoutClauses = await tool.execute(
+    "no-clauses",
+    { status: "converged" },
+    undefined,
+    undefined,
+    {},
+  );
+  assert.equal(withoutClauses.terminate, true);
+  assert.deepEqual(withoutClauses.details, { status: "converged" });
 });

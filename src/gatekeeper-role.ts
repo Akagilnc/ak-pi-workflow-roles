@@ -20,7 +20,11 @@ export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 /** Gate review officers — 台院 / 符宝郎 / 审刑院 / 给事中 (#753 / #756 / #969). */
 export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
 
-/** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
+/**
+ * Officer routing only. Ordinary audit dialogue is the parent submission body
+ * (or ticket-court blind materials for notary); code does not open a second
+ * run-dossier content channel here.
+ */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
   | { readonly kind: "judge_draft" }
@@ -34,7 +38,8 @@ export type GatekeeperSubject =
  * `receipt` unchanged — no findings rewrite, no unreadable/unusable label,
  * no next-step selection for the parent.
  * `runId` is the nested officer run id when known (summoned.runDirectory /
- * terminal.runId) — public terminal projection consumes it (#969).
+ * terminal.runId) so callers resume that seat; parent public finals do not
+ * project other-seat tables (#1195).
  */
 export type GatekeeperResult =
   | {
@@ -227,7 +232,7 @@ function projectOfficerPayloads(
   return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
-/** Nested officer runId from summoned.runDirectory, else terminal.runId (#969). */
+/** Nested officer runId from summoned.runDirectory, else terminal.runId (resume identity). */
 export function officerRunIdFromSummoned(summoned: PublicSummonResult): string | undefined {
   if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
     const fromDir = runIdFromRunDirectory(summoned.runDirectory);
@@ -314,6 +319,22 @@ function projectOfficerTerminal(
     );
   }
   if (outcome.kind === "accepted") {
+    // Nested / prior incomplete (directionUnsettled) is not a gate pass (ADR 0055).
+    // Receipt stays this-court or retained; runId comes from the summoned volume
+    // (public-role-summons already prefers nested terminal.runId when roles differ).
+    // No parent-side officerPayloads / officerRunId copies (#1195).
+    if (outcome.decisiveFacts?.directionUnsettled === true) {
+      const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
+      return withOfficerRunId(
+        {
+          status: "needs_reask",
+          officer,
+          receipt,
+          receivedStatus: receivedDiscriminator(receipt, "status"),
+        },
+        summoned,
+      );
+    }
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded. It may interpret a receipt
     // lacking its own status, never substitute for a missing receipt.

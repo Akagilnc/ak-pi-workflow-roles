@@ -98,6 +98,13 @@ import type { PublicThinkingLevel } from "./registry.ts";
 
 import { errorText, isRecord } from "../unknown-value.ts";
 
+/** Nonblank admitted source path, preserving its original bytes. */
+export function admittedSourceRunPath(admitted: unknown): string | undefined {
+  if (!isRecord(admitted)) return undefined;
+  const path = admitted.sourceRunPath;
+  return typeof path === "string" && path.trim() !== "" ? path : undefined;
+}
+
 /** Caller-supplied attachment path recorded as-is (#1165). */
 export type AdmittedAttachment = {
   readonly path: string;
@@ -493,6 +500,38 @@ export async function persistAdmittedSourceRunPath(
       ...(auditorSubject === undefined ? {} : { auditorSubject }),
     };
   });
+}
+
+/**
+ * #1195 option 1: record the parent sealed toolCallId this officer is reviewing
+ * on the officer's own admitted-request (one field). Re-summons for a newer seal
+ * replace the value; continueParentAfterChild only trusts a child whose field
+ * matches the parent seal currently under audit.
+ */
+export function persistAdmittedAuditedSubmissionToolCallId(
+  runDirectory: string,
+  auditedSubmissionToolCallId: string,
+): void {
+  const id = auditedSubmissionToolCallId.trim();
+  if (id === "") {
+    throw new Error("persistAdmittedAuditedSubmissionToolCallId requires a non-empty id");
+  }
+  // Offline gate mocks may return a runDirectory without admission — skip, do not invent.
+  if (readPageSync(runDirectory, "admitted") === undefined) return;
+  updateSectionSync(runDirectory, "admitted", (current) => {
+    if (current.auditedSubmissionToolCallId === id) return undefined;
+    return { ...current, auditedSubmissionToolCallId: id };
+  });
+}
+
+/** Read the sealed id this officer admitted-request last recorded (#1195). */
+export function readAdmittedAuditedSubmissionToolCallId(
+  runDirectory: string,
+): string | undefined {
+  const page = readPageSync(runDirectory, "admitted");
+  if (page === undefined) return undefined;
+  const id = page.auditedSubmissionToolCallId;
+  return typeof id === "string" && id.trim() !== "" ? id : undefined;
 }
 
 /**

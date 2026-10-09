@@ -781,24 +781,27 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
       assert.equal(judgeCalls, 1, `limit ${limit}: parent is not resumed for revision`);
       assert.equal(notaryCalls, limit + 1, `limit ${limit}`);
       assert.equal(result.exitCode, 0, `limit ${limit}`);
+      // #1195: unreadable audit returns the actual officer volume — not a parent copy.
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
-      assert.equal(result.terminal?.roleOutcome.role, "judge", `limit ${limit}`);
+      assert.equal(result.terminal?.roleOutcome.role, "notary", `limit ${limit}`);
       if (result.terminal?.roleOutcome.kind !== "accepted") return;
-      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["continue"]);
-      const facts = result.terminal.roleOutcome.decisiveFacts as {
-        directionUnsettled?: boolean;
-        subsequentAudit?: string;
-        officerRole?: string;
-        officerRunId?: string;
-        officerPayloads?: readonly { status?: string; revision?: number }[];
-      };
-      assert.equal(facts.directionUnsettled, true);
-      assert.equal(facts.subsequentAudit, "incomplete");
-      assert.equal(facts.officerRole, "notary");
-      assert.equal(typeof facts.officerRunId, "string");
-      assert.equal(facts.officerPayloads?.at(-1)?.status, "sideways");
-      assert.deepEqual(facts.officerPayloads?.map((payload) => payload.revision),
-        Array.from({ length: limit + 1 }, (_, index) => index + 1));
+      assert.equal(result.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
+      assert.equal(result.terminal.roleOutcome.decisiveFacts?.subsequentAudit, "incomplete");
+      assert.equal(
+        result.terminal.roleOutcome.decisiveFacts?.officerPayloads,
+        undefined,
+        "parent/other-seat payload copies must not ride the returned terminal",
+      );
+      // This-court volume: submissions carry reask history when present; else payloads.
+      const volume = (result.terminal.submissions !== undefined && result.terminal.submissions.length > 0
+        ? result.terminal.submissions
+        : result.terminal.roleOutcome.payloads ?? []) as readonly { status?: string; revision?: number }[];
+      assert.equal(volume.at(-1)?.status, "sideways");
+      assert.deepEqual(
+        volume.map((payload) => payload.revision),
+        Array.from({ length: limit + 1 }, (_, index) => index + 1),
+      );
+      assert.equal(typeof result.terminal.runId, "string");
     });
   }
 });
@@ -864,11 +867,15 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       assert.equal(calls.countersign, limit + 1, `limit ${limit}`);
       assert.equal(opened.exitCode, 0, `limit ${limit}`);
       assert.equal(opened.terminal?.roleOutcome.kind, "accepted", `limit ${limit}`);
-      const openedFacts = opened.terminal?.roleOutcome.kind === "accepted"
-        ? opened.terminal.roleOutcome.decisiveFacts as { officerRunId?: string; directionUnsettled?: boolean }
-        : undefined;
-      assert.equal(openedFacts?.directionUnsettled, true, `limit ${limit}`);
-      const officerRunId = openedFacts?.officerRunId;
+      // #1195: resume identity is the actual audit seat, not a parent-side copy field.
+      assert.equal(opened.terminal?.roleOutcome.role, "countersign", `limit ${limit}`);
+      assert.equal(opened.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true, `limit ${limit}`);
+      assert.equal(
+        opened.terminal?.roleOutcome.decisiveFacts?.officerPayloads,
+        undefined,
+        `limit ${limit}: no other-seat payload copy`,
+      );
+      const officerRunId = opened.terminal?.runId;
       assert.equal(typeof officerRunId, "string", `limit ${limit}`);
       const beforeResume = calls.countersign ?? 0;
       const resumed = await runAkRole(["resume", officerRunId!], env);

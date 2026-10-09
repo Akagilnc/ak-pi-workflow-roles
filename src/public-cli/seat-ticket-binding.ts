@@ -10,7 +10,7 @@
  */
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
-  findLatestRunIdForSeatTicket,
+  findLatestRunForSeatTicket,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -18,9 +18,10 @@ import {
 /**
  * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987).
  * A supplied typed ticket only narrows the prior-run search. When a prior run is
- * found, resume carries this summons' materials. Lookup/resume failures
- * propagate (失败诚实) — never wash into a fresh mint. Returns undefined when
- * the caller declared an explicit fresh summons (`ak-role new`), the parent
+ * found, resume carries this summons' materials and the located runDirectory so
+ * load does not re-walk every book for the bare runId (#1195). Lookup/resume
+ * failures propagate (失败诚实) — never wash into a fresh mint. Returns undefined
+ * when the caller declared an explicit fresh summons (`ak-role new`), the parent
  * path is blank, or no prior run exists; those mint new. freshSummons is
  * required so no seat can drift back into its own skip branch.
  */
@@ -35,17 +36,18 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly resume: (
     runId: string,
     summons: SameTicketSummonsMaterials | undefined,
+    runDirectory: string,
   ) => Promise<T>;
 }): Promise<T | undefined> {
   if (input.freshSummons === true) return undefined;
   if (input.parentRunPath.trim() === "") return undefined;
-  const previousRunId = await findLatestRunIdForSeatTicket({
+  const previous = await findLatestRunForSeatTicket({
     home: input.home,
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
     parentRunPath: input.parentRunPath,
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
   });
-  if (previousRunId === undefined) return undefined;
-  return await input.resume(previousRunId, input.summons);
+  if (previous === undefined) return undefined;
+  return await input.resume(previous.runId, input.summons, previous.runDirectory);
 }

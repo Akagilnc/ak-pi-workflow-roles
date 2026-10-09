@@ -83,3 +83,4 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(h.beforeStart());
 });
+

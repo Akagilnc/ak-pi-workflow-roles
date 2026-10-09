@@ -8,7 +8,7 @@
  * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -43,7 +43,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,
@@ -102,51 +102,62 @@ async function inspectLiveRequest(
 }> {
   const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-live-"));
   const socketPath = join(socketDir, "mcp.sock");
-  const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
-  const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-  if (request.activation.role === "auditor") {
-    const admitted = readCurrentSection(request.runDirectory, "admitted");
-    const subject =
-      typeof admitted.auditorSubject === "string" && admitted.auditorSubject.trim() !== ""
-        ? admitted.auditorSubject
-        : "judge";
-    process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
-    if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
-      process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
-    }
-  }
-  try {
-    const prepared = await prepareRoleEnvelope({
-      request,
-      dependencies: createRoleRuntimeDependencies(packageRootPath),
-      socketPath,
-      sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-      principalAuthority: piDurablePrincipalAuthority,
-    });
-    try {
-      const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
-      const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
-      let toolNames: string[] | undefined;
+  let priorSubject: string | undefined;
+  let priorSource: string | undefined;
+  let envMutated = false;
+  // After the temp root exists, body + env restore + rm share primary-aware cleanup
+  // (cleanup failure alone fails; primary failure is not erased).
+  return withPrimaryAwareCleanup(
+    async () => {
       if (request.activation.role === "auditor") {
-        toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+        priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+        priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+        const admitted = readCurrentSection(request.runDirectory, "admitted");
+        const subject =
+          typeof admitted.auditorSubject === "string" && admitted.auditorSubject.trim() !== ""
+            ? admitted.auditorSubject
+            : "judge";
+        process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
+        envMutated = true;
+        if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+          process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
+        }
       }
-      return {
-        prompt: prepared.prompt,
-        identities,
-        pathMaterials,
-        ...(toolNames === undefined ? {} : { toolNames }),
-      };
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (request.activation.role === "auditor") {
+      const prepared = await prepareRoleEnvelope({
+        request,
+        dependencies: createRoleRuntimeDependencies(packageRootPath),
+        socketPath,
+        sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        principalAuthority: piDurablePrincipalAuthority,
+      });
+      try {
+        const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
+        const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
+        let toolNames: string[] | undefined;
+        if (request.activation.role === "auditor") {
+          toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+        }
+        return {
+          prompt: prepared.prompt,
+          identities,
+          pathMaterials,
+          ...(toolNames === undefined ? {} : { toolNames }),
+        };
+      } finally {
+        await prepared.dispose?.();
+      }
+    },
+    async () => {
+      if (!envMutated) return;
       if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
       if (priorSource === undefined) delete process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
       else process.env.AK_ROLE_AUDITOR_SOURCE_RUN = priorSource;
-    }
-  }
+    },
+    async () => {
+      await rm(socketDir, { recursive: true, force: true });
+    },
+  );
 }
 
 async function configureOfficerSeats(home: string, roles: readonly string[]): Promise<void> {
@@ -551,5 +562,154 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
     }
+  });
+});
+
+/**
+ * #1195 ticket-court blind review: countersign → notary does not preload the
+ * countersign submission into dialogue. Structured contract: empty continuation
+ * prompt + audited-run identity. Same-parent resubmit stays empty.
+ */
+test("#1195 countersign→notary blind: empty dialogue on gate and same-parent resubmit", async () => {
+  await withTempRoot("ak-1195-blind-", async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await configureOfficerSeats(home, ["notary", "countersign", "diarist"]);
+
+    const first = {
+      status: "converged" as const,
+      ticketNumber: 1195,
+      clauses: [
+        {
+          clause: "blind input seam",
+          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
+          derivation: "Q2(a)",
+        },
+      ],
+    };
+    const second = {
+      status: "converged" as const,
+      ticketNumber: 1195,
+      clauses: [
+        {
+          clause: "resubmit after bounce",
+          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
+          derivation: "Q2(a) still blind",
+        },
+      ],
+    };
+    assert.notEqual(readableGateItem(first), readableGateItem(second));
+
+    const runId = "01a0119500007000800000000000c001";
+    const notaryPrompts: string[] = [];
+    const notaryIdentities: string[] = [];
+    let parentSeals = 0;
+
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "notary") {
+        // Structured face on the live request before envelope fold.
+        assert.equal(request.continuation.prompt, "");
+        notaryPrompts.push(request.continuation.prompt);
+        const inspected = await inspectLiveRequest(request, packageRoot);
+        assert.equal(inspected.prompt, "");
+        assert.equal(inspected.identities.length, 1);
+        notaryIdentities.push(inspected.identities[0]!.identity);
+        const details = notaryPrompts.length <= 1
+          ? {
+            status: "continue",
+            violations: ["rewrite"],
+            ticketNumber: 1195,
+            clauses: first.clauses,
+          }
+          : {
+            status: "converged",
+            ticketNumber: 1195,
+            clauses: second.clauses,
+          };
+        return roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details,
+          }),
+        }).executeTurn(request);
+      }
+      parentSeals += 1;
+      const body = parentSeals === 1 ? first : second;
+      const { sessionDirectory, sessionFile } =
+        piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(sessionFile, "", "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd,
+        home,
+        runId,
+        runDirectory: request.runDirectory,
+        role: "countersign",
+        details: body,
+        toolCallId: `countersign-1195-${parentSeals}`,
+        ...(request.courtAttemptId === undefined
+          ? {}
+          : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+
+    const firstIo = captureIo();
+    let finalResult = await runAkRole(
+      ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        io: firstIo.io,
+        credentials: CREDENTIALS,
+        roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
+      },
+    );
+    assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
+    assert.ok(notaryPrompts.length >= 1);
+    assert.equal(notaryPrompts[0], "");
+    assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
+
+    if (notaryPrompts.length < 2) {
+      const resumeIo = captureIo();
+      finalResult = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          io: resumeIo.io,
+          credentials: CREDENTIALS,
+          roleTurnHost: withNestedTrueUnboundDiarist(host, { primaryRole: "countersign" }),
+        },
+      );
+      assert.equal(finalResult.exitCode, 0, resumeIo.stderr.join(""));
+    }
+
+    assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
+    assert.equal(notaryPrompts.at(-1), "");
+    assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
+    // Peer body would differ across resubmits; blind dialogue stays empty both times.
+    assert.notEqual(readableGateItem(first), readableGateItem(second));
+
+    // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
+    assert.ok(finalResult.terminal, "public final terminal must exist");
+    assert.equal(finalResult.terminal.roleOutcome.role, "countersign");
+    assert.equal(finalResult.terminal.roleOutcome.kind, "accepted");
+    const parentPayloads = finalResult.terminal.roleOutcome.kind === "accepted"
+      ? finalResult.terminal.roleOutcome.payloads ?? []
+      : [];
+    assert.deepEqual(parentPayloads.at(-1), second);
+    assert.equal(
+      finalResult.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
+      undefined,
+      "parent final must not project notaryTerminal",
+    );
   });
 });
