@@ -208,8 +208,9 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
   const preload = "--import ./scripts/test-process-env-preload.mjs";
   // #252: test:fast is a canonical entry — fixed per-test --test-timeout=300000, no config.
   const testTimeout = "--test-timeout=300000";
-  // #1206: Node built-in reporter at existing test call seams (simple framework output).
-  const reporter = "--test-reporter=dot";
+  // #1206: Node built-in reporters at existing test call seams (dot+spec destinations).
+  const reporter =
+    "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=stderr";
   const bareUnitContract =
     `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
   const fastUnitContract =
@@ -390,10 +391,22 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
     child.argv.includes("--test-timeout=300000"),
     `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
   );
-  // #1206: Node built-in reporter on the sole test:all child seam.
+  // #1206: Node built-in reporters on the sole test:all child seam.
   assert.ok(
     child.argv.includes("--test-reporter=dot"),
     `child argv must include --test-reporter=dot; got ${JSON.stringify(child.argv)}`,
+  );
+  assert.ok(
+    child.argv.includes("--test-reporter=spec"),
+    `child argv must include --test-reporter=spec; got ${JSON.stringify(child.argv)}`,
+  );
+  const reporterDestinations = child.argv.filter(
+    (arg) => arg === "--test-reporter-destination=stdout" || arg === "--test-reporter-destination=stderr",
+  );
+  assert.deepEqual(
+    reporterDestinations,
+    ["--test-reporter-destination=stdout", "--test-reporter-destination=stderr"],
+    `child argv must pair reporter destinations stdout then stderr; got ${JSON.stringify(child.argv)}`,
   );
   assert.equal(
     hasConcurrencyTwo(child.argv),
