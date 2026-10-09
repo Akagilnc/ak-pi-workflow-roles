@@ -136,6 +136,9 @@ function summarizeNodeTestTap(text: string): { pass: number; fail: number; summa
     const parser = new Parser();
     const walk = (node: Parser): void => {
       node.on("assert", (result) => {
+        // node:test classification: skip/todo are not pass/fail; suites are not tests.
+        if (result.skip || result.todo) return;
+        if (result.diag?.type === "suite") return;
         if (result.ok) pass++;
         else fail++;
       });
