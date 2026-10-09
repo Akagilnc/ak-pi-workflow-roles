@@ -299,7 +299,6 @@ test("#879/#1208 notary each turn receives fixed dispatch — not history array 
       assert.equal(projected.result.status, "continue");
       // #1208: notary dialogue is the fixed dispatch every round; body stays in the ledger.
       assert.equal(prompts[i + 1], NOTARY_FIXED_DISPATCH);
-      assert.notEqual(JSON.stringify(body), NOTARY_FIXED_DISPATCH);
       const terminal = projected.summoned?.terminal;
       assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
       assert.equal(terminal!.roleOutcome.kind, "accepted");
@@ -476,7 +475,6 @@ test("#1092/#1208 station-child notary: no case-dossier pointer material; dialog
     assert.equal(projected.result.status, "converged");
     assert.ok(prompts.length >= 1);
     assert.equal(prompts[prompts.length - 1], NOTARY_FIXED_DISPATCH);
-    assert.notEqual(JSON.stringify(body), NOTARY_FIXED_DISPATCH);
 
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");

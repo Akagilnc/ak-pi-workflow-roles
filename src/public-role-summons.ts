@@ -723,10 +723,10 @@ export async function summonGateOfficer(options: {
   }
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
-  // Conclusion re-ask keeps sole ownership of reviewReask when present.
-  // #1208: notary never preloads parent body — fixed dispatch comes from
-  // resolveReviewSeatDialogueBody for every source. Other officers still receive
-  // the parent submission body.
+  // Conclusion re-ask owns reviewReask when present (no parallel gate body).
+  // #1208: notary never preloads parent body; dialogue is always the fixed
+  // dispatch from resolveReviewSeatDialogueBody. Other officers still receive
+  // the parent submission body when reask is absent.
   let gateReviewInstruction: string | undefined;
   if (
     options.reask === undefined

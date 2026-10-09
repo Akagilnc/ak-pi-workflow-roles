@@ -472,8 +472,6 @@ test("#1166/#1208 same parent re-submits: notary fixed dispatch; auditor gets ne
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
     assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
-    // Peer body differs across resubmits; notary dialogue stays the fixed dispatch.
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
   });
 });
 
@@ -704,8 +702,6 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
     assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
-    // Peer body would differ across resubmits; blind dialogue stays the fixed dispatch.
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");

@@ -533,23 +533,24 @@ export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职
 
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
- * (#1166 / ADR 0085 / ADR 0087 / #1208): explicit format reask → notary fixed
- * dispatch → non-empty caller dispatch → source-only ledger peer body.
- * Identity stays in startup materials. Notary never preloads parent verdict
- * regardless of source seat (countersign or judge).
+ * (#1166 / ADR 0085 / ADR 0087 / #1208): notary always fixed dispatch; other seats
+ * prefer format reask, then gate body, then caller dispatch, then ledger peer.
+ * Identity stays in startup materials. Notary never takes reask/gate/caller as
+ * dialogue — budgets, receipts, and diagnostic presentation stay elsewhere.
  */
 async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
-  readonly reask?: string;
+  readonly reviewReask?: string;
+  readonly gateReviewInstruction?: string;
   readonly callerInstruction?: string;
   readonly sourceRunPath?: string;
   readonly projectRoot: string;
   readonly home: string;
 }): Promise<string | undefined> {
-  const reask = input.reask;
-  if (reask !== undefined && reask.length > 0) return reask;
-  // #1208: notary fixed dispatch for every source; verdict stays in ledger files.
+  // #1208: fixed dispatch for every notary delivery path (incl. internal reask).
   if (input.role === "notary") return NOTARY_FIXED_DISPATCH;
+  const preferred = input.reviewReask ?? input.gateReviewInstruction;
+  if (preferred !== undefined && preferred.length > 0) return preferred;
   const caller = input.callerInstruction ?? "";
   if (caller.length > 0) return caller;
   const sourceRunPath = admittedSourceRunPath(input)?.trim();
@@ -564,13 +565,12 @@ async function resolveInitialPrompt(
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
     const sourceRunPath = admittedSourceRunPath(admitted);
-    // #1208: notary ignores gate body preload; only true format reask may override fixed dispatch.
-    const reask = admitted.role === "notary"
-      ? env.reviewReask
-      : (env.reviewReask ?? env.gateReviewInstruction);
     const body = await resolveReviewSeatDialogueBody({
       role: admitted.role,
-      ...(reask === undefined ? {} : { reask }),
+      ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
+      ...(env.gateReviewInstruction === undefined
+        ? {}
+        : { gateReviewInstruction: env.gateReviewInstruction }),
       callerInstruction: admitted.instruction,
       ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       projectRoot: admitted.projectRoot,
@@ -866,7 +866,7 @@ function resumeSameParentInstructionSeat(input: {
 
 /**
  * Same delivery rule as resolveInitialPrompt for same-parent resume summons.
- * Reask / explicit caller text / source-only ledger peer — one authority.
+ * Shared resolver owns the input choice — callers only pass env fields.
  */
 async function sameParentDialogue(
   env: InstructionSeatRunEnv,
@@ -875,13 +875,12 @@ async function sameParentDialogue(
   projectRoot: string,
   role: string,
 ): Promise<{ readonly instruction: string; readonly instructionEmpty: boolean }> {
-  // #1208: notary ignores gate body preload; only true format reask may override fixed dispatch.
-  const reask = role === "notary"
-    ? env.reviewReask
-    : (env.reviewReask ?? env.gateReviewInstruction);
   const body = await resolveReviewSeatDialogueBody({
     role,
-    ...(reask === undefined ? {} : { reask }),
+    ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
+    ...(env.gateReviewInstruction === undefined
+      ? {}
+      : { gateReviewInstruction: env.gateReviewInstruction }),
     callerInstruction: fallback.instruction,
     sourceRunPath,
     projectRoot,
@@ -1281,12 +1280,22 @@ export async function runPublicInstructionSeatResume(
     },
     buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
-      return buildInstructionSeatTurnRequest(
-        admitted,
-        {
-          ...resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
-        },
+      const projection = resumeTurnRequestProjectionOptions(
+        admitted, effective, env, summonsPrepared,
       );
+      // #1208: internal same-ticket resume (no bare caller message) keeps notary
+      // on the shared fixed dispatch — diagnostic summons text is not dialogue.
+      if (admitted.role === "notary" && effective.message === undefined) {
+        const fileFlags = summonsPrepared?.attachments ?? [];
+        const prompt = fileFlags.length === 0
+          ? NOTARY_FIXED_DISPATCH
+          : appendCallerFileFlagPaths(NOTARY_FIXED_DISPATCH, fileFlags);
+        return buildInstructionSeatTurnRequest(admitted, {
+          ...projection,
+          continuation: { kind: "resume", prompt },
+        });
+      }
+      return buildInstructionSeatTurnRequest(admitted, { ...projection });
     },
     adapters: {
       trySettle: async () => undefined,
