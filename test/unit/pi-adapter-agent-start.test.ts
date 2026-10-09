@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { BASH_RECEIPT_THRESHOLD_BYTES } from "../../src/pi/bash-tool-result-presentation.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
@@ -120,6 +121,51 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
       [otherBound],
     ),
   );
+});
+
+test("#1206 Pi adapter tool_result presents large bash and leaves read alone", async () => {
+  const { pi, handlers, ctx } = piCapture();
+  createPiRoleHostAdapter(pi);
+  const toolResult = handlers.get("tool_result")?.[0];
+  assert.ok(toolResult);
+
+  const large = `BEGIN\n${"x".repeat(BASH_RECEIPT_THRESHOLD_BYTES * 2)}\nEND`;
+  const bashResult = await toolResult(
+    {
+      type: "tool_result",
+      toolName: "bash",
+      toolCallId: "call-bash-1",
+      content: [{ type: "text", text: large }],
+      details: undefined,
+      isError: false,
+      input: { command: "echo" },
+    },
+    ctx,
+  );
+  assert.ok(bashResult && typeof bashResult === "object");
+  const bashContent = (bashResult as { content?: Array<{ type: string; text?: string }> }).content;
+  const bashText = bashContent?.find((p) => p.type === "text")?.text ?? "";
+  assert.ok(bashText.startsWith("BEGIN\n"));
+  assert.match(bashText, /END/);
+  assert.ok(Buffer.byteLength(bashText, "utf8") < Buffer.byteLength(large, "utf8"));
+  const fullPath = (bashResult as { details?: { fullOutputPath?: string } }).details?.fullOutputPath;
+  assert.equal(typeof fullPath, "string");
+  assert.ok(fullPath && bashText.includes(fullPath));
+
+  const readLarge = `file\n${"y".repeat(BASH_RECEIPT_THRESHOLD_BYTES * 2)}`;
+  const readResult = await toolResult(
+    {
+      type: "tool_result",
+      toolName: "read",
+      toolCallId: "call-read-1",
+      content: [{ type: "text", text: readLarge }],
+      details: undefined,
+      isError: false,
+      input: { path: "x" },
+    },
+    ctx,
+  );
+  assert.equal(readResult, undefined);
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {

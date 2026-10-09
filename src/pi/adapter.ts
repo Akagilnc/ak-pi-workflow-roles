@@ -4,6 +4,7 @@ import {
   type ExtensionContext,
   type SessionManager,
   type ToolDefinition,
+  type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import type { SubmissionGateNonPassResult } from "../gatekeeper-role.ts";
@@ -29,6 +30,7 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "../submission-errors.ts";
 import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
+import { presentPiBashToolResult } from "./bash-tool-result-presentation.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -163,6 +165,34 @@ export function createPiRoleHostAdapter(
   pi.on("input", (value) => {
     const text = readUserDialogueStdin(value.text);
     return text === value.text ? { action: "continue" } : { action: "transform", text };
+  });
+  // #1206: pi-only bash tool_result presentation (head/tail + TAP summary).
+  // Registered on the native seam so other hosts stay untouched.
+  pi.on("tool_result", async (value, _ctx): Promise<ToolResultEventResult | void> => {
+    const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+    for (const part of value.content ?? []) {
+      if (part.type === "text") content.push({ type: "text", text: part.text });
+      else if (part.type === "image") content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+    }
+    const mutation = await presentPiBashToolResult({
+      toolName: value.toolName,
+      content,
+      details: value.details,
+      ...(value.structuredContent === undefined ? {} : { structuredContent: value.structuredContent }),
+      isError: value.isError,
+    });
+    if (mutation === undefined) return;
+    if (mutation.structuredContent !== undefined) {
+      return {
+        content: mutation.content,
+        details: mutation.details,
+        structuredContent: mutation.structuredContent as NonNullable<ToolResultEventResult["structuredContent"]>,
+      };
+    }
+    return {
+      content: mutation.content,
+      details: mutation.details,
+    };
   });
   const host: RoleHost = {
     deliverSubmissionRejection(_rejection) {
