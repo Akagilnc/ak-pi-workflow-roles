@@ -554,7 +554,7 @@ function withReviewerLens(
   return [...argv.slice(0, separator), "--lens", lens, ...argv.slice(separator)];
 }
 
-/** Git toplevel for Reviewer target status / seal checks (subdir-safe). */
+/** Git toplevel for Reviewer pre-dispatch --base existence check (subdir-safe). */
 async function resolveReviewerGitToplevel(projectRoot: string): Promise<string> {
   const callerProjectRoot = await realpath(projectRoot);
   return await realpath((await execFileAsync(
@@ -570,6 +570,10 @@ async function resolveReviewerGitToplevel(projectRoot: string): Promise<string> 
  * caller's public argv and only adds `--lens` (10a). No seat-specific ephemeral
  * copy — same shared tree as other seats. Lifecycle stays in this shared
  * summons seam, never in the role module (#946 / ADR 0018).
+ *
+ * Work-tree dirt and mid-batch HEAD drift are not package hard-stops (#1133):
+ * each ordinary Reviewer leg judges and reports object state itself; this seam
+ * records original child terminals as returned.
  */
 export async function summonParallelReviewerLenses(options: {
   /** Public argv after the role token; must not already carry `--lens`. */
@@ -606,37 +610,10 @@ export async function summonParallelReviewerLenses(options: {
     return { completeness: failure, correctness: failure } as const;
   };
 
-  // Pre-dispatch target checks use git toplevel (subdir-safe). Every failure
-  // keeps the existing dual-child batch surface.
-  let sourceProjectRoot: string;
-  let targetCommit: string;
-  const statusArgs = [
-    "status",
-    "--porcelain=v1",
-    "--untracked-files=all",
-    "--",
-    ":/",
-    ":(top,exclude).claude/worktrees/**",
-  ] as const;
+  // Pre-dispatch: only verify typed --base resolves (subdir-safe). Missing base
+  // keeps the dual-child batch surface. Status / HEAD are not package gates.
   try {
-    sourceProjectRoot = await resolveReviewerGitToplevel(options.projectRoot);
-    const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
-      cwd: sourceProjectRoot,
-    });
-    if (statusStdout !== "") {
-      const diagnostic = [
-        "Reviewer target status gate failed:",
-        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
-        statusStdout,
-      ].join("\n");
-      return dualFailure(new Error(diagnostic));
-    }
-    const { stdout: targetStdout } = await execFileAsync(
-      "git",
-      ["rev-parse", "--verify", "HEAD^{commit}"],
-      { cwd: sourceProjectRoot },
-    );
-    targetCommit = targetStdout.trim();
+    const sourceProjectRoot = await resolveReviewerGitToplevel(options.projectRoot);
     // Typed base from the public parse — covers --base value and --base=value alike.
     // Child legs still carry the original argv token unchanged (10a).
     await execFileAsync(
@@ -682,7 +659,7 @@ export async function summonParallelReviewerLenses(options: {
     summon("completeness"),
     summon("correctness"),
   ]);
-  let results = {
+  return {
     completeness: settled[0].status === "fulfilled"
       ? settled[0].value
       : failedResult(settled[0].reason),
@@ -690,55 +667,6 @@ export async function summonParallelReviewerLenses(options: {
       ? settled[1].value
       : failedResult(settled[1].reason),
   };
-
-  let sealDiagnostic: string | undefined;
-  try {
-    const { stdout: headBeforeStdout } = await execFileAsync(
-      "git",
-      ["rev-parse", "--verify", "HEAD^{commit}"],
-      { cwd: sourceProjectRoot },
-    );
-    const { stdout: sealedStatusStdout } = await execFileAsync("git", statusArgs, {
-      cwd: sourceProjectRoot,
-    });
-    const { stdout: headAfterStdout } = await execFileAsync(
-      "git",
-      ["rev-parse", "--verify", "HEAD^{commit}"],
-      { cwd: sourceProjectRoot },
-    );
-    const headBefore = headBeforeStdout.trim();
-    const headAfter = headAfterStdout.trim();
-    if (
-      headBefore !== targetCommit
-      || headAfter !== targetCommit
-      || sealedStatusStdout !== ""
-    ) {
-      sealDiagnostic = [
-        "Reviewer target final seal failed:",
-        `HEAD before status => ${headBefore}`,
-        `HEAD after status => ${headAfter}`,
-        `expected PRE_HEAD ${targetCommit}`,
-        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
-        sealedStatusStdout,
-      ].join("\n");
-    }
-  } catch (error) {
-    sealDiagnostic = `Reviewer target final seal failed:\n${serializeThrownValue(error)}`;
-  }
-  if (sealDiagnostic !== undefined) {
-    const withSealFailure = (result: PublicSummonResult): PublicSummonResult => ({
-      ...result,
-      exitCode: 1,
-      stderr: [result.stderr, sealDiagnostic].filter(
-        (text): text is string => typeof text === "string" && text !== "",
-      ).join("\n"),
-    });
-    results = {
-      completeness: withSealFailure(results.completeness),
-      correctness: withSealFailure(results.correctness),
-    };
-  }
-  return results;
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via parentRunPath (#969 / #987). */

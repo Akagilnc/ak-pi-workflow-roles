@@ -11,12 +11,9 @@ import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import {
   access,
-  chmod,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
@@ -757,140 +754,84 @@ test("explicit single-lens projects admitted lens and optional caller provenance
   });
 });
 
-test("default dual-lens final seal fails closed when HEAD drifts during the batch", async () => {
+test("default dual-lens keeps original child terminals despite dirty tree and mid-batch drift", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
 
-    const wrapperRoot = await mkdtemp(join(home, "git-seal-wrapper-"));
-    const wrapper = join(wrapperRoot, "git");
-    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-    const sealCwd = realpathSync(project);
-    await writeFile(wrapper, `#!/bin/sh
-count_file='${join(wrapperRoot, "count")}'
-marker='${join(wrapperRoot, "committed")}'
-count=0
-[ -f "$count_file" ] && count=$(cat "$count_file")
-if [ "$1 $2 $3" = "rev-parse --verify HEAD^{commit}" ]; then
-  count=$((count + 1)); printf '%s' "$count" > "$count_file"
-fi
-if [ "$1" = "status" ] && [ "$count" = "2" ] && [ "$PWD" = "${sealCwd}" ] && [ ! -f "$marker" ]; then
-  : > "$marker"
-  '${realGit}' commit --allow-empty -m 'seal-race' >/dev/null
-fi
-exec '${realGit}' "$@"
-`, "utf8");
-    await chmod(wrapper, 0o755);
-    const priorPath = process.env.PATH;
-    process.env.PATH = `${wrapperRoot}:${priorPath ?? ""}`;
-    try {
-      const { io, stdout } = captureIo();
-      const sealed = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high",
-        "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
-      ], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-cli-reviewer-final-seal",
-        io,
-        roleTurnHost: reviewerHost(async (args) => lawfulChildTurn(args)),
-      });
-      assert.equal(sealed.exitCode, 1, stdout.join(""));
-      assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
-      assert.equal(
-        sealed.terminal?.roleOutcome.kind === "failure"
-          ? sealed.terminal.roleOutcome.decisiveFacts.failedChildren
-          : undefined,
-        0,
-      );
-      assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
-      assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
-      assert.equal(sealed.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
-      assert.equal(sealed.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
-      assert.equal(
-        sealed.terminal?.roleOutcome.kind === "failure"
-          && typeof sealed.terminal.roleOutcome.diagnostic === "string"
-          && sealed.terminal.roleOutcome.diagnostic.length > 0,
-        true,
-      );
-    } finally {
-      process.env.PATH = priorPath;
-    }
+    // Pre-dispatch dirt and mid-batch probes/HEAD drift must not kill the batch (#1133).
+    await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
+    let childTurns = 0;
+    const { io, stdout } = captureIo();
+    const result = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-dirty-ok",
+      io,
+      roleTurnHost: reviewerHost(async (args, options) => {
+        childTurns += 1;
+        const lens = args[args.indexOf("--ak-review-lens") + 1]!;
+        await writeFile(join(options.cwd, `sibling-probe-${lens}.txt`), "probe\n", "utf8");
+        if (lens === "correctness") {
+          execFileSync("git", ["commit", "--allow-empty", "-m", "mid-batch-head-drift"], {
+            cwd: options.cwd,
+          });
+        }
+        return lawfulChildTurn(args);
+      }),
+    });
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "dirty dual-lens must keep original terminals");
+    assert.equal(childTurns, 2);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.reviewerChildOutcomes?.completeness.exitCode, 0);
+    assert.equal(result.terminal?.reviewerChildOutcomes?.correctness.exitCode, 0);
   });
 });
 
-test("default dual-lens pre-dispatch failures keep dual-child surface without child turns", async () => {
+test("default dual-lens missing base keeps dual-child surface without child turns", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
 
-    // Dirty target must hard-stop before dual-lens child turns start.
-    await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
-    {
-      let childTurns = 0;
-      const { io, stdout } = captureIo();
-      const dirty = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high",
-        "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
-      ], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-cli-reviewer-dirty-parent",
-        io,
-        roleTurnHost: {
-          async executeTurn() {
-            childTurns += 1;
-            throw new Error("dirty parent must not dispatch a child turn");
-          },
+    let childTurns = 0;
+    const { io, stdout } = captureIo();
+    const missingBase = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "no-such-reviewer-base-rev",
+      "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-missing-base",
+      io,
+      roleTurnHost: {
+        async executeTurn() {
+          childTurns += 1;
+          throw new Error("missing base must not dispatch a child turn");
         },
-      });
-      assert.equal(dirty.exitCode, 1, stdout.join(""));
-      assert.equal(childTurns, 0);
-      assert.equal(dirty.terminal?.roleOutcome.kind, "failure");
-      assert.equal(dirty.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
-      assert.equal(dirty.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
-      assert.equal(dirty.terminal?.reviewerChildren?.completeness, undefined);
-      assert.equal(dirty.terminal?.reviewerChildren?.correctness, undefined);
-    }
-    await rm(join(project, "untracked-review-evidence.txt"));
-
-    // Missing base keeps the same dual-child structured surface.
-    {
-      let childTurns = 0;
-      const { io, stdout } = captureIo();
-      const missingBase = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high",
-        "--project", project, "--base", "no-such-reviewer-base-rev",
-        "--authority-ref", "CLAUDE.md",
-      ], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-cli-reviewer-missing-base",
-        io,
-        roleTurnHost: {
-          async executeTurn() {
-            childTurns += 1;
-            throw new Error("missing base must not dispatch a child turn");
-          },
-        },
-      });
-      assert.equal(missingBase.exitCode, 1, stdout.join(""));
-      assert.equal(childTurns, 0);
-      assert.equal(missingBase.terminal?.roleOutcome.kind, "failure");
-      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
-      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
-      const completenessDiag = missingBase.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "";
-      const correctnessDiag = missingBase.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "";
-      assert.equal(completenessDiag.length > 0, true);
-      assert.equal(completenessDiag, correctnessDiag);
-    }
+      },
+    });
+    assert.equal(missingBase.exitCode, 1, stdout.join(""));
+    assert.equal(childTurns, 0);
+    assert.equal(missingBase.terminal?.roleOutcome.kind, "failure");
+    assert.equal(missingBase.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+    assert.equal(missingBase.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+    const completenessDiag = missingBase.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "";
+    const correctnessDiag = missingBase.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "";
+    assert.equal(completenessDiag.length > 0, true);
+    assert.equal(completenessDiag, correctnessDiag);
   });
 });
 
