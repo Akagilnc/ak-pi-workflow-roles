@@ -249,7 +249,7 @@ async function sealedLedgerOutcome(
       admitted.projectRoot,
       admitted.runId,
       scope.courtAttemptId,
-      home,
+      ledgerReadScope(admitted, scope),
     );
     // Scope present + zero this-court rows → no this-court outcome (not run history).
     return roleOutcomeFromRows(role, thisCourt);

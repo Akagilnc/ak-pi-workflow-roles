@@ -467,7 +467,11 @@ export async function summonPublicRole(
     ) => Promise<{
       exitCode: number;
       terminal?: TerminalResult;
-      admitted?: { readonly runDirectory?: string };
+      admitted?: {
+        readonly runDirectory?: string;
+        readonly runId?: string;
+        readonly role?: string;
+      };
     }>,
   ) {
     let parsedArgv!: TParsed;
@@ -494,7 +498,11 @@ export async function summonPublicRole(
   let result: {
     exitCode: number;
     terminal?: TerminalResult;
-    admitted?: { readonly runDirectory?: string };
+    admitted?: {
+      readonly runDirectory?: string;
+      readonly runId?: string;
+      readonly role?: string;
+    };
   };
   if (resumeRunId !== undefined) {
     const instruction = options.argv[0] ?? "";
@@ -520,16 +528,30 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // Secretariat can return its preliminary diarist's escalation verbatim.
-  // The terminal's independent run, not the officer, is the gate pointer.
-  const runDirectory = result.terminal !== undefined
+  // Nested escalate may present a lower terminal; prefer that seat's admitted
+  // runDirectory when already in hand — do not re-resolve bare runId across books (#1195).
+  let runDirectory = result.admitted?.runDirectory;
+  if (
+    result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"
-    ? await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
-      home,
-      result.terminal.runId,
-    )
-    : result.admitted?.runDirectory;
+  ) {
+    const nestedRunId = result.terminal.runId;
+    if (
+      result.admitted !== undefined
+      && (result.admitted.runId === nestedRunId
+        || result.admitted.role === result.terminal.roleOutcome.role)
+      && typeof result.admitted.runDirectory === "string"
+      && result.admitted.runDirectory.trim() !== ""
+    ) {
+      runDirectory = result.admitted.runDirectory;
+    } else {
+      runDirectory = await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
+        home,
+        nestedRunId,
+      ) ?? runDirectory;
+    }
+  }
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),

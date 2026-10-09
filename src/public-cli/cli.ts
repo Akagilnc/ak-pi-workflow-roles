@@ -1238,12 +1238,23 @@ export async function runAkRole(
         && !latestPayloadEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
+        // Child admitted.sourceRunPath is the known parent volume when present (#1195).
+        const parentRunDirectory =
+          "sourceRunPath" in current.admitted
+          && typeof (current.admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
+          && (current.admitted as { sourceRunPath: string }).sourceRunPath.trim() !== ""
+            ? (current.admitted as { sourceRunPath: string }).sourceRunPath
+            : undefined;
         resumeFailureContext = {
           home,
           runId: parentRunId,
           authority: env.principalAuthority ?? piDurablePrincipalAuthority,
         };
-        const parentRole = await peekRoleRunRole(home, parentRunId);
+        const parentRole = await peekRoleRunRole(
+          home,
+          parentRunId,
+          parentRunDirectory === undefined ? undefined : { runDirectory: parentRunDirectory },
+        );
         if (parentRole === undefined) break;
         const parentSeat = resolveEffectiveSeat(
           parts.config,
@@ -1260,7 +1271,13 @@ export async function runAkRole(
           seat: parentSeat,
           config: parts.config,
         });
-        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
+        current = await continueParentAfterChild(
+          parentRunId,
+          current.admitted,
+          parentEnv,
+          io,
+          parentRunDirectory,
+        );
       }
       return cliResultFromRoleRun(current);
     }

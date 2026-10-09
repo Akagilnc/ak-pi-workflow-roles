@@ -385,14 +385,11 @@ export async function readAttemptScopedSubmissionRows(
   cwd: string,
   runId: string,
   attemptId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<readonly RecordedSubmissionRow[]> {
   if (attemptId.length === 0) return [];
-  const { owned } = await readOwnedSubmissionRecords(
-    cwd,
-    runId,
-    home === undefined ? {} : { home },
-  );
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
   return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
 }
 

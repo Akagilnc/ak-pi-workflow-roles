@@ -1398,8 +1398,21 @@ export async function continueParentAfterChild(
   child: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
   io: CliIo,
+  parentRunDirectory?: string,
 ): Promise<SeatRunResult> {
-  const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority);
+  const knownParentDirectory =
+    parentRunDirectory
+    ?? ("sourceRunPath" in child
+      && typeof (child as { sourceRunPath?: unknown }).sourceRunPath === "string"
+      && (child as { sourceRunPath: string }).sourceRunPath.trim() !== ""
+      ? (child as { sourceRunPath: string }).sourceRunPath
+      : undefined);
+  const loaded = await loadResumablePublicRole(
+    env.home,
+    parentRunId,
+    env.principalAuthority,
+    knownParentDirectory === undefined ? undefined : { runDirectory: knownParentDirectory },
+  );
   if (loaded.run.state !== "admitted" && !AUDITED_ROLES.has(loaded.admitted.role)) {
     return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
   }

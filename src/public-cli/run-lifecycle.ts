@@ -1382,8 +1382,20 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
 export async function peekRoleRunRole(
   home: string,
   runId: string,
+  options?: { readonly runDirectory?: string },
 ): Promise<PackagedRole | undefined> {
-  const runDirectory = await findRunDirectoryById(home, runId);
+  let runDirectory: string | undefined;
+  if (typeof options?.runDirectory === "string" && options.runDirectory.trim() !== "") {
+    const parsed = parseRunLeaf(basename(options.runDirectory));
+    if (parsed === undefined || parsed.runId !== runId) {
+      throw new CliUsageError(
+        `run directory does not match run id ${runId}: ${options.runDirectory}`,
+      );
+    }
+    runDirectory = options.runDirectory;
+  } else {
+    runDirectory = await findRunDirectoryById(home, runId);
+  }
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
