@@ -818,17 +818,14 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
 }
 
 /**
- * #1132: one 没交卷催交 turn, dispatched through the SAME settlement path as the
- * first turn.
+ * #1132 / #1208: one 没交卷催交 turn, dispatched through the SAME settlement path
+ * as the first turn.
  *
- * There is deliberately no second settlement implementation here. A delivery
- * turn is an ordinary host turn on this same run/session: this builds the
- * host-neutral resume request (the adapter's stored native session id, ADR 0082;
- * pi's existing delivery-state content reused verbatim — no new prompt wording,
- * no new host capability). The caller settles it through the same
- * `settleCompletedHostTurn` the first turn uses (ADR 0080): the runner/host
- * failure re-read, the shouldPresent gate, the fresh-seal check, open-court
- * cleanup, cancel re-reads, run-state persist, and the stderr mirror.
+ * A delivery turn is an ordinary host turn on this same run/session: this builds
+ * the host-neutral resume request (the adapter's stored native session id,
+ * ADR 0082). #1208: resend this turn's actual prompt — never substitute
+ * delivery-state / run-stats JSON for dialogue. Counts, rejections, and
+ * no_receipt facts stay on receiptDelivery / lifecycle settlement.
  *
  * The caller owns the live delivery policy; the request projects its next send.
  */
@@ -842,10 +839,7 @@ function buildReceiptDeliveryRequest(input: {
     ...request,
     continuation: {
       kind: "resume",
-      prompt: JSON.stringify({
-        ...receiptDelivery.deliveryState(),
-        deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
-      }),
+      prompt: request.continuation.prompt,
     },
     deliveryRequestLimit: receiptDelivery.limit,
   };

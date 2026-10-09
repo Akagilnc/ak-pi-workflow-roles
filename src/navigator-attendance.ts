@@ -444,9 +444,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         };
         await promptAllowingRejectedPrepare(request);
         // Correction after rejected prepare on the sole model round (#1160).
+        // #1208: resend this turn's prepare request; delivery-state stays on policy facts.
         while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
           delivery.recordDeliveryRequest();
-          await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()));
+          await promptAllowingRejectedPrepare(request);
         }
         if (output === undefined && delivery.nextAction() === "request-delivery") {
           delivery.closeBudget();

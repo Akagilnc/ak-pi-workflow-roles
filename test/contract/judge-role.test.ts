@@ -870,18 +870,21 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       "ak-receipt-delivery-prompt",
       "ak-receipt-delivery-prompt",
     ]);
-    const delivered = deliveryPrompts.map((message) => JSON.parse(message.content) as {
-      terminalToolCalled: boolean;
-      deliveryTurns: number;
-      rejectedReceipts: Array<{ diagnosticAvailable: boolean }>;
-    });
-    assert.equal(delivered[0]?.terminalToolCalled, true);
-    assert.equal(delivered[0]?.deliveryTurns, 1);
-    assert.equal(delivered[0]?.rejectedReceipts.length, 1);
-    assert.equal(delivered[0]?.rejectedReceipts[0]?.diagnosticAvailable, true);
-    assert.equal(delivered[1]?.terminalToolCalled, true);
-    assert.equal(delivered[1]?.deliveryTurns, 2);
-    assert.equal(delivered[1]?.rejectedReceipts.length, 2);
+    // #1208: 催交 must not substitute delivery-state JSON; counts ride lifecycle entries.
+    for (const message of deliveryPrompts) {
+      let deliveryState = false;
+      try {
+        const parsed = JSON.parse(message.content) as { deliveryTurns?: unknown };
+        deliveryState = typeof parsed.deliveryTurns === "number";
+      } catch {
+        deliveryState = false;
+      }
+      assert.equal(deliveryState, false);
+    }
+    assert.equal(
+      harness2.appendedEntries.filter((entry) => entry.customType === "ak-receipt-delivery-request").length,
+      2,
+    );
     const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
       handlers: harness2.handlers,

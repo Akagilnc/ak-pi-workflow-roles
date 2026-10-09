@@ -1285,16 +1285,14 @@ export async function runPublicInstructionSeatResume(
       );
       // #1208: internal summons only — shared resolver owns dialogue choice.
       // Public bare resume (no summons) keeps projection, including empty prompt.
+      // This-round body is already on summons; do not reselect stale env dialogue
+      // (old gateReviewInstruction / reviewReask) over it (#1208 R1).
       if (effective.summons === undefined || effective.message !== undefined) {
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const sourceRunPath = admittedSourceRunPath(admitted);
       const body = await resolveReviewSeatDialogueBody({
         role: admitted.role,
-        ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
-        ...(env.gateReviewInstruction === undefined
-          ? {}
-          : { gateReviewInstruction: env.gateReviewInstruction }),
         callerInstruction: summonsPrepared?.instruction ?? "",
         ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
         projectRoot: admitted.projectRoot,
