@@ -1283,19 +1283,34 @@ export async function runPublicInstructionSeatResume(
       const projection = resumeTurnRequestProjectionOptions(
         admitted, effective, env, summonsPrepared,
       );
-      // #1208: internal same-ticket resume (no bare caller message) keeps notary
-      // on the shared fixed dispatch — diagnostic summons text is not dialogue.
-      if (admitted.role === "notary" && effective.message === undefined) {
-        const fileFlags = summonsPrepared?.attachments ?? [];
-        const prompt = fileFlags.length === 0
-          ? NOTARY_FIXED_DISPATCH
-          : appendCallerFileFlagPaths(NOTARY_FIXED_DISPATCH, fileFlags);
-        return buildInstructionSeatTurnRequest(admitted, {
-          ...projection,
-          continuation: { kind: "resume", prompt },
-        });
+      // #1208: internal summons only — shared resolver owns dialogue choice.
+      // Public bare resume (no summons) keeps projection, including empty prompt.
+      if (effective.summons === undefined || effective.message !== undefined) {
+        return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
-      return buildInstructionSeatTurnRequest(admitted, { ...projection });
+      const sourceRunPath = admittedSourceRunPath(admitted);
+      const body = await resolveReviewSeatDialogueBody({
+        role: admitted.role,
+        ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
+        ...(env.gateReviewInstruction === undefined
+          ? {}
+          : { gateReviewInstruction: env.gateReviewInstruction }),
+        callerInstruction: summonsPrepared?.instruction ?? "",
+        ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+      });
+      if (body === undefined) {
+        return buildInstructionSeatTurnRequest(admitted, { ...projection });
+      }
+      const fileFlags = summonsPrepared?.attachments ?? [];
+      const prompt = fileFlags.length === 0
+        ? body
+        : appendCallerFileFlagPaths(body, fileFlags);
+      return buildInstructionSeatTurnRequest(admitted, {
+        ...projection,
+        continuation: { kind: "resume", prompt },
+      });
     },
     adapters: {
       trySettle: async () => undefined,
