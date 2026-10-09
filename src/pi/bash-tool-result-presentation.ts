@@ -130,143 +130,170 @@ function matchSummaryBlock(eightLinesJoined: string): { pass: number; fail: numb
  * yield missing counts (B2), not invented N/M.
  *
  * Footer-only input (no TAP version): one trailing summary block, no plan.
+ *
+ * `tail` is a bounded end-of-doc window only (B1: no full line array).
  */
 function authoritativeRootPassFail(
-  docLines: readonly string[],
+  tail: readonly string[],
   requirePlan: boolean,
 ): { pass: number; fail: number } | undefined {
-  let end = docLines.length;
-  while (end > 0 && (docLines[end - 1] ?? "").trim() === "") end--;
+  let end = tail.length;
+  while (end > 0 && (tail[end - 1] ?? "").trim() === "") end--;
   if (end < 8) return undefined;
 
-  const block = docLines.slice(end - 8, end).join("\n");
+  const block = tail.slice(end - 8, end).join("\n");
   const counts = matchSummaryBlock(block);
   if (counts === undefined) return undefined;
 
   if (!requirePlan) return counts;
 
   let i = end - 8;
-  while (i > 0 && (docLines[i - 1] ?? "").trim() === "") i--;
+  while (i > 0 && (tail[i - 1] ?? "").trim() === "") i--;
   if (i <= 0) return undefined;
-  const planLine = docLines[i - 1] ?? "";
+  const planLine = tail[i - 1] ?? "";
   if (!ROOT_PLAN_LINE.test(planLine)) return undefined;
   return counts;
 }
 
-/** Source-original not-ok regions (not-ok line + optional YAML diagnostic). */
-function sliceNotOkSourceBlocks(lines: readonly string[]): string[] {
-  const blocks: string[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const match = /^( *)not ok\b/.exec(lines[i] ?? "");
-    if (match === null) {
-      i++;
-      continue;
-    }
-    const indent = match[1]?.length ?? 0;
-    const start = i;
-    i++;
-    while (i < lines.length && (lines[i] ?? "").trim() === "") i++;
-    const yamlOpen = /^( *)---\s*$/.exec(lines[i] ?? "");
-    if (yamlOpen !== null && (yamlOpen[1]?.length ?? 0) > indent) {
-      const yamlIndent = yamlOpen[1]?.length ?? 0;
-      i++;
-      while (i < lines.length) {
-        const closer = /^( *)\.\.\.\s*$/.exec(lines[i] ?? "");
-        if (closer !== null && (closer[1]?.length ?? 0) === yamlIndent) {
-          i++;
-          break;
-        }
-        const peer = /^( *)(ok|not ok)\b/.exec(lines[i] ?? "");
-        if (peer !== null && (peer[1]?.length ?? 0) <= indent) break;
-        i++;
-      }
-    }
-    blocks.push(lines.slice(start, i).join("\n"));
-  }
-  return blocks;
+/** Plan + blanks + 8 summary lines; generous blank slack without holding the file. */
+const TAP_TAIL_WINDOW = 24;
+
+function pushTapTail(tail: string[], line: string): void {
+  tail.push(line);
+  if (tail.length > TAP_TAIL_WINDOW) tail.shift();
 }
 
-function splitTapDocuments(lines: readonly string[]): {
-  hasVersion: boolean;
-  docs: string[][];
-} {
-  const starts: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (TAP_VERSION_LINE.test(lines[i] ?? "")) starts.push(i);
+function* iterateTextLines(text: string): Generator<string> {
+  if (text.length === 0) return;
+  let start = 0;
+  for (;;) {
+    const next = text.indexOf("\n", start);
+    if (next === -1) {
+      if (start < text.length) yield text.slice(start);
+      return;
+    }
+    yield text.slice(start, next);
+    start = next + 1;
+    if (start === text.length) return;
   }
-  if (starts.length === 0) {
-    return { hasVersion: false, docs: [lines.slice()] };
-  }
-  const docs: string[][] = [];
-  for (let s = 0; s < starts.length; s++) {
-    const from = starts[s]!;
-    const to = starts[s + 1] ?? lines.length;
-    docs.push(lines.slice(from, to));
-  }
-  return { hasVersion: true, docs };
 }
 
 /**
- * Single consumer of node:test authoritative pass/fail + not-ok source blocks.
+ * Single streaming consumer: trailing plan+summary identity (B3) + not-ok blocks.
+ * Path and memory share this path — no full-line materialization (B1).
  */
-function summarizeNodeTestTapLines(
-  lines: readonly string[],
-): { pass: number; fail: number; summaryText: string } | undefined {
-  const { hasVersion, docs } = splitTapDocuments(lines);
-  if (!hasVersion) {
-    // Footer-only: one trailing summary over the whole text.
-    if (!lines.some((l) => /^# tests \d+/.test(l))) return undefined;
-    const counts = authoritativeRootPassFail(docs[0] ?? [], false);
-    if (counts === undefined) return undefined;
-    const notOkBlocks = sliceNotOkSourceBlocks(lines);
-    const out = [`${counts.pass} pass／${counts.fail} fail`];
-    if (notOkBlocks.length > 0) {
-      out.push("");
-      out.push(...notOkBlocks);
-    }
-    return { ...counts, summaryText: out.join("\n") };
-  }
-
+async function summarizeNodeTestTapStream(
+  lines: AsyncIterable<string> | Iterable<string>,
+): Promise<{ pass: number; fail: number; summaryText: string } | undefined> {
+  let docsStarted = 0;
+  let docsWithSummary = 0;
   let pass = 0;
   let fail = 0;
-  for (const doc of docs) {
-    const counts = authoritativeRootPassFail(doc, true);
-    if (counts === undefined) return undefined;
+  let anyVersion = false;
+  let anyTestsFooter = false;
+  let tail: string[] = [];
+  const notOkBlocks: string[] = [];
+  let notOk: { indent: number; lines: string[]; yamlIndent: number | undefined } | null = null;
+  const queue: string[] = [];
+
+  const finalizeDoc = (requirePlan: boolean): boolean => {
+    const counts = authoritativeRootPassFail(tail, requirePlan);
+    tail = [];
+    if (counts === undefined) return false;
     pass += counts.pass;
     fail += counts.fail;
+    docsWithSummary++;
+    return true;
+  };
+
+  const closeNotOk = (): void => {
+    if (notOk === null) return;
+    notOkBlocks.push(notOk.lines.join("\n"));
+    notOk = null;
+  };
+
+  for await (const incoming of lines as AsyncIterable<string>) {
+    queue.push(incoming);
+    while (queue.length > 0) {
+      const line = queue.shift()!;
+
+      if (TAP_VERSION_LINE.test(line)) {
+        if (anyVersion) {
+          closeNotOk();
+          if (!finalizeDoc(true)) return undefined;
+        }
+        anyVersion = true;
+        docsStarted++;
+        tail = [];
+        notOk = null;
+        continue;
+      }
+
+      if (/^# tests \d+/.test(line)) anyTestsFooter = true;
+
+      if (notOk !== null) {
+        if (notOk.yamlIndent === undefined) {
+          if (line.trim() === "") {
+            notOk.lines.push(line);
+            pushTapTail(tail, line);
+            continue;
+          }
+          const yamlOpen = /^( *)---\s*$/.exec(line);
+          if (yamlOpen !== null && (yamlOpen[1]?.length ?? 0) > notOk.indent) {
+            notOk.yamlIndent = yamlOpen[1]?.length ?? 0;
+            notOk.lines.push(line);
+            pushTapTail(tail, line);
+            continue;
+          }
+          closeNotOk();
+          queue.unshift(line);
+          continue;
+        }
+        const closer = /^( *)\.\.\.\s*$/.exec(line);
+        if (closer !== null && (closer[1]?.length ?? 0) === notOk.yamlIndent) {
+          notOk.lines.push(line);
+          pushTapTail(tail, line);
+          closeNotOk();
+          continue;
+        }
+        const peer = /^( *)(ok|not ok)\b/.exec(line);
+        if (peer !== null && (peer[1]?.length ?? 0) <= notOk.indent) {
+          closeNotOk();
+          queue.unshift(line);
+          continue;
+        }
+        notOk.lines.push(line);
+        pushTapTail(tail, line);
+        continue;
+      }
+
+      const notOkMatch = /^( *)not ok\b/.exec(line);
+      if (notOkMatch !== null) {
+        notOk = { indent: notOkMatch[1]?.length ?? 0, lines: [line], yamlIndent: undefined };
+        pushTapTail(tail, line);
+        continue;
+      }
+
+      pushTapTail(tail, line);
+    }
   }
 
-  const notOkBlocks = sliceNotOkSourceBlocks(lines);
+  closeNotOk();
+
+  if (anyVersion) {
+    if (docsStarted === 0 || !finalizeDoc(true) || docsWithSummary !== docsStarted) {
+      return undefined;
+    }
+  } else {
+    if (!anyTestsFooter || !finalizeDoc(false) || docsWithSummary !== 1) return undefined;
+  }
+
   const out = [`${pass} pass／${fail} fail`];
   if (notOkBlocks.length > 0) {
     out.push("");
     out.push(...notOkBlocks);
   }
   return { pass, fail, summaryText: out.join("\n") };
-}
-
-function linesFromText(text: string): string[] {
-  if (text.length === 0) return [];
-  // Keep trailing empty line semantics aligned with split("\n") without
-  // retaining a final empty entry when the text ends in "\n".
-  const parts = text.split("\n");
-  if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
-  return parts;
-}
-
-async function linesFromPath(path: string): Promise<string[]> {
-  const rl = createInterface({
-    input: createReadStream(path, { encoding: "utf8" }),
-    crlfDelay: Infinity,
-  });
-  const lines: string[] = [];
-  try {
-    for await (const line of rl) lines.push(line);
-  } finally {
-    rl.close();
-  }
-  return lines;
 }
 
 function headAndTailReceipt(text: string): {
@@ -477,9 +504,18 @@ async function looksLikeNodeTestTap(source: FullOutputSource): Promise<boolean> 
 async function trySummarizeNodeTestTap(
   source: FullOutputSource,
 ): Promise<{ pass: number; fail: number; summaryText: string } | undefined> {
-  const lines =
-    source.kind === "memory" ? linesFromText(source.text) : await linesFromPath(source.path);
-  return summarizeNodeTestTapLines(lines);
+  if (source.kind === "memory") {
+    return summarizeNodeTestTapStream(iterateTextLines(source.text));
+  }
+  const rl = createInterface({
+    input: createReadStream(source.path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  try {
+    return await summarizeNodeTestTapStream(rl);
+  } finally {
+    rl.close();
+  }
 }
 
 export type PiBashToolResultContentPart =
