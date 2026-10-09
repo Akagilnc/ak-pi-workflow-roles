@@ -25,14 +25,13 @@ const TAP_VERSION_LINE = /^TAP version \d+\s*$/;
 const TAP_VERSION_LINE_SEARCH = /^TAP version \d+/m;
 const TAP_TESTS_FOOTER_SEARCH = /^# tests \d+/m;
 const ROOT_PLAN_LINE = /^1\.\.\d+\s*$/;
-const SUMMARY_LINE = /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) /;
 /**
- * node:test root summary block (after the root plan, once per document).
- * Full contiguous block only — lone `# pass`/`# fail` lines are stdout/stderr comments
- * (`# ${line}`), not counts (node lib/internal/test_runner/reporter/tap.js).
+ * node:test root summary block. Full contiguous 8-line form only — lone
+ * `# pass`/`# fail` lines are stdout/stderr comments (`# ${line}`), not counts
+ * (node lib/internal/test_runner/reporter/tap.js).
  */
 const NODE_TEST_SUMMARY_BLOCK =
-  /^# tests \d+\s*\r?\n# suites \d+\s*\r?\n# pass (\d+)\s*\r?\n# fail (\d+)\s*\r?\n# cancelled \d+\s*\r?\n# skipped \d+\s*\r?\n# todo \d+\s*\r?\n# duration_ms \d+(?:\.\d+)?\s*$/m;
+  /^# tests \d+\s*\n# suites \d+\s*\n# pass (\d+)\s*\n# fail (\d+)\s*\n# cancelled \d+\s*\n# skipped \d+\s*\n# todo \d+\s*\n# duration_ms \d+(?:\.\d+)?\s*$/;
 
 type StructuredBashContent = {
   output?: unknown;
@@ -42,7 +41,7 @@ type StructuredBashContent = {
 };
 
 type FullOutputSource =
-  | { kind: "path"; path: string; usedExisting: boolean }
+  | { kind: "path"; path: string }
   | { kind: "memory"; text: string };
 
 function byteLength(text: string): number {
@@ -113,166 +112,161 @@ function statusSuffixFromFacts(structured: StructuredBashContent | undefined): s
   return "";
 }
 
-function matchOneSummary(text: string): { pass: number; fail: number } | undefined {
-  const match = NODE_TEST_SUMMARY_BLOCK.exec(text);
+function matchSummaryBlock(eightLinesJoined: string): { pass: number; fail: number } | undefined {
+  const match = NODE_TEST_SUMMARY_BLOCK.exec(eightLinesJoined);
   if (match === null) return undefined;
   return { pass: Number(match[1]), fail: Number(match[2]) };
 }
 
-function* iterateTextLines(text: string): Generator<string> {
-  let offset = 0;
-  while (offset <= text.length) {
-    if (offset === text.length) {
-      if (text.length === 0 || text.endsWith("\n")) return;
-      return;
+/**
+ * Runner root summary identity (B3): the 8-line block at the **end** of each
+ * document (only trailing whitespace after it — i.e. EOF or next TAP version
+ * outside the doc), immediately preceded by an unindented root plan
+ * (`1..N`), with only blank lines between plan and block.
+ *
+ * Mid-document stdout/stderr mirrored as `# …` (including after early `1..0`
+ * plans from name-pattern quirks) is never authoritative. Incomplete streams
+ * that end on a pollution block without a final plan+trailing-summary pair
+ * yield missing counts (B2), not invented N/M.
+ *
+ * Footer-only input (no TAP version): one trailing summary block, no plan.
+ */
+function authoritativeRootPassFail(
+  docLines: readonly string[],
+  requirePlan: boolean,
+): { pass: number; fail: number } | undefined {
+  let end = docLines.length;
+  while (end > 0 && (docLines[end - 1] ?? "").trim() === "") end--;
+  if (end < 8) return undefined;
+
+  const block = docLines.slice(end - 8, end).join("\n");
+  const counts = matchSummaryBlock(block);
+  if (counts === undefined) return undefined;
+
+  if (!requirePlan) return counts;
+
+  let i = end - 8;
+  while (i > 0 && (docLines[i - 1] ?? "").trim() === "") i--;
+  if (i <= 0) return undefined;
+  const planLine = docLines[i - 1] ?? "";
+  if (!ROOT_PLAN_LINE.test(planLine)) return undefined;
+  return counts;
+}
+
+/** Source-original not-ok regions (not-ok line + optional YAML diagnostic). */
+function sliceNotOkSourceBlocks(lines: readonly string[]): string[] {
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const match = /^( *)not ok\b/.exec(lines[i] ?? "");
+    if (match === null) {
+      i++;
+      continue;
     }
-    const next = text.indexOf("\n", offset);
-    if (next === -1) {
-      yield text.slice(offset);
-      return;
+    const indent = match[1]?.length ?? 0;
+    const start = i;
+    i++;
+    while (i < lines.length && (lines[i] ?? "").trim() === "") i++;
+    const yamlOpen = /^( *)---\s*$/.exec(lines[i] ?? "");
+    if (yamlOpen !== null && (yamlOpen[1]?.length ?? 0) > indent) {
+      const yamlIndent = yamlOpen[1]?.length ?? 0;
+      i++;
+      while (i < lines.length) {
+        const closer = /^( *)\.\.\.\s*$/.exec(lines[i] ?? "");
+        if (closer !== null && (closer[1]?.length ?? 0) === yamlIndent) {
+          i++;
+          break;
+        }
+        const peer = /^( *)(ok|not ok)\b/.exec(lines[i] ?? "");
+        if (peer !== null && (peer[1]?.length ?? 0) <= indent) break;
+        i++;
+      }
     }
-    yield text.slice(offset, next);
-    offset = next + 1;
-    if (offset === text.length) return;
+    blocks.push(lines.slice(start, i).join("\n"));
   }
+  return blocks;
+}
+
+function splitTapDocuments(lines: readonly string[]): {
+  hasVersion: boolean;
+  docs: string[][];
+} {
+  const starts: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (TAP_VERSION_LINE.test(lines[i] ?? "")) starts.push(i);
+  }
+  if (starts.length === 0) {
+    return { hasVersion: false, docs: [lines.slice()] };
+  }
+  const docs: string[][] = [];
+  for (let s = 0; s < starts.length; s++) {
+    const from = starts[s]!;
+    const to = starts[s + 1] ?? lines.length;
+    docs.push(lines.slice(from, to));
+  }
+  return { hasVersion: true, docs };
 }
 
 /**
- * Single consumer: runner root summary after unindented plan (B3), else missing (B2).
- * Multi-doc sums each root; any doc without a root summary → undefined.
- * Footer-only (no TAP version) accepts one whole-text summary block.
- * not-ok blocks collected with source bounds for the approved failure presentation.
+ * Single consumer of node:test authoritative pass/fail + not-ok source blocks.
  */
-async function summarizeNodeTestTap(
-  lines: AsyncIterable<string> | Iterable<string>,
-): Promise<{ pass: number; fail: number; summaryText: string } | undefined> {
-  let docsStarted = 0;
-  let docsWithSummary = 0;
-  let pass = 0;
-  let fail = 0;
-  let anyVersion = false;
-  let anyTestsFooter = false;
-  let afterRootPlan = false;
-  let summaryLines: string[] = [];
-  const notOkBlocks: string[] = [];
-  let notOk: { indent: number; lines: string[]; yamlIndent: number | undefined } | null = null;
-
-  const finishSummaryAttempt = (): void => {
-    if (summaryLines.length === 0) return;
-    const matched = matchOneSummary(summaryLines.join("\n"));
-    summaryLines = [];
-    if (matched === undefined) return;
-    if (anyVersion && !afterRootPlan) return;
-    pass += matched.pass;
-    fail += matched.fail;
-    docsWithSummary++;
-    if (anyVersion) afterRootPlan = false;
-  };
-
-  const closeNotOk = (): void => {
-    if (notOk === null) return;
-    notOkBlocks.push(notOk.lines.join("\n"));
-    notOk = null;
-  };
-
-  const queue: string[] = [];
-  const pushLines = async (): Promise<void> => {
-    for await (const line of lines as AsyncIterable<string>) {
-      queue.push(line);
-      while (queue.length > 0) {
-        const line = queue.shift()!;
-
-        if (TAP_VERSION_LINE.test(line)) {
-          finishSummaryAttempt();
-          closeNotOk();
-          anyVersion = true;
-          docsStarted++;
-          afterRootPlan = false;
-          summaryLines = [];
-          continue;
-        }
-
-        if (ROOT_PLAN_LINE.test(line)) {
-          finishSummaryAttempt();
-          closeNotOk();
-          afterRootPlan = true;
-          summaryLines = [];
-          continue;
-        }
-
-        if (/^# tests \d+/.test(line)) anyTestsFooter = true;
-
-        if (notOk !== null) {
-          if (notOk.yamlIndent === undefined) {
-            if (line.trim() === "") {
-              notOk.lines.push(line);
-              continue;
-            }
-            const yamlOpen = /^( *)---\s*$/.exec(line);
-            if (yamlOpen !== null && (yamlOpen[1]?.length ?? 0) > notOk.indent) {
-              notOk.yamlIndent = yamlOpen[1]?.length ?? 0;
-              notOk.lines.push(line);
-              continue;
-            }
-            closeNotOk();
-            queue.unshift(line);
-            continue;
-          }
-          const closer = /^( *)\.\.\.\s*$/.exec(line);
-          if (closer !== null && (closer[1]?.length ?? 0) === notOk.yamlIndent) {
-            notOk.lines.push(line);
-            closeNotOk();
-            continue;
-          }
-          const peer = /^( *)(ok|not ok)\b/.exec(line);
-          if (peer !== null && (peer[1]?.length ?? 0) <= notOk.indent) {
-            closeNotOk();
-            queue.unshift(line);
-            continue;
-          }
-          notOk.lines.push(line);
-          continue;
-        }
-
-        const notOkMatch = /^( *)not ok\b/.exec(line);
-        if (notOkMatch !== null) {
-          finishSummaryAttempt();
-          notOk = { indent: notOkMatch[1]?.length ?? 0, lines: [line], yamlIndent: undefined };
-          continue;
-        }
-
-        const acceptWindow = anyVersion ? afterRootPlan : true;
-        if (!acceptWindow) {
-          summaryLines = [];
-          continue;
-        }
-        if (SUMMARY_LINE.test(line)) {
-          if (summaryLines.length === 0 && !line.startsWith("# tests ")) continue;
-          summaryLines.push(line);
-          if (summaryLines.length >= 8) finishSummaryAttempt();
-          continue;
-        }
-        if (summaryLines.length > 0) summaryLines = [];
-      }
+function summarizeNodeTestTapLines(
+  lines: readonly string[],
+): { pass: number; fail: number; summaryText: string } | undefined {
+  const { hasVersion, docs } = splitTapDocuments(lines);
+  if (!hasVersion) {
+    // Footer-only: one trailing summary over the whole text.
+    if (!lines.some((l) => /^# tests \d+/.test(l))) return undefined;
+    const counts = authoritativeRootPassFail(docs[0] ?? [], false);
+    if (counts === undefined) return undefined;
+    const notOkBlocks = sliceNotOkSourceBlocks(lines);
+    const out = [`${counts.pass} pass／${counts.fail} fail`];
+    if (notOkBlocks.length > 0) {
+      out.push("");
+      out.push(...notOkBlocks);
     }
-  };
-
-  await pushLines();
-  finishSummaryAttempt();
-  closeNotOk();
-
-  if (anyVersion) {
-    if (docsStarted === 0 || docsWithSummary !== docsStarted) return undefined;
-  } else if (!anyTestsFooter || docsWithSummary !== 1) {
-    return undefined;
+    return { ...counts, summaryText: out.join("\n") };
   }
 
+  let pass = 0;
+  let fail = 0;
+  for (const doc of docs) {
+    const counts = authoritativeRootPassFail(doc, true);
+    if (counts === undefined) return undefined;
+    pass += counts.pass;
+    fail += counts.fail;
+  }
+
+  const notOkBlocks = sliceNotOkSourceBlocks(lines);
   const out = [`${pass} pass／${fail} fail`];
   if (notOkBlocks.length > 0) {
     out.push("");
     out.push(...notOkBlocks);
   }
   return { pass, fail, summaryText: out.join("\n") };
+}
+
+function linesFromText(text: string): string[] {
+  if (text.length === 0) return [];
+  // Keep trailing empty line semantics aligned with split("\n") without
+  // retaining a final empty entry when the text ends in "\n".
+  const parts = text.split("\n");
+  if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+  return parts;
+}
+
+async function linesFromPath(path: string): Promise<string[]> {
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  const lines: string[] = [];
+  try {
+    for await (const line of rl) lines.push(line);
+  } finally {
+    rl.close();
+  }
+  return lines;
 }
 
 function headAndTailReceipt(text: string): {
@@ -332,19 +326,14 @@ function decodeUtf8Window(buf: Buffer, role: "head" | "tail"): string {
   return buf.subarray(start, end).toString("utf8");
 }
 
-async function streamFileCharLineCounts(
-  path: string,
-): Promise<{ chars: number; lines: number; bytes: number }> {
+async function streamFileCharLineCounts(path: string): Promise<{ chars: number; lines: number }> {
   const stream = createReadStream(path);
   const decoder = new TextDecoder("utf8");
   let chars = 0;
   let newlines = 0;
-  let bytes = 0;
   let lastChar = "";
   for await (const chunk of stream) {
-    const buf = chunk as Buffer;
-    bytes += buf.length;
-    const s = decoder.decode(buf, { stream: true });
+    const s = decoder.decode(chunk as Buffer, { stream: true });
     for (const ch of s) {
       chars++;
       if (ch === "\n") newlines++;
@@ -358,7 +347,7 @@ async function streamFileCharLineCounts(
     lastChar = ch;
   }
   const lines = chars === 0 ? 0 : newlines + (lastChar === "\n" ? 0 : 1);
-  return { chars, lines, bytes };
+  return { chars, lines };
 }
 
 /** Head/tail + totals from a spill path without loading the whole file (B1). */
@@ -443,12 +432,12 @@ function resolveProvenFullOutputSource(input: {
 }): FullOutputSource | undefined {
   const existing = input.existingFullOutputPath;
   if (typeof existing === "string" && existing.trim() !== "") {
-    return { kind: "path", path: existing, usedExisting: true };
+    return { kind: "path", path: existing };
   }
   const structured = input.structured;
   const structuredPath = structured?.full_output_path;
   if (typeof structuredPath === "string" && structuredPath.trim() !== "") {
-    return { kind: "path", path: structuredPath, usedExisting: true };
+    return { kind: "path", path: structuredPath };
   }
   if (typeof structured?.output === "string" && structured.truncated !== true) {
     return { kind: "memory", text: structured.output };
@@ -488,19 +477,9 @@ async function looksLikeNodeTestTap(source: FullOutputSource): Promise<boolean> 
 async function trySummarizeNodeTestTap(
   source: FullOutputSource,
 ): Promise<{ pass: number; fail: number; summaryText: string } | undefined> {
-  // One consumer for path and memory (B3 authority + B2 missing).
-  if (source.kind === "memory") {
-    return summarizeNodeTestTap(iterateTextLines(source.text));
-  }
-  const rl = createInterface({
-    input: createReadStream(source.path, { encoding: "utf8" }),
-    crlfDelay: Infinity,
-  });
-  try {
-    return await summarizeNodeTestTap(rl);
-  } finally {
-    rl.close();
-  }
+  const lines =
+    source.kind === "memory" ? linesFromText(source.text) : await linesFromPath(source.path);
+  return summarizeNodeTestTapLines(lines);
 }
 
 export type PiBashToolResultContentPart =
