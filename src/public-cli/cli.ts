@@ -1238,22 +1238,22 @@ export async function runAkRole(
         && !latestPayloadEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
-        // Child admitted.sourceRunPath is the known parent volume when present (#1195).
-        const parentRunDirectory =
-          "sourceRunPath" in current.admitted
-          && typeof (current.admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
-          && (current.admitted as { sourceRunPath: string }).sourceRunPath.trim() !== ""
-            ? (current.admitted as { sourceRunPath: string }).sourceRunPath
-            : undefined;
         resumeFailureContext = {
           home,
           runId: parentRunId,
           authority: env.principalAuthority ?? piDurablePrincipalAuthority,
         };
+        // Parent directory authority is child.sourceRunPath inside continueParentAfterChild (#1195).
+        const parentSource =
+          "sourceRunPath" in current.admitted
+          && typeof (current.admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
+          && (current.admitted as { sourceRunPath: string }).sourceRunPath.trim() !== ""
+            ? (current.admitted as { sourceRunPath: string }).sourceRunPath
+            : undefined;
         const parentRole = await peekRoleRunRole(
           home,
           parentRunId,
-          parentRunDirectory === undefined ? undefined : { runDirectory: parentRunDirectory },
+          parentSource === undefined ? undefined : { runDirectory: parentSource },
         );
         if (parentRole === undefined) break;
         const parentSeat = resolveEffectiveSeat(
@@ -1271,13 +1271,7 @@ export async function runAkRole(
           seat: parentSeat,
           config: parts.config,
         });
-        current = await continueParentAfterChild(
-          parentRunId,
-          current.admitted,
-          parentEnv,
-          io,
-          parentRunDirectory,
-        );
+        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }
       return cliResultFromRoleRun(current);
     }

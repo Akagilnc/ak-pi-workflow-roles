@@ -18,5 +18,5 @@ Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197）
 
 - `courtAttemptId`／`invocationScopeId`／`attemptHistoryIdentity` 只在每腿卷宗文件之间互相引用，随卷宗一起删（#1202）。太史（analyst）与太医署（doctor）留着、待重新设计（2026-10-08 陛下：「太史留着吧。以后重新设计」），不作读者保护，读不到旧文件是预期。
 - 冻结重放改从票级行＋宿主原件重组起跑材料，不再依赖 `turn-delivery`。
-- 还没报票号的腿，行与原件先落 `unbound/`，报号后搬到票下（[ADR 0081](0081-ticket-identity-settled.md) 的角色自报票号不变）。
+- 还没报票号的腿，行与原件先落 `unbound/`，报号后搬到票下（[ADR 0081](0081-diarist-case-context-and-delivery.md) 的角色自报票号不变）。
 - 旧格式的 books 不迁移，原样留档；真有必要另立票。

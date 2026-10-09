@@ -1445,25 +1445,31 @@ function admitResumedRole(loaded: {
   const base = resumedBaseAdmitted(loaded);
   switch (record.admission) {
     case "instruction": {
+      // Restore sourceRunPath whenever the admitted page has it (auditor/inspector/…).
+      // Downstream continueParent / seal-id belonging needs this fact (#1195).
+      const withSource =
+        fields.sourceRunPath === undefined
+          ? base
+          : { ...base, sourceRunPath: fields.sourceRunPath };
       if (packagedResumeSourcePath(role)) {
         const admitted: AdmittedInspectorInvocation = {
           role: "inspector",
-          ...base,
-          ...(fields.sourceRunPath === undefined
-            ? {}
-            : { sourceRunPath: fields.sourceRunPath }),
+          ...withSource,
         };
         return admitted;
       }
       return {
         role,
-        ...base,
+        ...withSource,
       } as AdmittedRoleInvocation;
     }
     case "court-materials": {
       const admitted: AdmittedCountersignInvocation = {
         role: "countersign",
         ...base,
+        ...(fields.sourceRunPath === undefined
+          ? {}
+          : { sourceRunPath: fields.sourceRunPath }),
       };
       return admitted;
     }

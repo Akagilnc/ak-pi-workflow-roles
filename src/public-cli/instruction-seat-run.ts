@@ -271,7 +271,11 @@ async function reaskUnreadablePostSubmissionStatus(
   const next = withUnreadableReask(env);
   if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
   return runPublicInstructionSeatResume(
-    { runId: admitted.runId, summons: { instruction: message } },
+    {
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      summons: { instruction: message },
+    },
     next,
     io,
   );
@@ -325,7 +329,11 @@ async function reaskMissingTicketOnce(
     softTicketReaskOwnership,
   };
   const result = await runPublicInstructionSeatResume(
-    { runId: admitted.runId, summons: { instruction } },
+    {
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      summons: { instruction },
+    },
     softReaskEnv,
     io,
   );
@@ -1398,15 +1406,14 @@ export async function continueParentAfterChild(
   child: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
   io: CliIo,
-  parentRunDirectory?: string,
 ): Promise<SeatRunResult> {
+  // Sole parent-directory authority on this chain: child admitted sourceRunPath (#1195).
   const knownParentDirectory =
-    parentRunDirectory
-    ?? ("sourceRunPath" in child
-      && typeof (child as { sourceRunPath?: unknown }).sourceRunPath === "string"
-      && (child as { sourceRunPath: string }).sourceRunPath.trim() !== ""
+    "sourceRunPath" in child
+    && typeof (child as { sourceRunPath?: unknown }).sourceRunPath === "string"
+    && (child as { sourceRunPath: string }).sourceRunPath.trim() !== ""
       ? (child as { sourceRunPath: string }).sourceRunPath
-      : undefined);
+      : undefined;
   const loaded = await loadResumablePublicRole(
     env.home,
     parentRunId,
@@ -1414,7 +1421,14 @@ export async function continueParentAfterChild(
     knownParentDirectory === undefined ? undefined : { runDirectory: knownParentDirectory },
   );
   if (loaded.run.state !== "admitted" && !AUDITED_ROLES.has(loaded.admitted.role)) {
-    return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
+    return runPublicInstructionSeatResume(
+      {
+        runId: parentRunId,
+        ...(knownParentDirectory === undefined ? {} : { runDirectory: knownParentDirectory }),
+      },
+      env,
+      io,
+    );
   }
   const admitted = loaded.admitted;
   const resolved = await queueConclusionFromChild(child, env, io);
@@ -1464,6 +1478,7 @@ export async function continueParentAfterChild(
     }
     return runPublicInstructionSeatResume({
       runId: parentRunId,
+      runDirectory: admitted.runDirectory,
       summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
     }, envForCourtContinue(env), io);
   }
@@ -1540,7 +1555,11 @@ async function auditSubmittedRole(
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
       return { ...turn, terminal };
     }
-    return runPublicInstructionSeatResume({ runId: admitted.runId, summons: { instruction: SECRETARIAT_STATUS_REASK } }, next, io);
+    return runPublicInstructionSeatResume({
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      summons: { instruction: SECRETARIAT_STATUS_REASK },
+    }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status))) {
     if (gateOwnsStatusReask) return turn;
@@ -1550,7 +1569,11 @@ async function auditSubmittedRole(
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
       return { ...turn, terminal };
     }
-    return runPublicInstructionSeatResume({ runId: admitted.runId, summons: { instruction: officerConclusionReask(status) } }, next, io);
+    return runPublicInstructionSeatResume({
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      summons: { instruction: officerConclusionReask(status) },
+    }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must
@@ -1623,7 +1646,9 @@ async function auditSubmittedRole(
       });
       if (decision.status === "continue") {
         return runPublicInstructionSeatResume({
-          runId: admitted.runId, summons: { instruction: readableGateItem(decision.receipt ?? decision.violations) },
+          runId: admitted.runId,
+          runDirectory: admitted.runDirectory,
+          summons: { instruction: readableGateItem(decision.receipt ?? decision.violations) },
         }, envForCourtContinue(env), io);
       }
       if (decision.status === "received") {
@@ -1756,6 +1781,7 @@ async function auditSubmittedRole(
     if (chain.status === "continue") {
       return runPublicInstructionSeatResume({
         runId: admitted.runId,
+        runDirectory: admitted.runDirectory,
         summons: { instruction: readableGateItem(chain.passes.at(-1)?.receipt) },
       }, envForCourtContinue(env), io);
     }
