@@ -9,11 +9,9 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 
 import {
-  buildAutoResumeContinuationPrompt,
   findRunDirectoryById,
   resolveLiveRunDirectoryPath,
   readRoleRunState,
-  RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -1723,8 +1721,8 @@ export function resumeTurnRequestProjectionOptions(
       ? body
       : appendCallerFileFlagPaths(body, fileFlags);
   } else if (request.summons !== undefined) {
-    // #879: same-ticket summons with no instruction (e.g. notary source-run binding
-    // only). Pointer is activation/sourceRun material — not dialogue content.
+    // Same-ticket summons without prepared dialogue. Notary always fills via
+    // resolveReviewSeatDialogueBody (#1208); other seats carry parent/caller words.
     prompt = "";
   } else {
     prompt = "";
@@ -2050,21 +2048,15 @@ export async function runPostAdmissionSeatResume<
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         toRequest: async (payload) => {
-          // #840 r8 判词 class 2: this call-local retry must keep this
-          // court's frozen summons / 交卷 body / attachments verbatim
-          // (same object as firstTurn) and project only the minimal
-          // host-needed resume trigger — never engine handbook material,
-          // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
-          // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
-          // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
-          // non-semantic trigger that projection already uses for a
-          // same-ticket summons carrying no instruction/attachments.
+          // #840 r8 / #1208: call-local retry keeps this court's frozen summons /
+          // 交卷 body / attachments and resends the same turn prompt — never a
+          // filler phrase or engine handbook substitute.
           if (payload.resumeTurn && firstTurn !== undefined) {
             return {
               ...firstTurn,
               continuation: {
                 kind: "resume",
-                prompt: RESUME_TRANSPORT_ENVELOPE,
+                prompt: firstTurn.continuation.prompt,
               },
             };
           }
@@ -2227,6 +2219,7 @@ export async function runPostAdmissionOneShot<
   admitted?: A;
   terminal?: T;
 }> {
+  // #1208: auto-resume resends this turn's actual prompt, never a filler phrase.
   return await runPostAdmissionResumable({
     admitted: input.admitted,
     env: input.env,
@@ -2236,7 +2229,7 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
-        prompt: buildAutoResumeContinuationPrompt(),
+        prompt: input.request.continuation.prompt,
       },
     }),
     adapters: input.adapters,

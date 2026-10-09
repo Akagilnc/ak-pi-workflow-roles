@@ -606,8 +606,8 @@ const NOTARY_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection.",
-      zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。",
+      en: "Required source run locator (runId@role under the book home, or path to that run directory). Binds the audited identity; dialogue is the fixed Notary dispatch (verdict stays in the ledger).",
+      zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。绑定受审身份；对话为符宝郎固定派单文（判词留在卷宗自行读取）。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1256,7 +1256,8 @@ const ROLE_COMMAND_HELP = {
   },
   notary: {
     command: "notary",
-    summary: "Direct Notary summons; duties: souls/notary.md. Zero prompt/attachment.",
+    summary:
+      "Direct Notary summons; duties: souls/notary.md. Fixed dispatch only — binds --source-run identity; does not accept caller prompt; verdict stays in the ledger.",
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
       "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -1319,7 +1320,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. Every callable seat, including Notary/符宝郎, accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary explicit new still accepts only its source-run locator, not a caller prompt. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. Every callable seat accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary new/direct calls use only --source-run plus the fixed dispatch (no caller prompt). Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",

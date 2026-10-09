@@ -125,10 +125,3 @@ export function roleFromRunDirectory(runDirectory: string): string | undefined {
   return parseRunLeaf(basename(runDirectory))?.role;
 }
 
-/**
- * #1195 ticket-court blind review: notary source is a countersign run.
- * Identity still binds; countersign body is not preloaded into dialogue.
- */
-export function isTicketCourtCountersignSource(runDirectory: string): boolean {
-  return roleFromRunDirectory(runDirectory) === "countersign";
-}

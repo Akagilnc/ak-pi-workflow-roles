@@ -3,9 +3,9 @@
  * Unit coverage: test/unit/gate-officer-resume-accounting.test.ts
  * - Multiple archived pointers to one officer session must not multiply rounds (#753).
  * - Officer seat host is not parent invocation host (#821).
- * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
+ * - Nth review turn: notary fixed dispatch (#1208); other officers bind Nth payload.
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
- * - Station-child: #1092 drops case-dossier pointer delivery; dialogue stays peer-only.
+ * - Station-child: #1092 drops case-dossier pointer delivery; notary dialogue is fixed.
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
@@ -27,7 +27,10 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
-import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
+import {
+  NOTARY_FIXED_DISPATCH,
+  runPublicInstructionSeat,
+} from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
   trySettlePublicSeat,
@@ -203,7 +206,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
   });
 });
 
-test("#879 Nth officer turn receives Nth parent submission — not history array", async () => {
+test("#879/#1208 notary each turn receives fixed dispatch — not history array or parent body", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -294,7 +297,9 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
       }),
     });
       assert.equal(projected.result.status, "continue");
-      assert.deepEqual(JSON.parse(prompts[i + 1]!), body);
+      // #1208: notary dialogue is the fixed dispatch every round; body stays in the ledger.
+      assert.equal(prompts[i + 1], NOTARY_FIXED_DISPATCH);
+      assert.notEqual(JSON.stringify(body), NOTARY_FIXED_DISPATCH);
       const terminal = projected.summoned?.terminal;
       assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
       assert.equal(terminal!.roleOutcome.kind, "accepted");
@@ -406,7 +411,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#1092 station-child officer: no case-dossier pointer material; dialogue = peer only", async () => {
+test("#1092/#1208 station-child notary: no case-dossier pointer material; dialogue = fixed dispatch", async () => {
   await withTempRoot("ak-officer-no-dossier-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -470,7 +475,8 @@ test("#1092 station-child officer: no case-dossier pointer material; dialogue = 
     });
     assert.equal(projected.result.status, "converged");
     assert.ok(prompts.length >= 1);
-    assert.deepEqual(JSON.parse(prompts[prompts.length - 1]!), body);
+    assert.equal(prompts[prompts.length - 1], NOTARY_FIXED_DISPATCH);
+    assert.notEqual(JSON.stringify(body), NOTARY_FIXED_DISPATCH);
 
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");

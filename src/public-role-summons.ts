@@ -724,20 +724,17 @@ export async function summonGateOfficer(options: {
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
-  // #1195 ticket-court notary (countersign source): do not preload the parent body.
-  // Identity binds via --source-run; the notary reads the ticket and verdict itself
-  // and its dispatch comes from resolveReviewSeatDialogueBody.
-  // Other officers / non-countersign sources still receive the parent submission body.
+  // #1208: notary never preloads parent body — fixed dispatch comes from
+  // resolveReviewSeatDialogueBody for every source. Other officers still receive
+  // the parent submission body.
   let gateReviewInstruction: string | undefined;
-  if (options.reask === undefined && options.submission !== undefined) {
-    const { isTicketCourtCountersignSource } = await import("./run-terminal-artifacts.ts");
-    const blindTicketCourt =
-      options.officer === "notary"
-      && isTicketCourtCountersignSource(options.sourceRunDirectory);
-    if (!blindTicketCourt) {
-      const { readableGateItem } = await import("./readable-gate-item.ts");
-      gateReviewInstruction = readableGateItem(options.submission);
-    }
+  if (
+    options.reask === undefined
+    && options.submission !== undefined
+    && options.officer !== "notary"
+  ) {
+    const { readableGateItem } = await import("./readable-gate-item.ts");
+    gateReviewInstruction = readableGateItem(options.submission);
   }
   const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
   const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);

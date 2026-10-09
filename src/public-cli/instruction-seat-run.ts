@@ -75,7 +75,6 @@ import {
 } from "./post-admission.ts";
 import { presentTerminal } from "./auto-resume.ts";
 import {
-  buildAutoResumeContinuationPrompt,
   loadResumablePublicRole,
   markRunAdmitted,
   readCurrentCourt,
@@ -529,15 +528,15 @@ async function loadLedgerPeerBody(
   return readableGateItem(latest.accepted);
 }
 
-/** Owner-approved fixed Notary dispatch (2026-10-09); never the parent verdict. */
+/** Owner-approved fixed Notary dispatch (2026-10-09 #1208); never the parent verdict. */
 export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
 
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
- * (#1166 / ADR 0085 / ADR 0087): explicit reask → non-empty caller dispatch →
- * source-only ledger peer body. Identity stays in startup materials.
- * #1195: ticket-court notary skips peer-body preload (countersign source only) and
- * receives the fixed dispatch instead (codex rejects an empty prompt).
+ * (#1166 / ADR 0085 / ADR 0087 / #1208): explicit format reask → notary fixed
+ * dispatch → non-empty caller dispatch → source-only ledger peer body.
+ * Identity stays in startup materials. Notary never preloads parent verdict
+ * regardless of source seat (countersign or judge).
  */
 async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
@@ -549,14 +548,12 @@ async function resolveReviewSeatDialogueBody(input: {
 }): Promise<string | undefined> {
   const reask = input.reask;
   if (reask !== undefined && reask.length > 0) return reask;
+  // #1208: notary fixed dispatch for every source; verdict stays in ledger files.
+  if (input.role === "notary") return NOTARY_FIXED_DISPATCH;
   const caller = input.callerInstruction ?? "";
   if (caller.length > 0) return caller;
   const sourceRunPath = admittedSourceRunPath(input)?.trim();
   if (sourceRunPath === undefined) return undefined;
-  if (input.role === "notary") {
-    const { isTicketCourtCountersignSource } = await import("../run-terminal-artifacts.ts");
-    if (isTicketCourtCountersignSource(sourceRunPath)) return NOTARY_FIXED_DISPATCH;
-  }
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }
 
@@ -567,7 +564,10 @@ async function resolveInitialPrompt(
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
     const sourceRunPath = admittedSourceRunPath(admitted);
-    const reask = env.reviewReask ?? env.gateReviewInstruction;
+    // #1208: notary ignores gate body preload; only true format reask may override fixed dispatch.
+    const reask = admitted.role === "notary"
+      ? env.reviewReask
+      : (env.reviewReask ?? env.gateReviewInstruction);
     const body = await resolveReviewSeatDialogueBody({
       role: admitted.role,
       ...(reask === undefined ? {} : { reask }),
@@ -702,6 +702,7 @@ async function dispatchAdmitted(
     const initialPromptText = await resolveInitialPrompt(admitted, activeEnv);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
+      // #1208: auto-resume resends this turn's actual content, never a filler phrase.
       return await runPostAdmissionResumable({
         admitted,
         env: activeEnv,
@@ -717,7 +718,7 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt(),
+            prompt: initialPromptText,
           }),
         ),
         adapters,
@@ -874,7 +875,10 @@ async function sameParentDialogue(
   projectRoot: string,
   role: string,
 ): Promise<{ readonly instruction: string; readonly instructionEmpty: boolean }> {
-  const reask = env.reviewReask ?? env.gateReviewInstruction;
+  // #1208: notary ignores gate body preload; only true format reask may override fixed dispatch.
+  const reask = role === "notary"
+    ? env.reviewReask
+    : (env.reviewReask ?? env.gateReviewInstruction);
   const body = await resolveReviewSeatDialogueBody({
     role,
     ...(reask === undefined ? {} : { reask }),
