@@ -802,8 +802,21 @@ export async function summonGateOfficer(options: {
       ? (options.submission as { ticketNumber?: unknown }).ticketNumber
       : undefined;
     const courtTicket = isSafePositiveTicketNumber(submittedTicket) ? submittedTicket : parentTicket;
-    // Argv instruction = reask or parent payload bytes only (never a fabricated line).
-    const instruction = options.reask ?? gateReviewInstruction ?? "";
+    // #1208 C1: argv dialogue from the same shared resolver as every other seat
+    // (never a parallel reask/gate/empty choice here). Request-field wiring of
+    // reviewReask / gateReviewInstruction onto env stays field assembly only.
+    // Terminal "" only when the resolver itself has no body — not a third source.
+    const { resolveReviewSeatDialogueBody } = await import("./public-cli/instruction-seat-run.ts");
+    const instruction =
+      (await resolveReviewSeatDialogueBody({
+        role: options.officer,
+        ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
+        ...(gateReviewInstruction === undefined
+          ? {}
+          : { gateReviewInstruction }),
+        projectRoot: options.cwd,
+        home,
+      })) ?? "";
     return summonPublicRole({
       role: options.officer,
       argv: ["--project", options.cwd, "--", instruction],

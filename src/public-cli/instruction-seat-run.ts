@@ -538,7 +538,7 @@ export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职
  * Identity stays in startup materials. Notary never takes reask/gate/caller as
  * dialogue — budgets, receipts, and diagnostic presentation stay elsewhere.
  */
-async function resolveReviewSeatDialogueBody(input: {
+export async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
   readonly reviewReask?: string;
   readonly gateReviewInstruction?: string;
