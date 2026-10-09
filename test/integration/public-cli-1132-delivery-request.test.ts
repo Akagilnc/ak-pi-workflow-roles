@@ -383,22 +383,6 @@ test("#1132: a countersign first turn carries the configured delivery ceiling", 
 });
 
 /**
- * #1208: 催交 resends this turn's actual prompt (not delivery-state JSON).
- * Identify delivery resumes as post-initial resume with the same prompt.
- */
-function createDeliveryPromptDetector(): (request: RoleTurnRequest) => boolean {
-  let initialPrompt: string | undefined;
-  return (request: RoleTurnRequest): boolean => {
-    if (request.continuation.kind === "initial") {
-      initialPrompt = request.continuation.prompt;
-      return false;
-    }
-    if (request.continuation.kind !== "resume") return false;
-    return initialPrompt !== undefined && request.continuation.prompt === initialPrompt;
-  };
-}
-
-/**
  * Production closeRound (prepareRoleEnvelope + driveExternalRoleTurnRounds).
  * The first round submits unfinished with no reason; later rounds submit nothing.
  */
@@ -468,18 +452,18 @@ test("#1132: closeRound reasks and failure recovery stay off the delivery count"
     const rounds = { count: 0 };
     let failedDelivery = false;
     let outerCalls = 0;
-    const isDeliveryPrompt = createDeliveryPromptDetector();
+    // Deterministic fixture ops: initial = closeRound; later resumes = 催交 then
+    // failure recovery — do not infer identity from prompt text (#1208).
     const host = {
       async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
         outerCalls += 1;
-        if (isDeliveryPrompt(request)) {
-          if (!failedDelivery) {
-            failedDelivery = true;
-            return { code: 1, stderr: "host exploded\n", timedOut: false };
-          }
-          return { code: 0, stderr: "", timedOut: false };
+        if (request.continuation.kind === "initial") {
+          return driveFixerCloseRound(request, rounds);
         }
-        if (rounds.count === 0) return driveFixerCloseRound(request, rounds);
+        if (!failedDelivery) {
+          failedDelivery = true;
+          return { code: 1, stderr: "host exploded\n", timedOut: false };
+        }
         return { code: 0, stderr: "", timedOut: false };
       },
     };

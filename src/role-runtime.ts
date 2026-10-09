@@ -1078,7 +1078,7 @@ export function createRoleRuntimeExtension(
     // #1132: one ceiling for this turn, closed over from the execution seam.
     let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
     let noReceiptRecorded = false;
-    /** #1208: first this-turn dialogue bytes for receipt催交 resend (not delivery-state JSON). */
+    /** #1208: this-turn dialogue bytes from before_agent_start for receipt催交 resend. */
     let turnDialoguePrompt: string | undefined;
     /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
     const disposeNavigatorAttendanceNonBlocking = (
@@ -1184,10 +1184,8 @@ export function createRoleRuntimeExtension(
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       const prompt = event.prompt;
-      // Capture the first non-empty turn dialogue for later receipt催交 (#1208).
-      if (turnDialoguePrompt === undefined && typeof prompt === "string" && prompt.length > 0) {
-        turnDialoguePrompt = prompt;
-      }
+      // #1208: each before_agent_start carries this turn's actual prompt (incl. empty).
+      if (typeof prompt === "string") turnDialoguePrompt = prompt;
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
