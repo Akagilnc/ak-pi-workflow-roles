@@ -114,6 +114,7 @@ export type PublicSummonRequest = {
    * the host session — not a package-built advice ledger.
    */
   readonly resumeRunId?: string;
+  readonly resumeRunDirectory?: string;
   /**
    * Nested court station child (default true): omit Navigator auto-attendance
    * and use station-child resume. Ordinary public-equivalent legs (dual-lens
@@ -510,6 +511,7 @@ export async function summonPublicRole(
       runPublicInstructionSeatResume(
         {
           runId: resumeRunId,
+          ...(options.resumeRunDirectory === undefined ? {} : { runDirectory: options.resumeRunDirectory }),
           summons: {
             instruction,
             instructionEmpty: instruction.length === 0,
@@ -535,22 +537,13 @@ export async function summonPublicRole(
     result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"
+    && result.admitted?.runId !== result.terminal.runId
   ) {
-    const nestedRunId = result.terminal.runId;
-    if (
-      result.admitted !== undefined
-      && (result.admitted.runId === nestedRunId
-        || result.admitted.role === result.terminal.roleOutcome.role)
-      && typeof result.admitted.runDirectory === "string"
-      && result.admitted.runDirectory.trim() !== ""
-    ) {
-      runDirectory = result.admitted.runDirectory;
-    } else {
-      runDirectory = await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
-        home,
-        nestedRunId,
-      ) ?? runDirectory;
-    }
+    // Compatibility surface with no admitted locator for that terminal.
+    runDirectory = await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
+      home,
+      result.terminal.runId,
+    ) ?? runDirectory;
   }
   return {
     exitCode: result.exitCode,

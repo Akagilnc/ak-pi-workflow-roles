@@ -98,6 +98,13 @@ import type { PublicThinkingLevel } from "./registry.ts";
 
 import { errorText, isRecord } from "../unknown-value.ts";
 
+/** Nonblank admitted source path, preserving its original bytes. */
+export function admittedSourceRunPath(admitted: unknown): string | undefined {
+  if (!isRecord(admitted)) return undefined;
+  const path = admitted.sourceRunPath;
+  return typeof path === "string" && path.trim() !== "" ? path : undefined;
+}
+
 /** Caller-supplied attachment path recorded as-is (#1165). */
 export type AdmittedAttachment = {
   readonly path: string;

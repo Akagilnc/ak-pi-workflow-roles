@@ -13,7 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { findRunDirectoryById, resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { formatRunLeaf, parseRunLeaf } from "./role-run-placement.ts";
 
 async function readRetainedIdentity(runDirectory: string) {
@@ -106,12 +106,7 @@ export async function resolveNotarySourceRunLocator(options: {
       basename(subjectDirectory) === "unbound" &&
       resolve(dirname(subjectDirectory)) === resolve(bookDirectory);
     if (isLegacyUnboundLocator) {
-      candidate = (await findRunDirectoryById(
-        options.home,
-        identity.runId,
-        bookKey,
-        identity.role,
-      )) ?? candidate;
+      candidate = (await resolveLiveRunDirectoryPath(candidate, options.home ?? ledgerHome, bookKey)) ?? candidate;
     }
   }
 

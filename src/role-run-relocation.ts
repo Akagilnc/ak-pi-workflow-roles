@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { activationBookDirectory, physicalPathIdentity } from "./activation-ledger-topology.ts";
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { findRoleRunDirectory, roleRunPlacement } from "./role-run-placement.ts";
+import { roleRunPlacement } from "./role-run-placement.ts";
 import {
   INVOCATION_PAGE_PATH_FIELDS,
   PRINCIPAL_SESSION_PATH_FIELDS,
@@ -76,8 +76,9 @@ export async function retainedRunPathsMatch(
     if (rewriteRunDirectoryPathValue(recordedPathIdentity, unbound.runDirectory, runDirectory) !== currentPathIdentity) {
       return false;
     }
-    const placed = await findRoleRunDirectory([directory], identity.runId, identity.role);
-    return placed !== undefined && physicalPathIdentity(placed) === runDirectory;
+    // The current volume's identity and the unbound→ticket rewrite already
+    // establish this relationship; do not select that volume again by bare ID.
+    return true;
   }
   return false;
 }

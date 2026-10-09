@@ -14,35 +14,14 @@ import type {
   RoleTurnResult,
 } from "./host-contracts.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
-import { tryBookKeyFromAkRolesPath } from "./activation-ledger-topology.ts";
 import { projectThrownFailureLeaf, retainPackageFault } from "./public-cli/settlement.ts";
-import { describeErrorIdentity, findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
+import { describeErrorIdentity, resolveLiveRunDirectoryPath } from "./public-cli/run-lifecycle.ts";
+export { resolveLiveRunDirectoryPath } from "./public-cli/run-lifecycle.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
 import { projectTurnRequestLiveRunDirectory } from "./role-run-relocation.ts";
 import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
-
-/**
- * #1171: mid-turn report-ticket may have moved the leg. Prefer the recorded
- * path when it still exists; otherwise re-locate by run id inside the book.
- * Undefined means vanished and unlocatable — callers must not revive the dead leaf.
- */
-export async function resolveLiveRunDirectoryPath(
-  recordedPath: string,
-  home: string,
-): Promise<string | undefined> {
-  if (existsSync(recordedPath)) return recordedPath;
-  const parsed = parseRunLeaf(basename(recordedPath));
-  const bookKey = tryBookKeyFromAkRolesPath(recordedPath);
-  if (parsed === undefined || bookKey === undefined) return undefined;
-  return await findRunDirectoryById(
-    home,
-    parsed.runId,
-    bookKey,
-    parsed.role,
-  );
-}
 
 /**
  * Prefer the request path when it still exists; otherwise re-locate by run id

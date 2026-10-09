@@ -43,6 +43,7 @@ import { readAuditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
+  admittedSourceRunPath,
   bindAdmittedTicketNumber,
   appendCallerFileFlagPaths,
   buildInstructionTransportPrompt,
@@ -546,20 +547,13 @@ async function resolveReviewSeatDialogueBody(input: {
   if (reask !== undefined && reask.length > 0) return reask;
   const caller = input.callerInstruction ?? "";
   if (caller.length > 0) return caller;
-  const sourceRunPath = input.sourceRunPath?.trim() ?? "";
-  if (sourceRunPath === "") return undefined;
+  const sourceRunPath = admittedSourceRunPath(input)?.trim();
+  if (sourceRunPath === undefined) return undefined;
   if (input.role === "notary") {
     const { isTicketCourtCountersignSource } = await import("../run-terminal-artifacts.ts");
     if (isTicketCourtCountersignSource(sourceRunPath)) return undefined;
   }
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
-}
-
-function admittedSourceRunPath(admitted: AdmittedRoleInvocation): string {
-  return "sourceRunPath" in admitted
-    && typeof (admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
-    ? (admitted as { sourceRunPath: string }).sourceRunPath.trim()
-    : "";
 }
 
 async function resolveInitialPrompt(
@@ -574,7 +568,7 @@ async function resolveInitialPrompt(
       role: admitted.role,
       ...(reask === undefined ? {} : { reask }),
       callerInstruction: admitted.instruction,
-      ...(sourceRunPath === "" ? {} : { sourceRunPath }),
+      ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       projectRoot: admitted.projectRoot,
       home: env.home,
     });
@@ -1032,6 +1026,7 @@ export async function runPublicInstructionSeat(
   let auditorSource: string | undefined;
   let auditorTicket: number | undefined;
   let resolvedNotarySource: NotarySourceRunLocator | undefined;
+  let instructionSourceRunPath: string | undefined;
   if (record.sameParent === "subject-source") {
     if (parsed.subject === undefined) {
       presentStructuralRejection(new CliUsageError("auditor --subject requires judge|doctor"), io);
@@ -1084,9 +1079,8 @@ export async function runPublicInstructionSeat(
   if (record.sameParent === "source-run") {
     // #1166: structured --source-run only. Instruction bytes stay opaque caller/peer text.
     if (parsed.sourceRun !== undefined) {
-      let parentRunPath: string;
       try {
-        parentRunPath = (await resolveNotarySourceRunLocator({
+        instructionSourceRunPath = (await resolveNotarySourceRunLocator({
           projectRoot,
           sourceRun: parsed.sourceRun,
           home: env.home,
@@ -1098,6 +1092,7 @@ export async function runPublicInstructionSeat(
         }
         throw error;
       }
+      const parentRunPath = instructionSourceRunPath;
       const summons: SameTicketSummonsMaterials = {
         sourceRunPath: parentRunPath,
         ...(await sameParentDialogue(
@@ -1180,14 +1175,9 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  if (record.sameParent === "source-run" && parsed.sourceRun !== undefined) {
-    const parentRunPath = (await resolveNotarySourceRunLocator({
-      projectRoot,
-      sourceRun: parsed.sourceRun,
-      home: env.home,
-    })).runDirectory;
-    await persistAdmittedSourceRunPath(admitted, parentRunPath);
-    admitted = { ...admitted, sourceRunPath: parentRunPath } as AdmittedRoleInvocation;
+  if (instructionSourceRunPath !== undefined) {
+    await persistAdmittedSourceRunPath(admitted, instructionSourceRunPath);
+    admitted = { ...admitted, sourceRunPath: instructionSourceRunPath } as AdmittedRoleInvocation;
   }
   if (record.sameParent === "subject-source" && auditorSource !== undefined) {
     await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
@@ -1246,6 +1236,7 @@ export async function runPublicInstructionSeatResume(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
+  let selectedRequest = request;
   const resume = async () => {
     const held: string[] = [];
     const turnIo: CliIo = {
@@ -1254,7 +1245,7 @@ export async function runPublicInstructionSeatResume(
     };
     const result = await runPostAdmissionSeatResume<AdmittedRoleInvocation>({
 
-    request,
+    request: selectedRequest,
     env,
     io: turnIo,
     load: async (effective) => {
@@ -1318,8 +1309,9 @@ export async function runPublicInstructionSeatResume(
       env.principalAuthority,
       request.runDirectory === undefined ? undefined : { runDirectory: request.runDirectory },
     );
+    selectedRequest = { ...request, runDirectory: loaded.admitted.runDirectory };
     binding = loaded.admitted.role === "auditor"
-      ? await readAuditorResumeBinding(loaded.admitted.runDirectory)
+      ? await readAuditorResumeBinding(loaded.admitted)
       : undefined;
   } catch (error) {
     if (!(error instanceof CliUsageError)) throw error;
@@ -1407,13 +1399,7 @@ export async function continueParentAfterChild(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  // Sole parent-directory authority on this chain: child admitted sourceRunPath (#1195).
-  const knownParentDirectory =
-    "sourceRunPath" in child
-    && typeof (child as { sourceRunPath?: unknown }).sourceRunPath === "string"
-    && (child as { sourceRunPath: string }).sourceRunPath.trim() !== ""
-      ? (child as { sourceRunPath: string }).sourceRunPath
-      : undefined;
+  const knownParentDirectory = admittedSourceRunPath(child);
   const loaded = await loadResumablePublicRole(
     env.home,
     parentRunId,
@@ -1424,7 +1410,7 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume(
       {
         runId: parentRunId,
-        ...(knownParentDirectory === undefined ? {} : { runDirectory: knownParentDirectory }),
+        runDirectory: loaded.admitted.runDirectory,
       },
       env,
       io,

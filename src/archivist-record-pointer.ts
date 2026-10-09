@@ -5,7 +5,7 @@ import { OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { readSitianRecords } from "./sitian-facade.ts";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
-import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-relocation.ts";
 import { parseRunLeaf, runDirectoryOfSessionFile } from "./role-run-placement.ts";
 
@@ -54,8 +54,8 @@ export async function resolveOfficerPointer(
   const leaf = parseRunLeaf(basename(recordedRunDirectory));
   const parentIdentity = await readRoleRunIdentity(parentRunDirectory);
   if (leaf !== undefined && parentIdentity !== undefined) {
-    const currentRunDirectory = await findRunDirectoryById(
-      homeFromRunDirectory(parentRunDirectory), leaf.runId, parentIdentity.bookKey, leaf.role,
+    const currentRunDirectory = await resolveLiveRunDirectoryPath(
+      recordedRunDirectory, homeFromRunDirectory(parentRunDirectory), parentIdentity.bookKey,
     );
     if (currentRunDirectory !== undefined) {
       sessionFile = rewriteRunDirectoryPathValue(sessionFile, recordedRunDirectory, currentRunDirectory) as string;

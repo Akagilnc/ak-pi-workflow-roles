@@ -9,12 +9,14 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
+import { existsSync } from "node:fs";
 import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
+  tryBookKeyFromAkRolesPath,
 } from "../activation-ledger-topology.ts";
 import { findRoleRunDirectory, listBookRunDirectories, parseRunLeaf, sessionFileIn } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
@@ -36,6 +38,7 @@ import {
 } from "../packaged-role-registry.ts";
 import {
   admittedReviewerBaseFault,
+  admittedSourceRunPath,
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
@@ -191,10 +194,7 @@ function parseSameTicketSummonsMaterials(
   const attachmentPaths = Array.isArray(record.attachmentPaths)
     ? record.attachmentPaths.filter((p): p is string => typeof p === "string")
     : undefined;
-  const sourceRunPath =
-    typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
-      ? record.sourceRunPath
-      : undefined;
+  const sourceRunPath = admittedSourceRunPath(record);
   let sourceRun: NotarySourceRunLocator | undefined;
   if (
     isRecord(record.sourceRun)
@@ -860,7 +860,8 @@ export async function acquireRunWriterLease(
 
 /**
  * Locate a Role run directory by run ID under the ledger books home.
- * Returns undefined when the ID is unknown.
+ * A supplied directory is checked against the ID and retained without a book walk.
+ * Returns undefined when the bare ID is unknown.
  * Walk surface = listBookRunDirectories (flat legacy + subject-tree).
  * Collects every match under the supplied book/role filters: zero → undefined,
  * one → path, many → loud ambiguity (never readdir-first).
@@ -870,7 +871,17 @@ export async function findRunDirectoryById(
   runId: string,
   onlyBookKey?: string,
   onlyRole?: string,
+  knownRunDirectory?: string,
 ): Promise<string | undefined> {
+  if (typeof knownRunDirectory === "string" && knownRunDirectory.trim() !== "") {
+    const parsed = parseRunLeaf(basename(knownRunDirectory));
+    if (parsed === undefined || parsed.runId !== runId) {
+      throw new CliUsageError(
+        `run directory does not match run id ${runId}: ${knownRunDirectory}`,
+      );
+    }
+    return knownRunDirectory;
+  }
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
   const booksRoot = join(ledgerHome, "books");
@@ -891,6 +902,19 @@ export async function findRunDirectoryById(
   );
 }
 
+/** Keep an existing placement; rediscover only after its recorded path disappeared. */
+export async function resolveLiveRunDirectoryPath(
+  recordedPath: string,
+  home: string,
+  onlyBookKey?: string,
+): Promise<string | undefined> {
+  if (existsSync(recordedPath)) return recordedPath;
+  const parsed = parseRunLeaf(basename(recordedPath));
+  const bookKey = onlyBookKey ?? tryBookKeyFromAkRolesPath(recordedPath);
+  if (parsed === undefined || bookKey === undefined) return undefined;
+  return findRunDirectoryById(home, parsed.runId, bookKey, parsed.role);
+}
+
 /**
  * Parent-run binding on a retained officer run (#747 / #1166).
  * Typed sourceRunPath only — instruction bytes are never a path protocol.
@@ -900,11 +924,7 @@ export async function readRunParentPath(
   runDirectory: string,
 ): Promise<string | undefined> {
   const record = readPageSync(runDirectory, "admitted");
-  if (record === undefined) return undefined;
-  if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
-    return record.sourceRunPath;
-  }
-  return undefined;
+  return admittedSourceRunPath(record);
 }
 
 /**
@@ -1064,18 +1084,7 @@ async function loadResumableRunRecord(
   readonly principal: DurablePrincipal;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
-  let runDirectory: string | undefined;
-  if (typeof knownRunDirectory === "string" && knownRunDirectory.trim() !== "") {
-    const parsed = parseRunLeaf(basename(knownRunDirectory));
-    if (parsed === undefined || parsed.runId !== runId) {
-      throw new CliUsageError(
-        `run directory does not match run id ${runId}: ${knownRunDirectory}`,
-      );
-    }
-    runDirectory = knownRunDirectory;
-  } else {
-    runDirectory = await findRunDirectoryById(home, runId);
-  }
+  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -1190,9 +1199,7 @@ async function loadResumableRunRecord(
         }
       }
       // Notary — admitted source-run locator identity (#633 resume).
-      if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
-        sourceRunPath = record.sourceRunPath;
-      }
+      sourceRunPath = admittedSourceRunPath(record);
       if (
         isRecord(record.sourceRun)
       ) {
@@ -1295,16 +1302,9 @@ async function loadResumableRunRecord(
       );
     }
   }
-  const sourceRunLeaf = parseRunLeaf(basename(sourceRunPath ?? ""));
-  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf?.runId;
-  const referencedRole = sourceRun?.role ?? sourceRunLeaf?.role;
-  if (referencedRunId !== undefined && referencedRunId !== "") {
-    const currentSourceRunDirectory = await findRunDirectoryById(
-      home,
-      referencedRunId,
-      run.bookKey,
-      referencedRole,
-    );
+  const recordedSourceDirectory = sourceRunPath ?? sourceRun?.runDirectory;
+  if (recordedSourceDirectory !== undefined) {
+    const currentSourceRunDirectory = await resolveLiveRunDirectoryPath(recordedSourceDirectory, home, run.bookKey);
     if (currentSourceRunDirectory !== undefined) {
       sourceRunPath = currentSourceRunDirectory;
       if (sourceRun !== undefined) {
@@ -1384,18 +1384,7 @@ export async function peekRoleRunRole(
   runId: string,
   options?: { readonly runDirectory?: string },
 ): Promise<PackagedRole | undefined> {
-  let runDirectory: string | undefined;
-  if (typeof options?.runDirectory === "string" && options.runDirectory.trim() !== "") {
-    const parsed = parseRunLeaf(basename(options.runDirectory));
-    if (parsed === undefined || parsed.runId !== runId) {
-      throw new CliUsageError(
-        `run directory does not match run id ${runId}: ${options.runDirectory}`,
-      );
-    }
-    runDirectory = options.runDirectory;
-  } else {
-    runDirectory = await findRunDirectoryById(home, runId);
-  }
+  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, options?.runDirectory);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;

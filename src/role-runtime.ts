@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readPageSync, RUN_STATE_FILE } from "./run-dossier.ts";
+import { admittedSourceRunPath } from "./public-cli/invocation.ts";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -762,9 +763,8 @@ function resolveAuditedSourceRunDirectory(
   const runDirectory = runDirectoryFromHostContext(ctx);
   if (runDirectory !== undefined) {
     const admitted = readPageSync(runDirectory, "admitted");
-    if (typeof admitted?.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
-      return admitted.sourceRunPath.trim();
-    }
+    const sourceRunPath = admittedSourceRunPath(admitted);
+    if (sourceRunPath !== undefined) return sourceRunPath.trim();
   }
   // Auditor env is request-scoped soul binding for the auditor seat only.
   if (role === "auditor") {

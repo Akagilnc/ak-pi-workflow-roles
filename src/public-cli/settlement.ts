@@ -239,7 +239,6 @@ async function sealedLedgerOutcome(
   role: TerminalRoleName,
   scope?: SettlementCourtScope,
 ): Promise<SealedLedgerSettle | undefined> {
-  const home = sealedLedgerHome(admitted);
   // #879: when court scope is present, roleOutcome is this-court original only —
   // never last-wins over an undivided historical array, and never falls back to
   // full-run history when this court sealed zero rows. #836 presentation of full

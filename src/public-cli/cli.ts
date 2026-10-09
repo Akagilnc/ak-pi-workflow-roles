@@ -60,6 +60,7 @@ import {
   type NamedRoleTurnHostAdapter,
 } from "./role-turn-host-resolution.ts";
 import {
+  admittedSourceRunPath,
   parseAnalystArgv,
   parsePublicSeatArgv,
   type PublicSeatArgvOwner,
@@ -83,6 +84,7 @@ import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
+  findRunDirectoryById,
   peekRoleRunRole,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -1084,7 +1086,7 @@ export async function runAkRole(
 ): Promise<CliResult> {
   const io = env.io ?? defaultIo();
   let resumeFailureContext:
-    | { readonly home: string; readonly runId: string; readonly authority: DurablePrincipalAuthority }
+    | { readonly home: string; readonly runId: string; readonly authority: DurablePrincipalAuthority; readonly runDirectory?: string }
     | undefined;
 
   try {
@@ -1200,14 +1202,19 @@ export async function runAkRole(
     // must still exist. Seat and dispatch follow the durable admitted role.
     // #471: unique parser owns {runId, message?}; five role paths only consume it.
     if (parsed.command === "resume") {
-      const resumeRequest = parseResumeRequest(parsed.args);
+      let resumeRequest = parseResumeRequest(parsed.args);
       resumeFailureContext = {
         home,
         runId: resumeRequest.runId,
         authority: env.principalAuthority ?? piDurablePrincipalAuthority,
       };
+      const runDirectory = await findRunDirectoryById(home, resumeRequest.runId);
+      if (runDirectory !== undefined) {
+        resumeRequest = { ...resumeRequest, runDirectory };
+        resumeFailureContext = { ...resumeFailureContext, runDirectory };
+      }
       const parts = await loadPublicRoleDispatchParts(env, home);
-      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
+      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId, resumeRequest);
       // Missing durable role keeps the judge seat table. The resume entry
       // itself is one function; it reads the stored run.
       const seatRole = resumeRole ?? "judge";
@@ -1238,18 +1245,13 @@ export async function runAkRole(
         && !latestPayloadEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
+        const parentSource = admittedSourceRunPath(current.admitted);
         resumeFailureContext = {
           home,
           runId: parentRunId,
+          ...(parentSource === undefined ? {} : { runDirectory: parentSource }),
           authority: env.principalAuthority ?? piDurablePrincipalAuthority,
         };
-        // Parent directory authority is child.sourceRunPath inside continueParentAfterChild (#1195).
-        const parentSource =
-          "sourceRunPath" in current.admitted
-          && typeof (current.admitted as { sourceRunPath?: unknown }).sourceRunPath === "string"
-          && (current.admitted as { sourceRunPath: string }).sourceRunPath.trim() !== ""
-            ? (current.admitted as { sourceRunPath: string }).sourceRunPath
-            : undefined;
         const parentRole = await peekRoleRunRole(
           home,
           parentRunId,
@@ -1320,6 +1322,7 @@ export async function runAkRole(
         resumeFailureContext.authority,
         io,
         error,
+        resumeFailureContext.runDirectory,
       )
     ) {
       return {
