@@ -529,11 +529,15 @@ async function loadLedgerPeerBody(
   return readableGateItem(latest.accepted);
 }
 
+/** Owner-approved fixed Notary dispatch (2026-10-09); never the parent verdict. */
+export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
+
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
  * (#1166 / ADR 0085 / ADR 0087): explicit reask → non-empty caller dispatch →
  * source-only ledger peer body. Identity stays in startup materials.
- * #1195: ticket-court notary skips peer-body preload (countersign source only).
+ * #1195: ticket-court notary skips peer-body preload (countersign source only) and
+ * receives the fixed dispatch instead (codex rejects an empty prompt).
  */
 async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
@@ -551,7 +555,7 @@ async function resolveReviewSeatDialogueBody(input: {
   if (sourceRunPath === undefined) return undefined;
   if (input.role === "notary") {
     const { isTicketCourtCountersignSource } = await import("../run-terminal-artifacts.ts");
-    if (isTicketCourtCountersignSource(sourceRunPath)) return undefined;
+    if (isTicketCourtCountersignSource(sourceRunPath)) return NOTARY_FIXED_DISPATCH;
   }
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }

@@ -724,9 +724,9 @@ export async function summonGateOfficer(options: {
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask keeps sole ownership of reviewReask when present.
-  // #1195 full-blind ticket-court notary (countersign source): do not preload the
-  // parent body. Identity binds via --source-run; the notary reads the live ticket
-  // and ledger itself and never opens the countersign verdict (fac9d5ec / sys-opt4).
+  // #1195 ticket-court notary (countersign source): do not preload the parent body.
+  // Identity binds via --source-run; the notary reads the ticket and verdict itself
+  // and its dispatch comes from resolveReviewSeatDialogueBody.
   // Other officers / non-countersign sources still receive the parent submission body.
   let gateReviewInstruction: string | undefined;
   if (options.reask === undefined && options.submission !== undefined) {
