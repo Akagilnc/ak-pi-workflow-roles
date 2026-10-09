@@ -95,6 +95,12 @@ export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
   readonly runId: string;
+  /**
+   * When already known (gate pass / same-ticket locator), load this directory
+   * instead of re-resolving runId across every book (#1195).
+   * Explicit public `ak-role resume <runId>` leaves this unset.
+   */
+  readonly runDirectory?: string;
   /** Present when the caller supplied the post-runId argv (including empty string). */
   readonly message?: string;
   /**
@@ -942,6 +948,22 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly parentRunPath: string;
   readonly ticketNumber?: number;
 }): Promise<string | undefined> {
+  const found = await findLatestRunForSeatTicket(input);
+  return found?.runId;
+}
+
+/**
+ * Latest retained seat run under one book/parent (and optional ticket), with its
+ * directory — callers that already scoped the search must not drop the path and
+ * re-resolve runId across every book (#1195).
+ */
+export async function findLatestRunForSeatTicket(input: {
+  readonly home: string;
+  readonly bookKey: string;
+  readonly role: RoleRunRecord["role"];
+  readonly parentRunPath: string;
+  readonly ticketNumber?: number;
+}): Promise<{ readonly runId: string; readonly runDirectory: string } | undefined> {
   if (input.parentRunPath.trim() === "") {
     return undefined;
   }
@@ -956,7 +978,7 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
-  let best: string | undefined;
+  let best: { readonly runId: string; readonly runDirectory: string } | undefined;
   for (const runDirectory of runDirectories) {
     const parsed = parseRunLeaf(basename(runDirectory));
     if (parsed === undefined || parsed.role !== input.role) continue;
@@ -966,7 +988,7 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (!await retainedRunPathsMatch(parentPath, input.parentRunPath, input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
-    if (best === undefined || runId > best) best = runId;
+    if (best === undefined || runId > best.runId) best = { runId, runDirectory };
   }
   return best;
 }
@@ -1036,12 +1058,24 @@ async function loadResumableRunRecord(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  knownRunDirectory?: string,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
-  const runDirectory = await findRunDirectoryById(home, runId);
+  let runDirectory: string | undefined;
+  if (typeof knownRunDirectory === "string" && knownRunDirectory.trim() !== "") {
+    const parsed = parseRunLeaf(basename(knownRunDirectory));
+    if (parsed === undefined || parsed.runId !== runId) {
+      throw new CliUsageError(
+        `run directory does not match run id ${runId}: ${knownRunDirectory}`,
+      );
+    }
+    runDirectory = knownRunDirectory;
+  } else {
+    runDirectory = await findRunDirectoryById(home, runId);
+  }
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
@@ -1369,8 +1403,14 @@ export async function loadResumablePublicRole(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  options?: { readonly runDirectory?: string },
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
+  const loaded = await loadResumableRunRecord(
+    home,
+    runId,
+    authority,
+    options?.runDirectory,
+  );
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 

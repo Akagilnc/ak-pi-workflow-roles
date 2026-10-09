@@ -845,8 +845,12 @@ function resumeSameParentInstructionSeat(input: {
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
     freshSummons: input.env.freshSummons,
     summons: input.summons,
-    resume: (runId, materials) => runPublicInstructionSeatResume(
-      { runId, ...(materials === undefined ? {} : { summons: materials }) },
+    resume: (runId, materials, runDirectory) => runPublicInstructionSeatResume(
+      {
+        runId,
+        runDirectory,
+        ...(materials === undefined ? {} : { summons: materials }),
+      },
       input.env,
       input.io,
     ),
@@ -1246,7 +1250,12 @@ export async function runPublicInstructionSeatResume(
     env,
     io: turnIo,
     load: async (effective) => {
-      const loaded = await loadResumablePublicRole(env.home, effective.runId, env.principalAuthority);
+      const loaded = await loadResumablePublicRole(
+        env.home,
+        effective.runId,
+        env.principalAuthority,
+        effective.runDirectory === undefined ? undefined : { runDirectory: effective.runDirectory },
+      );
       if (
         packagedRebindSourceOnResume(loaded.admitted.role)
         && effective.summons?.sourceRunPath !== undefined
@@ -1295,7 +1304,12 @@ export async function runPublicInstructionSeatResume(
   };
   let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
   try {
-    const loaded = await loadResumablePublicRole(env.home, request.runId, env.principalAuthority);
+    const loaded = await loadResumablePublicRole(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+      request.runDirectory === undefined ? undefined : { runDirectory: request.runDirectory },
+    );
     binding = loaded.admitted.role === "auditor"
       ? await readAuditorResumeBinding(loaded.admitted.runDirectory)
       : undefined;
@@ -1682,10 +1696,16 @@ async function auditSubmittedRole(
       const pass = chain.passes.at(-1);
       const officerTerminal = pass?.terminal;
       if (officerTerminal === undefined) throw new Error("unreadable audit has no terminal result");
+      const officerRunDirectory = pass?.runDirectory;
       const officerRunId = pass?.runId
-        ?? (pass?.runDirectory === undefined ? undefined : runIdFromRunDirectory(pass.runDirectory));
+        ?? (officerRunDirectory === undefined ? undefined : runIdFromRunDirectory(officerRunDirectory));
       if (officerRunId === undefined) throw new Error("unreadable audit has no resumable run identity");
-      const officer = await loadResumablePublicRole(env.home, officerRunId, env.principalAuthority);
+      const officer = await loadResumablePublicRole(
+        env.home,
+        officerRunId,
+        env.principalAuthority,
+        officerRunDirectory === undefined ? undefined : { runDirectory: officerRunDirectory },
+      );
       const terminal = await presentUnsettledOfficer(
         officerTerminal,
         io,
@@ -1695,11 +1715,17 @@ async function auditSubmittedRole(
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);
+      const escalatedRunDirectory = escalation?.runDirectory;
       const escalatedRunId = escalation?.runId
-        ?? (escalation?.runDirectory === undefined
-          ? undefined : runIdFromRunDirectory(escalation.runDirectory));
+        ?? (escalatedRunDirectory === undefined
+          ? undefined : runIdFromRunDirectory(escalatedRunDirectory));
       if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
-      const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority);
+      const officer = await loadResumablePublicRole(
+        env.home,
+        escalatedRunId,
+        env.principalAuthority,
+        escalatedRunDirectory === undefined ? undefined : { runDirectory: escalatedRunDirectory },
+      );
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
       let terminal = escalation?.terminal;
