@@ -1,43 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
-  BASH_RECEIPT_HEAD_BYTES,
   BASH_RECEIPT_THRESHOLD_BYTES,
-  extractTapNotOkBlocks,
-  headAndTailReceipt,
-  isNodeTestTap,
-  presentBashToolResultText,
   presentPiBashToolResult,
-  summarizeNodeTestTap,
 } from "../../src/pi/bash-tool-result-presentation.ts";
-
-const PASS_TAP = `TAP version 13
-# Subtest: a
-ok 1 - a
-  ---
-  duration_ms: 0.3
-  type: 'test'
-  ...
-# Subtest: b
-ok 2 - b
-  ---
-  duration_ms: 0.1
-  type: 'test'
-  ...
-1..2
-# tests 2
-# suites 0
-# pass 2
-# fail 0
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 10
-`;
 
 const FAIL_TAP = `TAP version 13
 # Subtest: a
@@ -108,185 +78,205 @@ not ok 1 - outer
 # duration_ms 10
 `;
 
+const PASS_TAP = `TAP version 13
+# Subtest: a
+ok 1 - a
+  ---
+  duration_ms: 0.1
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5
+`;
+
 function asciiPad(prefix: string, totalBytes: number, suffix = ""): string {
   const mid = Math.max(0, totalBytes - Buffer.byteLength(prefix + suffix, "utf8"));
   return prefix + "x".repeat(mid) + suffix;
 }
 
-test("isNodeTestTap recognizes version and # tests markers only", () => {
-  assert.equal(isNodeTestTap(PASS_TAP), true);
-  assert.equal(isNodeTestTap("# tests 3\n# pass 3\n"), true);
-  assert.equal(isNodeTestTap("hello\nworld\n"), false);
-  assert.equal(isNodeTestTap("not a tap report, just words about tests 3"), false);
+function textOf(mutation: { content: Array<{ type: string; text?: string }> } | undefined): string {
+  return mutation?.content.find((part) => part.type === "text")?.text ?? "";
+}
+
+function fullPathOf(mutation: { details?: unknown } | undefined): string | undefined {
+  const details = mutation?.details;
+  if (details === null || typeof details !== "object") return undefined;
+  const path = (details as { fullOutputPath?: unknown }).fullOutputPath;
+  return typeof path === "string" ? path : undefined;
+}
+
+test("#1206 presentPiBashToolResult: small receipt and non-bash stay untouched", async () => {
+  assert.equal(
+    await presentPiBashToolResult({
+      toolName: "bash",
+      content: [{ type: "text", text: "hello from bash\n" }],
+    }),
+    undefined,
+  );
+  assert.equal(
+    await presentPiBashToolResult({
+      toolName: "read",
+      content: [{ type: "text", text: asciiPad("file\n", BASH_RECEIPT_THRESHOLD_BYTES * 2) }],
+    }),
+    undefined,
+  );
 });
 
-test("summarizeNodeTestTap keeps pass/fail counts and every not-ok block", () => {
-  const pass = summarizeNodeTestTap(PASS_TAP);
-  assert.equal(pass.pass, 2);
-  assert.equal(pass.fail, 0);
-  assert.deepEqual(pass.notOkBlocks, []);
-  assert.equal(pass.summaryText, "2 pass／0 fail");
-
-  const fail = summarizeNodeTestTap(FAIL_TAP);
-  assert.equal(fail.pass, 1);
-  assert.equal(fail.fail, 1);
-  assert.equal(fail.notOkBlocks.length, 1);
-  assert.match(fail.notOkBlocks[0]!, /^not ok 2 - b/);
-  assert.match(fail.notOkBlocks[0]!, /1 !== 2/);
-  assert.match(fail.summaryText, /^1 pass／1 fail\n\nnot ok 2 - b/);
-
-  const nested = summarizeNodeTestTap(NESTED_FAIL_TAP);
-  assert.equal(nested.pass, 1);
-  assert.equal(nested.fail, 2);
-  assert.equal(nested.notOkBlocks.length, 2);
-  assert.match(nested.notOkBlocks[0]!, /inner fail/);
-  assert.match(nested.notOkBlocks[0]!, /assert\.ok\(false\)/);
-  assert.match(nested.notOkBlocks[1]!, /^not ok 1 - outer/);
-});
-
-test("extractTapNotOkBlocks does not swallow following ok peers", () => {
-  const blocks = extractTapNotOkBlocks(NESTED_FAIL_TAP);
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks.some((b) => b.includes("inner ok")), false);
-});
-
-test("headAndTailReceipt leaves sub-threshold text untouched", () => {
-  const text = "small output\n";
-  const result = headAndTailReceipt(text);
-  assert.equal(result.body, text);
-  assert.equal(result.omittedChars, 0);
-});
-
-test("headAndTailReceipt keeps head 1KiB and fills to 10KiB with tail", () => {
-  const headMarker = "HEAD_MARKER_START\n";
-  const tailMarker = "\nTAIL_MARKER_END";
-  const text = asciiPad(headMarker, BASH_RECEIPT_THRESHOLD_BYTES * 3, tailMarker);
-  const result = headAndTailReceipt(text);
-  assert.ok(Buffer.byteLength(result.body, "utf8") <= BASH_RECEIPT_THRESHOLD_BYTES);
-  assert.ok(result.body.startsWith(headMarker));
-  assert.ok(result.body.endsWith(tailMarker));
-  assert.ok(Buffer.byteLength(result.body.slice(0, result.body.indexOf("\n\n")), "utf8") <= BASH_RECEIPT_HEAD_BYTES);
-  assert.ok(result.omittedChars > 0);
-  assert.ok(result.totalChars > result.omittedChars);
-});
-
-test("presentBashToolResultText leaves small non-TAP bash output unchanged", async () => {
-  const presented = await presentBashToolResultText({ text: "hello from bash\n" });
-  assert.equal(presented, null);
-});
-
-test("presentBashToolResultText spills full text and head-tails large non-TAP output", async () => {
-  const files: string[] = [];
-  const text = asciiPad("BEGIN\n", BASH_RECEIPT_THRESHOLD_BYTES * 2, "\nEND");
-  const presented = await presentBashToolResultText({
-    text,
-    writeFullOutput: async (full) => {
-      const dir = await mkdtemp(join(tmpdir(), "bash-pres-"));
-      const path = join(dir, "full.log");
-      await writeFile(path, full, "utf8");
-      files.push(path);
-      return path;
-    },
+test("#1206 presentPiBashToolResult: large ordinary receipt head-tails and spills full text", async () => {
+  const large = asciiPad("BEGIN\n", BASH_RECEIPT_THRESHOLD_BYTES * 2, "\nEND");
+  const rewritten = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: large }],
+    details: { keep: true },
+    structuredContent: { output: large, exit_code: 0 },
   });
-  assert.ok(presented);
-  assert.equal(files.length, 1);
-  assert.equal(await readFile(files[0]!, "utf8"), text);
-  assert.ok(presented!.text.startsWith("BEGIN\n"));
-  assert.match(presented!.text, /END/);
-  assert.ok(presented!.text.includes(presented!.fullOutputPath));
-  // Body before the footer stays within the 10 KiB bound.
-  const footerAt = presented!.text.lastIndexOf("\n\n[");
-  assert.ok(footerAt > 0);
-  assert.ok(Buffer.byteLength(presented!.text.slice(0, footerAt), "utf8") <= BASH_RECEIPT_THRESHOLD_BYTES);
+  assert.ok(rewritten);
+  assert.equal((rewritten!.details as { keep?: boolean }).keep, true);
+  const path = fullPathOf(rewritten);
+  assert.equal(typeof path, "string");
+  assert.equal(await readFile(path!, "utf8"), large);
+  assert.deepEqual(rewritten!.structuredContent, { output: large, exit_code: 0 });
+
+  const presented = textOf(rewritten);
+  assert.ok(presented.startsWith("BEGIN\n"));
+  assert.ok(presented.includes("END"));
+  assert.ok(path && presented.includes(path));
+  assert.ok(Buffer.byteLength(presented, "utf8") < Buffer.byteLength(large, "utf8"));
 });
 
-test("presentBashToolResultText uses existing fullOutputPath and does not re-spill", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "bash-pres-existing-"));
+test("#1206 presentPiBashToolResult: threshold uses receipt; native full path is source of truth", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bash-pres-"));
   const fullPath = join(dir, "pi-native.log");
   const full = asciiPad("FULL_BEGIN\n", BASH_RECEIPT_THRESHOLD_BYTES * 4, "\nFULL_END");
   await writeFile(fullPath, full, "utf8");
-  // Display text is the already-truncated pi view, not the full file.
-  const truncatedView = `${full.slice(0, 200)}\n\n[Showing lines 1-10 of 999 (50.0KB limit). Full output: ${fullPath}]`;
-  let writes = 0;
-  const presented = await presentBashToolResultText({
-    text: truncatedView,
-    existingFullOutputPath: fullPath,
-    writeFullOutput: async () => {
-      writes++;
-      return join(dir, "should-not-write.log");
-    },
-  });
-  assert.ok(presented);
-  assert.equal(writes, 0);
-  assert.equal(presented!.fullOutputPath, fullPath);
-  assert.ok(presented!.text.startsWith("FULL_BEGIN\n"));
-  assert.match(presented!.text, /FULL_END/);
-  assert.ok(presented!.text.includes(fullPath));
-});
 
-test("presentBashToolResultText summarizes TAP and keeps failure blocks + exit status", async () => {
-  const files: string[] = [];
-  const presented = await presentBashToolResultText({
-    text: `${FAIL_TAP}\n\nCommand exited with code 1`,
-    writeFullOutput: async (full) => {
-      const dir = await mkdtemp(join(tmpdir(), "bash-pres-tap-"));
-      const path = join(dir, "full.log");
-      await writeFile(path, full, "utf8");
-      files.push(path);
-      return path;
-    },
-  });
-  assert.ok(presented);
-  assert.equal(await readFile(files[0]!, "utf8"), FAIL_TAP);
-  assert.match(presented!.text, /^1 pass／1 fail/);
-  assert.match(presented!.text, /not ok 2 - b/);
-  assert.match(presented!.text, /1 !== 2/);
-  assert.match(presented!.text, /Command exited with code 1$/);
-  assert.ok(!presented!.text.includes("ok 1 - a\n"));
-});
-
-test("presentBashToolResultText summarizes nested TAP failures without dropping inner blocks", async () => {
-  const presented = await presentBashToolResultText({
-    text: NESTED_FAIL_TAP,
-    writeFullOutput: async () => "/tmp/fake-tap.log",
-  });
-  assert.ok(presented);
-  assert.match(presented!.text, /^1 pass／2 fail/);
-  assert.match(presented!.text, /inner fail/);
-  assert.match(presented!.text, /assert\.ok\(false\)/);
-  assert.match(presented!.text, /not ok 1 - outer/);
-});
-
-test("presentPiBashToolResult ignores non-bash tools and preserves structuredContent on rewrite", async () => {
-  const readResult = await presentPiBashToolResult({
-    toolName: "read",
-    content: [{ type: "text", text: asciiPad("file\n", BASH_RECEIPT_THRESHOLD_BYTES * 2) }],
-  });
-  assert.equal(readResult, undefined);
-
-  const large = asciiPad("BASH\n", BASH_RECEIPT_THRESHOLD_BYTES * 2, "\nDONE");
-  const rewritten = await presentPiBashToolResult(
-    {
+  // Native line-truncation leaves a small receipt that must not be rewritten (F4 reverse).
+  const smallNativeReceipt = `${full.slice(0, 200)}\n\n[Showing lines 1-10 of 999. Full output: ${fullPath}]`;
+  assert.ok(Buffer.byteLength(smallNativeReceipt, "utf8") < BASH_RECEIPT_THRESHOLD_BYTES);
+  assert.equal(
+    await presentPiBashToolResult({
       toolName: "bash",
-      content: [{ type: "text", text: large }],
-      details: { keep: true },
-      structuredContent: { output: large, exit_code: 0 },
-      isError: false,
-    },
-    {
-      writeFullOutput: async (full) => {
-        const dir = await mkdtemp(join(tmpdir(), "bash-pres-pi-"));
-        const path = join(dir, "full.log");
-        await writeFile(path, full, "utf8");
-        return path;
-      },
-    },
+      content: [{ type: "text", text: smallNativeReceipt }],
+      details: { fullOutputPath: fullPath, truncation: { truncated: true, truncatedBy: "lines" } },
+      structuredContent: { output: full.slice(0, 200), truncated: true, full_output_path: fullPath, exit_code: 0 },
+    }),
+    undefined,
   );
+
+  // Large receipt with native full path reuses the file and head-tails the full source.
+  const largeReceipt = asciiPad("TRUNC_VIEW\n", BASH_RECEIPT_THRESHOLD_BYTES + 64, `\n[Full output: ${fullPath}]`);
+  const rewritten = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: largeReceipt }],
+    details: { fullOutputPath: fullPath },
+    structuredContent: { output: largeReceipt, truncated: true, full_output_path: fullPath, exit_code: 0 },
+  });
   assert.ok(rewritten);
-  assert.equal((rewritten!.details as { keep?: boolean }).keep, true);
-  assert.equal(typeof (rewritten!.details as { fullOutputPath?: string }).fullOutputPath, "string");
-  assert.deepEqual(rewritten!.structuredContent, { output: large, exit_code: 0 });
-  const textPart = rewritten!.content.find((p) => p.type === "text");
-  assert.ok(textPart && "text" in textPart);
-  assert.ok((textPart as { text: string }).text.startsWith("BASH\n"));
+  assert.equal(fullPathOf(rewritten), fullPath);
+  const presented = textOf(rewritten);
+  assert.ok(presented.startsWith("FULL_BEGIN\n"));
+  assert.ok(presented.includes("FULL_END"));
+  assert.equal(await readFile(fullPath, "utf8"), full);
+});
+
+test("#1206 presentPiBashToolResult: missing native full path fails honestly", async () => {
+  const missing = join(tmpdir(), `ak-roles-missing-${Date.now()}.log`);
+  const receipt = asciiPad("PARTIAL\n", BASH_RECEIPT_THRESHOLD_BYTES + 32, "\nEND");
+  await assert.rejects(
+    () =>
+      presentPiBashToolResult({
+        toolName: "bash",
+        content: [{ type: "text", text: receipt }],
+        details: { fullOutputPath: missing },
+        structuredContent: { output: receipt, truncated: true, full_output_path: missing, exit_code: 0 },
+      }),
+    (error: unknown) => error instanceof Error && "code" in error,
+  );
+});
+
+test("#1206 presentPiBashToolResult: stdout status-shaped text is not host status identity", async () => {
+  // User output ends with the same shape pi uses for failures; exit_code 0 means keep it (F2).
+  const body = `${"S".repeat(20_000)}\n\nCommand exited with code 77`;
+  assert.equal(Buffer.byteLength(body, "utf8"), 20_029);
+  const rewritten = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: body }],
+    structuredContent: { output: body, exit_code: 0 },
+  });
+  assert.ok(rewritten);
+  const path = fullPathOf(rewritten);
+  assert.equal(typeof path, "string");
+  assert.equal(await readFile(path!, "utf8"), body);
+  assert.equal(Buffer.byteLength(await readFile(path!, "utf8"), "utf8"), 20_029);
+});
+
+test("#1206 presentPiBashToolResult: receipt threshold includes real exit status bytes", async () => {
+  // Body under threshold; receipt with fact-based status suffix crosses it (F4).
+  const body = "x".repeat(BASH_RECEIPT_THRESHOLD_BYTES - 20);
+  const status = "\n\nCommand exited with code 1";
+  const receipt = `${body}${status}`;
+  assert.ok(Buffer.byteLength(body, "utf8") < BASH_RECEIPT_THRESHOLD_BYTES);
+  assert.ok(Buffer.byteLength(receipt, "utf8") >= BASH_RECEIPT_THRESHOLD_BYTES);
+
+  const rewritten = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: receipt }],
+    structuredContent: { output: body, exit_code: 1 },
+    isError: true,
+  });
+  assert.ok(rewritten);
+  const presented = textOf(rewritten);
+  assert.ok(presented.includes("Command exited with code 1"));
+  const path = fullPathOf(rewritten);
+  assert.equal(await readFile(path!, "utf8"), body);
+});
+
+test("#1206 presentPiBashToolResult: TAP summary keeps source not-ok blocks and multi-doc counts", async () => {
+  const fail = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: `${FAIL_TAP}\n\nCommand exited with code 1` }],
+    structuredContent: { output: FAIL_TAP, exit_code: 1 },
+    isError: true,
+  });
+  assert.ok(fail);
+  const failText = textOf(fail);
+  assert.ok(failText.startsWith("1 pass／1 fail"));
+  assert.ok(failText.includes("not ok 2 - b"));
+  assert.ok(failText.includes("1 !== 2"));
+  assert.ok(failText.endsWith("Command exited with code 1"));
+  assert.equal(await readFile(fullPathOf(fail)!, "utf8"), FAIL_TAP);
+
+  const nested = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: NESTED_FAIL_TAP }],
+    structuredContent: { output: NESTED_FAIL_TAP, exit_code: 1 },
+    isError: true,
+  });
+  assert.ok(nested);
+  const nestedText = textOf(nested);
+  assert.ok(nestedText.startsWith("1 pass／2 fail"));
+  assert.ok(nestedText.includes("inner fail"));
+  assert.ok(nestedText.includes("assert.ok(false)"));
+  assert.ok(nestedText.includes("not ok 1 - outer"));
+
+  // Two TAP documents in one bash receipt: counts cover the whole output (F3).
+  const multi = `${PASS_TAP}${FAIL_TAP}`;
+  const multiResult = await presentPiBashToolResult({
+    toolName: "bash",
+    content: [{ type: "text", text: multi }],
+    structuredContent: { output: multi, exit_code: 1 },
+    isError: true,
+  });
+  assert.ok(multiResult);
+  const multiText = textOf(multiResult);
+  // PASS_TAP (1 pass) + FAIL_TAP (1 pass / 1 fail) over the whole receipt.
+  assert.ok(multiText.startsWith("2 pass／1 fail"));
+  assert.ok(multiText.includes("not ok 2 - b"));
 });

@@ -123,7 +123,7 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
   );
 });
 
-test("#1206 Pi adapter tool_result presents large bash and leaves read alone", async () => {
+test("#1206 Pi adapter tool_result registers bash presentation on the native seam", async () => {
   const { pi, handlers, ctx } = piCapture();
   createPiRoleHostAdapter(pi);
   const toolResult = handlers.get("tool_result")?.[0];
@@ -137,6 +137,7 @@ test("#1206 Pi adapter tool_result presents large bash and leaves read alone", a
       toolCallId: "call-bash-1",
       content: [{ type: "text", text: large }],
       details: undefined,
+      structuredContent: { output: large, exit_code: 0 },
       isError: false,
       input: { command: "echo" },
     },
@@ -146,11 +147,15 @@ test("#1206 Pi adapter tool_result presents large bash and leaves read alone", a
   const bashContent = (bashResult as { content?: Array<{ type: string; text?: string }> }).content;
   const bashText = bashContent?.find((p) => p.type === "text")?.text ?? "";
   assert.ok(bashText.startsWith("BEGIN\n"));
-  assert.match(bashText, /END/);
+  assert.ok(bashText.includes("END"));
   assert.ok(Buffer.byteLength(bashText, "utf8") < Buffer.byteLength(large, "utf8"));
   const fullPath = (bashResult as { details?: { fullOutputPath?: string } }).details?.fullOutputPath;
   assert.equal(typeof fullPath, "string");
   assert.ok(fullPath && bashText.includes(fullPath));
+  assert.deepEqual(
+    (bashResult as { structuredContent?: unknown }).structuredContent,
+    { output: large, exit_code: 0 },
+  );
 
   const readLarge = `file\n${"y".repeat(BASH_RECEIPT_THRESHOLD_BYTES * 2)}`;
   const readResult = await toolResult(
