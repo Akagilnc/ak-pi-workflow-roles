@@ -130,6 +130,31 @@ export type SubmissionGateOutcome = {
   readonly reason?: string;
 };
 
+/** One place for non-pass / pass gate outcome field expansion (#1214 C1). */
+function presentGateOutcome(fields: {
+  readonly status: SubmissionGateOutcome["status"];
+  readonly officer: GateOfficer;
+  readonly receipt: unknown;
+  readonly runId?: string | undefined;
+  readonly runDirectory?: string | undefined;
+  readonly terminal?: TerminalResult | undefined;
+  readonly reason?: string | undefined;
+}): SubmissionGateOutcome {
+  return {
+    status: fields.status,
+    officer: fields.officer,
+    receipt: fields.receipt,
+    ...(typeof fields.runId === "string" && fields.runId.trim() !== ""
+      ? { runId: fields.runId }
+      : {}),
+    ...(typeof fields.runDirectory === "string" && fields.runDirectory.trim() !== ""
+      ? { runDirectory: fields.runDirectory }
+      : {}),
+    ...(fields.terminal === undefined ? {} : { terminal: fields.terminal }),
+    ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+  };
+}
+
 /**
  * Shared envelope: project gate, map onto host actions.
  * A real converged / continue / escalate returns immediately. An unreadable
@@ -194,33 +219,24 @@ export async function requireSubmissionGate(options: {
       }
     }
     if (gatekeeper.status === "converged") {
-      return {
+      // Keep the officer terminal for escalate / unsettled surfaces; parent
+      // finals do not project other-seat tables (#1195).
+      return presentGateOutcome({
         status: "converged",
         officer: projected.officer,
         receipt: gatekeeper.receipt,
-        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-          ? { runId: gatekeeper.runId }
-          : {}),
-        ...(typeof projected.summoned?.runDirectory === "string"
-          && projected.summoned.runDirectory.trim() !== ""
-          ? { runDirectory: projected.summoned.runDirectory }
-          : {}),
-        // Keep the officer terminal for escalate / unsettled surfaces; parent
-        // finals do not project other-seat tables (#1195).
-        ...(projected.summoned?.terminal === undefined
-          ? {}
-          : { terminal: projected.summoned.terminal }),
-      };
+        runId: gatekeeper.runId,
+        runDirectory: projected.summoned?.runDirectory,
+        terminal: projected.summoned?.terminal,
+      });
     }
     if (gatekeeper.status === "continue") {
-      return {
+      return presentGateOutcome({
         status: "continue",
         officer: projected.officer,
         receipt: gatekeeper.receipt,
-        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-          ? { runId: gatekeeper.runId }
-          : {}),
-      };
+        runId: gatekeeper.runId,
+      });
     }
     if (gatekeeper.status === "needs_reask") {
       // Nested incomplete already exhausted the inner seat's own reask. Surface it;
@@ -229,21 +245,14 @@ export async function requireSubmissionGate(options: {
         projected.summoned?.terminal?.roleOutcome.kind === "accepted"
         && projected.summoned.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true;
       if (nestedIncomplete || reasksSpent >= reaskLimit) {
-        return {
+        return presentGateOutcome({
           status: "needs_reask",
           officer: projected.officer,
           receipt: gatekeeper.receipt,
-          ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-            ? { runId: gatekeeper.runId }
-            : {}),
-          ...(typeof projected.summoned?.runDirectory === "string"
-            && projected.summoned.runDirectory.trim() !== ""
-            ? { runDirectory: projected.summoned.runDirectory }
-            : {}),
-          ...(projected.summoned?.terminal === undefined
-            ? {}
-            : { terminal: projected.summoned.terminal }),
-        };
+          runId: gatekeeper.runId,
+          runDirectory: projected.summoned?.runDirectory,
+          terminal: projected.summoned?.terminal,
+        });
       }
       reasksSpent += 1;
       reask = officerConclusionReask(gatekeeper.receivedStatus);
@@ -252,60 +261,37 @@ export async function requireSubmissionGate(options: {
     if (gatekeeper.status === "transport_failure") {
       // #1214 A5: officer process/transport failure stays on the officer run.
       // Present honestly; do not failInfrastructure the parent / audited seat.
-      return {
+      return presentGateOutcome({
         status: "transport_failure",
         officer: projected.officer,
         receipt: gatekeeper.submission ?? { reason: gatekeeper.reason },
         reason: gatekeeper.reason,
-        ...(typeof projected.summoned?.terminal?.runId === "string"
-          && projected.summoned.terminal.runId.trim() !== ""
-          ? { runId: projected.summoned.terminal.runId }
-          : {}),
-        ...(typeof projected.summoned?.runDirectory === "string"
-          && projected.summoned.runDirectory.trim() !== ""
-          ? { runDirectory: projected.summoned.runDirectory }
-          : {}),
-        ...(projected.summoned?.terminal === undefined
-          ? {}
-          : { terminal: projected.summoned.terminal }),
-      };
+        runId: projected.summoned?.terminal?.runId,
+        runDirectory: projected.summoned?.runDirectory,
+        terminal: projected.summoned?.terminal,
+      });
     }
     if (gatekeeper.status === "escalate") {
-      return {
+      // Keep the actual officer terminal so callers resume that seat.
+      return presentGateOutcome({
         status: "escalate",
         officer: projected.officer,
         receipt: gatekeeper.receipt,
-        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-          ? { runId: gatekeeper.runId }
-          : {}),
-        ...(typeof projected.summoned?.runDirectory === "string"
-          && projected.summoned.runDirectory.trim() !== ""
-          ? { runDirectory: projected.summoned.runDirectory }
-          : {}),
-        // Keep the actual officer terminal so callers resume that seat.
-        ...(projected.summoned?.terminal === undefined
-          ? {}
-          : { terminal: projected.summoned.terminal }),
-      };
+        runId: gatekeeper.runId,
+        runDirectory: projected.summoned?.runDirectory,
+        terminal: projected.summoned?.terminal,
+      });
     }
     // #1214 F2: lawful officer no_receipt is a typed incomplete outcome, not a
     // call-killing exception. Present honestly; do not bind/throw as non-pass.
-    return {
+    return presentGateOutcome({
       status: "no_receipt",
       officer: projected.officer,
       receipt: gatekeeper.facts ?? { reason: gatekeeper.reason },
       reason: gatekeeper.reason,
-      ...(typeof projected.summoned?.terminal?.runId === "string"
-        && projected.summoned.terminal.runId.trim() !== ""
-        ? { runId: projected.summoned.terminal.runId }
-        : {}),
-      ...(typeof projected.summoned?.runDirectory === "string"
-        && projected.summoned.runDirectory.trim() !== ""
-        ? { runDirectory: projected.summoned.runDirectory }
-        : {}),
-      ...(projected.summoned?.terminal === undefined
-        ? {}
-        : { terminal: projected.summoned.terminal }),
-    };
+      runId: projected.summoned?.terminal?.runId,
+      runDirectory: projected.summoned?.runDirectory,
+      terminal: projected.summoned?.terminal,
+    });
   }
 }
