@@ -2,7 +2,7 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
@@ -10,6 +10,7 @@ import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /**
  * #1183: ledger-mouth place may move the leaf while the faux in-process spawn
@@ -47,6 +48,10 @@ async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  /** #1199 this-turn summons / 催交 from the input seam (HostContext field). */
+  readonly summonsInstruction?: string;
+  /** #1199: issued session coordinate from the live --session / principal face. */
+  readonly sessionFile?: string;
   /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
 }): Promise<void> {
@@ -78,21 +83,33 @@ async function driveLedgerProducer(input: {
     },
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
-  const runDirectory = input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
-  const sessionDirectory = join(runDirectory, "session");
+  let runDirectory = input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
+  let sessionDirectory = input.sessionFile !== undefined
+    ? dirname(input.sessionFile)
+    : join(runDirectory, "session");
+  let sessionFile = input.sessionFile ?? join(sessionDirectory, "session.jsonl");
   const context = {
         cwd: input.cwd,
         mode: "json",
         model: undefined,
-        runDirectory,
+        get runDirectory() { return runDirectory; },
+        set runDirectory(next: string) { runDirectory = next; },
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+        ...(input.summonsInstruction === undefined
+          ? {}
+          : { summonsInstruction: input.summonsInstruction }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
           getLeafId: () => null,
           getLeafEntry: () => undefined,
           getEntries: () => [],
           getSessionDir: () => sessionDirectory,
-          getSessionFile: () => join(sessionDirectory, "session.jsonl"),
+          getSessionFile: () => sessionFile,
+          // #1199: mid-turn relocate projects the live handle (same as production).
+          setSessionFile(path: string) {
+            sessionFile = path;
+            sessionDirectory = dirname(path);
+          },
         },
         abort() {},
       } as HostContext;
@@ -131,6 +148,10 @@ export async function sealAcceptedSubmission(input: {
   readonly runDirectory?: string;
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
+  /** #1199 this-turn summons / 催交 for seal-time progress. */
+  readonly summonsInstruction?: string;
+  /** #1199 issued session coordinate from the live host face. */
+  readonly sessionFile?: string;
 }): Promise<void> {
   await driveLedgerProducer({
     cwd: input.cwd,
@@ -139,9 +160,13 @@ export async function sealAcceptedSubmission(input: {
     details: input.details,
     ...(input.outputDetails === undefined ? {} : { outputDetails: input.outputDetails }),
     toolCallId: input.toolCallId ?? "seal-1",
+    ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
     ...(input.home === undefined ? {} : { home: input.home }),
     ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
     ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+    ...(input.summonsInstruction === undefined
+      ? {}
+      : { summonsInstruction: input.summonsInstruction }),
   });
 }
 
@@ -149,6 +174,10 @@ export async function sealAcceptedSubmission(input: {
 export async function sealAcceptedSubmissionForSpawn(input: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  /** #1199: same stdin dialogue the live Pi child input seam records. */
+  readonly stdin?: string;
+  /** #1199: issued --session coordinate from the live host face. */
+  readonly sessionFile?: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
   readonly outputDetails?: unknown;
@@ -172,6 +201,12 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     input.env.AK_ROLE_COURT_ATTEMPT.length > 0
       ? input.env.AK_ROLE_COURT_ATTEMPT
       : undefined;
+  // #1199: faux spawn mirrors the live input seam — progress instruction is
+  // the model-facing body (what the seat actually receives).
+  const summonsInstruction =
+    typeof input.stdin === "string"
+      ? readUserDialogueStdin(input.stdin)
+      : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,
@@ -182,6 +217,8 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(summonsInstruction === undefined ? {} : { summonsInstruction }),
+    ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
   });
   // Place may have moved during ledger execute — keep the spawn env on the live leaf.
   await spawnRunDirectoryFromEnv(input.env);

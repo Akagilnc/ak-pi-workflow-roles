@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { parseRunLeaf, sessionDirectoryOf } from "./role-run-placement.ts";
+import {
+  parseRunLeaf,
+  sessionDirectoryOf,
+} from "./role-run-placement.ts";
 import { RUN_HISTORY_FILE, RUN_HISTORY_KINDS, RUN_LOG_FILE, RUN_STATE_FILE, RUN_STATE_KINDS } from "./run-dossier-files.ts";
 import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
 
@@ -46,6 +49,14 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string)
 /** Volume directory name for a record kind: the kind itself. */
 export function resolveSitianVolumeCategory(kind: string): string {
   return kind;
+}
+
+/** Run directory owning `<run>/session` (leg-local originals; #1199 keeps this landing). */
+function runDirectoryOwningSessionParent(sessionParentDir: string): string | undefined {
+  if (basename(sessionParentDir) !== "session") return undefined;
+  const runDirectory = dirname(sessionParentDir);
+  if (parseRunLeaf(basename(runDirectory)) === undefined) return undefined;
+  return runDirectory;
 }
 
 type SitianRecordPath = {
@@ -117,8 +128,8 @@ export function resolveSitianRecordPathInLedger(
       throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
     const sessionParentDir = dirname(input.sessionParent);
-    const runDirectory = dirname(sessionParentDir);
-    if (basename(sessionParentDir) === "session" && parseRunLeaf(basename(runDirectory)) !== undefined) {
+    const runDirectory = runDirectoryOwningSessionParent(sessionParentDir);
+    if (runDirectory !== undefined) {
       // A role run's own session: every record kind shares the run's one log (#1161).
       sessionDir = runDirectory;
       recordFile = join(runDirectory, RUN_HISTORY_KINDS.has(input.kind) ? RUN_HISTORY_FILE : RUN_STATE_KINDS.has(input.kind) ? RUN_STATE_FILE : RUN_LOG_FILE);

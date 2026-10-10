@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 
@@ -188,7 +189,8 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
   ]) {
     assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`);
   }
-  const sessionDirectory = join(runDirectory, "session");
+  // #1199: session originals stay under `<run>/session`.
+  const sessionDirectory = sessionDirectoryOf(runDirectory);
   if (!existsSync(sessionDirectory)) return;
   for (const entry of readdirSync(sessionDirectory)) {
     assert.equal(
@@ -200,15 +202,32 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
- * #1161 / #1165: what a run directory may hold at rest — the dossier files, the session volume,
- * and seat input files still written at admission — and none of the retired names.
+ * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
+ * (dossier + leg-local `receipts/` / `session/`). Sole list of the six;
+ * allowlist below spreads this and adds unbound / seat-only leaves.
+ */
+export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
+  "current.json",
+  "history.jsonl",
+  "log.jsonl",
+  "receipts",
+  "session",
+  "state.jsonl",
+] as const;
+
+/**
+ * Leaf names a run directory may hold at rest: bound six plus unbound
+ * staging `progress.jsonl` and seat input `merger-input.json`.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
+export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
+  ...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+  "progress.jsonl",
+  "merger-input.json",
+] as const;
+
 export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
-  const allowed = new Set([
-    "current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session",
-    "merger-input.json",
-  ]);
+  const allowed = new Set<string>(RUN_DIRECTORY_ALLOWED_ENTRIES);
   for (const entry of readdirSync(runDirectory)) {
     assert.equal(allowed.has(entry), true, `unexpected run directory entry: ${entry}`);
   }

@@ -1,16 +1,44 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
+import type { RoleEnvelopeHost } from "../../src/host-contracts.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-/** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
+/** Pi runner createContext() returns a fresh object per emit/tool (extensions runner). */
+function freshExtensionContext(cwd: string): ExtensionContext {
+  return {
+    cwd,
+    mode: "agent",
+    model: undefined,
+    sessionManager: {
+      getLeafEntry: () => undefined,
+      getLeafId: () => null,
+      getEntries: () => [],
+      getSessionDir: () => cwd,
+      getSessionFile: () => undefined,
+      getHeader: () => null,
+      setSessionFile() {},
+      appendCustomEntry() {},
+    },
+    abort() {},
+  } as unknown as ExtensionContext;
+}
+
+/** Minimal Pi surface: capture handlers / tools as the adapter registration path. */
 function piCapture() {
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => any>>();
+  let registeredTool: ToolDefinition | undefined;
   const pi = {
     on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
@@ -19,7 +47,9 @@ function piCapture() {
     getFlag() {
       return undefined;
     },
-    registerTool() {},
+    registerTool(tool: ToolDefinition) {
+      registeredTool = tool;
+    },
     getAllTools() {
       return [];
     },
@@ -29,23 +59,13 @@ function piCapture() {
     },
     sendMessage() {},
   };
-  const ctx = {
-    cwd: "/tmp/pi-adapter-agent-start",
-    mode: "agent",
-    model: undefined,
-    sessionManager: {
-      getLeafEntry: () => undefined,
-      getLeafId: () => null,
-      getEntries: () => [],
-      getSessionDir: () => "/tmp/pi-adapter-agent-start",
-      getSessionFile: () => undefined,
-      getHeader: () => null,
-      setSessionFile() {},
-      appendCustomEntry() {},
-    },
-    abort() {},
-  } as unknown as ExtensionContext;
-  return { pi: pi as unknown as ExtensionAPI, handlers, ctx };
+  const ctx = freshExtensionContext("/tmp/pi-adapter-agent-start");
+  return {
+    pi: pi as unknown as ExtensionAPI,
+    handlers,
+    ctx,
+    getRegisteredTool: () => registeredTool,
+  };
 }
 
 test("Pi adapter folds readingMaterial into provider systemPrompt and strips the typed field", async () => {
@@ -125,17 +145,38 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {
   const collision = encodeUserDialogueStdin("ACTUAL");
   const wrapped = encodeUserDialogueStdin(collision);
-  const { pi, handlers, ctx } = piCapture();
+  const { pi, handlers, getRegisteredTool } = piCapture();
   const adapter = createPiRoleHostAdapter(pi);
+  // Real runtime input chain after adapter unpack — legal JSON literal must not
+  // be re-parsed into a second transport layer (#1199 R2).
+  const envelopeHost: RoleEnvelopeHost = {
+    host: adapter.host,
+    appendEntry() {},
+    async sendMessage() {},
+    startKeepalive() {},
+    stopKeepalive() {},
+  };
+  createRoleRuntimeExtension({
+    loadRoleSoul: async () => "judge",
+  })(envelopeHost);
+
   const seenInputs: string[] = [];
   let seenPrompt: string | undefined;
   adapter.host.on("input", (event) => {
     seenInputs.push(event.text);
     return { action: "continue" as const };
   });
-  adapter.host.on("input", (event) => {
-    seenInputs.push(event.text);
-    return { action: "continue" as const };
+  adapter.host.registerTool({
+    name: "ak-probe-literal-summons",
+    label: "probe",
+    description: "read this-turn summons after adapter+runtime input",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _update, hostCtx) {
+      return {
+        content: [{ type: "text" as const, text: "ok" }],
+        details: { summonsInstruction: hostCtx.summonsInstruction },
+      };
+    },
   });
   adapter.host.on("before_agent_start", (event) => {
     seenPrompt = event.prompt;
@@ -144,19 +185,66 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
 
   const inputHandlers = handlers.get("input");
   assert.ok(inputHandlers);
+  const inputCtx = freshExtensionContext("/tmp/pi-adapter-literal-input");
   let inputEvent = { text: wrapped, source: "piped" };
   for (const inputHandler of inputHandlers) {
-    const result = await inputHandler(inputEvent, ctx);
+    const result = await inputHandler(inputEvent, inputCtx);
     if (result?.action === "transform") inputEvent = { ...inputEvent, text: result.text };
   }
-  assert.deepEqual(seenInputs, [collision, collision]);
+  // Adapter strips once; model-facing body stays the intact legal JSON literal.
+  assert.ok(seenInputs.length >= 1);
+  assert.ok(seenInputs.every((text) => text === collision));
   assert.equal(inputEvent.text, collision);
 
-  const startHandler = handlers.get("before_agent_start")?.[0];
-  assert.ok(startHandler);
-  await startHandler(
-    { prompt: collision, systemPrompt: "BASE", systemPromptOptions: {} },
-    ctx,
+  const tool = getRegisteredTool();
+  assert.ok(tool);
+  const toolCtx = freshExtensionContext("/tmp/pi-adapter-literal-tool") as ExtensionToolContext;
+  const toolResult = await tool.execute("probe-literal", {}, undefined, undefined, toolCtx);
+  // Structured progress field equals the caller's model-facing JSON literal.
+  assert.equal(
+    (toolResult.details as { summonsInstruction?: string } | undefined)?.summonsInstruction,
+    collision,
   );
+
+  const startHandlers = handlers.get("before_agent_start");
+  assert.ok(startHandlers && startHandlers.length > 0);
+  const startCtx = freshExtensionContext("/tmp/pi-adapter-literal-start");
+  let systemPrompt = "BASE";
+  for (const startHandler of startHandlers) {
+    const result = await startHandler(
+      { prompt: collision, systemPrompt, systemPromptOptions: {} },
+      startCtx,
+    );
+    if (result?.systemPrompt !== undefined) systemPrompt = result.systemPrompt;
+  }
   assert.equal(seenPrompt, collision);
+});
+
+test("#1199 Pi spawn env must not carry summons body (stdin already holds dialogue)", async () => {
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const host = createPiRoleTurnHost({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    spawnRunner: async (_args, options) => {
+      capturedEnv = options.env;
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  });
+  const huge = "x".repeat(200_000);
+  await host.executeTurn({
+    home: "/tmp/pi-summons-no-env-body",
+    agentDir: "/tmp/pi-summons-no-env-body/agent",
+    cwd: "/tmp/pi-summons-no-env-body/cwd",
+    runDirectory: "/tmp/pi-summons-no-env-body/run",
+    principal: fixturePrincipal("/tmp/pi-summons-no-env-body/session"),
+    activation: { role: "judge" },
+    methods: [],
+    continuation: { kind: "initial", prompt: huge },
+  });
+  assert.ok(capturedEnv);
+  assert.equal(capturedEnv.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(capturedEnv, "AK_ROLE_SUMMONS_INSTRUCTION"),
+    false,
+  );
 });

@@ -617,7 +617,10 @@ export async function resolveReviewSeatDialogueBody(input: {
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }
 
-async function resolveInitialPrompt(
+/**
+ * Initial host prompt for this turn (#1199: progress instruction = these bytes).
+ */
+async function resolveInitialTurnPrompt(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
 ): Promise<string> {
@@ -758,7 +761,7 @@ async function dispatchAdmitted(
     if (activeEnv.correlationId !== undefined && activeEnv.correlationId.trim() !== "") {
       await recordAdmittedCorrelation(admitted, activeEnv.correlationId);
     }
-    const initialPromptText = await resolveInitialPrompt(admitted, activeEnv);
+    const initialPrompt = await resolveInitialTurnPrompt(admitted, activeEnv);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
       // #1208: auto-resume resends this turn's actual content, never a filler phrase.
@@ -770,14 +773,14 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "initial",
-            prompt: initialPromptText,
+            prompt: initialPrompt,
           }),
         ),
         buildResumeRequest: () => buildInstructionSeatTurnRequest(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: initialPromptText,
+            prompt: initialPrompt,
           }),
         ),
         adapters,
@@ -792,7 +795,7 @@ async function dispatchAdmitted(
         admitted,
         roleTurnOptions(activeEnv, admitted, {
           kind: "initial",
-          prompt: initialPromptText,
+          prompt: initialPrompt,
         }),
       ),
       adapters,
@@ -931,7 +934,7 @@ function resumeSameParentInstructionSeat(input: {
 }
 
 /**
- * Same delivery rule as resolveInitialPrompt for same-parent resume summons.
+ * Same delivery rule as resolveInitialTurnPrompt for same-parent resume summons.
  * Shared resolver owns the input choice — callers only pass env fields.
  */
 async function sameParentDialogue(
@@ -1037,7 +1040,7 @@ async function runCountersignBody(
       // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
-        prompt: await resolveInitialPrompt(admitted, env),
+        prompt: await resolveInitialTurnPrompt(admitted, env),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({

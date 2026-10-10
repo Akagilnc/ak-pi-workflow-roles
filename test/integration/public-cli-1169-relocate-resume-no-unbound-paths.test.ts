@@ -116,6 +116,10 @@ async function sealTerminatingTurn(input: {
     role: input.role,
     details: input.details,
     toolCallId: input.toolCallId,
+    // #1199 J3: this-turn seal must tag the live courtAttemptId.
+    ...(input.request.courtAttemptId === undefined
+      ? {}
+      : { courtAttemptId: input.request.courtAttemptId }),
   });
 }
 
@@ -240,9 +244,12 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     const topLevel = new Set(await readdir(ticketRunDirectory));
-    for (const required of ["current.json", "history.jsonl", "state.jsonl", "log.jsonl", "session"]) {
+    for (const required of ["current.json", "history.jsonl", "state.jsonl", "log.jsonl"]) {
       assert.equal(topLevel.has(required), true, `topology requires ${required}`);
     }
+    // #1199: session originals stay under the leg (`<run>/session`).
+    const { sessionDirectoryOf } = await import("../../src/role-run-placement.ts");
+    assert.equal(existsSync(sessionDirectoryOf(ticketRunDirectory)), true, "topology requires leg session/");
     for (const forbidden of ["attachments", "fix-packet.md", "task.md", "prerequisites.json"]) {
       assert.equal(topLevel.has(forbidden), false, `topology forbids ${forbidden}`);
     }

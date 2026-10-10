@@ -44,44 +44,6 @@ export function createPiRoleRuntimeExtension(
   return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, options));
 }
 
-/** Project Pi's activation context onto the package-owned host contract. */
-function projectPiContext(context: ExtensionContext, transcriptFromContext?: (context: ExtensionContext) => string): HostContext {
-  const sessionManager = context.sessionManager as SessionManager;
-  const host: HostContext = {
-    cwd: context.cwd,
-    mode: context.mode,
-    model: context.model === undefined ? undefined : { provider: context.model.provider },
-    ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
-      ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
-      : {}),
-    ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
-      ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
-      : {}),
-    ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
-      ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
-      : {}),
-    ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
-      ? { host: process.env.AK_ROLE_HOST.trim() }
-      : {}),
-    sessionManager: {
-      getLeafEntry: () => context.sessionManager.getLeafEntry(),
-      getLeafId: () => context.sessionManager.getLeafId(),
-      getEntries: () => context.sessionManager.getEntries(),
-      getSessionDir: () => context.sessionManager.getSessionDir(),
-      getSessionFile: () => context.sessionManager.getSessionFile(),
-      getHeader: () => context.sessionManager.getHeader(),
-      setSessionFile: (path) => sessionManager.setSessionFile(path),
-      appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
-    },
-    ...(context.signal === undefined ? {} : { signal: context.signal }),
-    ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
-    ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
-    abort: () => context.abort(),
-  };
-  piContexts.set(host, context);
-  return host;
-}
-
 /** Recover the Pi context only at the Pi composition boundary. */
 export function toPiContext(context: HostContext): ExtensionContext {
   const piContext = piContexts.get(context);
@@ -157,10 +119,63 @@ export function createPiRoleHostAdapter(
   let beforeAgentStartHandlers = 0;
   // Parameters of registered terminating tools — the schema Pi was handed.
   const registeredToolParameters = new Map<string, unknown>();
-  // Decode transport exactly once before Pi's native handler chain. Pi retains
-  // its own transform/image propagation and per-handler error isolation.
+  // Pi createContext() is fresh per emit/tool (runner.js). Do not cache HostContext by
+  // ExtensionContext identity. Share only this-turn 传召词 / 催交 on the adapter instance;
+  // model and identity pointers stay live on each fresh projection (#1199).
+  let turnSummonsInstruction: string | undefined;
+  const transcriptFromContext = options.transcriptFromContext;
+  const projectPiContext = (context: ExtensionContext): HostContext => {
+    const sessionManager = context.sessionManager as SessionManager;
+    const host: HostContext = {
+      cwd: context.cwd,
+      mode: context.mode,
+      model: context.model === undefined ? undefined : { provider: context.model.provider },
+      ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
+        ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
+        : {}),
+      ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
+        ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
+        : {}),
+      ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
+        ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
+        : {}),
+      ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
+        ? { host: process.env.AK_ROLE_HOST.trim() }
+        : {}),
+      sessionManager: {
+        getLeafEntry: () => context.sessionManager.getLeafEntry(),
+        getLeafId: () => context.sessionManager.getLeafId(),
+        getEntries: () => context.sessionManager.getEntries(),
+        getSessionDir: () => context.sessionManager.getSessionDir(),
+        getSessionFile: () => context.sessionManager.getSessionFile(),
+        getHeader: () => context.sessionManager.getHeader(),
+        setSessionFile: (path) => sessionManager.setSessionFile(path),
+        appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
+      },
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+      ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
+      ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
+      abort: () => context.abort(),
+    };
+    // exactOptionalPropertyTypes: wire via accessors so undefined stays "absent value"
+    // while every fresh projection shares the adapter-instance turn field.
+    Object.defineProperty(host, "summonsInstruction", {
+      enumerable: true,
+      configurable: true,
+      get: () => turnSummonsInstruction,
+      set: (value: string | undefined) => {
+        turnSummonsInstruction = value;
+      },
+    });
+    piContexts.set(host, context);
+    return host;
+  };
+  // Decode transport exactly once before Pi's native handler chain. Progress
+  // instruction is the model-facing body (what the seat actually receives) —
+  // no parallel 传召词 channel. Every input refreshes the turn field.
   pi.on("input", (value) => {
     const text = readUserDialogueStdin(value.text);
+    turnSummonsInstruction = text;
     return text === value.text ? { action: "continue" } : { action: "transform", text };
   });
   const host: RoleHost = {
@@ -171,10 +186,7 @@ export function createPiRoleHostAdapter(
     getFlag: (name) => pi.getFlag(name),
     registerTool: (tool) => {
       registeredToolParameters.set(tool.name, tool.parameters);
-      return pi.registerTool(toPiToolDefinition(
-        tool,
-        (context) => projectPiContext(context, options.transcriptFromContext),
-      ));
+      return pi.registerTool(toPiToolDefinition(tool, projectPiContext));
     },
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
@@ -183,7 +195,7 @@ export function createPiRoleHostAdapter(
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
     on(...registration: HostEventRegistration) {
-      const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
+      const context = projectPiContext;
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
         const position = beforeAgentStartHandlers;

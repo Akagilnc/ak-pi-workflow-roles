@@ -34,11 +34,27 @@ export function parseRunLeaf(name: string): { readonly runId: string; readonly r
   return { runId: name.slice(0, at), role: name.slice(at + 1) };
 }
 
+export const ROLE_RUN_SESSION_FILENAME = "session.jsonl";
+
+/**
+ * Ticket or unbound subject directory owning a run under `<subject>/runs/<leaf>`.
+ * Used by ticket-progress relative paths — not a second session landing.
+ */
+export function subjectDirectoryOfRun(runDirectory: string): string | undefined {
+  const runsParent = dirname(runDirectory);
+  if (basename(runsParent) !== "runs") return undefined;
+  const subjectDirectory = dirname(runsParent);
+  const subjectName = basename(subjectDirectory);
+  if (subjectName === "unbound" || /^[1-9]\d*$/.test(subjectName)) {
+    return subjectDirectory;
+  }
+  return undefined;
+}
+
+/** #1199 / main: session originals stay under the leg — `<run>/session`. */
 export function sessionDirectoryOf(runDirectory: string): string {
   return join(runDirectory, "session");
 }
-
-export const ROLE_RUN_SESSION_FILENAME = "session.jsonl";
 
 export function sessionFileIn(sessionDirectory: string): string {
   return join(sessionDirectory, ROLE_RUN_SESSION_FILENAME);
@@ -177,5 +193,6 @@ export function ensureRoleRunPlacement(
   ledgerHome: string,
   placement: RoleRunPlacement,
 ): void {
+  ensureRoleRunDirectory(ledgerHome, placement.runDirectory);
   ensureRoleRunDirectory(ledgerHome, placement.sessionDirectory);
 }

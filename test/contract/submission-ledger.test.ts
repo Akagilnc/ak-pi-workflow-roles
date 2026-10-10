@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -19,6 +19,10 @@ import {
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../../src/submission-ledger.ts";
+import {
+  readTicketProgressLines,
+} from "../../src/ticket-progress.ts";
+import { join } from "node:path";
 
 /** Sole unbound run path for this fixture (docs/dossier-topology.md no-ticket nest). */
 function fixtureUnboundRunDirectory(root: string, runLeaf: string): string {
@@ -169,32 +173,86 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
 
 test("one turn two submissions → two ledger rows; original payload returned; no abort (#836)", async () => {
   await withLedgerFixture(async (f) => {
+    f.context.summonsInstruction = "first summons for two-seal progress";
     await f.start("first");
-    const firstPayload = { status: "converged" };
+    const firstPayload = {
+      status: "converged",
+      summary: "first sealed summary text here ok",
+      unknownKept: "literal-extra-field",
+    };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.equal(first.terminate, true);
     assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       { role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first" },
     ]);
+    // #1199: each seal lands progress immediately — no post-turn history pick.
+    const unbound = join(f.root, ".ak-roles", "books", "fixture", "unbound");
+    assert.equal(readTicketProgressLines(unbound).length, 1);
+
+    // Torn/corrupt append-only progress must not block the next seal (dossier posture).
+    const runDirectory = f.context.runDirectory;
+    assert.ok(runDirectory, "ledger fixture must admit a run directory");
+    const progressPath = join(runDirectory, "progress.jsonl");
+    assert.equal(existsSync(progressPath), true);
+    await appendFile(progressPath, "{not-json-torn-line\n", "utf8");
+    // Valid HEAD so a non-empty stderr capture cannot be an unrelated rev-parse fault.
+    execFileSync(
+      "git",
+      ["-c", "user.name=Ledger Test", "-c", "user.email=ledger@test.invalid", "commit", "--allow-empty", "-m", "ak-roles: ledger fixture head"],
+      { cwd: f.root },
+    );
+    const stderrChunks: Buffer[] = [];
+    const previousWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+      stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : Buffer.from(chunk));
+      return (previousWrite as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof process.stderr.write;
 
     // Second submission on the same attempt records again — no seal throw.
-    const secondDetails = { status: "continue", report: "more" };
+    const secondDetails = { status: "continue", report: "more", summary: "second sealed summary text here ok" };
     const secondHost = registerTool(
       f.root,
       async () => ({ content: [], details: secondDetails, terminate: true }),
     );
-    await secondHost.start("second");
-    const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
-    assert.deepEqual(accepted2.details, secondDetails);
-    assert.equal(accepted2.terminate, true);
+    secondHost.context.summonsInstruction = "second summons for two-seal progress";
+    try {
+      await secondHost.start("second");
+      const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
+      assert.deepEqual(accepted2.details, secondDetails);
+      assert.equal(accepted2.terminate, true);
+    } finally {
+      process.stderr.write = previousWrite;
+    }
 
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 2);
-    assert.deepEqual(all[0], { status: "converged" });
+    assert.deepEqual(all[0], firstPayload);
     assert.deepEqual(all[1], secondDetails);
     assert.equal(f.deliveredRejections.length, 0);
     assert.equal(secondHost.deliveredRejections.length, 0);
+
+    const lines = readTicketProgressLines(unbound).filter((line) => line.seat === "judge");
+    assert.equal(lines.length, 2);
+    // Unbound staging: round empty until whole-leg bind publishes into ticket current.
+    assert.equal(lines[0]!.round, "");
+    assert.equal(lines[1]!.round, "");
+    assert.equal(lines[0]!.instruction, "first summons for two-seal progress");
+    assert.equal(lines[1]!.instruction, "second summons for two-seal progress");
+    assert.equal(existsSync(join(unbound, lines[0]!.receipt)), true);
+    assert.equal(existsSync(join(unbound, lines[1]!.receipt)), true);
+    assert.ok(lines[0]!.receipt.endsWith("/receipts/1.json"), lines[0]!.receipt);
+    assert.ok(lines[1]!.receipt.endsWith("/receipts/2.json"), lines[1]!.receipt);
+    // Whole sealed JSON retained — unknown fields survive (票面原样回执).
+    assert.deepEqual(
+      JSON.parse(await readFile(join(unbound, lines[0]!.receipt), "utf8")),
+      firstPayload,
+    );
+    // Channel exists after excluding HEAD fault — do not lock diagnostic free text.
+    assert.ok(
+      Buffer.concat(stderrChunks).byteLength > 0,
+      "torn progress must emit stderr diagnostic bytes",
+    );
   });
 });
 

@@ -1370,7 +1370,7 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       runDir: string,
       page: Record<string, unknown>,
     ): Promise<void> {
-      await mkdir(join(runDir, "session"), { recursive: true });
+      await mkdir(sessionDirectoryOf(runDir), { recursive: true });
       seedCurrentSection(runDir, "admitted", page);
       seedCurrentSection(runDir, "invocation", { runDirectory: runDir });
     }
@@ -1949,7 +1949,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     );
 
     // Relocation keeps both attempts in the package ledger, not the host original.
-    const relocatedSessionFile = join(ticketPlacement.runDirectory, "session", "session.jsonl");
+    const relocatedSessionFile = sessionFileOf(ticketPlacement.runDirectory);
     const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
     assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
     const attemptHistory = historyPayloads<{
@@ -2024,7 +2024,7 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
       {
         afterReask: async () => {
           await writeFile(
-            join(unboundPlacement.runDirectory, "session", "session.jsonl"),
+            sessionFileOf(unboundPlacement.runDirectory),
             `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,
             "utf8",
           );

@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { activationBookDirectory, physicalPathIdentity } from "./activation-ledger-topology.ts";
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import { roleRunPlacement, sessionDirectoryOf } from "./role-run-placement.ts";
 import {
   INVOCATION_PAGE_PATH_FIELDS,
   PRINCIPAL_SESSION_PATH_FIELDS,
@@ -267,7 +267,7 @@ async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  const sessionRoot = join(pagesDirectory, "session");
+  const sessionRoot = sessionDirectoryOf(pagesDirectory);
   async function walk(directory: string): Promise<void> {
     let entries;
     try {

@@ -124,4 +124,3 @@ export function runIdFromRunDirectory(runDirectory: string): string | undefined 
 export function roleFromRunDirectory(runDirectory: string): string | undefined {
   return parseRunLeaf(basename(runDirectory))?.role;
 }
-

@@ -1,4 +1,6 @@
 import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
@@ -275,7 +277,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      // #1199 leg-local session/ via placement helpers.
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
@@ -421,7 +424,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           "unbound", "runs",
           `${runId}@judge`,
         );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must survive a later persist failure",
@@ -489,7 +492,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.ok(result.terminal);
       assert.equal(result.terminal!.autoResumeCount, 0);
       assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -518,7 +521,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
         { "history.jsonl": "EISDIR" },
@@ -593,7 +596,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       "unbound", "runs",
       `${runId}@judge`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     // Simulate a resumable run-state written before sessionFile was persisted.
     const legacyState = readCurrentSection(runDirectory, "runState");
     delete legacyState.sessionFile;
@@ -680,7 +683,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
     // Resume reopens the pre-relocate principal; seal ticketNumber then relocates.
-    assert.equal(durable?.sessionFile, join(liveRunDirectory, "session", "session.jsonl"));
+    assert.equal(durable?.sessionFile, sessionFileOf(liveRunDirectory));
     assert.deepEqual([...openedPrincipals], [
       join(sessionDirectory, "session.jsonl"),
     ]);
@@ -1136,7 +1139,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
         const liveRunDirectory =
           (await findRunDirectoryById(home, runId)) ?? runDirectory;
-        const entries = (await readFile(join(liveRunDirectory, "session", "session.jsonl"), "utf8"))
+        const entries = (await readFile(sessionFileOf(liveRunDirectory), "utf8"))
           .trim()
           .split("\n")
           .filter(Boolean)
@@ -1408,7 +1411,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
     assert.equal(
-      durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"),
+      durable.sessionFile.endsWith("/host-issued-principal.jsonl"),
       true,
       durable.sessionFile,
     );
@@ -1458,7 +1461,16 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
     const after = await readRoleRunState(liveRunDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
-    assert.equal(after?.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
+    assert.equal(after?.sessionFile.endsWith("/host-issued-principal.jsonl"), true);
+    // #1199: progress consumer must use the same host-issued coordinate (not session.jsonl default).
+    const ticketSubject = join(home, ".ak-roles", "books", bookKey, "1171");
+    const progress = readTicketProgressLines(ticketSubject).filter((line) => line.seat === "judge");
+    assert.equal(progress.length, 1);
+    assert.ok(
+      progress[0]!.session.endsWith("host-issued-principal.jsonl"),
+      progress[0]!.session,
+    );
+    assert.equal(existsSync(join(ticketSubject, progress[0]!.session)), true);
   });
 });
 
@@ -1477,7 +1489,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       "unbound", "runs",
       `${runId}@judge`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
     seedCurrentSection(runDirectory, "admitted", {
@@ -1580,16 +1592,16 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         },
         }),
       });
-      const sessionDirectory = join(
+      const runDirectory = join(
         home,
         ".ak-roles",
         "books",
         resolveBookKeyFromGit(project),
         "unbound", "runs",
         `${runId}@${role}`,
-        "session",
       );
-      return { sessionDirectory, sessionFile: join(sessionDirectory, "session.jsonl") };
+      const sessionDirectory = sessionDirectoryOf(runDirectory);
+      return { sessionDirectory, sessionFile: sessionFileOf(runDirectory) };
     }
 
     const cases: ReadonlyArray<{
@@ -1715,7 +1727,7 @@ test("public resume failures persist structured diagnostics", async () => {
         readonly correlationId?: string;
       }) {
         const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
-        const sessionDirectory = join(runDirectory, "session");
+        const sessionDirectory = sessionDirectoryOf(runDirectory);
         const sessionFile = join(sessionDirectory, "session.jsonl");
         await mkdir(sessionDirectory, { recursive: true });
         if (input.session) await writeFile(sessionFile, "\n", "utf8");

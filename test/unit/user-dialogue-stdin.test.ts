@@ -27,6 +27,9 @@ test("#879 typed stdin recovers original body after pipe trim", () => {
   assert.equal(readUserDialogueStdin(encoded), body);
   assert.equal(readUserDialogueStdin(`  ${encoded}  \n`), body);
   assert.equal(readUserDialogueStdin(encoded.trim()), body);
+  // #1199: progress instruction is the same body bytes (file-flag wrap included).
+  const transport = "caller body only\n\n--attach /tmp/x.json";
+  assert.equal(readUserDialogueStdin(encodeUserDialogueStdin(transport)), transport);
 });
 
 test("#879 typed stdin keeps empty and flag-like opaque messages", () => {
