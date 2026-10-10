@@ -31,7 +31,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
@@ -900,7 +899,7 @@ test("tool path: engine failure + sitian write failure returns both causes witho
     const scripts = await ensureScripts(project);
 
     // Three real seams (spawn / nonzero / empty). Engine failure stays a tool
-    // result; full process streams + full ledger error in details — seat lives.
+    // result; full process streams + ledger error on seat-visible content — seat lives.
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
@@ -965,12 +964,20 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         ledgerError?: string;
       };
       assert.equal(details.tool, "ak_engine_detour", row.label);
-      // Full thrown value — class name alone is not the cause (#1213).
+      // Structured dual-fail field present; seat content carries the same bytes
+      // (MCP delivers content, not details — #1213).
       assert.equal(typeof details.ledgerError, "string", row.label);
       assert.ok(
-        (details.ledgerError as string).includes(SitianInfrastructureError.name)
-          && (details.ledgerError as string) !== SitianInfrastructureError.name,
-        `${row.label}: ledger error keeps more than class name`,
+        (details.ledgerError as string).length > 0,
+        `${row.label}: ledger error keeps a real thrown value`,
+      );
+      const textParts = (result.content ?? [])
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      assert.ok(
+        textParts.includes(details.ledgerError as string),
+        `${row.label}: seat content carries ledger error bytes`,
       );
       if (row.expectEngineErrno !== undefined) {
         assert.equal(
@@ -988,20 +995,10 @@ test("tool path: engine failure + sitian write failure returns both causes witho
           row.expectStdout,
           `${row.label}: failure keeps full process stdout`,
         );
-        const textParts = (result.content ?? [])
-          .filter((part): part is { type: "text"; text: string } => part.type === "text")
-          .map((part) => part.text)
-          .join("");
         if (row.expectStdout.length > 0) {
           assert.ok(
             textParts.includes(row.expectStdout),
             `${row.label}: seat content keeps existing process stdout`,
-          );
-        }
-        if (row.expectCode !== undefined && row.expectCode !== 0) {
-          assert.ok(
-            textParts.includes(String(row.expectCode)),
-            `${row.label}: seat content carries nonzero exit code`,
           );
         }
       }

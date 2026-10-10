@@ -99,8 +99,15 @@ function engineFailureResult(input: {
     ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
     ...(input.ledgerError === undefined ? {} : { ledgerError: input.ledgerError }),
   };
+  // MCP / invokeAkTool deliver content only — dual-fail ledger cause must ride
+  // the seat-visible content channel, not details alone (#1213).
+  let text = input.text;
+  if (input.ledgerError !== undefined && input.ledgerError.length > 0) {
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
+    text += input.ledgerError;
+  }
   return {
-    content: [{ type: "text" as const, text: input.text }],
+    content: [{ type: "text" as const, text }],
     details,
   };
 }

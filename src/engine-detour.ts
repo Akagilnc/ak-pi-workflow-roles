@@ -156,8 +156,9 @@ export function isEngineDetourFailure(result: {
 /**
  * Seat-visible failure text for the same-session tool result (#1213).
  * Preserve full stdout and stderr — no last-line excerpt, no stderr-only swap
- * that drops existing labor output. Exit code is attached only when streams
- * alone would hide a nonzero failure. Fully-empty output → stable fallback.
+ * that drops existing labor output. Nonzero exit code and empty-stdout failure
+ * reasons also ride this content channel (MCP delivers content, not details).
+ * Fully-empty output → stable fallback.
  */
 export function engineDetourFailureSeatText(result: {
   stderr: string;
@@ -184,6 +185,12 @@ export function engineDetourFailureSeatText(result: {
   if (result.code !== 0) {
     if (!text.endsWith("\n")) text += "\n";
     text += `劳务引擎以 code ${result.code} 退出`;
+  }
+  // Empty stdout is itself a failure reason under isEngineDetourFailure; do not
+  // let a present stderr hide that fact on the seat-visible channel.
+  if (!outUseful) {
+    if (!text.endsWith("\n")) text += "\n";
+    text += ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
   }
   return text;
 }
