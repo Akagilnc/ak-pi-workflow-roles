@@ -348,8 +348,10 @@ export function relocateTicketProgressForLeg(input: {
           `ticket progress relocate refuses to overwrite session ${newSibling} with ${oldSibling}`,
         );
       }
-      cpSync(oldSibling, newSibling, { recursive: true });
+      // Track before copy: mid-cpSync failure must still roll back the destination
+      // so retry is not blocked by existsSync(newSibling).
       stagedCopies.push(newSibling);
+      cpSync(oldSibling, newSibling, { recursive: true });
       sourcesToRemove.push(oldSibling);
     }
 
@@ -363,8 +365,13 @@ export function relocateTicketProgressForLeg(input: {
       const oldReceiptAbs = join(oldSubject, line.receipt);
       if (existsSync(oldReceiptAbs)) {
         mkdirSync(dirname(absolutePath), { recursive: true });
-        copyFileSync(oldReceiptAbs, absolutePath);
+        if (existsSync(absolutePath)) {
+          throw new Error(
+            `ticket progress relocate refuses to overwrite receipt ${absolutePath} with ${oldReceiptAbs}`,
+          );
+        }
         stagedCopies.push(absolutePath);
+        copyFileSync(oldReceiptAbs, absolutePath);
         sourcesToRemove.push(oldReceiptAbs);
       }
       const moved: TicketProgressLine = {
@@ -389,7 +396,12 @@ export function relocateTicketProgressForLeg(input: {
     }
   } catch (error) {
     // Partial copy / failed append: destinations are not yet authoritative.
-    rollbackStagedCopies();
+    // Rollback must not mask the relocate failure.
+    try {
+      rollbackStagedCopies();
+    } catch {
+      // ignore cleanup errors
+    }
     throw error;
   }
 
