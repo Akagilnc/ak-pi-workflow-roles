@@ -1872,7 +1872,7 @@ export function appendCallerFileFlagPaths(
  * One initial prompt transport. The registry `transportPrompt` leaf selects
  * a bound baseline or skill args. Absent means the caller instruction plus
  * caller file-flag paths (ADR 0087). Notary dialogue is owned by
- * resolveReviewSeatDialogueBody (fixed dispatch), not an empty transport leaf.
+ * resolveReviewSeatDialogueBody (review fixed dispatch), not an empty transport leaf.
  * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(

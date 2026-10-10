@@ -1715,7 +1715,7 @@ export function resumeTurnRequestProjectionOptions(
       ? body
       : appendCallerFileFlagPaths(body, fileFlags);
   } else if (request.summons !== undefined) {
-    // Same-ticket summons without prepared dialogue. Notary always fills via
+    // Same-ticket summons without prepared dialogue. Notary review fills via
     // resolveReviewSeatDialogueBody (#1208); other seats carry parent/caller words.
     prompt = "";
   } else {

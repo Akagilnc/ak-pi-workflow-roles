@@ -528,15 +528,17 @@ async function loadLedgerPeerBody(
   return readableGateItem(latest.accepted);
 }
 
-/** Owner-approved fixed Notary dispatch (2026-10-09 #1208); never the parent verdict. */
+/** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */
 export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
 
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
- * (#1166 / ADR 0085 / ADR 0087 / #1208): notary always fixed dispatch; other seats
- * prefer format reask, then gate body, then caller dispatch, then ledger peer.
- * Identity stays in startup materials. Notary never takes reask/gate/caller as
- * dialogue — budgets, receipts, and diagnostic presentation stay elsewhere.
+ * (#1166 / ADR 0085 / ADR 0087 / #1208): notary review uses fixed dispatch;
+ * notary operational reasks (#1171 missing-ticket, unreadable status) deliver
+ * this-round reviewReask or summons/caller body; other seats prefer format
+ * reask, then gate body, then caller dispatch, then ledger peer.
+ * Identity stays in startup materials. Notary never takes gate/parent verdict
+ * as dialogue (gateReviewInstruction stays unread for notary).
  */
 export async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
@@ -547,8 +549,14 @@ export async function resolveReviewSeatDialogueBody(input: {
   readonly projectRoot: string;
   readonly home: string;
 }): Promise<string | undefined> {
-  // #1208: fixed dispatch for every notary delivery path (incl. internal reask).
-  if (input.role === "notary") return NOTARY_FIXED_DISPATCH;
+  // #1208 revised: fixed sentence is the review function only (owner 37bfe80d /
+  // 393daf98). Operational reasks keep their own text; parent/gate body stays out.
+  if (input.role === "notary") {
+    if (input.reviewReask !== undefined) return input.reviewReask;
+    const thisRound = input.callerInstruction;
+    if (thisRound !== undefined && thisRound.length > 0) return thisRound;
+    return NOTARY_FIXED_DISPATCH;
+  }
   const preferred = input.reviewReask ?? input.gateReviewInstruction;
   if (preferred !== undefined && preferred.length > 0) return preferred;
   const caller = input.callerInstruction ?? "";

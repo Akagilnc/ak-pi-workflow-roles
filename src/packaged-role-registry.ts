@@ -294,7 +294,7 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    /** Dialogue via shared resolveReviewSeatDialogueBody (fixed notary dispatch). */
+    /** Dialogue via shared resolveReviewSeatDialogueBody (review = fixed dispatch). */
     reaskPrompt: true,
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */
