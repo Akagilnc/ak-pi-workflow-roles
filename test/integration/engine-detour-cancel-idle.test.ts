@@ -1,7 +1,7 @@
 /**
- * Detour cancellation propagation + spawn-miss cause seam + silent-idle survival.
- * Narrow call-input only — does NOT cover public-CLI empty-output / exit-23 cause
- * 贯穿 or the full engine-detour failure table (C3 #685 §D 未结).
+ * Detour cancellation propagation + spawn-miss result seam + silent-idle survival.
+ * Engine process failure returns to the seat (#1213); does NOT cover public-CLI
+ * empty-output / exit-23 cause 贯穿 or the full engine-detour failure table.
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
  */
 import assert from "node:assert/strict";
@@ -53,7 +53,6 @@ test("detour caller AbortSignal cancel propagates unchanged", async () => {
   await withHangCwd(async (cwd, argv) => {
     const tool = createEngineDetourToolDefinition({
       engineName: "kimi",
-      fail(error) { throw error; },
     });
     const controller = new AbortController();
     const pending = tool.execute("call-1", { argv }, controller.signal, undefined, fakeCtx(cwd));
@@ -63,18 +62,49 @@ test("detour caller AbortSignal cancel propagates unchanged", async () => {
   });
 });
 
-test("detour spawn failure stops through the cause-bearing failure seam", async () => {
-  const tool = createEngineDetourToolDefinition({
-    engineName: "kimi",
-    fail(error) { throw error; },
-  });
+test("detour spawn failure returns cause-bearing result without aborting the seat", async () => {
+  const tool = createEngineDetourToolDefinition({ engineName: "kimi" });
   await withTempRoot("ak-detour-spawn-miss-", async (cwd) => {
-    await assert.rejects(
-      tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),
-      (error: unknown) => error instanceof Error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT",
+    const result = await tool.execute(
+      "call-spawn-miss",
+      { argv: ["ak-engine-definitely-missing-binary-xyz"] },
+      undefined,
+      undefined,
+      fakeCtx(cwd),
     );
-    });
+    assert.ok(Array.isArray(result.content) && result.content.length > 0);
+    assert.equal(result.isError, true, "identified spawn failure is a tool error");
+    const details = result.details as { tool?: string; errorCode?: string };
+    assert.equal(details.tool, "ak_engine_detour");
+    assert.equal(details.errorCode, "ENOENT");
+  });
+});
+
+test("detour empty or invalid argv returns parameter error without aborting the seat", async () => {
+  const tool = createEngineDetourToolDefinition({ engineName: "kimi" });
+  await withTempRoot("ak-detour-argv-", async (cwd) => {
+    const cases: Array<{ label: string; params: Record<string, unknown> }> = [
+      { label: "empty-array", params: { argv: [] } },
+      { label: "empty-string-element", params: { argv: [""] } },
+      { label: "missing-argv", params: {} },
+    ];
+    for (const row of cases) {
+      const result = await tool.execute(
+        `call-argv-${row.label}`,
+        row.params as { argv: string[] },
+        undefined,
+        undefined,
+        fakeCtx(cwd),
+      );
+      assert.ok(
+        Array.isArray(result.content) && result.content.length > 0,
+        `${row.label}: parameter error returns tool content`,
+      );
+      assert.equal(result.isError, true, `${row.label}: parameter error is a tool error`);
+      const details = result.details as { tool?: string };
+      assert.equal(details.tool, "ak_engine_detour", row.label);
+    }
+  });
 });
 
 test("silent detour child is not cut by a package-owned tool idle backstop", async (t) => {
@@ -82,9 +112,6 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
   await withHangCwd(async (cwd, argv) => {
     const tool = createEngineDetourToolDefinition({
         engineName: "opus",
-        fail(error) {
-          throw error;
-        },
       });
       const controller = new AbortController();
       const pending = tool.execute(

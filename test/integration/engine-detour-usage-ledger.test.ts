@@ -31,7 +31,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
@@ -62,7 +61,7 @@ const JUDGE_ACCEPTED = { status: "converged" as const, ticketNumber: 1171 };
 const ECHO_STDOUT = "你好";
 const ECHO_STDOUT_BYTES = Buffer.byteLength(ECHO_STDOUT, "utf8");
 
-type DetourKind = "ok" | "spawn" | "nonzero" | "empty";
+type DetourKind = "ok" | "spawn" | "nonzero" | "empty" | "invalid";
 
 type TurnPlan = {
   readonly detours?: readonly {
@@ -97,7 +96,13 @@ async function ensureScripts(project: string): Promise<{
   const nonzero = join(project, "detour-nonzero.mjs");
   const empty = join(project, "detour-empty.mjs");
   await writeFile(echo, `process.stdout.write(${JSON.stringify(ECHO_STDOUT)})\n`, "utf8");
-  await writeFile(nonzero, 'process.stdout.write("partial"); process.exit(2);\n', "utf8");
+  // Nonzero + stderr is the common engine-failure shape; seat content must
+  // still carry the exit code (not details-only) alongside full streams.
+  await writeFile(
+    nonzero,
+    'process.stdout.write("partial"); process.stderr.write("engine-warn"); process.exit(2);\n',
+    "utf8",
+  );
   await writeFile(empty, "process.exit(0);\n", "utf8");
   return { echo, nonzero, empty };
 }
@@ -125,43 +130,29 @@ async function runDetours(input: {
       ...(input.host === undefined ? {} : { host: input.host }),
     };
 
-    if (call.kind === "ok") {
-      const tool = createEngineDetourToolDefinition({
-        engineName: ENGINE,
-        fail(error) {
-          throw error;
-        },
-      });
-      await tool.execute(
-        call.toolCallId,
-        { argv: [process.execPath, scripts.echo] },
-        undefined,
-        undefined,
-        ctx,
-      );
-      continue;
-    }
-
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
-      fail(error) {
-        throw error;
-      },
     });
-    const argv =
-      call.kind === "spawn"
-        ? ["ak-engine-definitely-missing-binary-xyz-537"]
-        : call.kind === "nonzero"
-          ? [process.execPath, scripts.nonzero]
-          : [process.execPath, scripts.empty];
-    await assert.rejects(
-      tool.execute(
-        call.toolCallId,
-        { argv },
-        undefined,
-        undefined,
-        ctx,
-      ),
+    const params =
+      call.kind === "invalid"
+        ? { argv: [] as string[] }
+        : {
+            argv:
+              call.kind === "ok"
+                ? [process.execPath, scripts.echo]
+                : call.kind === "spawn"
+                  ? ["ak-engine-definitely-missing-binary-xyz-537"]
+                  : call.kind === "nonzero"
+                    ? [process.execPath, scripts.nonzero]
+                    : [process.execPath, scripts.empty],
+          };
+    // Engine process failure returns to the seat; it must not reject/abort.
+    await tool.execute(
+      call.toolCallId,
+      params,
+      undefined,
+      undefined,
+      ctx,
     );
   }
 }
@@ -456,6 +447,18 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         expectCallCount: 1,
         expectToolCallId: "c-empty",
       },
+      {
+        // Parameter-error execute still books the call; no forged process metrics
+        // (same shape as spawn — duration only).
+        label: "accepted-invalid-argv",
+        plan: {
+          detours: [{ toolCallId: "c-invalid", kind: "invalid" }],
+          terminal: { kind: "accepted" },
+        },
+        expectKind: "accepted",
+        expectCallCount: 1,
+        expectToolCallId: "c-invalid",
+      },
     ];
 
     for (const row of rows) {
@@ -487,7 +490,10 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         );
         assert.deepEqual(objectPayloads(result.terminal.roleOutcome), [JUDGE_ACCEPTED]);
       }
-      if (row.label === "failure-coexist-spawn") {
+      if (
+        row.label === "failure-coexist-spawn"
+        || row.label === "accepted-invalid-argv"
+      ) {
         assert.equal(usage.calls[0] !== undefined && "code" in usage.calls[0], false);
         assert.equal(
           usage.calls[0] !== undefined && "stdoutByteLength" in usage.calls[0],
@@ -909,18 +915,28 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
   });
 });
 
-test("tool path: engine failure + sitian write failure keeps both causes via AggregateError", async () => {
+test("tool path: engine failure + sitian write failure returns both causes without aborting", async () => {
   await withHermeticHome({ prefix: "ak-detour-dual-fail-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     const scripts = await ensureScripts(project);
 
-    // Three real seams (spawn / nonzero / empty). Assert only AggregateError
-    // structured causality — never Error.name/message prose (anchoring constitution).
+    // Four real seams (spawn / nonzero / empty / whitespace-only). Engine failure
+    // stays a tool result; full process streams + ledger error on seat-visible
+    // content — seat lives. Whitespace-only is still received output (#1213).
+    const whitespace = join(project, "detour-whitespace.mjs");
+    await writeFile(
+      whitespace,
+      'process.stdout.write(" \\t\\n"); process.stderr.write("\\r\\n"); process.exit(23);\n',
+      "utf8",
+    );
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
       readonly expectEngineErrno?: string;
+      readonly expectCode?: number;
+      readonly expectStdout?: string;
+      readonly expectStderr?: string;
     }> = [
       {
         label: "spawn",
@@ -930,10 +946,21 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
       {
         label: "nonzero",
         argv: [process.execPath, scripts.nonzero],
+        expectCode: 2,
+        expectStdout: "partial",
       },
       {
         label: "empty",
         argv: [process.execPath, scripts.empty],
+        expectCode: 0,
+        expectStdout: "",
+      },
+      {
+        label: "whitespace",
+        argv: [process.execPath, whitespace],
+        expectCode: 23,
+        expectStdout: " \t\n",
+        expectStderr: "\r\n",
       },
     ];
 
@@ -944,14 +971,11 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
 
       const tool = createEngineDetourToolDefinition({
         engineName: ENGINE,
-        fail(error) {
-          throw error;
-        },
       });
 
-      let thrown: unknown;
+      let result: Awaited<ReturnType<typeof tool.execute>> | undefined;
       try {
-        await tool.execute(
+        result = await tool.execute(
           `dual-fail-${row.label}`,
           { argv: row.argv },
           undefined,
@@ -965,36 +989,75 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
             host: "codex",
           },
         );
-      } catch (error) {
-        thrown = error;
       } finally {
         await chmod(blockedSession, 0o644).catch(() => undefined);
       }
 
-      assert.ok(thrown instanceof AggregateError, `${row.label}: expected AggregateError`);
-      const aggregate = thrown as AggregateError;
-      assert.ok(
-        aggregate.errors.length >= 2,
-        `${row.label}: both engine and ledger failures required`,
-      );
-      const engineCause = aggregate.errors[0];
-      const ledgerCause = aggregate.errors[1];
+      assert.ok(result, `${row.label}: engine failure returns a tool result`);
       assert.equal(
-        aggregate.cause,
-        engineCause,
-        `${row.label}: AggregateError.cause must keep the engine object identity`,
+        result.isError,
+        true,
+        `${row.label}: identified engine failure is a tool error`,
       );
-      assert.ok(engineCause instanceof Error, `${row.label}: engine cause is Error`);
+      const details = result.details as {
+        tool?: string;
+        code?: number;
+        stdout?: string;
+        stderr?: string;
+        errorCode?: string;
+        ledgerError?: string;
+      };
+      assert.equal(details.tool, "ak_engine_detour", row.label);
+      // Structured dual-fail field present; seat content carries the same bytes
+      // (MCP delivers content, not details — #1213).
+      assert.equal(typeof details.ledgerError, "string", row.label);
       assert.ok(
-        ledgerCause instanceof SitianInfrastructureError,
-        `${row.label}: ledger cause is SitianInfrastructureError`,
+        (details.ledgerError as string).length > 0,
+        `${row.label}: ledger error keeps a real thrown value`,
+      );
+      const textParts = (result.content ?? [])
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      assert.ok(
+        textParts.includes(details.ledgerError as string),
+        `${row.label}: seat content carries ledger error bytes`,
       );
       if (row.expectEngineErrno !== undefined) {
         assert.equal(
-          (engineCause as NodeJS.ErrnoException).code,
+          details.errorCode,
           row.expectEngineErrno,
           `${row.label}: spawn seam keeps structured errno`,
         );
+      }
+      if (row.expectCode !== undefined) {
+        assert.equal(details.code, row.expectCode, row.label);
+      }
+      if (row.expectStdout !== undefined) {
+        assert.equal(
+          details.stdout,
+          row.expectStdout,
+          `${row.label}: failure keeps full process stdout`,
+        );
+        if (row.expectStdout.length > 0) {
+          assert.ok(
+            textParts.includes(row.expectStdout),
+            `${row.label}: seat content keeps existing process stdout`,
+          );
+        }
+      }
+      if (row.expectStderr !== undefined) {
+        assert.equal(
+          details.stderr,
+          row.expectStderr,
+          `${row.label}: failure keeps full process stderr`,
+        );
+        if (row.expectStderr.length > 0) {
+          assert.ok(
+            textParts.includes(row.expectStderr),
+            `${row.label}: seat content keeps existing process stderr`,
+          );
+        }
       }
     }
   });

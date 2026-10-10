@@ -9,6 +9,13 @@ type HostSessionEntry = { type: string; message?: HostMessage };
 export type HostToolResult<T = unknown> = {
   content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
   details: T;
+  /**
+   * Native tool-failure flag (Pi AgentToolResult.isError). Resolved execute
+   * results that already identify failure must set this true — describing the
+   * failure only in content is not enough. Seat-run death stays a separate
+   * infrastructure path (details.cause / kind), not this bit.
+   */
+  isError?: boolean;
   terminate?: boolean;
 };
 

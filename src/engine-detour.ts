@@ -154,27 +154,44 @@ export function isEngineDetourFailure(result: {
 }
 
 /**
- * Diagnostic string for shared settlement / Terminal Error Artifact (#395).
- * Prefer engine stderr 原样; whitespace-only/empty stderr with stdout body must
- * carry the child's last result/error row verbatim (e.g. a 529 API Error row) —
- * never swallow the cause behind an exit code. Fully-empty output → stable fallback.
+ * Seat-visible failure text for the same-session tool result (#1213).
+ * Preserve every received stream byte (including whitespace-only) — failure
+ * predicates use trim, but content conservation does not. Nonzero exit and
+ * empty-stdout reasons also ride this content channel (MCP delivers content,
+ * not details). Fully-empty streams → diagnostics only.
  */
-export function engineDetourFailureDiagnostic(result: {
+export function engineDetourFailureSeatText(result: {
   stderr: string;
   code: number;
   stdout: string;
 }): string {
-  if (result.stderr.trim().length > 0) return result.stderr;
-  if (result.stdout.trim() === "") return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
-  const rows = result.stdout.split("\n");
-  let lastRow = "";
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (rows[index]!.trim() !== "") {
-      lastRow = rows[index]!;
-      break;
+  // Length, not trim: whitespace-only streams still reach the seat.
+  const parts: string[] = [];
+  if (result.stdout.length > 0) parts.push(result.stdout);
+  if (result.stderr.length > 0) parts.push(result.stderr);
+  let text = "";
+  if (parts.length > 0) {
+    text = parts[0]!;
+    for (let index = 1; index < parts.length; index += 1) {
+      if (!text.endsWith("\n")) text += "\n";
+      text += parts[index]!;
     }
   }
-  return `劳务引擎以 code ${result.code} 退出：${lastRow}`;
+  const append = (line: string): void => {
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
+    text += line;
+  };
+  // Exit code must reach the seat-visible content channel on every nonzero
+  // failure — including when stderr is present (details-only is not enough).
+  if (result.code !== 0) {
+    append(`劳务引擎以 code ${result.code} 退出`);
+  }
+  // Empty-stdout failure reason (isEngineDetourFailure) is independent of
+  // whether stream bytes were preserved above.
+  if (result.stdout.trim() === "") {
+    append(ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
+  }
+  return text.length > 0 ? text : ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
 }
 
 /** Non-empty trimmed engine name from process.env, else undefined. */
