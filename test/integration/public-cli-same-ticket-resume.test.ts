@@ -195,7 +195,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
 
     /** Lawful non-pass seal for the open second court (distinct from first pass). */
     const secondCourtSeal = {
-      status: "bounce" as const,
+      status: "continue" as const,
       disposition: "rewrite" as const,
       findings: ["second-court-non-pass"],
     };
@@ -211,7 +211,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 2) {
@@ -219,7 +219,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 3) {
@@ -227,7 +227,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -268,7 +268,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       first.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(first.terminal.roleOutcome)
         : [],
-      ["pass"],
+      ["converged"],
     );
     assert.deepEqual(
       seen.length, 1, "first public notary must dispatch one turn");
@@ -368,7 +368,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.deepEqual(
       second.terminal?.submissions,
-      [{ status: "pass", findings: [], ticketNumber: 1171 }],
+      [{ status: "converged", findings: [], ticketNumber: 1171 }],
       "run-scoped submissions still present the first court's sealed pass",
     );
     assert.equal(turn, 3, "same-parent court must dispatch a real turn");
@@ -476,7 +476,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
         : [],
-      ["pass", secondCourtSeal.status],
+      ["converged", secondCourtSeal.status],
       "post-court pass-through presents full history with the current non-pass last",
     );
   } finally {
@@ -541,7 +541,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 2) {
@@ -549,21 +549,21 @@ test("#637/#987 public inspector: resume continues open-court settlement without
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
           })(extraArgs, options);
         }
         if (turn === 3) {
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
         return scriptedTerminatingToolSession({
           role: "inspector",
           toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [], ticketNumber: 1171 },
+          details: { status: "converged", findings: [], ticketNumber: 1171 },
         })(extraArgs, options);
       },
     });
@@ -636,7 +636,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     );
     assert.deepEqual(
       second.terminal?.submissions,
-      [{ status: "pass", findings: [], ticketNumber: 1171 }],
+      [{ status: "converged", findings: [], ticketNumber: 1171 }],
       "run-scoped submissions still present the first court's sealed pass",
     );
     assert.equal(seen.length, 3);
@@ -740,7 +740,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
             role: "auditor",
             toolName: AUDITOR_OUTPUT_TOOL_NAME,
             details: {
-              status: "pass",
+              status: "converged",
               violations: [],
               conflicts: [],
               decisionGate: null,
@@ -753,7 +753,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
             role: "auditor",
             toolName: AUDITOR_OUTPUT_TOOL_NAME,
             details: {
-              status: "pass",
+              status: "converged",
               violations: [],
               conflicts: [],
               decisionGate: null,
@@ -766,7 +766,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
           role: "auditor",
           toolName: AUDITOR_OUTPUT_TOOL_NAME,
           details: {
-            status: "pass",
+            status: "converged",
             violations: [],
             conflicts: [],
             decisionGate: null,
@@ -856,7 +856,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     assert.deepEqual(
       second.terminal?.submissions,
       [{
-        status: "pass",
+        status: "converged",
         violations: [],
         conflicts: [],
         decisionGate: null,
@@ -956,7 +956,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [], ticketNumber: 1171 },
+        details: { status: "converged", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(inner, seen);
@@ -1049,7 +1049,7 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
       piRunner: scriptedTerminatingToolSession({
         role: "inspector",
         toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [], ticketNumber: 1171 },
+        details: { status: "converged", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(inner, seen);
@@ -1232,7 +1232,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [], ticketNumber: 1171 },
+        details: { status: "converged", findings: [], ticketNumber: 1171 },
       }),
     });
     const host = observingSealHost(sealHost, seen);
@@ -1331,7 +1331,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -1341,7 +1341,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 1171 },
+            details: { status: "converged", findings: [], ticketNumber: 1171 },
             seal: false,
           })(extraArgs, options);
         }
@@ -1353,7 +1353,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [], ticketNumber: 1171 },
+          details: { status: "converged", findings: [], ticketNumber: 1171 },
         })(extraArgs, options);
       },
     });

@@ -137,6 +137,12 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   judge: {
     statuses: REVIEW_QUEUE_STATUSES,
   },
+  // #1208 C1: independent notary uses the shared unreadable-status seam
+  // (officerConclusionReask). Gate summons still own the outer budget via
+  // nestedIncomplete when this seat exhausts unsettled.
+  notary: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
   coder: {
     statuses: WORKER_ROUTING_STATUSES,
     reask: WORKER_STATUS_REASK,
@@ -1265,6 +1271,25 @@ export async function runPublicInstructionSeat(
   return runAdmitted();
 }
 
+/**
+ * #1208 C2: same as new source-locator admission — when this leg is still
+ * unbound, inherit the board ticket already on the audited source and relocate.
+ * True no-ticket sources stay unbound so #1171 still asks once.
+ */
+async function inheritKnownTicketFromSource(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<AdmittedRoleInvocation> {
+  if (admitted.ticketNumber !== undefined) return admitted;
+  const sourcePath = admittedSourceRunPath(admitted);
+  if (sourcePath === undefined) return admitted;
+  const sourceTicket = await readBoardTicketNumber(sourcePath);
+  if (sourceTicket === undefined) return admitted;
+  await bindAdmittedTicketNumber(admitted, sourceTicket);
+  await relocateAdmittedRunToTicket(admitted, authority);
+  return admitted;
+}
+
 export async function runPublicInstructionSeatResume(
   request: PublicResumeRequest,
   env: InstructionSeatRunEnv,
@@ -1289,21 +1314,21 @@ export async function runPublicInstructionSeatResume(
         env.principalAuthority,
         effective.runDirectory === undefined ? undefined : { runDirectory: effective.runDirectory },
       );
+      let admitted = loaded.admitted;
       if (
-        packagedRebindSourceOnResume(loaded.admitted.role)
+        packagedRebindSourceOnResume(admitted.role)
         && effective.summons?.sourceRunPath !== undefined
         && effective.summons.sourceRun !== undefined
       ) {
-        return {
-          ...loaded,
-          admitted: {
-            ...loaded.admitted,
-            sourceRunPath: effective.summons.sourceRunPath,
-            sourceRun: effective.summons.sourceRun,
-          },
-        };
+        // source-locator seats only (notary); sourceRun is on that admission face.
+        admitted = {
+          ...admitted,
+          sourceRunPath: effective.summons.sourceRunPath,
+          sourceRun: effective.summons.sourceRun,
+        } as AdmittedRoleInvocation;
       }
-      return loaded;
+      admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
+      return { ...loaded, admitted };
     },
     buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
@@ -1414,9 +1439,11 @@ async function queueConclusionFromChild(
     return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
   }
   let current: AdmittedRoleInvocation = child;
-  // Notary, auditor, and inspector have no seat-local status reask. This loop
-  // is their one budget. The child resume keeps the caller's env so delivery,
-  // failure recovery, and other reask loops stay separate.
+  // #1208: notary also has seat-local POST_SUBMISSION_ROUTING. This
+  // parent-side loop remains the gate/correlation budget; nestedIncomplete
+  // from an exhausted seat-local chain surfaces without a second spend.
+  // The child resume keeps the caller's env so delivery, failure recovery,
+  // and other reask loops stay separate.
   let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
     const terminal = await trySettlePublicSeat(
