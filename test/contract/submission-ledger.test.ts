@@ -191,6 +191,19 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     const unbound = join(f.root, ".ak-roles", "books", "fixture", "unbound");
     assert.equal(readTicketProgressLines(unbound).length, 1);
 
+    // Torn/corrupt append-only progress must not block the next seal (dossier posture).
+    const runDirectory = f.context.runDirectory;
+    assert.ok(runDirectory, "ledger fixture must admit a run directory");
+    const progressPath = join(runDirectory, "ticket-progress.jsonl");
+    assert.equal(existsSync(progressPath), true);
+    await appendFile(progressPath, "{not-json-torn-line\n", "utf8");
+    const stderrChunks: string[] = [];
+    const previousWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return (previousWrite as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof process.stderr.write;
+
     // Second submission on the same attempt records again — no seal throw.
     const secondDetails = { status: "continue", report: "more", summary: "second sealed summary text here ok" };
     const secondHost = registerTool(
@@ -198,10 +211,14 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       async () => ({ content: [], details: secondDetails, terminate: true }),
     );
     secondHost.context.summonsInstruction = "second summons for two-seal progress";
-    await secondHost.start("second");
-    const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
-    assert.deepEqual(accepted2.details, secondDetails);
-    assert.equal(accepted2.terminate, true);
+    try {
+      await secondHost.start("second");
+      const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
+      assert.deepEqual(accepted2.details, secondDetails);
+      assert.equal(accepted2.terminate, true);
+    } finally {
+      process.stderr.write = previousWrite;
+    }
 
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 2);
@@ -222,6 +239,10 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     assert.deepEqual(
       JSON.parse(await readFile(join(unbound, lines[0]!.receipt), "utf8")),
       firstPayload,
+    );
+    assert.ok(
+      stderrChunks.some((chunk) => chunk.includes("[ticket-progress]") && chunk.includes("malformed")),
+      "malformed progress line must leave a true-cause stderr diagnostic",
     );
   });
 });

@@ -28,7 +28,12 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { resolveHostDossierLandingPath } from "./host-session-record.ts";
 import type { HostContext } from "./host-contracts.ts";
 import { runDirectoryFromHostContext } from "./host-contracts.ts";
-import { packagedRoleMetadata } from "./packaged-role-registry.ts";
+import {
+  acceptedFacts,
+  isTerminatingToolName,
+  type AcceptedDetails,
+} from "./package-contracts/terminating-tools.ts";
+import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
   formatRunLeaf,
   isUnboundRunDirectory,
@@ -37,6 +42,7 @@ import {
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
 import { readPageSync } from "./run-dossier.ts";
+import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
@@ -65,22 +71,32 @@ export type TicketProgressLine = {
   readonly session: string;
 };
 
-function parseProgressText(text: string): TicketProgressLine[] {
+/**
+ * Append-only progress JSONL — same posture as run-dossier row files:
+ * sole Sitian decoder keeps reachable rows; malformed lines leave diagnostics
+ * on stderr and do not abort seal/relocate.
+ */
+function parseProgressText(text: string, pathForDiagnostic: string): TicketProgressLine[] {
   if (text.trim() === "") return [];
+  const { records, diagnostics } = parseSitianRecordText(text);
+  for (const diagnostic of diagnostics) {
+    process.stderr.write(
+      `[ticket-progress] ${pathForDiagnostic} has malformed row(s); keeps reachable rows and retains the diagnostic: line ${diagnostic.line}: ${diagnostic.error}\n`,
+    );
+  }
   const lines: TicketProgressLine[] = [];
-  for (const raw of text.split("\n")) {
-    if (raw.trim() === "") continue;
-    const parsed = JSON.parse(raw) as unknown;
+  for (const record of records) {
+    const parsed: unknown = record;
     if (!isRecord(parsed)) continue;
     if (typeof parsed.seat !== "string" || typeof parsed.round !== "string") continue;
-    lines.push(parsed as TicketProgressLine);
+    lines.push(parsed as unknown as TicketProgressLine);
   }
   return lines;
 }
 
 function readProgressFile(path: string): TicketProgressLine[] {
   if (!existsSync(path)) return [];
-  return parseProgressText(readFileSync(path, "utf8"));
+  return parseProgressText(readFileSync(path, "utf8"), path);
 }
 
 /**
@@ -133,23 +149,24 @@ function receiptFileName(seat: string, round: string): string {
 
 /**
  * Copy structured status/summary from the seat receipt.
+ * Status leaves reuse acceptedFacts (terminating-tools authority) via the seat's
+ * current output tool — legacy judgeStatus/countersignStatus keys are unreachable
+ * at this seal seam (tool is the live registry name, not ak_judge_output).
+ * summary is seat-authored prose on the receipt and is not part of AcceptedFacts.
  * Missing fields stay absent — never invent "" or "accepted".
+ *
+ * Not receiptStatusFromRegistry: that scans every registry key for navigator
+ * projection when the seat is unknown; here the seal already knows the seat.
  */
 function statusAndSummaryFromPayload(seat: string, payload: unknown): {
   readonly status?: string;
   readonly summary?: string;
 } {
   if (!isRecord(payload)) return {};
-  let status: string | undefined;
-  const meta = packagedRoleMetadata(seat);
-  const seatKey = meta !== undefined && "receiptStatusKey" in meta
-    ? meta.receiptStatusKey
+  const toolName = packagedRoleOutputTool(seat);
+  const status = toolName !== undefined && isTerminatingToolName(toolName)
+    ? acceptedFacts(toolName, payload as AcceptedDetails).status
     : undefined;
-  if (typeof seatKey === "string" && typeof payload[seatKey] === "string") {
-    status = payload[seatKey];
-  } else if (typeof payload.status === "string") {
-    status = payload.status;
-  }
   const summary = typeof payload.summary === "string" ? payload.summary : undefined;
   return {
     ...(status === undefined ? {} : { status }),
