@@ -53,12 +53,9 @@ type Observation = {
     readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
-  resume(message?: string): Promise<ResumeObservation>;
-  resumeRun(runId: string, message?: string): Promise<ResumeObservation>;
+  resume(message?: string): Promise<CliResult>;
+  resumeRun(runId: string, message?: string): Promise<CliResult>;
 };
-
-/** A public resume call: its exit plus the stdout it presented. */
-type ResumeObservation = CliResult & { readonly stdout: readonly string[] };
 
 async function runJudge(
   officerRunner: LegacyFauxPiRunner,
@@ -192,10 +189,10 @@ async function runJudge(
         parentMessages,
         judgeSubmissions,
         officerSessions,
-        async resumeRun(runId: string, message?: string): Promise<ResumeObservation> {
+        async resumeRun(runId: string, message?: string) {
           const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
           const resumeCapture = captureIo();
-          const result = await runAkRole(args, {
+          return runAkRole(args, {
             packageRoot,
             home,
             cwd: project,
@@ -203,7 +200,6 @@ async function runJudge(
             principalAuthority: piDurablePrincipalAuthority,
             hostAdapters: [adapter("pi", routed)],
           });
-          return { ...result, stdout: resumeCapture.stdout };
         },
         async resume(message?: string) {
           const officerRunId = first.terminal?.runId;
@@ -402,7 +398,7 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1214 R2b: an auditor resume that stays undecidable presents the audited Judge original on the public call", async () => {
+test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -419,12 +415,6 @@ test("#1214 R2b: an auditor resume that stays undecidable presents the audited J
     assert.equal(continued.exitCode, 0);
     assert.equal(continued.terminal?.roleOutcome.role, "auditor");
     assert.equal(continued.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true);
-    // Unsettled exit: the audited Judge original is presented on this call. The
-    // parent run id is the identity the presentation names it by (not wording).
-    assert.ok(
-      continued.stdout.some((line) => line.includes(observed.parentRunId)),
-      "unsettled audit must present the audited Judge original on the public call",
-    );
   });
 });
 

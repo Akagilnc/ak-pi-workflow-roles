@@ -80,9 +80,8 @@ import {
 } from "./option-definitions.ts";
 import { TurnDispatchedFailure } from "./auto-resume.ts";
 import {
-  beginPublicCallPresentation,
   continueParentAfterChild,
-  presentAuditedOriginalOfUnpassedOfficer,
+  presentAuditedOriginalOfUnsettledOfficer,
   runPublicInstructionSeat,
   runPublicInstructionSeatResume,
 } from "./instruction-seat-run.ts";
@@ -1091,7 +1090,6 @@ export async function runAkRole(
   env: CliEnv,
 ): Promise<CliResult> {
   const io = env.io ?? defaultIo();
-  beginPublicCallPresentation(io);
   let resumeFailureContext:
     | { readonly home: string; readonly runId: string; readonly authority: DurablePrincipalAuthority; readonly runDirectory?: string }
     | undefined;
@@ -1241,6 +1239,8 @@ export async function runAkRole(
         config: parts.config,
       });
       const result = await runPublicInstructionSeatResume(resumeRequest, resumeEnv, io);
+      // #1214 R2: an officer resume left unsettled keeps its audited original on this call.
+      await presentAuditedOriginalOfUnsettledOfficer(result, resumeEnv, io);
       let current = result;
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
@@ -1279,8 +1279,6 @@ export async function runAkRole(
         });
         current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }
-      // #1214 R2: the public call's final result decides whether the audited original shows.
-      await presentAuditedOriginalOfUnpassedOfficer(current, resumeEnv, io);
       return cliResultFromRoleRun(current);
     }
 
@@ -1297,11 +1295,7 @@ export async function runAkRole(
       return await dispatchPublicRoleCommand(
         env, home, io, parsed, role,
         (args) => PUBLIC_ROLE_ARGV[role].parse(args) as PublicSeatParse,
-        async (args, roleEnv, once) => {
-          const seat = await runPublicInstructionSeat(args, roleEnv, io, role, once);
-          await presentAuditedOriginalOfUnpassedOfficer(seat, roleEnv, io);
-          return seat;
-        },
+        (args, roleEnv, once) => runPublicInstructionSeat(args, roleEnv, io, role, once),
       );
     }
 

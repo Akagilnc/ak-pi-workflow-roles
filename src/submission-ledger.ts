@@ -501,7 +501,7 @@ export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName | readonly TerminalRoleName[]>,
   failInfrastructure: (error: unknown, context: HostContext, toolCallId?: string) => never = (error) => { throw error; },
-  projectClosure: (closed: ClosedSubmission, context: HostContext) => void | Promise<void> = () => undefined,
+  projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
@@ -658,9 +658,9 @@ export function createSubmissionLedgerHost(
             if (toolThrew) throw error;
             return failInfrastructure(error, context, toolCallId);
           }
-          // Navigator lifecycle projection stays outside the record seam (A navigator
-          // failure cannot erase an already accepted closure).
-          await projectClosure(closed, context);
+          // Closure projection owns its own record seam: a closure write failure rides
+          // failInfrastructure there; a Navigator settle failure does not erase the closure (#959).
+          await projectClosure(closed, context, toolCallId);
           return result;
         },
       });

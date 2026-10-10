@@ -555,6 +555,7 @@ export async function projectClosedSubmissionLifecycle(
   phase: NavigatorPhase,
   recordAccepted: () => void,
   settle: (settlement: NavigatorSettlement | undefined) => Promise<NavigatorEvent | undefined>,
+  failRecord: (error: unknown) => never,
 ): Promise<void> {
   recordAccepted();
   const closure = {
@@ -568,10 +569,15 @@ export async function projectClosedSubmissionLifecycle(
   } finally {
     // A Navigator failure cannot erase an already accepted role closure.
     // Missing attendance remains a typed unavailable at public settlement.
-    context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
-      ...closure,
-      ...(navigator === undefined ? {} : { navigator }),
-    });
+    // #1214 K1: the closure record write is package-side accounting; its failure rides the declared seam.
+    try {
+      context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
+        ...closure,
+        ...(navigator === undefined ? {} : { navigator }),
+      });
+    } catch (error) {
+      failRecord(error);
+    }
   }
 }
 
@@ -1006,7 +1012,7 @@ export function createRoleRuntimeExtension(
     ? deliveryLimitFromEnv(process.env)
     : deliveryLimitFromConfig(deliveryRequestLimit);
   return (envelopeHost) => {
-    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
+    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext, toolCallId: string) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
@@ -1021,7 +1027,7 @@ export function createRoleRuntimeExtension(
         return entries;
       }, [])),
       (error, ctx, toolCallId) => hostActions.failInfrastructure(error, ctx, toolCallId),
-      async (closed, context) => projectClosedSubmission(closed, context),
+      async (closed, context, toolCallId) => projectClosedSubmission(closed, context, toolCallId),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1155,7 +1161,7 @@ export function createRoleRuntimeExtension(
       await pending;
       return pendingNavigatorPresentation?.event;
     };
-    projectClosedSubmission = async (closed, context) => {
+    projectClosedSubmission = async (closed, context, toolCallId) => {
       // #1183: typed ticket identity is acquired on the ledger seam when params
       // are first read — not here after seal. Closure only projects lifecycle.
       await projectClosedSubmissionLifecycle(
@@ -1164,6 +1170,7 @@ export function createRoleRuntimeExtension(
         navigatorPhase(roleHost, closed.role),
         () => receiptDelivery.recordAccepted(),
         settleNavigatorProjection,
+        (error) => hostActions.failInfrastructure(error, context, toolCallId),
       );
     };
     roleHost.on("input", (event, ctx) => {
@@ -1334,15 +1341,17 @@ export function createRoleRuntimeExtension(
         const prose = lastAssistantProse(event.messages);
         if (prose !== undefined && prose.trim() !== "") {
           const accepted = { prose };
+          const toolCallId = `navigator-prose-exit:${randomUUID()}`;
           await sealAcceptedSubmission({
             context: ctx,
             role: "navigator",
             accepted,
-            toolCallId: `navigator-prose-exit:${randomUUID()}`,
+            toolCallId,
           });
           await projectClosedSubmission(
             { role: "navigator", kind: "accepted", accepted },
             ctx,
+            toolCallId,
           );
           return;
         }
