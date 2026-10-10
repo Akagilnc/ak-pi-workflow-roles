@@ -76,12 +76,16 @@ function runNodeTest(files) {
   // #252: fixed --test-timeout=300000 as per-test upper bound. No config seam.
   // Callers on Node 22: upstream still uses the old per-execution/file timeout
   // boundary (nodejs/node#57656; per-test fix landed in #57672 / Node 24+).
-  // #1206: Node built-in reporter — simple framework output at the sole test:all seam.
+  // #1206 B: Node built-in reporters at the sole test:all seam — compact progress on
+  // stdout (dot) plus native diagnostics in the fixed repo-root report (spec).
   const args = [
     "--import",
     "tsx",
     "--test-timeout=300000",
+    "--test-reporter=dot",
+    "--test-reporter-destination=stdout",
     "--test-reporter=spec",
+    "--test-reporter-destination=node-test-report.txt",
     "--test",
     ...files,
   ];

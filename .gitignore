@@ -3,6 +3,9 @@ coverage/
 dist/
 *.tgz
 
+# #1206 native Node test spec report (package scripts / run-test-all child)
+node-test-report.txt
+
 # Claude Code session dir (local only)
 .claude/
 
