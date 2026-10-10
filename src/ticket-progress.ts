@@ -337,9 +337,9 @@ export function relocateTicketProgressForLeg(input: {
   const ticketLines = [...readTicketProgressLines(subjectDirectory)];
   const movedLines: TicketProgressLine[] = [];
   for (const line of mine) {
-    // Empty unbound round: recover lens from this leg's admitted page only.
-    const lens = roundLens(line.round)
-      ?? lensFromRunDirectory(input.runDirectory, line.seat);
+    // Current unbound staging publishes empty rounds; lens comes only from this
+    // leg's admitted page. No legacy staged-round mirror-suffix branch.
+    const lens = lensFromRunDirectory(input.runDirectory, line.seat);
     const round = nextRoundFromLines(ticketLines, line.seat, lens);
     const moved: TicketProgressLine = {
       ...line,
