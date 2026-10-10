@@ -1020,7 +1020,7 @@ export function createRoleRuntimeExtension(
         }
         return entries;
       }, [])),
-      failInfrastructure,
+      (error, ctx, toolCallId) => hostActions.failInfrastructure(error, ctx, toolCallId),
       async (closed, context) => projectClosedSubmission(closed, context),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
@@ -1306,7 +1306,7 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { isError: true };
+        return { isError: true, details: infrastructureDetails };
       }
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has

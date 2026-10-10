@@ -306,6 +306,39 @@ async function incompleteAuditWithoutOfficerVolume(
   return { exitCode: 1, admitted };
 }
 
+/**
+ * #1214 R2: a gate officer's non-pass volume (failure, unreadable, no_receipt) keeps
+ * its audited seat's already-filed original on the public call (被审席已交原卷照常呈出).
+ * The officer keeps its own identity and exit; the audited seat is not re-run and its
+ * volume is read from its own run through the settlement seam (#1195: not copied into
+ * the officer's book). `presentedRunId` skips the seat the caller already presented.
+ */
+async function presentAuditedOriginalOfOfficer(
+  officer: AdmittedRoleInvocation,
+  presentedRunId: string | undefined,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<void> {
+  if (!GATE_CHILD_ROLES.has(officer.role)) return;
+  const audited = officer.correlationId;
+  if (audited === undefined || audited === presentedRunId) return;
+  const auditedSource = admittedSourceRunPath(officer);
+  const parent = await loadResumablePublicRole(
+    env.home,
+    audited,
+    env.principalAuthority,
+    auditedSource === undefined ? undefined : { runDirectory: auditedSource },
+  );
+  if (!AUDITED_ROLES.has(parent.admitted.role)) return;
+  const terminal = await trySettlePublicSeat(
+    parent.admitted,
+    env.principalAuthority,
+    { ...await readCurrentCourt(parent.admitted.runDirectory), ...packageFaultScope(parent.admitted, env, io) },
+  );
+  if (terminal?.roleOutcome.kind !== "accepted") return;
+  await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory);
+}
+
 async function reaskUnreadablePostSubmissionStatus(
   admitted: AdmittedRoleInvocation,
   terminal: TerminalResult | undefined,
@@ -1422,6 +1455,9 @@ export async function runPublicInstructionSeatResume(
       await presentOriginalVolume(held, result.terminal, io);
       return result;
     }
+    if (result.exitCode !== 0) {
+      await presentAuditedOriginalOfOfficer(result.admitted, undefined, env, io);
+    }
     return continueAfterPostSubmissionGuards(
       result,
       result.admitted.role,
@@ -1892,6 +1928,8 @@ async function auditSubmittedRole(
           env.principalAuthority,
           officerRunDirectory === undefined ? undefined : { runDirectory: officerRunDirectory },
         );
+        // #1214 R2: a nested audited seat's original (officer's own audited parent) stays visible.
+        await presentAuditedOriginalOfOfficer(officer.admitted, admitted.runId, env, io);
         if (chain.status === "needs_reask" || chain.status === "no_receipt") {
           // Lawful incomplete (unreadable / no_receipt): exit 0, direction unsettled.
           const terminal = await presentUnsettledOfficer(

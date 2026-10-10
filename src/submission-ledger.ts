@@ -500,7 +500,7 @@ export async function sealAcceptedSubmission(options: {
 export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName | readonly TerminalRoleName[]>,
-  failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
+  failInfrastructure: (error: unknown, context: HostContext, toolCallId?: string) => never = (error) => { throw error; },
   projectClosure: (closed: ClosedSubmission, context: HostContext) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
@@ -572,84 +572,97 @@ export function createSubmissionLedgerHost(
           if (typedTicket !== undefined) {
             await reportTicketFromHostContext(context, typedTicket);
           }
-          const runId = runIdentity(context);
-          const attemptId = attemptIdentity(context, runId);
-          const state = await stateFor(context, runId);
-          const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
-          // #541 / #575: shared infra-declaration fail lives on the ledger seam.
-          // #641 chain②: seats may bounce a misdeclared infrastructure failure
-          // as correctable (2.1/2.2/2.3 keep paths).
-          append({
-            type: "candidate",
-            attemptId,
-            toolCallId,
-            toolName: tool.name,
-            sequence: ++state.sequence,
-            role,
-            params,
-          });
+          // #1214 R1: the ledger's own reads, record appends and seal-time landing
+          // are host infrastructure. Their failure rides the declared failure seam
+          // (keeps 真因, closes the round as failure). Only tool.execute's own throws
+          // stay on the tool-result face (correctable / ordinary isError).
+          let toolThrew = false;
           let result: HostToolResult<unknown>;
+          let closed: ClosedSubmission;
           try {
-            // #1214 A2: infrastructureFailure rides the original params as receipt
-            // content. Declaration alone never host-fails the leg.
-            result = await tool.execute(toolCallId, params, signal, update, context);
-          } catch (error) {
-            if (isCorrectableExecuteError(error)) {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "correctable-rejection",
-                code: "typed-bounce",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
-              throw error;
-            } else {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "infrastructure",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
+            const runId = runIdentity(context);
+            const attemptId = attemptIdentity(context, runId);
+            const state = await stateFor(context, runId);
+            const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
+            // #541 / #575: shared infra-declaration fail lives on the ledger seam.
+            // #641 chain②: seats may bounce a misdeclared infrastructure failure
+            // as correctable (2.1/2.2/2.3 keep paths).
+            append({
+              type: "candidate",
+              attemptId,
+              toolCallId,
+              toolName: tool.name,
+              sequence: ++state.sequence,
+              role,
+              params,
+            });
+            try {
+              // #1214 A2: infrastructureFailure rides the original params as receipt
+              // content. Declaration alone never host-fails the leg.
+              result = await tool.execute(toolCallId, params, signal, update, context);
+            } catch (error) {
+              if (isCorrectableExecuteError(error)) {
+                append({
+                  type: "outcome",
+                  attemptId,
+                  toolCallId,
+                  outcome: "correctable-rejection",
+                  code: "typed-bounce",
+                  diagnostic: errorText(error),
+                  role,
+                  accepted: params,
+                });
+              } else {
+                append({
+                  type: "outcome",
+                  attemptId,
+                  toolCallId,
+                  outcome: "infrastructure",
+                  diagnostic: errorText(error),
+                  role,
+                  accepted: params,
+                });
+              }
+              toolThrew = true;
               throw error;
             }
+            // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
+            // Machine facts on result.details stay on the tool-result face returned to the model.
+            // A continuing gate leaves the candidate recorded but has not accepted it.
+            if (result.terminate === false) return result;
+            closed = {
+              role,
+              kind: "accepted",
+              accepted: params,
+            };
+            // #1199: seal-time HEAD + ticket progress before projectClosure.
+            // One seal → one row; post-turn history guessing is not used.
+            const sealHead = captureWorktreeHead(context.cwd);
+            append({
+              type: "sealed",
+              attemptId,
+              toolCallId,
+              role,
+              accepted: params,
+            });
+            const rawLens = typeof host.getFlag === "function"
+              ? host.getFlag("ak-review-lens")
+              : undefined;
+            landTicketProgressForSealedSubmission({
+              context,
+              role,
+              accepted: params,
+              sealHead,
+              ...(rawLens === "completeness" || rawLens === "correctness"
+                ? { lens: rawLens }
+                : {}),
+            });
+          } catch (error) {
+            if (toolThrew) throw error;
+            return failInfrastructure(error, context, toolCallId);
           }
-          // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
-          // Machine facts on result.details stay on the tool-result face returned to the model.
-          // A continuing gate leaves the candidate recorded but has not accepted it.
-          if (result.terminate === false) return result;
-          const closed: ClosedSubmission = {
-            role,
-            kind: "accepted",
-            accepted: params,
-          };
-          // #1199: seal-time HEAD + ticket progress before projectClosure.
-          // One seal → one row; post-turn history guessing is not used.
-          const sealHead = captureWorktreeHead(context.cwd);
-          append({
-            type: "sealed",
-            attemptId,
-            toolCallId,
-            role,
-            accepted: params,
-          });
-          const rawLens = typeof host.getFlag === "function"
-            ? host.getFlag("ak-review-lens")
-            : undefined;
-          landTicketProgressForSealedSubmission({
-            context,
-            role,
-            accepted: params,
-            sealHead,
-            ...(rawLens === "completeness" || rawLens === "correctness"
-              ? { lens: rawLens }
-              : {}),
-          });
+          // Navigator lifecycle projection stays outside the record seam (A navigator
+          // failure cannot erase an already accepted closure).
           await projectClosure(closed, context);
           return result;
         },
