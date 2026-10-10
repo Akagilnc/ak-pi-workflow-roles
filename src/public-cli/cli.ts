@@ -1239,8 +1239,11 @@ export async function runAkRole(
         config: parts.config,
       });
       const result = await runPublicInstructionSeatResume(resumeRequest, resumeEnv, io);
-      // #1214 R2: an officer resume left unsettled keeps its audited original on this call.
-      await presentAuditedOriginalOfUnsettledOfficer(result, resumeEnv, io);
+      // #1214 R2: a directly resumed officer left unsettled keeps its audited original on this call.
+      // An officer returned by an audit inside this resume already presented that original where it arose.
+      if (result.admitted?.runId === resumeRequest.runId) {
+        await presentAuditedOriginalOfUnsettledOfficer(result, resumeEnv, io);
+      }
       let current = result;
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined

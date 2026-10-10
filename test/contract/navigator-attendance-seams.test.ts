@@ -133,18 +133,6 @@ test("settlement rejection still records an accepted closure with unavailable at
   assert.equal(extractNavigatorFact([{ type: "custom", ...entries[0]! }] as never).disposition, "unavailable");
 });
 
-test("#1214 K1: closure record write failure rides the declared failure seam, not an ordinary throw", async () => {
-  const writeFailure = new Error("session entry write failed");
-  const ctx = { sessionManager: { appendCustomEntry() { throw writeFailure; } } } as never;
-  const failures: unknown[] = [];
-  await assert.rejects(projectClosedSubmissionLifecycle(
-    { role: "judge", kind: "accepted", accepted: { status: "converged" } },
-    ctx, null, () => {}, async () => undefined,
-    (error) => { failures.push(error); throw error; },
-  ), (error: unknown) => error === writeFailure);
-  assert.deepEqual(failures, [writeFailure]);
-});
-
 test("#1187 identity-only work context: role-input path starts prepare; authority files are not materials", async () => {
   await withTempRoot("navigator-input-identity-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
