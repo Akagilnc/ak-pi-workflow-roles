@@ -7,6 +7,7 @@ import {
   ExplicitInternalActivationError,
 
   runDirectoryFromHostContext,
+  SUMMONS_INSTRUCTION_ENV,
   type HostContext,
   type RoleEnvelopeHost,
   type RoleHost,
@@ -22,7 +23,6 @@ import {
   reportTicketFromHostContext,
   REPORT_TICKET_TOOL_NAME,
 } from "./report-ticket-tool.ts";
-import { rememberRoundInstruction } from "./ticket-progress.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -1170,12 +1170,10 @@ export function createRoleRuntimeExtension(
         settleNavigatorProjection,
       );
     };
-    roleHost.on("input", (event, ctx) => {
-      // #1199: first/resume summons bytes for the seal-time progress row.
-      const runDirectory = runDirectoryFromHostContext(ctx);
-      if (runDirectory !== undefined && typeof event.text === "string") {
-        rememberRoundInstruction(runDirectory, event.text);
-      }
+    roleHost.on("input", (_event, _ctx) => {
+      // #1199: 传召词 rides RoleTurnRequest.summonsInstruction → HostContext /
+      // child env. Do not overwrite from pi input text — that may be the
+      // file-flag delivery wrapper, not the public raw 传召词.
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
@@ -1379,12 +1377,11 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
-        // #1199: still retain the actual催交原文 for the seal-time progress row.
+        // #1199: envelope 包内催交 updates this-turn HostContext instruction
+        // (and child env so later pi projections see the same bytes).
         const deliveryContent = JSON.stringify(receiptDelivery.deliveryState());
-        const deliveryRunDirectory = runDirectoryFromHostContext(ctx);
-        if (deliveryRunDirectory !== undefined) {
-          rememberRoundInstruction(deliveryRunDirectory, deliveryContent);
-        }
+        ctx.summonsInstruction = deliveryContent;
+        process.env[SUMMONS_INSTRUCTION_ENV] = deliveryContent;
         const scopeId = ctx.invocationScopeId?.trim() ?? "";
         envelopeHost.appendEntry(
           RECEIPT_DELIVERY_REQUEST_ENTRY,

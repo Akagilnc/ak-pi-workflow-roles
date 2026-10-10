@@ -44,7 +44,6 @@ const RECEIPTS_DIRNAME = "receipts" as const;
 const SESSIONS_DIRNAME = "sessions" as const;
 const LEG_PROGRESS_FILENAME = "ticket-progress.jsonl" as const;
 const LEG_RECEIPTS_DIRNAME = "ticket-receipts" as const;
-const ROUND_INSTRUCTION_FILENAME = "round-instruction.txt" as const;
 
 /** One accepted-receipt progress row on the ticket (or unbound leg) subject. */
 export type TicketProgressLine = {
@@ -65,18 +64,6 @@ export type TicketProgressLine = {
   /** Path relative to the subject directory. */
   readonly session: string;
 };
-
-/** Persist this-turn instruction bytes for the seal-time progress row. */
-export function rememberRoundInstruction(runDirectory: string, instruction: string): void {
-  mkdirSync(runDirectory, { recursive: true });
-  writeFileSync(join(runDirectory, ROUND_INSTRUCTION_FILENAME), instruction, "utf8");
-}
-
-function readRoundInstruction(runDirectory: string): string {
-  const path = join(runDirectory, ROUND_INSTRUCTION_FILENAME);
-  if (!existsSync(path)) return "";
-  return readFileSync(path, "utf8");
-}
 
 function parseProgressText(text: string): TicketProgressLine[] {
   if (text.trim() === "") return [];
@@ -267,11 +254,14 @@ export function landTicketProgressForSealedSubmission(input: {
   const sessionFile = progressSessionAbsolute(runDirectory, input.context);
   const sessionRelative = relative(subjectDirectory, sessionFile).split(sep).join("/");
   const { status, summary } = statusAndSummaryFromPayload(input.role, input.accepted);
+  const instruction = typeof input.context.summonsInstruction === "string"
+    ? input.context.summonsInstruction
+    : "";
   const line: TicketProgressLine = {
     at: new Date().toISOString(),
     seat: input.role,
     round,
-    instruction: readRoundInstruction(runDirectory),
+    instruction,
     head: input.sealHead.head,
     ...(status === undefined ? {} : { status }),
     ...(summary === undefined ? {} : { summary }),
@@ -281,28 +271,10 @@ export function landTicketProgressForSealedSubmission(input: {
 
   mkdirSync(dirname(progressPath), { recursive: true });
   appendFileSync(progressPath, `${JSON.stringify(line)}\n`, "utf8");
+  // HEAD capture fault: keep the raw cause on stderr. Do not invent a second
+  // dossier custom-frame channel beside post-admission's existing retain path.
   if (input.sealHead.fault !== undefined) {
-    // Same durable cleanup channel as post-admission (#840): session custom
-    // entry beside the run. Fall back to stderr when the session leaf is absent.
-    const sessionFile = sessionFileOf(runDirectory);
-    try {
-      mkdirSync(dirname(sessionFile), { recursive: true });
-      const recordedAt = new Date().toISOString();
-      appendFileSync(
-        sessionFile,
-        `${JSON.stringify({
-          type: "custom",
-          customType: "ak_post_admission_cleanup_diagnostic",
-          data: { diagnostic: input.sealHead.fault, recordedAt },
-          id: `ticket-progress-head-${recordedAt}`,
-          parentId: null,
-          timestamp: recordedAt,
-        })}\n`,
-        "utf8",
-      );
-    } catch {
-      process.stderr.write(`[ticket-progress] ${input.sealHead.fault}\n`);
-    }
+    process.stderr.write(`${input.sealHead.fault}\n`);
   }
   return line;
 }

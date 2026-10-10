@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import { SUMMONS_INSTRUCTION_ENV } from "../../src/host-contracts.ts";
 import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
@@ -47,6 +48,8 @@ async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  /** #1199 this-turn summons / 催交 from the input seam (spawn env / HostContext). */
+  readonly summonsInstruction?: string;
   /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
 }): Promise<void> {
@@ -86,6 +89,9 @@ async function driveLedgerProducer(input: {
         model: undefined,
         runDirectory,
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+        ...(input.summonsInstruction === undefined
+          ? {}
+          : { summonsInstruction: input.summonsInstruction }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
           getLeafId: () => null,
@@ -131,6 +137,8 @@ export async function sealAcceptedSubmission(input: {
   readonly runDirectory?: string;
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
+  /** #1199 this-turn summons / 催交 for seal-time progress. */
+  readonly summonsInstruction?: string;
 }): Promise<void> {
   await driveLedgerProducer({
     cwd: input.cwd,
@@ -142,6 +150,9 @@ export async function sealAcceptedSubmission(input: {
     ...(input.home === undefined ? {} : { home: input.home }),
     ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
     ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+    ...(input.summonsInstruction === undefined
+      ? {}
+      : { summonsInstruction: input.summonsInstruction }),
   });
 }
 
@@ -172,6 +183,11 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     input.env.AK_ROLE_COURT_ATTEMPT.length > 0
       ? input.env.AK_ROLE_COURT_ATTEMPT
       : undefined;
+  // Same child-env projection the live pi adapter uses for HostContext (#1199).
+  const summonsInstruction =
+    typeof input.env[SUMMONS_INSTRUCTION_ENV] === "string"
+      ? input.env[SUMMONS_INSTRUCTION_ENV]
+      : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,
@@ -182,6 +198,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(summonsInstruction === undefined ? {} : { summonsInstruction }),
   });
   // Place may have moved during ledger execute — keep the spawn env on the live leaf.
   await spawnRunDirectoryFromEnv(input.env);

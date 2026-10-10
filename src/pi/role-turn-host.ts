@@ -22,7 +22,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../host-contracts.ts";
-import { ExplicitInternalActivationError } from "../host-contracts.ts";
+import { ExplicitInternalActivationError, SUMMONS_INSTRUCTION_ENV } from "../host-contracts.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
@@ -458,6 +458,10 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // Selected host axis (#537 / ADR 0082): omit must not inherit a parent env value.
       if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
       else env.AK_ROLE_HOST = request.host.trim();
+      // #1199: this-turn 传召词 for seal-time progress (input seam → child HostContext).
+      // Omit must not inherit a parent value; empty string is a lawful retained value.
+      if (request.summonsInstruction === undefined) delete env[SUMMONS_INSTRUCTION_ENV];
+      else env[SUMMONS_INSTRUCTION_ENV] = request.summonsInstruction;
       // #1132: the one effective delivery-request ceiling travels to the child
       // on its own env so the in-child role runtime and the worker submission
       // gate count with the same configured number the AK seam resolved. Omit

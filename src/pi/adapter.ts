@@ -18,7 +18,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
-import { runDirectoryFromHostContext } from "../host-contracts.ts";
+import { runDirectoryFromHostContext, SUMMONS_INSTRUCTION_ENV } from "../host-contracts.ts";
 import { sitianReportSafe } from "../host-session-record.ts";
 import { isTerminatingToolName } from "../package-contracts/terminating-tools.ts";
 import { sessionFileOf } from "../role-run-placement.ts";
@@ -63,6 +63,9 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
       : {}),
     ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
       ? { host: process.env.AK_ROLE_HOST.trim() }
+      : {}),
+    ...(typeof process.env[SUMMONS_INSTRUCTION_ENV] === "string"
+      ? { summonsInstruction: process.env[SUMMONS_INSTRUCTION_ENV] }
       : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),

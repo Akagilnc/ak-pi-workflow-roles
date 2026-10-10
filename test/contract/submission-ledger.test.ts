@@ -22,7 +22,6 @@ import {
 } from "../../src/submission-ledger.ts";
 import {
   readTicketProgressLines,
-  rememberRoundInstruction,
 } from "../../src/ticket-progress.ts";
 import { join } from "node:path";
 
@@ -175,8 +174,7 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
 
 test("one turn two submissions → two ledger rows; original payload returned; no abort (#836)", async () => {
   await withLedgerFixture(async (f) => {
-    const runDirectory = f.context.runDirectory!;
-    rememberRoundInstruction(runDirectory, "first summons for two-seal progress");
+    f.context.summonsInstruction = "first summons for two-seal progress";
     await f.start("first");
     const firstPayload = {
       status: "converged",
@@ -194,12 +192,12 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     assert.equal(readTicketProgressLines(unbound).length, 1);
 
     // Second submission on the same attempt records again — no seal throw.
-    rememberRoundInstruction(runDirectory, "second summons for two-seal progress");
     const secondDetails = { status: "continue", report: "more", summary: "second sealed summary text here ok" };
     const secondHost = registerTool(
       f.root,
       async () => ({ content: [], details: secondDetails, terminate: true }),
     );
+    secondHost.context.summonsInstruction = "second summons for two-seal progress";
     await secondHost.start("second");
     const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
     assert.deepEqual(accepted2.details, secondDetails);

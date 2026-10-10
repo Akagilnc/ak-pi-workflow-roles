@@ -186,6 +186,10 @@ export async function prepareRoleEnvelope(options: {
     ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     ...(request.invocationScopeId === undefined ? {} : { invocationScopeId: request.invocationScopeId }),
     ...(request.host === undefined || request.host.trim() === "" ? {} : { host: request.host.trim() }),
+    // #1199: this-turn 传召词 from the first/continue input seam (not a dispatch-copy file).
+    ...(request.summonsInstruction === undefined
+      ? {}
+      : { summonsInstruction: request.summonsInstruction }),
     sessionManager: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
