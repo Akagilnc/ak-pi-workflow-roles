@@ -53,9 +53,12 @@ type Observation = {
     readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
-  resume(message?: string): Promise<CliResult>;
-  resumeRun(runId: string, message?: string): Promise<CliResult>;
+  resume(message?: string): Promise<ResumeObservation>;
+  resumeRun(runId: string, message?: string): Promise<ResumeObservation>;
 };
+
+/** A public resume call: its exit plus the stdout it presented. */
+type ResumeObservation = CliResult & { readonly stdout: readonly string[] };
 
 async function runJudge(
   officerRunner: LegacyFauxPiRunner,
@@ -189,10 +192,10 @@ async function runJudge(
         parentMessages,
         judgeSubmissions,
         officerSessions,
-        async resumeRun(runId: string, message?: string) {
+        async resumeRun(runId: string, message?: string): Promise<ResumeObservation> {
           const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
           const resumeCapture = captureIo();
-          return runAkRole(args, {
+          const result = await runAkRole(args, {
             packageRoot,
             home,
             cwd: project,
@@ -200,6 +203,7 @@ async function runJudge(
             principalAuthority: piDurablePrincipalAuthority,
             hostAdapters: [adapter("pi", routed)],
           });
+          return { ...result, stdout: resumeCapture.stdout };
         },
         async resume(message?: string) {
           const officerRunId = first.terminal?.runId;
@@ -395,6 +399,32 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
     assert.equal(auditorSessions[1]?.continuation, "resume");
     assert.deepEqual(auditorSessions[1]?.activation, auditorSessions[0]?.activation);
     assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
+  });
+});
+
+test("#1214 R2b: an auditor resume that stays undecidable presents the audited Judge original on the public call", async () => {
+  let auditorCalls = 0;
+  await runJudge(async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") return officer("notary", { status: "converged", mark: 2 })(args, options);
+    if (role === "auditor") {
+      auditorCalls += 1;
+      return officer("auditor", auditorCalls === 1
+        ? { status: "escalate", mark: 4 }
+        : { status: "undecidable", mark: 6 })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  }, () => ({ code: 0, stderr: "" }), async (observed) => {
+    const continued = await observed.resume(RULING);
+    assert.equal(continued.exitCode, 0);
+    assert.equal(continued.terminal?.roleOutcome.role, "auditor");
+    assert.equal(continued.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true);
+    // Unsettled exit: the audited Judge original is presented on this call. The
+    // parent run id is the identity the presentation names it by (not wording).
+    assert.ok(
+      continued.stdout.some((line) => line.includes(observed.parentRunId)),
+      "unsettled audit must present the audited Judge original on the public call",
+    );
   });
 });
 

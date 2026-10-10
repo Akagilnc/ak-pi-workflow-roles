@@ -867,32 +867,27 @@ export function createDiaristRoleRuntime(
         const assertion = readDiaristTicketAssertion(submitted);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        // #1183 / #1214 R1b: typed ticket is identity acquisition — one mid-turn
-        // bind/relocate here. Past assertion, package-side accounting failures
-        // ride failInfrastructure (worker/doctor shape); do not wash to isError.
-        if (ticketNumber !== undefined) {
-          try {
-            await reportTicketFromHostContext(ctx, ticketNumber);
-          } catch (error) {
-            hostActions.failInfrastructure(error, ctx, toolCallId);
-          }
-        }
-        // Live leaf after possible relocate (commit reads history under runDirectory).
-        const coords = readDiaristRunCoordinates(ctx);
-        // Strict-schema hosts emit ticketSessions: null for a single ticket.
-        const multiTicket = submitted?.ticketSessions != null;
-        const singleSessions = submitted && !multiTicket
-          ? projectDiaristSessions(parameters)
-          : undefined;
-        const ticketSessions = submitted && multiTicket
-          ? projectDiaristTicketSessions(submitted)
-          : singleSessions === undefined
-            ? undefined
-            : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
-        if (ticketSessions === undefined) {
-          throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
-        }
+        // #1183 / #1214 R1b/R1c: typed ticket is identity acquisition — one mid-turn
+        // bind/relocate, then the diary record (durable coordinates, commit). Every
+        // package-side record failure in this span rides failInfrastructure; only
+        // typed bounds/provenance input errors bounce to reask.
         try {
+          if (ticketNumber !== undefined) await reportTicketFromHostContext(ctx, ticketNumber);
+          // Live leaf after possible relocate (commit reads history under runDirectory).
+          const coords = readDiaristRunCoordinates(ctx);
+          // Strict-schema hosts emit ticketSessions: null for a single ticket.
+          const multiTicket = submitted?.ticketSessions != null;
+          const singleSessions = submitted && !multiTicket
+            ? projectDiaristSessions(parameters)
+            : undefined;
+          const ticketSessions = submitted && multiTicket
+            ? projectDiaristTicketSessions(submitted)
+            : singleSessions === undefined
+              ? undefined
+              : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
+          if (ticketSessions === undefined) {
+            throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
+          }
           await commitDiaristProjection({
             cwd: coords.projectRoot,
             home: coords.home,

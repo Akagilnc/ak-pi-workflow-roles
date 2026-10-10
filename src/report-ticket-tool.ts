@@ -105,13 +105,9 @@ export type ReportTicketResult = {
  */
 export async function reportTicketFromHostContext(
   context: HostContext,
-  rawTicketNumber: unknown,
+  ticketNumber: number,
   authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<ReportTicketResult> {
-  const ticketNumber = readDeclaredTicketNumber(rawTicketNumber);
-  if (ticketNumber === undefined) {
-    throw new Error("ak_report_ticket requires an identifiable ticketNumber");
-  }
   const runDirectory = runDirectoryFromHostContext(context);
   if (runDirectory === undefined) {
     throw new Error("ak_report_ticket requires a per-turn run directory");

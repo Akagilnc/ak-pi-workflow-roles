@@ -275,6 +275,26 @@ async function presentUnsettledOfficer(
 }
 
 /**
+ * #1214 R2: audited originals already shown on one public call, keyed by that call's io.
+ * Several paths reach the same audited original; one call shows it once.
+ */
+const auditedOriginalsShownByCall = new WeakMap<CliIo, Set<string>>();
+
+/** A public call starts with no originals shown (runAkRole calls this on entry). */
+export function beginPublicCallPresentation(io: CliIo): void {
+  auditedOriginalsShownByCall.delete(io);
+}
+
+/** True only the first time this public call shows that audited run's original. */
+function claimAuditedOriginalShowing(io: CliIo, auditedRunId: string): boolean {
+  const shown = auditedOriginalsShownByCall.get(io) ?? new Set<string>();
+  auditedOriginalsShownByCall.set(io, shown);
+  if (shown.has(auditedRunId)) return false;
+  shown.add(auditedRunId);
+  return true;
+}
+
+/**
  * #1214 F1: present the audited seat's already-filed original on the public call.
  * Presentation only — callers keep honest exit / officer identity (不伪作通过).
  */
@@ -284,6 +304,7 @@ async function presentAuditedOriginalVolume(
 ): Promise<void> {
   const admitted = turn.admitted;
   if (turn.terminal === undefined || admitted === undefined) return;
+  if (!claimAuditedOriginalShowing(io, admitted.runId)) return;
   await presentTerminal(
     turn.terminal,
     { ...io, omitFailureStderrDiagnostic: true },
@@ -336,7 +357,33 @@ async function presentAuditedOriginalOfOfficer(
     { ...await readCurrentCourt(parent.admitted.runDirectory), ...packageFaultScope(parent.admitted, env, io) },
   );
   if (terminal?.roleOutcome.kind !== "accepted") return;
+  if (!claimAuditedOriginalShowing(io, parent.admitted.runId)) return;
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory);
+}
+
+/** Settled officer exit that is a real pass: exit 0, accepted, direction settled, not escalated, readable. */
+function officerResultPassed(result: SeatRunResult): boolean {
+  const terminal = result.terminal;
+  return result.exitCode === 0
+    && terminal !== undefined
+    && terminal.roleOutcome.kind === "accepted"
+    && terminal.roleOutcome.decisiveFacts?.directionUnsettled !== true
+    && !latestPayloadEscalated(terminal.roleOutcome)
+    && !heldUnreadableTerminal(terminal);
+}
+
+/**
+ * #1214 R2: public-call exit. A gate officer whose settled result is not a pass keeps
+ * its audited seat's already-filed original on this call. Called once on the final
+ * result of a public call, so nested reasks do not present the same original again.
+ */
+export async function presentAuditedOriginalOfUnpassedOfficer(
+  result: SeatRunResult,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<void> {
+  if (result.admitted === undefined || officerResultPassed(result)) return;
+  await presentAuditedOriginalOfOfficer(result.admitted, undefined, env, io);
 }
 
 async function reaskUnreadablePostSubmissionStatus(
@@ -1455,9 +1502,6 @@ export async function runPublicInstructionSeatResume(
       await presentOriginalVolume(held, result.terminal, io);
       return result;
     }
-    if (result.exitCode !== 0) {
-      await presentAuditedOriginalOfOfficer(result.admitted, undefined, env, io);
-    }
     return continueAfterPostSubmissionGuards(
       result,
       result.admitted.role,
@@ -1519,7 +1563,7 @@ async function queueConclusionFromChild(
     if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
       return { admitted: child, terminal, status };
     }
-    return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
+    return { stop: { exitCode: 0, admitted: child, ...(terminal === undefined ? {} : { terminal }) } };
   }
   let current: AdmittedRoleInvocation = child;
   // #1208: review-queue gate children also have seat-local
@@ -1543,7 +1587,7 @@ async function queueConclusionFromChild(
       current, terminal, budgetEnv, io, officerConclusionReask(status),
     );
     if (reasked === undefined || isUnreadableReaskExhausted(reasked)) {
-      return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
+      return { stop: { exitCode: 0, admitted: current, ...(terminal === undefined ? {} : { terminal }) } };
     }
     budgetEnv = withUnreadableReask(budgetEnv)!;
     if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined
@@ -2002,6 +2046,8 @@ async function auditSubmittedRole(
           "escalated audit has no terminal result",
         );
       }
+      // #1214 R2: escalated audit is unsettled; the audited seat's own volume stays visible.
+      await presentAuditedOriginalVolume(turn, io);
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.admitted.runDirectory);
       return { exitCode: 0, admitted: officer.admitted, terminal };
     }

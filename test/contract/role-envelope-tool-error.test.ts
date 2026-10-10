@@ -332,3 +332,35 @@ test("#1214 R1b: diarist commitDiaristProjection I/O failure is round infrastruc
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("#1214 R1c: diarist durable coordinate read failure before commit is round infrastructure failure", async () => {
+  // Same-shape member of R1b: the admitted page that carries projectRoot is unreadable
+  // after prepare, so the diary record cannot locate its book. Must not wash to isError.
+  const priorExitCode = process.exitCode;
+  const home = await mkdtemp(join(tmpdir(), "ak-1214-r1c-"));
+  try {
+    const { prepared, socketPath, runDirectory } = await prepareUnboundEnvelope(home, "run-1214-r1c@diarist", "diarist");
+    try {
+      await rm(join(runDirectory, "state.jsonl"), { force: true });
+      const token = mcpTokenFromPrepared(prepared);
+      await callMcpTool({
+        socketPath,
+        token,
+        name: DIARIST_OUTPUT_TOOL_NAME,
+        args: { status: "completed", ticketNumber: null, sessions: [] },
+      });
+      const closed = await prepared.closeRound();
+      assert.equal(closed.accepted, false, "unreadable diary coordinates must not close as accepted");
+      assert.equal(
+        "failure" in closed ? closed.failure?.identity?.name : undefined,
+        "InfrastructureFailure",
+        "diary coordinate read failure must surface as typed round infrastructure failure",
+      );
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    await rm(home, { recursive: true, force: true });
+  }
+});

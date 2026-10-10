@@ -584,9 +584,6 @@ export function createSubmissionLedgerHost(
             const attemptId = attemptIdentity(context, runId);
             const state = await stateFor(context, runId);
             const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
-            // #541 / #575: shared infra-declaration fail lives on the ledger seam.
-            // #641 chain②: seats may bounce a misdeclared infrastructure failure
-            // as correctable (2.1/2.2/2.3 keep paths).
             append({
               type: "candidate",
               attemptId,

@@ -79,7 +79,13 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { TurnDispatchedFailure } from "./auto-resume.ts";
-import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import {
+  beginPublicCallPresentation,
+  continueParentAfterChild,
+  presentAuditedOriginalOfUnpassedOfficer,
+  runPublicInstructionSeat,
+  runPublicInstructionSeatResume,
+} from "./instruction-seat-run.ts";
 import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
@@ -1085,6 +1091,7 @@ export async function runAkRole(
   env: CliEnv,
 ): Promise<CliResult> {
   const io = env.io ?? defaultIo();
+  beginPublicCallPresentation(io);
   let resumeFailureContext:
     | { readonly home: string; readonly runId: string; readonly authority: DurablePrincipalAuthority; readonly runDirectory?: string }
     | undefined;
@@ -1224,19 +1231,16 @@ export async function runAkRole(
         parts.credentials,
         invocationFromParsed(parsed),
       );
-      const result = await runPublicInstructionSeatResume(
-        resumeRequest,
-        createRoleEnvironment(env, {
-          role: seatRole,
-          home,
-          agentDir: parts.agentDir,
-          cwd: parts.cwd,
-          credentials: parts.credentials,
-          seat,
-          config: parts.config,
-        }),
-        io,
-      );
+      const resumeEnv = createRoleEnvironment(env, {
+        role: seatRole,
+        home,
+        agentDir: parts.agentDir,
+        cwd: parts.cwd,
+        credentials: parts.credentials,
+        seat,
+        config: parts.config,
+      });
+      const result = await runPublicInstructionSeatResume(resumeRequest, resumeEnv, io);
       let current = result;
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
@@ -1275,6 +1279,8 @@ export async function runAkRole(
         });
         current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }
+      // #1214 R2: the public call's final result decides whether the audited original shows.
+      await presentAuditedOriginalOfUnpassedOfficer(current, resumeEnv, io);
       return cliResultFromRoleRun(current);
     }
 
@@ -1291,7 +1297,11 @@ export async function runAkRole(
       return await dispatchPublicRoleCommand(
         env, home, io, parsed, role,
         (args) => PUBLIC_ROLE_ARGV[role].parse(args) as PublicSeatParse,
-        (args, roleEnv, once) => runPublicInstructionSeat(args, roleEnv, io, role, once),
+        async (args, roleEnv, once) => {
+          const seat = await runPublicInstructionSeat(args, roleEnv, io, role, once);
+          await presentAuditedOriginalOfUnpassedOfficer(seat, roleEnv, io);
+          return seat;
+        },
       );
     }
 
