@@ -6,11 +6,12 @@
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -693,12 +694,20 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000direct";
     const instruction = "Repair #1171.";
-    const scripted = fixerTurnHost(() => ({
+    const headAtSeal = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: project,
+      encoding: "utf8",
+    }).trim();
+    // Unknown extra field must stay in the receipt JSON as sealed (票面原样回执).
+    const submit = {
       status: "completed",
       report: "direct ticket",
+      summary: "direct bind short summary text here ok",
       ticketNumber: TICKET,
       classResults: FIXER_DONE.classResults,
-    }));
+      unexpectedExtra: { kept: true, n: 3 },
+    } as const;
+    const scripted = fixerTurnHost(() => ({ ...submit }));
     const result = await runPublicInstructionSeat(
       ["apply", instruction],
       seatEnv(home, project, runId, "pi", scripted.host),
@@ -710,15 +719,25 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
-    // #1199 J5: same path also owns ticket progress relocate (was a parallel case).
-    // Gate may summon inspector on the same ticket — assert this fixer leg only.
+    // #1199: progress + whole receipt JSON + head; no model/host/thinking columns.
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
     const fixerLines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(fixerLines.length, 1);
     assert.equal(fixerLines[0]!.instruction, instruction);
+    assert.equal(fixerLines[0]!.head, headAtSeal);
+    assert.equal(fixerLines[0]!.round, "1");
+    assert.equal(fixerLines[0]!.status, "completed");
+    assert.equal(fixerLines[0]!.summary, submit.summary);
+    assert.equal(Object.hasOwn(fixerLines[0]!, "model"), false);
+    assert.equal(Object.hasOwn(fixerLines[0]!, "host"), false);
+    assert.equal(Object.hasOwn(fixerLines[0]!, "thinking"), false);
     assert.equal(existsSync(join(ticketDir, fixerLines[0]!.receipt)), true);
     assert.equal(existsSync(join(ticketDir, fixerLines[0]!.session)), true);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(ticketDir, fixerLines[0]!.receipt), "utf8")),
+      submit,
+    );
     assert.equal(
       readTicketProgressLines(unboundDir).some((line) => line.session.includes(runId)),
       false,
@@ -727,6 +746,313 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       existsSync(join(unboundDir, "sessions", formatRunLeaf(runId, "fixer"))),
       false,
     );
+
+    // Same seat, new session: rounds accumulate; sessions differ.
+    const runId2 = "01a011710-0000-7000-8000-0000000dire2";
+    const secondInstruction = "Second session on same ticket.";
+    const second = fixerTurnHost(() => ({
+      status: "completed",
+      report: "second session",
+      summary: "second session summary text here ok",
+      ticketNumber: TICKET,
+      classResults: FIXER_DONE.classResults,
+    }));
+    const secondResult = await runPublicInstructionSeat(
+      ["apply", secondInstruction],
+      seatEnv(home, project, runId2, "pi", second.host),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(secondResult.exitCode, 0, `${secondResult.terminal?.roleOutcome.kind}`);
+    const after = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(after.length, 2);
+    assert.equal(after[1]!.round, "2");
+    assert.equal(after[1]!.instruction, secondInstruction);
+    assert.notEqual(after[0]!.session, after[1]!.session);
+  });
+});
+
+test("#1199 public resume relocate: ticket current write fail keeps unbound staging", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-relfail01";
+    const stayId = "01a011710-0000-7000-8000-relstay01";
+    // Sibling stays unbound; only moveId relocates (isolation).
+    for (const id of [stayId, runId]) {
+      const seed = fixerTurnHost((turn) => ({
+        status: "completed",
+        report: turn === 1 ? `seed-${id}-1` : `seed-${id}-2`,
+        summary: `unbound sealed summary for ${id} here`,
+        classResults: FIXER_DONE.classResults,
+      }));
+      await runPublicInstructionSeat(
+        ["apply", `Seed unbound ${id}`],
+        seatEnv(home, project, id, "pi", seed.host),
+        captureIo().io,
+        "fixer",
+        (args) => parsePublicSeatArgv("fixer", args),
+      );
+      assert.equal(existsSync(unboundLeaf(home, bookKey, id, "fixer")), true);
+    }
+    const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
+    const beforeMove = readTicketProgressLines(unboundDir)
+      .filter((line) => line.session.includes(runId));
+    const beforeStay = readTicketProgressLines(unboundDir)
+      .filter((line) => line.session.includes(stayId));
+    assert.ok(beforeMove.length >= 1, "move leg must stage progress before bind");
+    assert.ok(beforeStay.length >= 1, "stay leg must stage progress before bind");
+
+    const ticketSubject = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    await mkdir(ticketSubject, { recursive: true });
+    const currentPath = join(ticketSubject, "current.jsonl");
+    await writeFile(currentPath, "", "utf8");
+    chmodSync(currentPath, 0o444);
+
+    const bind = fixerTurnHost(() => ({
+      status: "completed",
+      report: "bind after unbound",
+      summary: "bind summary text here is long enough",
+      ticketNumber: TICKET,
+      classResults: FIXER_DONE.classResults,
+    }));
+    await runPublicInstructionSeatResume(
+      { runId, message: "declare ticket after unbound seal" },
+      seatEnv(home, project, runId, "pi", bind.host),
+      captureIo().io,
+    ).catch(() => undefined);
+
+    const afterMove = readTicketProgressLines(unboundDir)
+      .filter((line) => line.session.includes(runId));
+    assert.ok(
+      afterMove.length >= 1,
+      "staging progress must survive failed ticket current append",
+    );
+    assert.equal(
+      existsSync(join(unboundLeaf(home, bookKey, runId, "fixer"), "ticket-progress.jsonl")),
+      true,
+      "private progress file must remain when target append fails",
+    );
+    // Sibling isolation: stay leg untouched whether bind threw or not.
+    const afterStay = readTicketProgressLines(unboundDir)
+      .filter((line) => line.session.includes(stayId));
+    assert.equal(afterStay.length, beforeStay.length);
+    for (const row of afterStay) {
+      assert.equal(existsSync(join(unboundDir, row.receipt)), true);
+    }
+  });
+});
+
+test("#1199 envelope 催交原文 is the progress instruction (not first mint)", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-progresume";
+    const firstInstruction = "first summons for progress resume";
+    let sealingSummons: string | undefined;
+    let turns = 0;
+    // External envelope: silent first turn → AK 没交卷催交; seal on the 催交 turn.
+    const sealing = envelopeHostThatReportsThen({
+      hostName: "codex",
+      ticketNumber: TICKET,
+      submit: {
+        status: "completed",
+        report: "sealed after delivery reask",
+        summary: "summary after delivery reask text ok",
+        classResults: FIXER_DONE.classResults,
+      },
+    });
+    const host = withPassingReviewHost({
+      async executeTurn(request: RoleTurnRequest) {
+        turns += 1;
+        if (turns === 1) {
+          return { timedOut: false, code: 0, stderr: "" };
+        }
+        if (request.continuation.kind === "resume") {
+          sealingSummons = request.summonsInstruction ?? request.continuation.prompt;
+        }
+        return sealing.executeTurn(request);
+      },
+    });
+    const first = await runPublicInstructionSeat(
+      ["apply", firstInstruction],
+      {
+        ...seatEnv(home, project, runId, "codex", host),
+        hostAdapters: nestAdaptersFor(host),
+      },
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(first.exitCode, 0, `${first.terminal?.roleOutcome.kind}`);
+    assert.ok(turns >= 2, `催交 must run; turns=${turns}`);
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(lines.length, 1);
+    assert.notEqual(lines[0]!.instruction, firstInstruction);
+    assert.ok(lines[0]!.instruction.length > 0);
+    if (sealingSummons !== undefined) {
+      assert.equal(lines[0]!.instruction, sealingSummons);
+    }
+    assert.equal(existsSync(join(ticketDir, lines[0]!.receipt)), true);
+  });
+});
+
+test("#1199 public resume/auto-resume: instruction/head; same session; distinct worktree heads", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-proghead";
+    const firstInstruction = "first summons for head resume";
+    let fixerTurns = 0;
+    let autoSummons: string | undefined;
+    const base = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        fixerTurns += 1;
+        if (fixerTurns === 1) {
+          // Host failure → in-call auto-resume on the same session original.
+          const sessionFile = args.includes("--session")
+            ? args[args.indexOf("--session") + 1]
+            : undefined;
+          if (typeof sessionFile === "string") {
+            await mkdir(dirname(sessionFile), { recursive: true });
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({ type: "message", role: "user", content: "pre-fail" })}\n`,
+              "utf8",
+            );
+          }
+          return { code: 1, timedOut: false, stderr: "quota", args: [...args] };
+        }
+        return scriptedTerminatingToolSession({
+          role: "fixer",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          details: {
+            status: "completed",
+            report: `done-${fixerTurns}`,
+            summary: `summary for round ${fixerTurns} text here ok`,
+            ticketNumber: TICKET,
+            classResults: FIXER_DONE.classResults,
+          },
+          toolCallId: `call_head_${fixerTurns}`,
+          sessionWriteMode: "append",
+        })(args, options);
+      },
+    });
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.continuation.kind === "resume") {
+          autoSummons = request.summonsInstruction ?? request.continuation.prompt;
+        }
+        return withPassingReviewHost(base).executeTurn(request);
+      },
+    };
+    const first = await runPublicInstructionSeat(
+      ["apply", firstInstruction],
+      {
+        ...seatEnv(home, project, runId, "pi", host, { autoResumeLimit: 1 }),
+        boundTicketNumber: TICKET,
+      },
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(first.exitCode, 0, `${first.terminal?.roleOutcome.kind}`);
+    assert.ok(fixerTurns >= 2, `auto-resume must run; turns=${fixerTurns}`);
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(lines.length, 1);
+    assert.notEqual(lines[0]!.instruction, firstInstruction);
+    if (autoSummons !== undefined) {
+      assert.equal(lines[0]!.instruction, autoSummons);
+    }
+    const sessionRel = lines[0]!.session;
+    const head1 = lines[0]!.head;
+
+    await writeFile(join(project, "advance-1199.txt"), "round-2\n", "utf8");
+    execFileSync("git", ["add", "advance-1199.txt"], { cwd: project });
+    execFileSync("git", ["commit", "-m", "advance head for progress"], { cwd: project });
+    const head2 = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: project,
+      encoding: "utf8",
+    }).trim();
+    assert.notEqual(head1, head2);
+
+    const resumeInstruction = "resume summons after head advance";
+    const resumeHost = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "fixer",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        details: {
+          status: "completed",
+          report: "resume sealed",
+          summary: "resume round summary text here ok",
+          ticketNumber: TICKET,
+          classResults: FIXER_DONE.classResults,
+        },
+        sessionWriteMode: "append",
+      })(args, options),
+    }));
+    const resumed = await runPublicInstructionSeatResume(
+      { runId, message: resumeInstruction },
+      seatEnv(home, project, runId, "pi", resumeHost),
+      captureIo().io,
+    );
+    assert.equal(resumed.exitCode, 0, `${resumed.terminal?.roleOutcome.kind}`);
+    const after = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(after.length, 2);
+    assert.equal(after[0]!.head, head1);
+    assert.equal(after[1]!.instruction, resumeInstruction);
+    assert.equal(after[1]!.head, head2);
+    assert.equal(after[0]!.session, after[1]!.session);
+    assert.equal(after[0]!.session, sessionRel);
+    assert.equal(existsSync(join(ticketDir, after[0]!.session)), true);
+    assert.equal(existsSync(join(ticketDir, after[1]!.receipt)), true);
+
+    // Distinct linked worktree: second seat cwd HEAD differs from project.
+    const projectB = join(home, "project-b");
+    execFileSync("git", ["branch", "work-b"], { cwd: project });
+    execFileSync("git", ["worktree", "add", projectB, "work-b"], { cwd: project });
+    await writeFile(join(projectB, "other-1199.txt"), "b-side\n", "utf8");
+    execFileSync("git", ["add", "other-1199.txt"], { cwd: projectB });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "project-b head"], {
+      cwd: projectB,
+    });
+    const headB = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: projectB,
+      encoding: "utf8",
+    }).trim();
+    assert.notEqual(head2, headB);
+    const runB = "01a011710-0000-7000-8000-progheadb";
+    const hostB = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "fixer",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        details: {
+          status: "completed",
+          report: "worktree-b",
+          summary: "worktree B summary text here ok",
+          ticketNumber: TICKET,
+          classResults: FIXER_DONE.classResults,
+        },
+      })(args, options),
+    }));
+    const second = await runPublicInstructionSeat(
+      ["apply", "summons from linked worktree B"],
+      {
+        ...seatEnv(home, projectB, runB, "pi", hostB),
+        boundTicketNumber: TICKET,
+      },
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(second.exitCode, 0, `${second.terminal?.roleOutcome.kind}`);
+    const withB = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    const rowB = withB.find((line) => line.session.includes(runB));
+    assert.ok(rowB !== undefined);
+    assert.equal(rowB!.head, headB);
   });
 });
 

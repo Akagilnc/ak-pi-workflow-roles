@@ -334,9 +334,8 @@ process.stdout.write(JSON.stringify({
       ) as unknown;
       assert.deepEqual(receipt, FIXER_DONE);
       const beforeBytes = await readFile(landing, "utf8");
-      const beforeLines = beforeBytes.trim().split("\n").filter(Boolean).length;
 
-      // Resume reuses bound host session id and appends the same original.
+      // Resume reuses bound host session id and the same original path.
       const resumed = await runPublicInstructionSeatResume(
         { runId, message: resumeInstruction },
         seatEnv(home, project, runId, "claude", withPassingReviewHost(host)),
@@ -348,9 +347,16 @@ process.stdout.write(JSON.stringify({
       assert.equal(afterProgress.length, 2);
       assert.equal(afterProgress[0]!.session, afterProgress[1]!.session);
       assert.equal(afterProgress[1]!.instruction, resumeInstruction);
+      assert.equal(
+        join(subjectDir(home, bookKey, TICKET), afterProgress[1]!.session),
+        landing,
+        "resume must keep the same host original path",
+      );
       const afterBytes = await readFile(landing, "utf8");
-      const afterLines = afterBytes.trim().split("\n").filter(Boolean).length;
-      assert.ok(afterLines > beforeLines, "resume must append host original, not mint a peer copy");
+      assert.ok(
+        afterBytes.length > beforeBytes.length,
+        "resume must grow the same host original, not mint a peer copy",
+      );
     } finally {
       await rm(socketDir, { recursive: true, force: true });
     }
@@ -388,8 +394,7 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
       await readFile(join(subjectDir(home, bookKey, TICKET), progress[0]!.receipt), "utf8"),
     ) as unknown;
     assert.deepEqual(receipt, FIXER_DONE);
-    const beforeLines = (await readFile(join(landing, "chat_history.jsonl"), "utf8"))
-      .trim().split("\n").filter(Boolean).length;
+    const beforeChat = await readFile(join(landing, "chat_history.jsonl"), "utf8");
     // Native grok original — exit-copy refreshes landing from here on each turn.
     const grokNative = join(
       home,
@@ -495,9 +500,16 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
       assert.equal(afterProgress.length, 2);
       assert.equal(afterProgress[0]!.session, afterProgress[1]!.session);
       assert.equal(afterProgress[1]!.instruction, resumeInstruction);
-      const afterLines = (await readFile(join(landing, "chat_history.jsonl"), "utf8"))
-        .trim().split("\n").filter(Boolean).length;
-      assert.ok(afterLines > beforeLines, "grok resume must append host original, not mint a peer copy");
+      assert.equal(
+        join(subjectDir(home, bookKey, TICKET), afterProgress[1]!.session),
+        landing,
+        "grok resume must keep the same host original path",
+      );
+      const afterChat = await readFile(join(landing, "chat_history.jsonl"), "utf8");
+      assert.ok(
+        afterChat.length > beforeChat.length,
+        "grok resume must grow the same host original, not mint a peer copy",
+      );
     } finally {
       await rm(socketDir, { recursive: true, force: true });
     }
@@ -611,7 +623,7 @@ process.stdout.write(events.map((e) => JSON.stringify(e)).join("\\n") + "\\n");
         await readFile(join(subjectDir(home, bookKey, TICKET), progress[0]!.receipt), "utf8"),
       ) as unknown;
       assert.deepEqual(receipt, FIXER_DONE);
-      const beforeLines = (await readFile(landing, "utf8")).trim().split("\n").filter(Boolean).length;
+      const beforeBytes = await readFile(landing, "utf8");
 
       const resumed = await runPublicInstructionSeatResume(
         { runId, message: resumeInstruction },
@@ -624,8 +636,16 @@ process.stdout.write(events.map((e) => JSON.stringify(e)).join("\\n") + "\\n");
       assert.equal(afterProgress.length, 2);
       assert.equal(afterProgress[0]!.session, afterProgress[1]!.session);
       assert.equal(afterProgress[1]!.instruction, resumeInstruction);
-      const afterLines = (await readFile(landing, "utf8")).trim().split("\n").filter(Boolean).length;
-      assert.ok(afterLines > beforeLines, "codex resume must append host original, not mint a peer copy");
+      assert.equal(
+        join(subjectDir(home, bookKey, TICKET), afterProgress[1]!.session),
+        landing,
+        "codex resume must keep the same host original path",
+      );
+      const afterBytes = await readFile(landing, "utf8");
+      assert.ok(
+        afterBytes.length > beforeBytes.length,
+        "codex resume must grow the same host original, not mint a peer copy",
+      );
     } finally {
       await rm(socketDir, { recursive: true, force: true });
     }

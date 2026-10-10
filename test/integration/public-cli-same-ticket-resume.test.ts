@@ -1192,13 +1192,14 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     // volume — no task.md copy. No artifacts/, stderr.log, headless-*, run-state /
     // invocation / admitted-request json or .run-starts; no attachments/. The session
     // volume holds the host session (and the gate officer's own session volume).
+    // #1199: round-instruction.txt is the seal-time summons staging beside the dossier.
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const coderRunDirectory =
       (await findRunDirectoryById(scratch.home, "run-worker-gate-resume-993"))
       ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "state.jsonl"],
+      ["current.json", "history.jsonl", "log.jsonl", "round-instruction.txt", "state.jsonl"],
     );
     // #1199: session beside runs/ under the ticket subject.
     assert.deepEqual(

@@ -2030,29 +2030,23 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        // Open court continue, or a new court for a real re-summons
-        // (clause 0 新庭可再交卷; #833). Bare resume — with or without caller
-        // words — carries no summons and no open court, so it mints none:
-        // the package must not turn ordinary continuation bytes into an audit
-        // court whose attempt scope would reshape settlement (#1032 修订票：
-        // 此要求不延伸到没有该传召庭次的裸 resume).
-        if (openCourtAttemptId !== undefined || request.summons !== undefined) {
-          const courtAttemptId =
-            openCourtAttemptId ??
-            (turnRequest.courtAttemptId !== undefined &&
-            turnRequest.courtAttemptId.length > 0
-              ? turnRequest.courtAttemptId
-              : randomUUID());
-          turnRequest = { ...turnRequest, courtAttemptId };
-          if (openCourtAttemptId === undefined) {
-            const court: CurrentCourtState = {
-              courtAttemptId,
-              ...(request.summons === undefined
-                ? {}
-                : { summons: request.summons }),
-            };
-            await recordCurrentCourt(admittedForBuild.runDirectory, court);
-          }
+        // #1199 J3 / #637: every host dispatch carries a courtAttemptId so
+        // this-court settlement cannot wash prior accepted into a no-seal turn.
+        // Bare resume mints a settlement id without recordCurrentCourt — that
+        // is not an audit/summons court (#1032: 裸 resume 不开传召庭).
+        const courtAttemptId =
+          openCourtAttemptId ??
+          (turnRequest.courtAttemptId !== undefined &&
+          turnRequest.courtAttemptId.length > 0
+            ? turnRequest.courtAttemptId
+            : randomUUID());
+        turnRequest = { ...turnRequest, courtAttemptId };
+        if (openCourtAttemptId === undefined && request.summons !== undefined) {
+          const court: CurrentCourtState = {
+            courtAttemptId,
+            summons: request.summons,
+          };
+          await recordCurrentCourt(admittedForBuild.runDirectory, court);
         }
     return turnRequest;
   };
@@ -2302,10 +2296,21 @@ export async function runPostAdmissionResumable<
   const invocationScopeId = mintEngineDetourInvocationScope({
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
+  // #1199 J3: every dispatched turn carries this-turn courtAttemptId (settlement
+  // isolation). Bare public resume without summons/open-court still mints none
+  // — that path uses buildRequestAfterLease, not this resumable builder.
+  const withCourtAttempt = (request: RoleTurnRequest): RoleTurnRequest =>
+    request.courtAttemptId !== undefined && request.courtAttemptId.length > 0
+      ? request
+      : { ...request, courtAttemptId: randomUUID() };
   const buildScopedInitial = (): RoleTurnRequest =>
-    withEngineDetourInvocationScope(buildInitialRequest(), invocationScopeId);
+    withCourtAttempt(
+      withEngineDetourInvocationScope(buildInitialRequest(), invocationScopeId),
+    );
   const buildScopedResume = (): RoleTurnRequest =>
-    withEngineDetourInvocationScope(buildResumeRequest(), invocationScopeId);
+    withCourtAttempt(
+      withEngineDetourInvocationScope(buildResumeRequest(), invocationScopeId),
+    );
 
   return runSettledAutoResumeLoop({
     admitted,

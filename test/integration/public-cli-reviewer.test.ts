@@ -4,6 +4,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 /**
  * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
@@ -507,6 +508,14 @@ test("default dual-lens admits both axes without a parent run", async () => {
     assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
 
     const bookKey = resolveBookKeyFromGit(project);
+    // #1199: dual-lens rounds are independent (`1.<lens>`); no occupancy placeholders.
+    const progressRounds = readTicketProgressLines(
+      join(home, ".ak-roles", "books", bookKey, "1171"),
+    )
+      .filter((line) => line.seat === "reviewer")
+      .map((line) => line.round)
+      .sort();
+    assert.deepEqual(progressRounds, ["1.completeness", "1.correctness"]);
     await assert.rejects(
       () => access(join(
         home, ".ak-roles", "books", bookKey, "unbound", "runs",

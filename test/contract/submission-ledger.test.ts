@@ -178,7 +178,11 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     const runDirectory = f.context.runDirectory!;
     rememberRoundInstruction(runDirectory, "first summons for two-seal progress");
     await f.start("first");
-    const firstPayload = { status: "converged", summary: "first sealed summary text here ok" };
+    const firstPayload = {
+      status: "converged",
+      summary: "first sealed summary text here ok",
+      unknownKept: "literal-extra-field",
+    };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.equal(first.terminate, true);
     assert.deepEqual(first.details, firstPayload);
@@ -216,6 +220,11 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     assert.equal(lines[1]!.instruction, "second summons for two-seal progress");
     assert.equal(existsSync(join(unbound, lines[0]!.receipt)), true);
     assert.equal(existsSync(join(unbound, lines[1]!.receipt)), true);
+    // Whole sealed JSON retained — unknown fields survive (票面原样回执).
+    assert.deepEqual(
+      JSON.parse(await readFile(join(unbound, lines[0]!.receipt), "utf8")),
+      firstPayload,
+    );
   });
 });
 
