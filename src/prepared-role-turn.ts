@@ -16,9 +16,9 @@ export type PreparedRoleTurn = Readonly<{
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
   /**
-   * #1199: book the prompt bytes actually sent this round onto HostContext
-   * summonsInstruction (same-envelope 催交 / correctable retry).
-   * Production prepareRoleEnvelope always provides this; test stubs may omit.
+   * #1199: book the bytes actually sent this round as progress instruction
+   * (same-envelope 催交 / correctable retry). Production prepareRoleEnvelope
+   * always provides this; test stubs may omit.
    */
   recordSentInstruction?(text: string): void;
   /**

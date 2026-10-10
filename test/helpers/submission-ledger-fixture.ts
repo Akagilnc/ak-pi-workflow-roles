@@ -10,7 +10,7 @@ import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
-import { readUserDialogueSummonsInstruction } from "../../src/user-dialogue-stdin.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /**
  * #1183: ledger-mouth place may move the leaf while the faux in-process spawn
@@ -201,11 +201,11 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     input.env.AK_ROLE_COURT_ATTEMPT.length > 0
       ? input.env.AK_ROLE_COURT_ATTEMPT
       : undefined;
-  // #1199: faux spawn mirrors the live input seam — typed stdin may carry
-  // progress 传召词 beside the model-facing transport body.
+  // #1199: faux spawn mirrors the live input seam — progress instruction is
+  // the model-facing body (what the seat actually receives).
   const summonsInstruction =
     typeof input.stdin === "string"
-      ? readUserDialogueSummonsInstruction(input.stdin)
+      ? readUserDialogueStdin(input.stdin)
       : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,

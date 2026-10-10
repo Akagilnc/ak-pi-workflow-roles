@@ -729,14 +729,14 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
     // #1199: progress + whole receipt JSON + head; no model/host/thinking columns.
-    // Transport may wrap --attach; progress instruction stays the caller body.
+    // Progress instruction is the bytes actually sent (file-flag wrap included).
     assert.ok(transportPrompt.includes("--attach"), "transport carries file flags");
     assert.notEqual(transportPrompt, instruction);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
     const fixerLines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(fixerLines.length, 1);
-    assert.equal(fixerLines[0]!.instruction, instruction);
+    assert.equal(fixerLines[0]!.instruction, transportPrompt);
     assert.equal(fixerLines[0]!.head, headAtSeal);
     assert.equal(fixerLines[0]!.round, "1");
     assert.equal(fixerLines[0]!.status, "completed");
@@ -1106,7 +1106,8 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         if (request.continuation.kind === "resume") {
-          autoSummons = request.summonsInstruction ?? request.continuation.prompt;
+          // #1199: progress instruction is this-turn prompt (not first mint).
+          autoSummons = request.continuation.prompt;
         }
         return withPassingReviewHost(base).executeTurn(request);
       },
@@ -1127,7 +1128,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
     assert.notEqual(lines[0]!.instruction, firstInstruction);
-    // Resume request must carry this-turn summonsInstruction (not first mint).
+    // Resume prompt is this-turn instruction (not first mint).
     assert.equal(typeof autoSummons, "string");
     assert.notEqual(autoSummons, firstInstruction);
     assert.equal(lines[0]!.instruction, autoSummons);

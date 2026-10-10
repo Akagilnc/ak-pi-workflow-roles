@@ -28,10 +28,7 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../submission-errors.ts";
-import {
-  readUserDialogueStdin,
-  readUserDialogueSummonsInstruction,
-} from "../user-dialogue-stdin.ts";
+import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -174,13 +171,12 @@ export function createPiRoleHostAdapter(
     piContexts.set(host, context);
     return host;
   };
-  // Decode transport exactly once before Pi's native handler chain. Capture this
-  // input's 传召词 from the typed envelope before stripping model-facing body
-  // (attach wrap must not become progress instruction). Every input refreshes
-  // the turn field — do not freeze the first summons for later plain text.
+  // Decode transport exactly once before Pi's native handler chain. Progress
+  // instruction is the model-facing body (what the seat actually receives) —
+  // no parallel 传召词 channel. Every input refreshes the turn field.
   pi.on("input", (value) => {
-    turnSummonsInstruction = readUserDialogueSummonsInstruction(value.text);
     const text = readUserDialogueStdin(value.text);
+    turnSummonsInstruction = text;
     return text === value.text ? { action: "continue" } : { action: "transform", text };
   });
   const host: RoleHost = {

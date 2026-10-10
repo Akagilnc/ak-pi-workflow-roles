@@ -186,10 +186,6 @@ export async function prepareRoleEnvelope(options: {
     ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     ...(request.invocationScopeId === undefined ? {} : { invocationScopeId: request.invocationScopeId }),
     ...(request.host === undefined || request.host.trim() === "" ? {} : { host: request.host.trim() }),
-    // #1199: seed from request; input seam overwrites with this-turn actual dialogue.
-    ...(request.summonsInstruction === undefined
-      ? {}
-      : { summonsInstruction: request.summonsInstruction }),
     sessionManager: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
@@ -708,6 +704,8 @@ export async function prepareRoleEnvelope(options: {
       const record = value as Record<string, unknown>;
       if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
     }
+    // #1199: progress instruction = bytes actually handed to the seat this turn.
+    context.summonsInstruction = prompt;
     // Book the user assignment so judge audit subjects recover it from parent books.
     if (typeof prompt === "string" && prompt.trim() !== "") {
       sessionEntries.push({

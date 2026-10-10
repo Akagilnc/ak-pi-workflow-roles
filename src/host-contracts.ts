@@ -206,11 +206,6 @@ export type RoleTurnRequest = {
    * number. Absent = package default. Never re-read from disk downstream.
    */
   readonly deliveryRequestLimit?: number;
-  /**
-   * #1199: this-turn summons / 催交 for in-process HostContext (envelope).
-   * Pi child records the same bytes from the input seam (stdin dialogue) — never env/argv.
-   */
-  readonly summonsInstruction?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */
@@ -269,7 +264,7 @@ export interface DurablePrincipalAuthority {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; /** Public-invocation scope (#537); never process-global env. */ invocationScopeId?: string; /** Selected host axis (#537 / ADR 0082); never process-global env invent. */ host?: string; /** #1199 this-turn summons / 催交 bytes; input-seam / in-process field only — never env/argv body. */ summonsInstruction?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; /** Public-invocation scope (#537); never process-global env. */ invocationScopeId?: string; /** Selected host axis (#537 / ADR 0082); never process-global env invent. */ host?: string; /** #1199 bytes actually sent to the seat this turn (progress instruction); input-seam / in-process only — never env/argv body. */ summonsInstruction?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
 /** Per-turn run directory; adapters must project any child-process identity. */
 export function runDirectoryFromHostContext(context: HostContext): string | undefined {

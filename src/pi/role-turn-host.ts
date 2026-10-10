@@ -439,9 +439,8 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
       const transportBody = piUserDialogueBody(turnRequest);
-      // #1199: model-facing transport may wrap file flags; progress 传召词 is the
-      // already-separated request field, riding the same typed stdin envelope.
-      const stdin = encodeUserDialogueStdin(transportBody, turnRequest.summonsInstruction);
+      // #1199: progress instruction is these same body bytes (actual seat input).
+      const stdin = encodeUserDialogueStdin(transportBody);
       // Shared envelope isolates this call's court identity: omitting courtAttemptId
       // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {

@@ -250,11 +250,11 @@ test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext 
       },
     });
 
-    const summons = "this-turn summons bytes for seal";
-    const transport = `${summons}\n\n--attach /tmp/pi-adapter-summons.json`;
+    // #1199: progress instruction = model-facing body (file-flag wrap included).
+    const transport = "this-turn summons bytes for seal\n\n--attach /tmp/pi-adapter-summons.json";
     const inputHandlers = handlers.get("input");
     assert.ok(inputHandlers);
-    let inputEvent = { text: encodeUserDialogueStdin(transport, summons), source: "piped" };
+    let inputEvent = { text: encodeUserDialogueStdin(transport), source: "piped" };
     const inputCtx = freshExtensionContext("/tmp/pi-adapter-summons-input");
     for (const inputHandler of inputHandlers) {
       const result = await inputHandler(inputEvent, inputCtx);
@@ -283,7 +283,7 @@ test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext 
     assert.ok(agentEnd);
     await agentEnd({ messages: [] }, after催交Ctx);
 
-    assert.deepEqual(seen, [summons, summons, summons, "催交-same-turn"]);
+    assert.deepEqual(seen, [transport, transport, transport, "催交-same-turn"]);
     assert.equal(process.env.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
   } finally {
     if (prior === undefined) delete process.env.AK_ROLE_SUMMONS_INSTRUCTION;
@@ -311,7 +311,6 @@ test("#1199 Pi spawn env must not carry summons body (stdin already holds dialog
     activation: { role: "judge" },
     methods: [],
     continuation: { kind: "initial", prompt: huge },
-    summonsInstruction: huge,
   });
   assert.ok(capturedEnv);
   assert.equal(capturedEnv.AK_ROLE_SUMMONS_INSTRUCTION, undefined);

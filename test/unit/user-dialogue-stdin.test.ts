@@ -16,7 +16,6 @@ import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import {
   encodeUserDialogueStdin,
   readUserDialogueStdin,
-  readUserDialogueSummonsInstruction,
   USER_DIALOGUE_STDIN_KIND,
 } from "../../src/user-dialogue-stdin.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -28,13 +27,9 @@ test("#879 typed stdin recovers original body after pipe trim", () => {
   assert.equal(readUserDialogueStdin(encoded), body);
   assert.equal(readUserDialogueStdin(`  ${encoded}  \n`), body);
   assert.equal(readUserDialogueStdin(encoded.trim()), body);
-  // Progress 传召词 rides the same envelope when transport wraps file flags.
+  // #1199: progress instruction is the same body bytes (file-flag wrap included).
   const transport = "caller body only\n\n--attach /tmp/x.json";
-  const summons = "caller body only";
-  const withSummons = encodeUserDialogueStdin(transport, summons);
-  assert.equal(readUserDialogueStdin(withSummons), transport);
-  assert.equal(readUserDialogueSummonsInstruction(withSummons), summons);
-  assert.equal(readUserDialogueSummonsInstruction(encodeUserDialogueStdin(summons)), summons);
+  assert.equal(readUserDialogueStdin(encodeUserDialogueStdin(transport)), transport);
 });
 
 test("#879 typed stdin keeps empty and flag-like opaque messages", () => {

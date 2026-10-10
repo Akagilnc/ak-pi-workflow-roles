@@ -840,7 +840,7 @@ function buildReceiptDeliveryRequest(input: {
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): RoleTurnRequest {
   const { request, receiptDelivery } = input;
-  // #1199: this turn's prompt IS the summonsInstruction for progress (not first mint).
+  // #1199: progress instruction is this turn's prompt (envelope books continuation.prompt).
   const prompt = JSON.stringify({
     ...receiptDelivery.deliveryState(),
     deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
@@ -851,7 +851,6 @@ function buildReceiptDeliveryRequest(input: {
       kind: "resume",
       prompt,
     },
-    summonsInstruction: prompt,
     deliveryRequestLimit: receiptDelivery.limit,
   };
 }
@@ -1707,10 +1706,8 @@ export function resumeTurnRequestProjectionOptions(
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
   const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;
-  // #1199: raw 传召词 for the progress line (not file-flag delivery wrapper).
-  let summonsInstruction: string;
+  // #1199: progress instruction = this prompt (actual seat input, file flags included).
   if (request.message !== undefined) {
-    summonsInstruction = request.message;
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + caller file flags.
       prompt = officerDialogue && fileFlags.length === 0
@@ -1724,7 +1721,6 @@ export function resumeTurnRequestProjectionOptions(
     }
   } else if (summonsPrepared !== undefined) {
     const body = summonsPrepared.instruction;
-    summonsInstruction = body;
     // No file flags: body alone (gate peer words). With flags: merge delivery.
     prompt = officerDialogue && fileFlags.length === 0
       ? body
@@ -1733,10 +1729,8 @@ export function resumeTurnRequestProjectionOptions(
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
     prompt = "";
-    summonsInstruction = request.summons.instruction ?? "";
   } else {
     prompt = "";
-    summonsInstruction = "";
   }
   return {
     ...projectPublicTurnAxes(env),
@@ -1748,7 +1742,6 @@ export function resumeTurnRequestProjectionOptions(
       kind: "resume",
       prompt,
     },
-    summonsInstruction,
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     ...(env.navigatorByStatusPrepare === true
       ? { navigatorByStatusPrepare: true as const }
@@ -1763,19 +1756,8 @@ export function roleTurnOptions(
   env: PostAdmissionEnv,
   admitted: { readonly correlationId?: string; readonly instruction?: string },
   continuation: RoleTurnRequest["continuation"],
-  /**
-   * #1199 this-round 传召词. Initial turns omit and use admitted.instruction.
-   * Auto-resume passes the continuation prompt so the progress line is not the
-   * first-mint instruction.
-   */
-  summonsInstruction?: string,
 ): RoleTurnRequestProjectionOptions {
   const correlationId = env.correlationId ?? admitted.correlationId;
-  const progressInstruction = summonsInstruction !== undefined
-    ? summonsInstruction
-    : typeof admitted.instruction === "string"
-      ? admitted.instruction
-      : undefined;
   return {
     ...projectPublicTurnAxes(env),
     ...(env.host === undefined ? {} : { host: env.host }),
@@ -1783,7 +1765,6 @@ export function roleTurnOptions(
       ? {}
       : { correlationId }),
     continuation,
-    ...(progressInstruction === undefined ? {} : { summonsInstruction: progressInstruction }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     ...(env.navigatorByStatusPrepare === true
       ? { navigatorByStatusPrepare: true as const }
@@ -2255,8 +2236,7 @@ export async function runPostAdmissionOneShot<
     io: input.io,
     buildInitialRequest: () => input.request,
     buildResumeRequest: () => {
-      // #1199 R2: one-shot auto-resume must refresh summonsInstruction to this
-      // continuation — do not keep the initial request's first-summons field.
+      // #1199: envelope books continuation.prompt as progress instruction.
       const prompt = buildAutoResumeContinuationPrompt();
       return {
         ...input.request,
@@ -2264,7 +2244,6 @@ export async function runPostAdmissionOneShot<
           kind: "resume" as const,
           prompt,
         },
-        summonsInstruction: prompt,
       };
     },
     adapters: input.adapters,

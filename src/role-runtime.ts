@@ -1170,12 +1170,12 @@ export function createRoleRuntimeExtension(
       );
     };
     roleHost.on("input", (event, ctx) => {
-      // #1199: this-turn 传召词 from the input seam (票面当轮实际输入).
+      // #1199: progress instruction = bytes actually received this turn.
       // HostContext field only — never process.env body (nested identity / ARG_MAX).
       // Transport unpack is sole at the host adapter (Pi strips envelope once).
       // Do not re-parse model-facing body — a legal JSON literal must stay intact.
-      // Adapter / turn-request / 催交 already seeded summonsInstruction; fill only
-      // when still absent (plain hosts without a prior unpack).
+      // Adapter already booked the unpacked body; fill only when still absent
+      // (plain hosts without a prior unpack).
       if (typeof event.text === "string" && ctx.summonsInstruction === undefined) {
         ctx.summonsInstruction = event.text;
       }
