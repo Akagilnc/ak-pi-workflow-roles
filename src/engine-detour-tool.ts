@@ -47,14 +47,6 @@ type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
   host?: string;
 };
 
-export type EngineDetourHostActions = {
-  failInfrastructure(
-    error: unknown,
-    ctx: EngineDetourContext,
-    toolCallId?: string,
-  ): never;
-};
-
 /** Caller/upper-layer cancellation must propagate unchanged. */
 function isCallerCancellation(
   error: unknown,
@@ -112,16 +104,14 @@ function engineFailureResult(input: {
 
 /**
  * Build one detour tool definition for a configured engine name.
- * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only
- * (empty/invalid argv). Engine process failures (nonzero/empty/spawn) return as
- * ordinary tool results to the same seat — no seat-run abort (#1213).
+ * Engine process failures (nonzero/empty/spawn) and empty/invalid argv return as
+ * ordinary tool results to the same seat — no seat-run abort (#1213 A3).
  * Caller AbortSignal cancellation propagates unchanged.
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
   /** Optional pool-directive model id (#883); description only — argv stays caller-assembled. */
   engineModel?: string;
-  fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
 }): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
   const engineName = input.engineName;
   const engineModel = input.engineModel;
@@ -146,11 +136,10 @@ export function createEngineDetourToolDefinition(input: {
       const args = params as EngineDetourArgs;
       const argv = Array.isArray(args.argv) ? args.argv : [];
       if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
-        input.fail(
-          new Error("劳务引擎 argv 须为非空字符串数组"),
-          toolCallId,
-          ctx,
-        );
+        // A3: parameter error returns to the seat — do not abort the run.
+        return engineFailureResult({
+          text: "劳务引擎 argv 须为非空字符串数组",
+        });
       }
 
       const sessionParent = ctx.sessionManager?.getSessionFile?.();
@@ -261,10 +250,7 @@ export function createEngineDetourToolDefinition(input: {
  * activation signal. Signal is request-scoped via RoleHost flag, with pi
  * child-process env as fallback (resolveEngineName). Returns whether registration occurred.
  */
-export function registerEngineDetourTool(
-  roleHost: RoleHost,
-  hostActions: EngineDetourHostActions,
-): boolean {
+export function registerEngineDetourTool(roleHost: RoleHost): boolean {
   const getFlag = (name: string) => roleHost.getFlag(name);
   const engineName = resolveEngineName(getFlag);
   if (engineName === undefined) {
@@ -275,9 +261,6 @@ export function registerEngineDetourTool(
   const definition = createEngineDetourToolDefinition({
     engineName,
     ...(engineModel === undefined ? {} : { engineModel }),
-    fail(error, toolCallId, ctx) {
-      hostActions.failInfrastructure(error, ctx, toolCallId);
-    },
   });
   roleHost.registerTool(definition);
 

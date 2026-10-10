@@ -1810,7 +1810,7 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {
-          engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
+          engineDetourRegistered = registerEngineDetourTool(roleHost);
         }
         // Secretariat owns a declared active surface. The shared engine detour is
         // registered after role activation, so include it here rather than leave

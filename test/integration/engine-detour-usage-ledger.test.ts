@@ -127,9 +127,6 @@ async function runDetours(input: {
 
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
-      fail(error) {
-        throw error;
-      },
     });
     const argv =
       call.kind === "ok"
@@ -926,13 +923,8 @@ test("tool path: engine failure + sitian write failure returns both causes witho
       await writeFile(blockedSession, "not-a-dir\n", "utf8");
       await chmod(blockedSession, 0o000);
 
-      let failCalled = false;
       const tool = createEngineDetourToolDefinition({
         engineName: ENGINE,
-        fail(error) {
-          failCalled = true;
-          throw error;
-        },
       });
 
       let result: Awaited<ReturnType<typeof tool.execute>> | undefined;
@@ -955,7 +947,6 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         await chmod(blockedSession, 0o644).catch(() => undefined);
       }
 
-      assert.equal(failCalled, false, `${row.label}: must not abort the seat`);
       assert.ok(result, `${row.label}: engine failure returns a tool result`);
       const details = result.details as {
         tool?: string;
