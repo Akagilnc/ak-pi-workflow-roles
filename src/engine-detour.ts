@@ -179,8 +179,9 @@ export function engineDetourFailureSeatText(result: {
     if (!text.endsWith("\n")) text += "\n";
     text += parts[index]!;
   }
-  // Nonzero + stdout-only would otherwise look like success on the content channel.
-  if (result.code !== 0 && !errUseful) {
+  // Exit code must reach the seat-visible content channel on every nonzero
+  // failure — including when stderr is present (details-only is not enough).
+  if (result.code !== 0) {
     if (!text.endsWith("\n")) text += "\n";
     text += `劳务引擎以 code ${result.code} 退出`;
   }

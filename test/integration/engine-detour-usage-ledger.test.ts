@@ -97,7 +97,13 @@ async function ensureScripts(project: string): Promise<{
   const nonzero = join(project, "detour-nonzero.mjs");
   const empty = join(project, "detour-empty.mjs");
   await writeFile(echo, `process.stdout.write(${JSON.stringify(ECHO_STDOUT)})\n`, "utf8");
-  await writeFile(nonzero, 'process.stdout.write("partial"); process.exit(2);\n', "utf8");
+  // Nonzero + stderr is the common engine-failure shape; seat content must
+  // still carry the exit code (not details-only) alongside full streams.
+  await writeFile(
+    nonzero,
+    'process.stdout.write("partial"); process.stderr.write("engine-warn"); process.exit(2);\n',
+    "utf8",
+  );
   await writeFile(empty, "process.exit(0);\n", "utf8");
   return { echo, nonzero, empty };
 }
@@ -990,6 +996,12 @@ test("tool path: engine failure + sitian write failure returns both causes witho
           assert.ok(
             textParts.includes(row.expectStdout),
             `${row.label}: seat content keeps existing process stdout`,
+          );
+        }
+        if (row.expectCode !== undefined && row.expectCode !== 0) {
+          assert.ok(
+            textParts.includes(String(row.expectCode)),
+            `${row.label}: seat content carries nonzero exit code`,
           );
         }
       }
