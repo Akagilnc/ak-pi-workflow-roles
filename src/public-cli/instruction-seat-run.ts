@@ -270,11 +270,14 @@ async function reaskUnreadablePostSubmissionStatus(
   if (message === undefined) return undefined;
   const next = withUnreadableReask(env);
   if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
+  // Named status-reask: summons opens a new court; message carries the diagnostic
+  // (not arbitrary summons.instruction passthrough through the review resolver).
   return runPublicInstructionSeatResume(
     {
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: message },
+      message,
+      summons: { instructionEmpty: true },
     },
     next,
     io,
@@ -328,11 +331,14 @@ async function reaskMissingTicketOnce(
     softTicketReaskTurn: true,
     softTicketReaskOwnership,
   };
+  // Named #1171 missing-ticket: summons opens a new court; message carries the
+  // package reask copy (not arbitrary summons.instruction passthrough).
   const result = await runPublicInstructionSeatResume(
     {
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction },
+      message: instruction,
+      summons: { instructionEmpty: true },
     },
     softReaskEnv,
     io,
@@ -534,11 +540,11 @@ export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
  * (#1166 / ADR 0085 / ADR 0087 / #1208): notary review uses fixed dispatch;
- * notary operational reasks (#1171 missing-ticket, unreadable status) deliver
- * this-round reviewReask or summons/caller body; other seats prefer format
- * reask, then gate body, then caller dispatch, then ledger peer.
- * Identity stays in startup materials. Notary never takes gate/parent verdict
- * as dialogue (gateReviewInstruction stays unread for notary).
+ * named operational reasks ride reviewReask (first-mint / gate) or the resume
+ * request message seam — never arbitrary non-empty caller/summons passthrough.
+ * Other seats prefer format reask, then gate body, then caller dispatch, then
+ * ledger peer. Identity stays in startup materials. Notary never takes
+ * gate/parent verdict as dialogue (gateReviewInstruction stays unread for notary).
  */
 export async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
@@ -549,12 +555,11 @@ export async function resolveReviewSeatDialogueBody(input: {
   readonly projectRoot: string;
   readonly home: string;
 }): Promise<string | undefined> {
-  // #1208 revised: fixed sentence is the review function only (owner 37bfe80d /
-  // 393daf98). Operational reasks keep their own text; parent/gate body stays out.
+  // #1208: fixed sentence is the review function only (owner 37bfe80d /
+  // 393daf98). reviewReask is the named operational override; caller/summons
+  // body is not a free passthrough (countersign rejected that prescription).
   if (input.role === "notary") {
     if (input.reviewReask !== undefined) return input.reviewReask;
-    const thisRound = input.callerInstruction;
-    if (thisRound !== undefined && thisRound.length > 0) return thisRound;
     return NOTARY_FIXED_DISPATCH;
   }
   const preferred = input.reviewReask ?? input.gateReviewInstruction;
@@ -860,15 +865,33 @@ function resumeSameParentInstructionSeat(input: {
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
     freshSummons: input.env.freshSummons,
     summons: input.summons,
-    resume: (runId, materials, runDirectory) => runPublicInstructionSeatResume(
-      {
-        runId,
-        runDirectory,
-        ...(materials === undefined ? {} : { summons: materials }),
-      },
-      input.env,
-      input.io,
-    ),
+    resume: (runId, materials, runDirectory) => {
+      // Named operational reask on this summon: explicit message seam.
+      // Review dialogue stays on summons → shared resolver (notary: fixed).
+      // Do not stuff reask into summons.instruction for later passthrough.
+      const reask = input.env.reviewReask;
+      if (reask !== undefined) {
+        return runPublicInstructionSeatResume(
+          {
+            runId,
+            runDirectory,
+            message: reask,
+            ...(materials === undefined ? {} : { summons: materials }),
+          },
+          input.env,
+          input.io,
+        );
+      }
+      return runPublicInstructionSeatResume(
+        {
+          runId,
+          runDirectory,
+          ...(materials === undefined ? {} : { summons: materials }),
+        },
+        input.env,
+        input.io,
+      );
+    },
   });
 }
 
@@ -1298,10 +1321,10 @@ export async function runPublicInstructionSeatResume(
       const projection = resumeTurnRequestProjectionOptions(
         admitted, effective, env, summonsPrepared,
       );
-      // #1208: internal summons only — shared resolver owns dialogue choice.
-      // Public bare resume (no summons) keeps projection, including empty prompt.
-      // This-round body is already on summons; do not reselect stale env dialogue
-      // (old gateReviewInstruction / reviewReask) over it (#1208 R1).
+      // #1208: internal summons only — shared resolver owns review dialogue.
+      // Public bare resume / explicit message keep projection (operational
+      // reasks use the message seam). Do not reselect stale env dialogue over
+      // this-round summons (#1208 R1).
       if (effective.summons === undefined || effective.message !== undefined) {
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
@@ -1589,7 +1612,8 @@ async function auditSubmittedRole(
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: SECRETARIAT_STATUS_REASK },
+      message: SECRETARIAT_STATUS_REASK,
+      summons: { instructionEmpty: true },
     }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status))) {
@@ -1603,7 +1627,8 @@ async function auditSubmittedRole(
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: officerConclusionReask(status) },
+      message: officerConclusionReask(status),
+      summons: { instructionEmpty: true },
     }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.

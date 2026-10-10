@@ -725,9 +725,9 @@ export async function summonGateOfficer(options: {
   // #879: binding pointer = parent run directory; dialogue content = submission body.
   // Conclusion re-ask owns reviewReask when present (no parallel gate body).
   // #1208: notary never preloads parent body; review dialogue is the fixed
-  // dispatch from resolveReviewSeatDialogueBody, while operational reasks
-  // (missing-ticket / unreadable status) keep their own text. Other officers
-  // still receive the parent submission body when reask is absent.
+  // dispatch from resolveReviewSeatDialogueBody. Named operational reasks
+  // ride reviewReask here (or the resume message seam elsewhere). Other
+  // officers still receive the parent submission body when reask is absent.
   let gateReviewInstruction: string | undefined;
   if (
     options.reask === undefined
