@@ -17,7 +17,16 @@ import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
-import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import {
+  assertRunDirectoryHoldsOnlyDossier,
+  historyPayloads,
+  statePayloads,
+  readCurrentSection,
+  lockCurrentJson,
+  unlockCurrentJson,
+  runLogPayloads,
+  RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+} from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -1174,23 +1183,27 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.equal(officerRequests.length, 2);
     assert.equal(coderTurns, 2);
-    // At rest after bounce -> resume -> accepted, the run holds only its dossier
-    // (#1161/#1168): current.json, history.jsonl, log.jsonl, state.jsonl, the session
-    // volume — no task.md copy. No artifacts/, stderr.log, headless-*, run-state /
-    // invocation / admitted-request json or .run-starts; no attachments/. The session
-    // volume holds the host session (and the gate officer's own session volume).
+    // At rest after bounce -> resume -> accepted: bound leg dossier + leg-local
+    // receipts/session (#1161/#1168/#1199). No task.md, artifacts/, stderr.log,
+    // headless-*, run-state / invocation / admitted-request json or .run-starts.
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const coderRunDirectory =
       (await findRunDirectoryById(scratch.home, "run-worker-gate-resume-993"))
       ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
+    assertRunDirectoryHoldsOnlyDossier(coderRunDirectory);
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "state.jsonl"],
+      [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
     );
     // #1199: session originals stay under the leg (`<run>/session`).
     assert.deepEqual(
       (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),
       ["session.jsonl"],
+    );
+    // Two accepted seals → leg-local receipts/1.json and receipts/2.json.
+    assert.deepEqual(
+      (await readdir(join(coderRunDirectory, "receipts"))).sort(),
+      ["1.json", "2.json"],
     );
     // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
     // this parent are lawful zero. Gate still summoned inspector (asserted above).
