@@ -163,6 +163,7 @@ function diaristEnvelopeRunner(
     const runtime = createDiaristRoleRuntime(
       createSubmissionLedgerHost(host, new Map([[DIARIST_OUTPUT_TOOL_NAME, "diarist" as const]])),
       { loadSoul: async () => "起居郎职分（测试装载）" },
+      { failInfrastructure(error) { throw error; } },
     );
     await runtime.activate();
     assert.ok(registered, "diarist envelope registered no output tool");

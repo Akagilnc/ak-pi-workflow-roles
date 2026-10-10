@@ -14,5 +14,5 @@
     "types": ["node"],
     "noEmitOnError": true
   },
-  "include": ["src/package-contracts/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

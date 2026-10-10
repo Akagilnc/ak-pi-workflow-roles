@@ -126,6 +126,7 @@ test("settlement rejection still records an accepted closure with unavailable at
   await assert.rejects(projectClosedSubmissionLifecycle(
     { role: "judge", kind: "accepted", accepted: { status: "converged" } },
     ctx, null, () => {}, async () => { throw writeFailure; },
+    (error) => { throw error; },
   ), (error: unknown) => error === writeFailure);
   assert.equal(entries.length, 1);
   assert.equal((entries[0]?.data as { navigator?: unknown }).navigator, undefined);

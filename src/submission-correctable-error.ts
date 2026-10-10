@@ -1,5 +1,4 @@
 import {
-  GatekeeperDecisionError,
   ParentQueueReaskError,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
@@ -21,13 +20,12 @@ export function isCorrectableSubmissionError(error: unknown): error is Correctab
 
 /**
  * Execute-path throws the same session may correct: branded correctable errors plus
- * gatekeeper bounce/no_receipt and worker reminder classes (ledger + Grok MCP catch).
+ * worker reminder / parent-queue reask classes (ledger + Grok MCP catch).
  * One predicate — do not re-list instanceof chains at each catch.
  */
 export function isCorrectableExecuteError(error: unknown): boolean {
   return (
     isCorrectableSubmissionError(error)
-    || error instanceof GatekeeperDecisionError
     || error instanceof ParentQueueReaskError
     || error instanceof WorkerCommitReminderError
     || error instanceof WorkerPrefixReminderError
@@ -55,9 +53,6 @@ export function projectCorrectableExecuteRejection(
   error: unknown,
 ): CorrectableExecuteRejectionProjection {
   const diagnostic = errorText(error);
-  if (error instanceof GatekeeperDecisionError) {
-    return { diagnostic, details: { ...(error.result as Record<string, unknown>) } };
-  }
   if (
     error instanceof WorkerCommitReminderError
     || error instanceof WorkerPrefixReminderError

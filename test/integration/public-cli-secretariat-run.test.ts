@@ -119,7 +119,7 @@ function courtDiaristWithDetails(
     } as unknown as RoleHost;
     await createDiaristRoleRuntime(host, {
       loadSoul: async () => "起居郎职分（测试装载）",
-    }).activate();
+    }, { failInfrastructure(error) { throw error; } }).activate();
     assert.ok(registered);
     // #1183: typed ticket assertion relocates mid-accept. Follow live leaf on
     // HostContext + spawn env/session args so scripted seal does not recreate

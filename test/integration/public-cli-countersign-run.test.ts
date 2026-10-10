@@ -57,7 +57,7 @@ import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
 } from "../helpers/ticket-provenance-fixture.ts";
@@ -561,20 +561,11 @@ function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
   });
 }
 
-function notaryBounceError(findings: readonly string[]) {
-  return new GatekeeperDecisionError({
-    status: "continue",
-    officer: "notary",
-    receipt: { status: "continue", findings: [...findings] },
-  });
-}
-
 async function recordCountersignBounce(input: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly details: unknown;
   readonly toolCallId: string;
-  readonly findings: readonly string[];
 }): Promise<void> {
   await recordNonSealedSubmissionForSpawn({
     cwd: input.cwd,
@@ -582,7 +573,8 @@ async function recordCountersignBounce(input: {
     role: "countersign",
     details: input.details,
     toolCallId: input.toolCallId,
-    executeError: notaryBounceError(input.findings),
+    // Live correctable class — GatekeeperDecisionError deleted with F2 throw path (#1214 N1).
+    executeError: new WorkerUnfinishedReasonReminderError(),
   });
 }
 
@@ -596,7 +588,6 @@ async function appendResidualBounceTurn(input: {
   readonly callId: string;
   readonly details: unknown;
   readonly body: string;
-  readonly findings: readonly string[];
   readonly n: number;
   readonly extraRows?: readonly unknown[];
 }): Promise<void> {
@@ -622,7 +613,6 @@ async function appendResidualBounceTurn(input: {
     env: input.env,
     details: input.details,
     toolCallId: input.callId,
-    findings: input.findings,
   });
 }
 
@@ -652,7 +642,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     const rejectionBody = "CORRECTABLE-REJECTION-RESIDUAL-BODY";
     const laterBounceBody = "SECOND-TURN-BOUNCE-BODY";
     const reverseBounceBody = "REVERSE-ORDER-BOUNCE-BODY";
-    const gateFindings = ["REJECTED-FIRST-findings-visible"] as const;
     const runId = "01a0sign00-0000-7000-8000-000000000843";
     const seatModel = ["--model", "test/caller-seat:high"] as const;
 
@@ -741,7 +730,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           env: options.env,
           details: rejected,
           toolCallId: "call-reject",
-          findings: gateFindings,
         });
         await sealAcceptedSubmissionForSpawn({
           cwd: options.cwd,
@@ -794,7 +782,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         userId: "user-resume",
         callId: "call-resume-bounce",
         body: laterBounceBody,
-        findings: ["SECOND-TURN-ONLY-BOUNCE"] as const,
         summary: "SECOND-TURN-ONLY-BOUNCE",
         n: 60,
         extraRows: undefined as readonly unknown[] | undefined,
@@ -804,7 +791,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         userId: "user-resume-missing-isError",
         callId: "call-resume-missing-isError-bounce",
         body: "MISSING-ISERROR-STILL-BOUNCE-BODY",
-        findings: ["bound-missing-isError"] as const,
         summary: "bound-missing-isError",
         n: 70,
         // bound decoy omits isError — must not establish success
@@ -823,7 +809,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         userId: "user-resume-unbound-false",
         callId: "call-resume-unbound-false-bounce",
         body: "UNBOUND-FALSE-STILL-BOUNCE-BODY",
-        findings: ["unbound-isError-false"] as const,
         summary: "unbound-isError-false",
         n: 80,
         // orphan toolResult only — no matching assistant toolCall
@@ -857,7 +842,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
             callId: caseSpec.callId,
             details: caseBounce,
             body: caseSpec.body,
-            findings: caseSpec.findings,
             n: caseSpec.n,
             ...(caseSpec.extraRows === undefined
               ? {}
@@ -942,7 +926,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           env: options.env,
           details: reverseBounced,
           toolCallId: "call-rev-bounce",
-          findings: ["BOUNCED-AFTER-ACCEPT-VISIBLE"],
         });
         return { code: 0, timedOut: false, stderr: "", args: [...args] };
       },
@@ -1128,7 +1111,7 @@ function courtPipelinePiRunner(
       let liveSessionFile = argvFlagValue(args, "--session") ?? "";
       const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
-        });
+        }, { failInfrastructure(error) { throw error; } });
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
         const params = { status: "completed", ticketNumber: ticketAssertion, sessions: [] };

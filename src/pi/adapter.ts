@@ -6,7 +6,6 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
-import type { SubmissionGateNonPassResult } from "../gatekeeper-role.ts";
 import type {
   HostContext,
   HostEventRegistration,

@@ -79,7 +79,12 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { TurnDispatchedFailure } from "./auto-resume.ts";
-import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import {
+  continueParentAfterChild,
+  presentAuditedOriginalOfUnsettledOfficer,
+  runPublicInstructionSeat,
+  runPublicInstructionSeatResume,
+} from "./instruction-seat-run.ts";
 import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
@@ -1224,19 +1229,21 @@ export async function runAkRole(
         parts.credentials,
         invocationFromParsed(parsed),
       );
-      const result = await runPublicInstructionSeatResume(
-        resumeRequest,
-        createRoleEnvironment(env, {
-          role: seatRole,
-          home,
-          agentDir: parts.agentDir,
-          cwd: parts.cwd,
-          credentials: parts.credentials,
-          seat,
-          config: parts.config,
-        }),
-        io,
-      );
+      const resumeEnv = createRoleEnvironment(env, {
+        role: seatRole,
+        home,
+        agentDir: parts.agentDir,
+        cwd: parts.cwd,
+        credentials: parts.credentials,
+        seat,
+        config: parts.config,
+      });
+      const result = await runPublicInstructionSeatResume(resumeRequest, resumeEnv, io);
+      // #1214 R2: a directly resumed officer left unsettled keeps its audited original on this call.
+      // An officer returned by an audit inside this resume already presented that original where it arose.
+      if (result.admitted?.runId === resumeRequest.runId) {
+        await presentAuditedOriginalOfUnsettledOfficer(result, resumeEnv, io);
+      }
       let current = result;
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined

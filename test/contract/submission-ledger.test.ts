@@ -8,7 +8,6 @@ import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
-import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
@@ -285,7 +284,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
   });
 });
 
-test("review escalate keeps a failure declaration; other roles still host-fail", async () => {
+test("#1214 A2: infrastructureFailure declaration is recorded; declaration itself does not host-fail", async () => {
   await withLedgerFixture(async (f) => {
     let ran = 0;
     const params = { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } };
@@ -313,28 +312,31 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
 
   await withLedgerFixture(async (f) => {
     let ran = 0;
-    const params = { infrastructureFailure: { diagnostic: "disk full" } };
+    const params = { status: "completed", infrastructureFailure: { diagnostic: "disk full" } };
     const coderTool = packagedRoleOutputTool("coder");
     assert.equal(typeof coderTool, "string");
-    const host = registerTool(f.root, async () => {
+    const host = registerTool(f.root, async (submitted) => {
       ran += 1;
-      return { content: [], details: params, terminate: true };
+      return { content: [], details: submitted, terminate: true };
     }, coderTool, "coder");
-    await assert.rejects(
-      host.tool().execute("coder-infra", params, undefined, undefined, host.context),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal(error.name, "InfrastructureFailure");
-        assert.equal(error.message, params.infrastructureFailure.diagnostic);
-        return true;
-      },
-    );
-    assert.equal(ran, 0);
+    const result = await host.tool().execute("coder-infra", params, undefined, undefined, host.context);
+    assert.equal(ran, 1, "declaration must not abort before execute");
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details, params);
+    assert.deepEqual(host.closedSubmissions.at(-1), {
+      role: "coder",
+      kind: "accepted",
+      accepted: params,
+    });
+    const sealed = (await ledgerRecords(f.root)).filter((record) => record.kind === "sealed");
+    assert.ok(sealed.some((record) => {
+      const payload = record.payload as { role?: string; accepted?: unknown; toolCallId?: string };
+      return payload.role === "coder"
+        && payload.toolCallId === "coder-infra"
+        && JSON.stringify(payload.accepted) === JSON.stringify(params);
+    }), "coder original payload with infrastructureFailure must seal");
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
-    assert.equal(outcomes.length, 1);
-    assert.equal((outcomes[0]?.payload as { outcome?: string }).outcome, "infrastructure");
-    assert.equal((outcomes[0]?.payload as { role?: string }).role, "coder");
-    assert.deepEqual((outcomes[0]?.payload as { accepted?: unknown }).accepted, params);
+    assert.equal(outcomes.length, 0, "declaration alone is not an infrastructure outcome");
   });
 });
 
@@ -363,28 +365,23 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
 
 test("pipeline ledger records typed bounce anchors as correctable-rejection", async () => {
   await withLedgerFixture(async (f) => {
-    const anchors: Array<{ label: string; error: Error }> = [
-      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "continue", officer: "inspector", receipt: { status: "continue", findings: ["x"] } }) },
-      { label: "unfinished-reason", error: new WorkerUnfinishedReasonReminderError() },
-    ];
-    for (const anchor of anchors) {
-      const params = { status: "converged", report: anchor.label };
-      const failing = registerTool(f.root, async () => { throw anchor.error; });
-      await assert.rejects(
-        failing.tool().execute(anchor.label, params, undefined, undefined, failing.context),
-      );
-      const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
-      assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
-      assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", anchor.label);
-      assert.equal((outcome?.payload as { role?: string }).role, "judge", anchor.label);
-      // #881: correctable-rejection original params project once (candidate+outcome deduped).
-      const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-      const projected = rows.find(
-        (row) => row.kind === "correctable-rejection" && row.toolCallId === anchor.label,
-      );
-      assert.ok(projected, anchor.label);
-      assert.deepEqual(projected?.accepted, params, anchor.label);
-    }
+    const label = "unfinished-reason";
+    const params = { status: "converged", report: label };
+    const failing = registerTool(f.root, async () => { throw new WorkerUnfinishedReasonReminderError(); });
+    await assert.rejects(
+      failing.tool().execute(label, params, undefined, undefined, failing.context),
+    );
+    const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
+    assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", label);
+    assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", label);
+    assert.equal((outcome?.payload as { role?: string }).role, "judge", label);
+    // #881: correctable-rejection original params project once (candidate+outcome deduped).
+    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const projected = rows.find(
+      (row) => row.kind === "correctable-rejection" && row.toolCallId === label,
+    );
+    assert.ok(projected, label);
+    assert.deepEqual(projected?.accepted, params, label);
   });
 });
 
@@ -392,11 +389,7 @@ test("#881 reader projects non-sealed original params once per tool call (correc
   await withLedgerFixture(async (f) => {
     const bounceParams = { status: "converged", report: "bounce-1" };
     const bounce = registerTool(f.root, async () => {
-      throw new GatekeeperDecisionError({
-        status: "continue",
-        officer: "inspector",
-        receipt: { status: "continue", findings: ["x"] },
-      });
+      throw new WorkerUnfinishedReasonReminderError();
     });
     await assert.rejects(bounce.tool().execute("call-bounce", bounceParams, undefined, undefined, bounce.context));
 

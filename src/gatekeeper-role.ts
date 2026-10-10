@@ -4,7 +4,7 @@ import type { HostContext } from "./host-contracts.ts";
 import { auditorRunDirectory } from "./role-run-placement.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
@@ -83,12 +83,6 @@ export type GatekeeperResult =
       readonly submission?: unknown;
     };
 
-/** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
-export type SubmissionGateNonPassResult = Extract<
-  GatekeeperResult,
-  { status: "continue" | "no_receipt" | "transport_failure" }
->;
-
 function gateSeatLabel(stage: GateOfficer): string {
   return packagedGateStageLabel(stage) ?? stage;
 }
@@ -106,8 +100,6 @@ const GATE_OFFICER_BY_SUBJECT = {
 export function gateOfficerForSubject(subject: GatekeeperSubject): GateOfficer {
   return GATE_OFFICER_BY_SUBJECT[subject.kind];
 }
-
-export { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export type GateOfficerSummon = (
   officer: GateOfficer,
@@ -149,12 +141,6 @@ export type RunGatekeeperOptions = {
    * Role module only projects; callers must supply the summon.
    */
   readonly summonOfficer: GateOfficerSummon;
-};
-
-export type SubmissionGateHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
-  /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
-  bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void;
 };
 
 /**

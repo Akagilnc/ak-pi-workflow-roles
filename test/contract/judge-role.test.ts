@@ -234,7 +234,6 @@ function extensionHarness(
 function testHostActions(): HostGatekeeperActions {
   return {
     failInfrastructure(error): never { throw error instanceof Error ? error : new Error(String(error)); },
-    bindSubmissionNonPass() {},
   };
 }
 
