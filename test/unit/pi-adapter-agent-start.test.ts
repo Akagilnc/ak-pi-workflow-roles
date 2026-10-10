@@ -187,8 +187,8 @@ test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext 
     const adapter = createPiRoleHostAdapter(pi);
     const seen: Array<string | undefined> = [];
 
-    adapter.host.on("input", (event, hostCtx) => {
-      hostCtx.summonsInstruction = event.text;
+    // Observe only — transport decode on the adapter sets the turn field.
+    adapter.host.on("input", (_event, hostCtx) => {
       seen.push(hostCtx.summonsInstruction);
       return { action: "continue" as const };
     });
@@ -209,21 +209,23 @@ test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext 
       },
     });
 
-    const body = "this-turn summons bytes for seal";
+    const summons = "this-turn summons bytes for seal";
+    const transport = `${summons}\n\n--attach /tmp/pi-adapter-summons.json`;
     const inputHandlers = handlers.get("input");
     assert.ok(inputHandlers);
-    let inputEvent = { text: encodeUserDialogueStdin(body), source: "piped" };
+    let inputEvent = { text: encodeUserDialogueStdin(transport, summons), source: "piped" };
     const inputCtx = freshExtensionContext("/tmp/pi-adapter-summons-input");
     for (const inputHandler of inputHandlers) {
       const result = await inputHandler(inputEvent, inputCtx);
       if (result?.action === "transform") inputEvent = { ...inputEvent, text: result.text };
     }
+    assert.equal(inputEvent.text, transport);
 
     const start = handlers.get("before_agent_start")?.[0];
     assert.ok(start);
     const startCtx = freshExtensionContext("/tmp/pi-adapter-summons-start");
     assert.notEqual(inputCtx, startCtx);
-    await start({ prompt: body, systemPrompt: "", systemPromptOptions: {} }, startCtx);
+    await start({ prompt: transport, systemPrompt: "", systemPromptOptions: {} }, startCtx);
 
     const tool = getRegisteredTool();
     assert.ok(tool);
@@ -240,7 +242,7 @@ test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext 
     assert.ok(agentEnd);
     await agentEnd({ messages: [] }, after催交Ctx);
 
-    assert.deepEqual(seen, [body, body, body, "催交-same-turn"]);
+    assert.deepEqual(seen, [summons, summons, summons, "催交-same-turn"]);
     assert.equal(process.env.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
   } finally {
     if (prior === undefined) delete process.env.AK_ROLE_SUMMONS_INSTRUCTION;

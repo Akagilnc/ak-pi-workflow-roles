@@ -1,5 +1,6 @@
 import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
@@ -1461,6 +1462,15 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     const after = await readRoleRunState(liveRunDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
     assert.equal(after?.sessionFile.endsWith("/host-issued-principal.jsonl"), true);
+    // #1199: progress consumer must use the same host-issued coordinate (not session.jsonl default).
+    const ticketSubject = join(home, ".ak-roles", "books", bookKey, "1171");
+    const progress = readTicketProgressLines(ticketSubject).filter((line) => line.seat === "judge");
+    assert.equal(progress.length, 1);
+    assert.ok(
+      progress[0]!.session.endsWith("host-issued-principal.jsonl"),
+      progress[0]!.session,
+    );
+    assert.equal(existsSync(join(ticketSubject, progress[0]!.session)), true);
   });
 });
 

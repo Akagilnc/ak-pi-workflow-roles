@@ -28,14 +28,12 @@ test("#879 typed stdin recovers original body after pipe trim", () => {
   assert.equal(readUserDialogueStdin(encoded), body);
   assert.equal(readUserDialogueStdin(`  ${encoded}  \n`), body);
   assert.equal(readUserDialogueStdin(encoded.trim()), body);
-});
-
-test("#1199 typed stdin keeps progress 传召词 beside transport body", () => {
+  // Progress 传召词 rides the same envelope when transport wraps file flags.
   const transport = "caller body only\n\n--attach /tmp/x.json";
   const summons = "caller body only";
-  const encoded = encodeUserDialogueStdin(transport, summons);
-  assert.equal(readUserDialogueStdin(encoded), transport);
-  assert.equal(readUserDialogueSummonsInstruction(encoded), summons);
+  const withSummons = encodeUserDialogueStdin(transport, summons);
+  assert.equal(readUserDialogueStdin(withSummons), transport);
+  assert.equal(readUserDialogueSummonsInstruction(withSummons), summons);
   assert.equal(readUserDialogueSummonsInstruction(encodeUserDialogueStdin(summons)), summons);
 });
 

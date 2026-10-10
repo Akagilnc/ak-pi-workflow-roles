@@ -6,7 +6,7 @@
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
-import { chmodSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -49,7 +49,6 @@ import {
   readCurrentSection,
   seedCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -695,6 +694,8 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000direct";
     const instruction = "Repair #1171.";
+    const attachPath = join(project, "caller-evidence.json");
+    await writeFile(attachPath, `${JSON.stringify({ note: "attach" })}\n`, "utf8");
     const headAtSeal = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: project,
       encoding: "utf8",
@@ -708,10 +709,17 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       classResults: FIXER_DONE.classResults,
       unexpectedExtra: { kept: true, n: 3 },
     } as const;
+    let transportPrompt = "";
     const scripted = fixerTurnHost(() => ({ ...submit }));
+    const host = withPassingReviewHost({
+      async executeTurn(request: RoleTurnRequest) {
+        transportPrompt = request.continuation.prompt;
+        return scripted.host.executeTurn(request);
+      },
+    });
     const result = await runPublicInstructionSeat(
-      ["apply", instruction],
-      seatEnv(home, project, runId, "pi", scripted.host),
+      ["apply", instruction, "--attach", attachPath],
+      seatEnv(home, project, runId, "pi", host),
       captureIo().io,
       "fixer",
       (args) => parsePublicSeatArgv("fixer", args),
@@ -721,6 +729,9 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
     // #1199: progress + whole receipt JSON + head; no model/host/thinking columns.
+    // Transport may wrap --attach; progress instruction stays the caller body.
+    assert.ok(transportPrompt.includes("--attach"), "transport carries file flags");
+    assert.notEqual(transportPrompt, instruction);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
     const fixerLines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
@@ -778,14 +789,22 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-relfail01";
     const stayId = "01a011710-0000-7000-8000-relstay01";
+    const otherId = "01a011710-0000-7000-8000-relother1";
+    const moveSeedSubmit = {
+      status: "completed",
+      report: `seed-${runId}-1`,
+      summary: `unbound sealed summary for ${runId} here`,
+      classResults: FIXER_DONE.classResults,
+    } as const;
+    const staySeedSubmit = {
+      status: "completed",
+      report: `seed-${stayId}-1`,
+      summary: `unbound sealed summary for ${stayId} here`,
+      classResults: FIXER_DONE.classResults,
+    } as const;
     // Sibling stays unbound; only moveId relocates (isolation).
-    for (const id of [stayId, runId]) {
-      const seed = fixerTurnHost((turn) => ({
-        status: "completed",
-        report: turn === 1 ? `seed-${id}-1` : `seed-${id}-2`,
-        summary: `unbound sealed summary for ${id} here`,
-        classResults: FIXER_DONE.classResults,
-      }));
+    for (const [id, submit] of [[runId, moveSeedSubmit], [stayId, staySeedSubmit]] as const) {
+      const seed = fixerTurnHost(() => ({ ...submit }));
       await runPublicInstructionSeat(
         ["apply", `Seed unbound ${id}`],
         seatEnv(home, project, id, "pi", seed.host),
@@ -802,9 +821,14 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       .filter((line) => line.session.includes(stayId));
     assert.ok(beforeMove.length >= 1, "move leg must stage progress before bind");
     assert.ok(beforeStay.length >= 1, "stay leg must stage progress before bind");
-    // #1199 R1: staged receipt originals must stay reachable after fail.
+    // #1199 R1: staged session + whole receipt JSON must stay reachable after fail.
     for (const row of beforeMove) {
       assert.equal(existsSync(join(unboundDir, row.receipt)), true, row.receipt);
+      assert.equal(existsSync(join(unboundDir, row.session)), true, row.session);
+      assert.deepEqual(
+        JSON.parse(await readFile(join(unboundDir, row.receipt), "utf8")),
+        moveSeedSubmit,
+      );
     }
 
     const ticketSubject = join(home, ".ak-roles", "books", bookKey, String(TICKET));
@@ -820,16 +844,23 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       ticketNumber: TICKET,
       classResults: FIXER_DONE.classResults,
     }));
-    await runPublicInstructionSeatResume(
-      { runId, message: "declare ticket after unbound seal" },
-      seatEnv(home, project, runId, "pi", bind.host),
-      captureIo().io,
-    ).catch(() => undefined);
+    let firstExit = 0;
+    try {
+      const firstBind = await runPublicInstructionSeatResume(
+        { runId, message: "declare ticket after unbound seal" },
+        seatEnv(home, project, runId, "pi", bind.host),
+        captureIo().io,
+      );
+      firstExit = firstBind.exitCode;
+    } catch {
+      firstExit = 1;
+    }
+    assert.notEqual(firstExit, 0, "target current append fail must not wash to exit 0");
 
     const afterMove = readTicketProgressLines(unboundDir)
       .filter((line) => line.session.includes(runId));
     assert.ok(
-      afterMove.length >= 1,
+      afterMove.length >= beforeMove.length,
       "staging progress must survive failed ticket current append",
     );
     assert.equal(
@@ -837,26 +868,80 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       true,
       "private progress file must remain when target append fails",
     );
+    const stagingReceipts: unknown[] = [];
     for (const row of afterMove) {
       assert.equal(existsSync(join(unboundDir, row.receipt)), true, `failed-leg receipt ${row.receipt}`);
+      assert.equal(existsSync(join(unboundDir, row.session)), true, `failed-leg session ${row.session}`);
+      const receipt = JSON.parse(await readFile(join(unboundDir, row.receipt), "utf8")) as unknown;
+      stagingReceipts.push(receipt);
     }
+    assert.ok(
+      stagingReceipts.some((receipt) => JSON.stringify(receipt) === JSON.stringify(moveSeedSubmit)),
+      "failed-leg must retain the seed sealed receipt JSON",
+    );
     // Sibling isolation: stay leg untouched whether bind threw or not.
     const afterStay = readTicketProgressLines(unboundDir)
       .filter((line) => line.session.includes(stayId));
     assert.equal(afterStay.length, beforeStay.length);
     for (const row of afterStay) {
       assert.equal(existsSync(join(unboundDir, row.receipt)), true);
+      assert.deepEqual(
+        JSON.parse(await readFile(join(unboundDir, row.receipt), "utf8")),
+        staySeedSubmit,
+      );
     }
 
-    // Restore write permission and bind again — moved receipts must land and open.
+    // Peer session on the same ticket publishes normally while staging stays.
     chmodSync(currentPath, 0o644);
-    const rebind = fixerTurnHost(() => ({
+    const otherSubmit = {
+      status: "completed",
+      report: "other-session",
+      summary: "other session summary text here is long enough",
+      ticketNumber: TICKET,
+      classResults: FIXER_DONE.classResults,
+    } as const;
+    const other = fixerTurnHost(() => ({ ...otherSubmit }));
+    const otherResult = await runPublicInstructionSeat(
+      ["apply", "peer session while relocate staging held"],
+      seatEnv(home, project, otherId, "pi", other.host),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(otherResult.exitCode, 0, `${otherResult.terminal?.roleOutcome.kind}`);
+    const peerRows = readTicketProgressLines(ticketSubject)
+      .filter((line) => line.seat === "fixer" && line.session.includes(otherId));
+    assert.equal(peerRows.length, 1);
+    assert.equal(peerRows[0]!.round, "1");
+    assert.deepEqual(
+      JSON.parse(await readFile(join(ticketSubject, peerRows[0]!.receipt), "utf8")),
+      otherSubmit,
+    );
+    // Staging for the failed bind leg must still be intact after the peer seal.
+    for (const row of afterMove) {
+      assert.equal(existsSync(join(unboundDir, row.receipt)), true, row.receipt);
+      assert.equal(existsSync(join(unboundDir, row.session)), true, row.session);
+    }
+    for (const expected of stagingReceipts) {
+      assert.ok(
+        afterMove.some((row) => {
+          const path = join(unboundDir, row.receipt);
+          return existsSync(path)
+            && JSON.stringify(JSON.parse(readFileSync(path, "utf8"))) === JSON.stringify(expected);
+        }),
+        "peer seal must not destroy failed-leg staging receipt JSON",
+      );
+    }
+
+    // Retry bind — every pre-retry staging receipt must land on the ticket intact.
+    const rebindSubmit = {
       status: "completed",
       report: "rebind after restore",
       summary: "rebind summary text here is long enough",
       ticketNumber: TICKET,
       classResults: FIXER_DONE.classResults,
-    }));
+    } as const;
+    const rebind = fixerTurnHost(() => ({ ...rebindSubmit }));
     const rebound = await runPublicInstructionSeatResume(
       { runId, message: "retry declare ticket after restore" },
       seatEnv(home, project, runId, "pi", rebind.host),
@@ -864,20 +949,34 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
     );
     assert.equal(rebound.exitCode, 0, `${rebound.terminal?.roleOutcome.kind}`);
     const ticketRows = readTicketProgressLines(ticketSubject)
-      .filter((line) => line.seat === "fixer" && line.session.includes(runId));
-    assert.ok(ticketRows.length >= 1, "relocated rows must publish after restore");
-    for (const row of ticketRows) {
+      .filter((line) => line.seat === "fixer");
+    assert.ok(ticketRows.some((line) => line.session.includes(otherId)), "peer row remains");
+    const relocated = ticketRows.filter((line) => line.session.includes(runId));
+    assert.ok(relocated.length >= stagingReceipts.length, "relocated rows cover pre-retry staging");
+    for (const row of relocated) {
       assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
+      assert.equal(existsSync(join(ticketSubject, row.session)), true, row.session);
+      assert.equal(row.session.includes("/unbound/"), false, row.session);
     }
-    // Session originals land under ticket sessions/ (not revived unbound paths).
+    const ticketReceipts = await Promise.all(
+      relocated.map(async (row) =>
+        JSON.parse(await readFile(join(ticketSubject, row.receipt), "utf8")) as unknown
+      ),
+    );
+    for (const expected of stagingReceipts) {
+      assert.ok(
+        ticketReceipts.some((receipt) => JSON.stringify(receipt) === JSON.stringify(expected)),
+        "each pre-retry staging receipt JSON must publish on the ticket",
+      );
+    }
     assert.ok(
-      ticketRows.every((row) => !row.session.includes("/unbound/")),
-      ticketRows.map((row) => row.session).join(","),
+      ticketReceipts.some((receipt) => JSON.stringify(receipt) === JSON.stringify(rebindSubmit)),
+      "rebind seal receipt must publish",
     );
   });
 });
 
-test("#1199 envelope 催交原文 is the progress instruction (not first mint)", async () => {
+test("#1199 same-envelope 催交原文 is the progress instruction (not first mint)", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-progresume";
     const firstInstruction = "first summons for progress resume";
@@ -944,95 +1043,6 @@ test("#1199 envelope 催交原文 is the progress instruction (not first mint)",
     assert.notEqual(lines[0]!.instruction, firstInstruction);
     assert.equal(lines[0]!.instruction, seenPrompts[1]);
     assert.equal(existsSync(join(ticketDir, lines[0]!.receipt)), true);
-  });
-});
-
-test("#1199 attach wrapper does not replace progress 传召词 body", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-attachbody";
-    const body = "caller body only";
-    const attachPath = join(project, "caller.json");
-    await writeFile(attachPath, `${JSON.stringify({ note: "attach" })}\n`, "utf8");
-    let transportPrompt = "";
-    const scripted = fixerTurnHost(() => ({
-      ...FIXER_DONE,
-      summary: "attach body progress summary text ok",
-      ticketNumber: TICKET,
-    }));
-    const host = withPassingReviewHost({
-      async executeTurn(request: RoleTurnRequest) {
-        transportPrompt = request.continuation.prompt;
-        return scripted.host.executeTurn(request);
-      },
-    });
-    const result = await runPublicInstructionSeat(
-      ["apply", body, "--attach", attachPath],
-      seatEnv(home, project, runId, "pi", host),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
-    assert.ok(transportPrompt.includes("--attach"), "transport carries file flags");
-    assert.notEqual(transportPrompt, body);
-    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
-    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
-    assert.equal(lines.length, 1);
-    assert.equal(lines[0]!.instruction, body);
-  });
-});
-
-test("#1199 progress session uses host-issued sessionFile coordinate", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-customses";
-    const principalAuthority = {
-      issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
-        const coords = piDurablePrincipalAuthority.decode(piDurablePrincipalAuthority.issue(request));
-        return fixturePrincipal(
-          coords.sessionDirectory,
-          join(coords.sessionDirectory, "host-issued-principal.jsonl"),
-        );
-      },
-      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
-        return fixturePrincipal(
-          coordinates.sessionDirectory,
-          join(coordinates.sessionDirectory, "host-issued-principal.jsonl"),
-        );
-      },
-      decode(value: unknown) {
-        return piDurablePrincipalAuthority.decode(value);
-      },
-    };
-    const host = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority,
-      piRunner: async (args, options) => scriptedTerminatingToolSession({
-        role: "fixer",
-        toolName: FIXER_OUTPUT_TOOL_NAME,
-        details: {
-          ...FIXER_DONE,
-          summary: "custom session progress summary text",
-          ticketNumber: TICKET,
-        },
-      })(args, options),
-    }));
-    const result = await runPublicInstructionSeat(
-      ["apply", "seal with host-issued session file"],
-      { ...seatEnv(home, project, runId, "pi", host), principalAuthority },
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
-    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
-    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
-    assert.equal(lines.length, 1);
-    assert.ok(
-      lines[0]!.session.endsWith("/host-issued-principal.jsonl")
-        || lines[0]!.session.endsWith("host-issued-principal.jsonl"),
-      lines[0]!.session,
-    );
-    assert.equal(existsSync(join(ticketDir, lines[0]!.session)), true);
   });
 });
 

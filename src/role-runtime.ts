@@ -17,7 +17,10 @@ import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
-import { readUserDialogueSummonsInstruction } from "./user-dialogue-stdin.ts";
+import {
+  readUserDialogueSummonsInstruction,
+  tryParseUserDialogueStdin,
+} from "./user-dialogue-stdin.ts";
 import {
   registerReportTicketTool,
   reportTicketFromHostContext,
@@ -1171,12 +1174,18 @@ export function createRoleRuntimeExtension(
       );
     };
     roleHost.on("input", (event, ctx) => {
-      // #1199: first/continue input seam retains this-turn 传召词 (票面当轮实际输入).
+      // #1199: this-turn 传召词 from the input seam (票面当轮实际输入).
       // HostContext field only — never process.env body (nested identity / ARG_MAX).
-      // Do not overwrite a turn-request body already seeded (in-process envelope).
-      // Pi stdin may carry summonsInstruction beside the model-facing transport body.
-      if (typeof event.text === "string" && ctx.summonsInstruction === undefined) {
-        ctx.summonsInstruction = readUserDialogueSummonsInstruction(event.text);
+      // Typed envelope still present → always refresh (same-session later input is
+      // a new summons). Plain text after Pi strips the envelope keeps authority
+      // already set by the adapter / turn-request seed / 催交 — do not take the
+      // attach-wrapped body as progress instruction (no free-text flag peeling).
+      if (typeof event.text === "string") {
+        if (tryParseUserDialogueStdin(event.text) !== undefined) {
+          ctx.summonsInstruction = readUserDialogueSummonsInstruction(event.text);
+        } else if (ctx.summonsInstruction === undefined) {
+          ctx.summonsInstruction = event.text;
+        }
       }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };

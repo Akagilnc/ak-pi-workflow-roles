@@ -104,7 +104,6 @@ function advanceSeatHead(project: string): void {
 function createGrokAcpSessionRestore(input: {
   readonly home: string;
   readonly project: string;
-  getActiveSessionId(): string;
   setActiveSessionId(id: string): void;
 }) {
   const nativeDirFor = (sessionId: string) => join(
@@ -168,7 +167,6 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
   const sessionRestore = createGrokAcpSessionRestore({
     home: input.home,
     project: input.project,
-    getActiveSessionId: () => activeSessionId,
     setActiveSessionId: (id) => { activeSessionId = id; },
   });
   const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
@@ -446,7 +444,6 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
     const sessionRestore = createGrokAcpSessionRestore({
       home,
       project,
-      getActiveSessionId: () => activeSessionId,
       setActiveSessionId: (id) => { activeSessionId = id; },
     });
     const connection: AcpConnection = {

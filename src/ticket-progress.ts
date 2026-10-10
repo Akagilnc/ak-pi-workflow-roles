@@ -309,8 +309,9 @@ export function landTicketProgressForSealedSubmission(input: {
  * current.jsonl only. head / instruction / status / summary keep seal-time
  * values; rounds re-key into the ticket seat series.
  *
- * Copy into the ticket first, publish current, then drop sources. A failed
- * append must leave staged originals recoverable (票面归位 / #1199 R1).
+ * Copy → publish ticket current → drop sources. Rollback of destination copies
+ * stops at publish (Node/POSIX copy-then-delete: a post-publish source rm
+ * failure must not delete already-published destinations — 票面归位 / #1199 R1).
  */
 export function relocateTicketProgressForLeg(input: {
   readonly oldRunDirectory: string;
@@ -330,8 +331,14 @@ export function relocateTicketProgressForLeg(input: {
 
   const oldSibling = join(oldSubject, SESSIONS_DIRNAME, leaf);
   const newSibling = join(newSubject, SESSIONS_DIRNAME, leaf);
-  const publishedCopies: string[] = [];
+  const stagedCopies: string[] = [];
   const sourcesToRemove: string[] = [];
+
+  const rollbackStagedCopies = (): void => {
+    for (const copy of stagedCopies) {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  };
 
   try {
     if (existsSync(oldSibling)) {
@@ -342,7 +349,7 @@ export function relocateTicketProgressForLeg(input: {
         );
       }
       cpSync(oldSibling, newSibling, { recursive: true });
-      publishedCopies.push(newSibling);
+      stagedCopies.push(newSibling);
       sourcesToRemove.push(oldSibling);
     }
 
@@ -357,7 +364,7 @@ export function relocateTicketProgressForLeg(input: {
       if (existsSync(oldReceiptAbs)) {
         mkdirSync(dirname(absolutePath), { recursive: true });
         copyFileSync(oldReceiptAbs, absolutePath);
-        publishedCopies.push(absolutePath);
+        stagedCopies.push(absolutePath);
         sourcesToRemove.push(oldReceiptAbs);
       }
       const moved: TicketProgressLine = {
@@ -380,23 +387,24 @@ export function relocateTicketProgressForLeg(input: {
         "utf8",
       );
     }
-
-    if (existsSync(oldProgressPath)) {
-      rmSync(oldProgressPath, { force: true });
-    }
-    const oldLegReceipts = join(input.oldRunDirectory, LEG_RECEIPTS_DIRNAME);
-    if (existsSync(oldLegReceipts)) {
-      rmSync(oldLegReceipts, { recursive: true, force: true });
-    }
-    for (const source of sourcesToRemove) {
-      if (existsSync(source)) {
-        rmSync(source, { recursive: true, force: true });
-      }
-    }
   } catch (error) {
-    for (const copy of publishedCopies) {
-      rmSync(copy, { recursive: true, force: true });
-    }
+    // Partial copy / failed append: destinations are not yet authoritative.
+    rollbackStagedCopies();
     throw error;
+  }
+
+  // After publish, destination copies are the originals for published rows.
+  // Source cleanup must not roll them back (same root as pre-publish rename loss).
+  if (existsSync(oldProgressPath)) {
+    rmSync(oldProgressPath, { force: true });
+  }
+  const oldLegReceipts = join(input.oldRunDirectory, LEG_RECEIPTS_DIRNAME);
+  if (existsSync(oldLegReceipts)) {
+    rmSync(oldLegReceipts, { recursive: true, force: true });
+  }
+  for (const source of sourcesToRemove) {
+    if (existsSync(source)) {
+      rmSync(source, { recursive: true, force: true });
+    }
   }
 }

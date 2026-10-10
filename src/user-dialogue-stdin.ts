@@ -29,17 +29,33 @@ export function encodeUserDialogueStdin(
   return JSON.stringify(envelope);
 }
 
-function isUserDialogueEnvelope(value: unknown): value is UserDialogueStdinEnvelope {
-  if (!isRecord(value)) return false;
-  const record = value as { kind?: unknown; body?: unknown; summonsInstruction?: unknown };
-  if (record.kind !== USER_DIALOGUE_STDIN_KIND || typeof record.body !== "string") return false;
-  if (
-    record.summonsInstruction !== undefined
-    && typeof record.summonsInstruction !== "string"
-  ) {
-    return false;
+/** One parse for body + optional progress 传召词 — callers must not re-implement. */
+export function tryParseUserDialogueStdin(raw: string): UserDialogueStdinEnvelope | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!isRecord(parsed)) return undefined;
+    const record = parsed as { kind?: unknown; body?: unknown; summonsInstruction?: unknown };
+    if (record.kind !== USER_DIALOGUE_STDIN_KIND || typeof record.body !== "string") {
+      return undefined;
+    }
+    if (
+      record.summonsInstruction !== undefined
+      && typeof record.summonsInstruction !== "string"
+    ) {
+      return undefined;
+    }
+    return record.summonsInstruction === undefined
+      ? { kind: USER_DIALOGUE_STDIN_KIND, body: record.body }
+      : {
+        kind: USER_DIALOGUE_STDIN_KIND,
+        body: record.body,
+        summonsInstruction: record.summonsInstruction,
+      };
+  } catch {
+    return undefined;
   }
-  return true;
 }
 
 /**
@@ -47,15 +63,7 @@ function isUserDialogueEnvelope(value: unknown): value is UserDialogueStdinEnvel
  * Non-envelope text (interactive Pi, officer JSON, headless raw body) is unchanged.
  */
 export function readUserDialogueStdin(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("{")) return raw;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (isUserDialogueEnvelope(parsed)) return parsed.body;
-  } catch {
-    // Not our envelope — leave caller bytes intact.
-  }
-  return raw;
+  return tryParseUserDialogueStdin(raw)?.body ?? raw;
 }
 
 /**
@@ -63,15 +71,7 @@ export function readUserDialogueStdin(raw: string): string {
  * the same bytes as {@link readUserDialogueStdin}.
  */
 export function readUserDialogueSummonsInstruction(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("{")) return raw;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (isUserDialogueEnvelope(parsed)) {
-      return parsed.summonsInstruction ?? parsed.body;
-    }
-  } catch {
-    // Not our envelope — leave caller bytes intact.
-  }
-  return raw;
+  const parsed = tryParseUserDialogueStdin(raw);
+  if (parsed === undefined) return raw;
+  return parsed.summonsInstruction ?? parsed.body;
 }
