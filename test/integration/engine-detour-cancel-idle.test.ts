@@ -1,7 +1,7 @@
 /**
- * Detour cancellation propagation + spawn-miss cause seam + silent-idle survival.
- * Narrow call-input only — does NOT cover public-CLI empty-output / exit-23 cause
- * 贯穿 or the full engine-detour failure table (C3 #685 §D 未结).
+ * Detour cancellation propagation + spawn-miss result seam + silent-idle survival.
+ * Engine process failure returns to the seat (#1213); does NOT cover public-CLI
+ * empty-output / exit-23 cause 贯穿 or the full engine-detour failure table.
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
  */
 import assert from "node:assert/strict";
@@ -63,18 +63,29 @@ test("detour caller AbortSignal cancel propagates unchanged", async () => {
   });
 });
 
-test("detour spawn failure stops through the cause-bearing failure seam", async () => {
+test("detour spawn failure returns cause-bearing result without aborting the seat", async () => {
+  let failCalled = false;
   const tool = createEngineDetourToolDefinition({
     engineName: "kimi",
-    fail(error) { throw error; },
+    fail(error) {
+      failCalled = true;
+      throw error;
+    },
   });
   await withTempRoot("ak-detour-spawn-miss-", async (cwd) => {
-    await assert.rejects(
-      tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),
-      (error: unknown) => error instanceof Error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT",
+    const result = await tool.execute(
+      "call-spawn-miss",
+      { argv: ["ak-engine-definitely-missing-binary-xyz"] },
+      undefined,
+      undefined,
+      fakeCtx(cwd),
     );
-    });
+    assert.equal(failCalled, false, "engine process failure must not call fail/failInfrastructure");
+    assert.ok(Array.isArray(result.content) && result.content.length > 0);
+    const details = result.details as { tool?: string; errorCode?: string };
+    assert.equal(details.tool, "ak_engine_detour");
+    assert.equal(details.errorCode, "ENOENT");
+  });
 });
 
 test("silent detour child is not cut by a package-owned tool idle backstop", async (t) => {

@@ -45,9 +45,9 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
 
 ## Failure handling
 
-Once an engine is selected, invoking that engine CLI is mandatory: you MUST
-actually run it. On any spawn, auth, quota, model-id, stream-stall,
-connection-drop, or other engine-process failure, return the typed failure and
-STOP — the run fails. In-seat labor after an engine-process failure is
-FORBIDDEN, and so is skipping the engine CLI to work in-seat. Zero invocations
-is a violation, not a fallback. Do not silently swap to another engine id.
+Prefer outsourcing labor to the selected engine rather than doing the work
+in-seat (尽量外包，别自己干). On spawn, auth, quota, model-id, stream-stall,
+connection-drop, or other engine-process failure, the real failure and any
+process result come back to this same session; decide next steps here (retry,
+report, or submit through the existing path). Do not silently swap to another
+engine id.

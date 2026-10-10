@@ -125,23 +125,6 @@ async function runDetours(input: {
       ...(input.host === undefined ? {} : { host: input.host }),
     };
 
-    if (call.kind === "ok") {
-      const tool = createEngineDetourToolDefinition({
-        engineName: ENGINE,
-        fail(error) {
-          throw error;
-        },
-      });
-      await tool.execute(
-        call.toolCallId,
-        { argv: [process.execPath, scripts.echo] },
-        undefined,
-        undefined,
-        ctx,
-      );
-      continue;
-    }
-
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
       fail(error) {
@@ -149,19 +132,20 @@ async function runDetours(input: {
       },
     });
     const argv =
-      call.kind === "spawn"
-        ? ["ak-engine-definitely-missing-binary-xyz-537"]
-        : call.kind === "nonzero"
-          ? [process.execPath, scripts.nonzero]
-          : [process.execPath, scripts.empty];
-    await assert.rejects(
-      tool.execute(
-        call.toolCallId,
-        { argv },
-        undefined,
-        undefined,
-        ctx,
-      ),
+      call.kind === "ok"
+        ? [process.execPath, scripts.echo]
+        : call.kind === "spawn"
+          ? ["ak-engine-definitely-missing-binary-xyz-537"]
+          : call.kind === "nonzero"
+            ? [process.execPath, scripts.nonzero]
+            : [process.execPath, scripts.empty];
+    // Engine process failure returns to the seat; it must not reject/abort.
+    await tool.execute(
+      call.toolCallId,
+      { argv },
+      undefined,
+      undefined,
+      ctx,
     );
   }
 }
@@ -906,18 +890,19 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
   });
 });
 
-test("tool path: engine failure + sitian write failure keeps both causes via AggregateError", async () => {
+test("tool path: engine failure + sitian write failure returns both causes without aborting", async () => {
   await withHermeticHome({ prefix: "ak-detour-dual-fail-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     const scripts = await ensureScripts(project);
 
-    // Three real seams (spawn / nonzero / empty). Assert only AggregateError
-    // structured causality — never Error.name/message prose (anchoring constitution).
+    // Three real seams (spawn / nonzero / empty). Engine failure stays a tool
+    // result; ledger write failure is carried in structured details — seat lives.
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
       readonly expectEngineErrno?: string;
+      readonly expectCode?: number;
     }> = [
       {
         label: "spawn",
@@ -927,10 +912,12 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
       {
         label: "nonzero",
         argv: [process.execPath, scripts.nonzero],
+        expectCode: 2,
       },
       {
         label: "empty",
         argv: [process.execPath, scripts.empty],
+        expectCode: 0,
       },
     ];
 
@@ -939,16 +926,18 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
       await writeFile(blockedSession, "not-a-dir\n", "utf8");
       await chmod(blockedSession, 0o000);
 
+      let failCalled = false;
       const tool = createEngineDetourToolDefinition({
         engineName: ENGINE,
         fail(error) {
+          failCalled = true;
           throw error;
         },
       });
 
-      let thrown: unknown;
+      let result: Awaited<ReturnType<typeof tool.execute>> | undefined;
       try {
-        await tool.execute(
+        result = await tool.execute(
           `dual-fail-${row.label}`,
           { argv: row.argv },
           undefined,
@@ -962,36 +951,33 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
             host: "codex",
           },
         );
-      } catch (error) {
-        thrown = error;
       } finally {
         await chmod(blockedSession, 0o644).catch(() => undefined);
       }
 
-      assert.ok(thrown instanceof AggregateError, `${row.label}: expected AggregateError`);
-      const aggregate = thrown as AggregateError;
-      assert.ok(
-        aggregate.errors.length >= 2,
-        `${row.label}: both engine and ledger failures required`,
-      );
-      const engineCause = aggregate.errors[0];
-      const ledgerCause = aggregate.errors[1];
+      assert.equal(failCalled, false, `${row.label}: must not abort the seat`);
+      assert.ok(result, `${row.label}: engine failure returns a tool result`);
+      const details = result.details as {
+        tool?: string;
+        code?: number;
+        errorCode?: string;
+        ledgerErrorName?: string;
+      };
+      assert.equal(details.tool, "ak_engine_detour", row.label);
       assert.equal(
-        aggregate.cause,
-        engineCause,
-        `${row.label}: AggregateError.cause must keep the engine object identity`,
-      );
-      assert.ok(engineCause instanceof Error, `${row.label}: engine cause is Error`);
-      assert.ok(
-        ledgerCause instanceof SitianInfrastructureError,
-        `${row.label}: ledger cause is SitianInfrastructureError`,
+        details.ledgerErrorName,
+        SitianInfrastructureError.name,
+        `${row.label}: ledger cause kept as structured fact`,
       );
       if (row.expectEngineErrno !== undefined) {
         assert.equal(
-          (engineCause as NodeJS.ErrnoException).code,
+          details.errorCode,
           row.expectEngineErrno,
           `${row.label}: spawn seam keeps structured errno`,
         );
+      }
+      if (row.expectCode !== undefined) {
+        assert.equal(details.code, row.expectCode, row.label);
       }
     }
   });

@@ -1,8 +1,9 @@
 /**
- * Package-owned engine detour tool (#357 T2 / #378 / #380).
+ * Package-owned engine detour tool (#357 T2 / #378 / #380 / #1213).
  * Registered by shared role-runtime when any role + engine activation signal is present.
  * Evidence-child legs install the same definition via customTools (no spawn in role modules).
- * Engine process failures stop through the host infrastructure-failure seam.
+ * Engine process failures return as tool results to the same seat session — the package
+ * does not abort the seat run on their behalf (#1213).
  * Caller AbortSignal cancellation propagates unchanged.
  */
 import { Type, type Static } from "typebox";
@@ -76,10 +77,44 @@ function asError(error: unknown, fallback: string): Error {
     : new Error(String(error).trim() || fallback);
 }
 
+/** Structured details shared by success and engine-process failure results. */
+type EngineDetourResultDetails = {
+  tool: typeof ENGINE_DETOUR_TOOL_NAME;
+  code?: number;
+  stderr?: string;
+  /** Node errno on spawn failure (e.g. ENOENT). */
+  errorCode?: string;
+  /** Present when the usage-ledger write also failed (失败诚实, seat still lives). */
+  ledgerErrorName?: string;
+};
+
+function engineFailureResult(input: {
+  text: string;
+  code?: number;
+  stderr?: string;
+  errorCode?: string;
+  ledgerErrorName?: string;
+}): HostToolResult<EngineDetourResultDetails> {
+  const details: EngineDetourResultDetails = {
+    tool: ENGINE_DETOUR_TOOL_NAME,
+    ...(input.code === undefined ? {} : { code: input.code }),
+    ...(input.stderr === undefined ? {} : { stderr: input.stderr }),
+    ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+    ...(input.ledgerErrorName === undefined
+      ? {}
+      : { ledgerErrorName: input.ledgerErrorName }),
+  };
+  return {
+    content: [{ type: "text" as const, text: input.text }],
+    details,
+  };
+}
+
 /**
  * Build one detour tool definition for a configured engine name.
- * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
- * Engine process failures (nonzero/empty/spawn) stop via `fail` with their cause.
+ * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only
+ * (empty/invalid argv). Engine process failures (nonzero/empty/spawn) return as
+ * ordinary tool results to the same seat — no seat-run abort (#1213).
  * Caller AbortSignal cancellation propagates unchanged.
  */
 export function createEngineDetourToolDefinition(input: {
@@ -155,29 +190,16 @@ export function createEngineDetourToolDefinition(input: {
         });
       };
 
-      /** Preserve engine cause; if ledger write also fails, keep both (失败诚实). */
-      const failAfterLedger = (
-        engineCause: Error,
+      /** Record usage; on ledger failure keep the name for 失败诚实 without aborting. */
+      const recordCallOrName = (
         observed: { code?: number; stdoutByteLength?: number },
-        aggregateMessage: string,
-      ): never => {
+      ): string | undefined => {
         try {
           recordCall(observed);
+          return undefined;
         } catch (recordError) {
-          input.fail(
-            new AggregateError(
-              [
-                engineCause,
-                asError(recordError, "engine detour usage ledger write failed"),
-              ],
-              aggregateMessage,
-              { cause: engineCause },
-            ),
-            toolCallId,
-            ctx,
-          );
+          return asError(recordError, "engine detour usage ledger write failed").name;
         }
-        input.fail(engineCause, toolCallId, ctx);
       };
 
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
@@ -190,24 +212,33 @@ export function createEngineDetourToolDefinition(input: {
       } catch (error) {
         if (isCallerCancellation(error, signal)) throw error;
         // Spawn path: duration only — code/stdout bytes absent (not forged 0).
-        return failAfterLedger(
-          asError(error, "劳务引擎 spawn 失败"),
-          {},
-          "engine detour spawn and usage ledger both failed",
-        );
+        // Return the real cause to the seat; do not abort the run (#1213).
+        const engineError = asError(error, "劳务引擎 spawn 失败");
+        const ledgerErrorName = recordCallOrName({});
+        const errno =
+          typeof (engineError as NodeJS.ErrnoException).code === "string"
+            ? (engineError as NodeJS.ErrnoException).code
+            : undefined;
+        return engineFailureResult({
+          text: engineError.message,
+          ...(errno === undefined ? {} : { errorCode: errno }),
+          ...(ledgerErrorName === undefined ? {} : { ledgerErrorName }),
+        });
       }
 
       const stdoutByteLength = engineDetourStdoutByteLength(result.stdout);
       const observed = { code: result.code, stdoutByteLength };
 
       // Classify closed-child failure before ledger write so a sitian failure
-      // cannot erase nonzero/empty engine facts.
+      // cannot erase nonzero/empty engine facts. Still a tool result (#1213).
       if (isEngineDetourFailure(result)) {
-        return failAfterLedger(
-          new Error(engineDetourFailureDiagnostic(result)),
-          observed,
-          "engine detour child-close and usage ledger both failed",
-        );
+        const ledgerErrorName = recordCallOrName(observed);
+        return engineFailureResult({
+          text: engineDetourFailureDiagnostic(result),
+          code: result.code,
+          stderr: result.stderr,
+          ...(ledgerErrorName === undefined ? {} : { ledgerErrorName }),
+        });
       }
 
       recordCall(observed);
