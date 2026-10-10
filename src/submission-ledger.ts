@@ -18,9 +18,7 @@ import type { SitianRecord } from "./sitian-contracts.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
-import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic } from "./package-contracts/terminating-infrastructure.ts";
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
@@ -580,26 +578,8 @@ export function createSubmissionLedgerHost(
           });
           let result: HostToolResult<unknown>;
           try {
-            // A review escalate that carries the failure declaration is the
-            // seat's own submission. Every other declaration stays on the
-            // host-failure seam. Tool identity comes from the registry map.
-            const reviewEscalate = tool.name === REVIEW_SUBMISSION_OUTPUT_TOOL_NAME
-              && infrastructureFailureDiagnostic(params) !== undefined
-              && isRecord(params)
-              && (params as Record<string, unknown>).status === "escalate";
-            if (!reviewEscalate) {
-              failOnInfrastructureFailureDeclaration(
-                params,
-                {
-                  failInfrastructure(error, ctx) {
-                    failInfrastructure(error, ctx);
-                  },
-                },
-                context,
-                toolCallId,
-                tool.bounceInfrastructureDeclaration,
-              );
-            }
+            // #1214 A2: infrastructureFailure rides the original params as receipt
+            // content. Declaration alone never host-fails the leg.
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
             if (isCorrectableExecuteError(error)) {

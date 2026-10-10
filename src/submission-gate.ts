@@ -121,13 +121,15 @@ export function createDefaultGateOfficerSummon(options: {
  * Parent does not book officer pointers or project other-seat finals (#1195).
  */
 export type SubmissionGateOutcome = {
-  readonly status: ReviewQueueWord | "needs_reask";
+  readonly status: ReviewQueueWord | "needs_reask" | "transport_failure";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
   /** Officer terminal already returned by the summon. Present when the reply was not a queue word. */
   readonly terminal?: TerminalResult;
+  /** transport_failure reason from the officer summon/process. */
+  readonly reason?: string;
 };
 
 /**
@@ -250,11 +252,25 @@ export async function requireSubmissionGate(options: {
       continue;
     }
     if (gatekeeper.status === "transport_failure") {
-      const failure = Object.assign(new Error(gatekeeper.reason), {
-        name: "GatekeeperTransportFailure",
-        ...(gatekeeper.submission === undefined ? {} : { submission: gatekeeper.submission }),
-      });
-      options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
+      // #1214 A5: officer process/transport failure stays on the officer run.
+      // Present honestly; do not failInfrastructure the parent / audited seat.
+      return {
+        status: "transport_failure",
+        officer: projected.officer,
+        receipt: gatekeeper.submission ?? { reason: gatekeeper.reason },
+        reason: gatekeeper.reason,
+        ...(typeof projected.summoned?.terminal?.runId === "string"
+          && projected.summoned.terminal.runId.trim() !== ""
+          ? { runId: projected.summoned.terminal.runId }
+          : {}),
+        ...(typeof projected.summoned?.runDirectory === "string"
+          && projected.summoned.runDirectory.trim() !== ""
+          ? { runDirectory: projected.summoned.runDirectory }
+          : {}),
+        ...(projected.summoned?.terminal === undefined
+          ? {}
+          : { terminal: projected.summoned.terminal }),
+      };
     }
     if (gatekeeper.status === "escalate") {
       return {

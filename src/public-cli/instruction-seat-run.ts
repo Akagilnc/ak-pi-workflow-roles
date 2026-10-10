@@ -1737,26 +1737,36 @@ async function auditSubmittedRole(
         }, envForCourtContinue(env), io);
       }
       if (decision.status === "received") {
-        if (lastSummon?.terminal === undefined) {
-          throw new Error("doctor audit kept an unreadable reply with no terminal");
+        if (lastSummon?.terminal !== undefined) {
+          const officerAdmitted = lastSummon.admitted;
+          const officerDir = officerAdmitted?.runDirectory ?? lastSummon.runDirectory ?? admitted.runDirectory;
+          const terminal = await presentUnsettledOfficer(lastSummon.terminal, io, officerDir);
+          return {
+            exitCode: 0,
+            ...(officerAdmitted === undefined ? { admitted } : { admitted: officerAdmitted }),
+            terminal,
+          };
         }
-        const officerAdmitted = lastSummon.admitted;
-        const officerDir = officerAdmitted?.runDirectory ?? lastSummon.runDirectory ?? admitted.runDirectory;
-        const terminal = await presentUnsettledOfficer(lastSummon.terminal, io, officerDir);
-        return {
-          exitCode: 0,
-          ...(officerAdmitted === undefined ? { admitted } : { admitted: officerAdmitted }),
-          terminal,
-        };
+        // #1214 A12: no officer terminal — present parent original volume; no_receipt fact.
+        if (turn.terminal !== undefined) {
+          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+          return turn;
+        }
+        return { exitCode: 0, admitted };
       }
       if (decision.status !== "converged") {
+        // #1214 A5/A12: officer failure or non-pass stays on officer; parent volume kept.
         if (lastSummon?.terminal !== undefined) {
           await presentTerminal(lastSummon.terminal, { ...io, omitFailureStderrDiagnostic: true }, lastSummon.admitted?.runDirectory ?? admitted.runDirectory);
           return { exitCode: lastSummon.exitCode,
             ...(lastSummon.admitted === undefined ? {} : { admitted: lastSummon.admitted }),
             terminal: lastSummon.terminal };
         }
-        throw new Error(`doctor audit did not converge: ${decision.status}`);
+        if (turn.terminal !== undefined) {
+          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+          return turn;
+        }
+        return { exitCode: 0, admitted };
       }
     }
   } else {
@@ -1801,40 +1811,71 @@ async function auditSubmittedRole(
         chain = { status: "converged", passes: [] };
       } else {
         const pass = await runGate(subject);
-        if (pass === undefined) throw new Error("audit gate returned no conclusion");
-        chain = {
-          status: pass.status,
-          passes: [{
-            subject,
+        if (pass === undefined) {
+          // #1214 A12: missing gate conclusion is not a parent-killing throw.
+          chain = {
+            status: "needs_reask",
+            passes: [{
+              subject,
+              status: "needs_reask",
+              receipt: { reason: "audit gate returned no conclusion" },
+            }],
+          };
+        } else {
+          chain = {
             status: pass.status,
-            receipt: pass.receipt,
-            ...(pass.runId === undefined ? {} : { runId: pass.runId }),
-            ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
-            ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
-          }],
-        };
+            passes: [{
+              subject,
+              status: pass.status,
+              receipt: pass.receipt,
+              ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+              ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+              ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
+              ...(pass.reason === undefined ? {} : { reason: pass.reason }),
+            }],
+          };
+        }
       }
     }
-    if (chain.status === "needs_reask") {
+    if (chain.status === "needs_reask" || chain.status === "transport_failure") {
       const pass = chain.passes.at(-1);
       const officerTerminal = pass?.terminal;
-      if (officerTerminal === undefined) throw new Error("unreadable audit has no terminal result");
       const officerRunDirectory = pass?.runDirectory;
       const officerRunId = pass?.runId
         ?? (officerRunDirectory === undefined ? undefined : runIdFromRunDirectory(officerRunDirectory));
-      if (officerRunId === undefined) throw new Error("unreadable audit has no resumable run identity");
-      const officer = await loadResumablePublicRole(
-        env.home,
-        officerRunId,
-        env.principalAuthority,
-        officerRunDirectory === undefined ? undefined : { runDirectory: officerRunDirectory },
-      );
-      const terminal = await presentUnsettledOfficer(
-        officerTerminal,
-        io,
-        officer.admitted.runDirectory,
-      );
-      return { exitCode: 0, admitted: officer.admitted, terminal };
+      if (officerTerminal !== undefined && officerRunId !== undefined) {
+        const officer = await loadResumablePublicRole(
+          env.home,
+          officerRunId,
+          env.principalAuthority,
+          officerRunDirectory === undefined ? undefined : { runDirectory: officerRunDirectory },
+        );
+        if (chain.status === "needs_reask") {
+          const terminal = await presentUnsettledOfficer(
+            officerTerminal,
+            io,
+            officer.admitted.runDirectory,
+          );
+          return { exitCode: 0, admitted: officer.admitted, terminal };
+        }
+        // #1214 A5: present officer failure volume; parent original stays on disk.
+        await presentTerminal(
+          officerTerminal,
+          { ...io, omitFailureStderrDiagnostic: true },
+          officer.admitted.runDirectory,
+        );
+        return {
+          exitCode: officerTerminal.roleOutcome.kind === "failure" ? 1 : 0,
+          admitted: officer.admitted,
+          terminal: officerTerminal,
+        };
+      }
+      // No officer terminal/run to present — keep parent original volume (A5/A12).
+      if (turn.terminal !== undefined) {
+        await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+        return turn;
+      }
+      return { exitCode: 0, admitted };
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);
@@ -1842,7 +1883,13 @@ async function auditSubmittedRole(
       const escalatedRunId = escalation?.runId
         ?? (escalatedRunDirectory === undefined
           ? undefined : runIdFromRunDirectory(escalatedRunDirectory));
-      if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
+      if (escalatedRunId === undefined) {
+        if (turn.terminal !== undefined) {
+          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+          return turn;
+        }
+        return { exitCode: 0, admitted };
+      }
       const officer = await loadResumablePublicRole(
         env.home,
         escalatedRunId,
@@ -1859,7 +1906,13 @@ async function auditSubmittedRole(
           { ...await readCurrentCourt(officer.admitted.runDirectory), ...packageFaultScope(officer.admitted, env, io) },
         );
       }
-      if (terminal === undefined) throw new Error("escalated audit has no terminal result");
+      if (terminal === undefined) {
+        if (turn.terminal !== undefined) {
+          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+          return turn;
+        }
+        return { exitCode: 0, admitted: officer.admitted };
+      }
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.admitted.runDirectory);
       return { exitCode: 0, admitted: officer.admitted, terminal };
     }

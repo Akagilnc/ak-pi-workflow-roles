@@ -505,12 +505,19 @@ export async function prepareRoleEnvelope(options: {
         content = [{ type: "text", text: projected.diagnostic }];
         details = projected.details;
       } else {
-        // Slot-before-abort; projectToolResult may still project durable details.
-        ({ content, details } = declareRoundInfrastructureFailure(error));
+        // #1214 A1: ordinary tool execute errors return to the calling seat as
+        // isError tool results. Do not promote them to round infrastructure
+        // failure / hostAbort — the seat decides next steps.
+        const diagnostic = errorText(error);
+        content = [{ type: "text", text: diagnostic }];
+        details = {
+          code: typeof (error as { code?: unknown })?.code === "string"
+            ? (error as { code: string }).code
+            : "ak-tool-execution-failed",
+          error: serializeThrownValue(error),
+        };
       }
-      // The shared envelope's tool_result handler is the sole classifier:
-      // it projects either the structured submission non-pass (correctable
-      // rejection) or the typed infrastructure fact onto the reply.
+      // Shared tool_result projection: correctable non-pass or plain isError.
       const projected = await projectToolResult(toolCallId, name, {
         content,
         details,

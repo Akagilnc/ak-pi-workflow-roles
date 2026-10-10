@@ -227,7 +227,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
   });
 });
 
-test("review escalate keeps a failure declaration; other roles still host-fail", async () => {
+test("#1214 A2: infrastructureFailure declaration is recorded; declaration itself does not host-fail", async () => {
   await withLedgerFixture(async (f) => {
     let ran = 0;
     const params = { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } };
@@ -255,28 +255,31 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
 
   await withLedgerFixture(async (f) => {
     let ran = 0;
-    const params = { infrastructureFailure: { diagnostic: "disk full" } };
+    const params = { status: "completed", infrastructureFailure: { diagnostic: "disk full" } };
     const coderTool = packagedRoleOutputTool("coder");
     assert.equal(typeof coderTool, "string");
-    const host = registerTool(f.root, async () => {
+    const host = registerTool(f.root, async (submitted) => {
       ran += 1;
-      return { content: [], details: params, terminate: true };
+      return { content: [], details: submitted, terminate: true };
     }, coderTool, "coder");
-    await assert.rejects(
-      host.tool().execute("coder-infra", params, undefined, undefined, host.context),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal(error.name, "InfrastructureFailure");
-        assert.equal(error.message, params.infrastructureFailure.diagnostic);
-        return true;
-      },
-    );
-    assert.equal(ran, 0);
+    const result = await host.tool().execute("coder-infra", params, undefined, undefined, host.context);
+    assert.equal(ran, 1, "declaration must not abort before execute");
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details, params);
+    assert.deepEqual(host.closedSubmissions.at(-1), {
+      role: "coder",
+      kind: "accepted",
+      accepted: params,
+    });
+    const sealed = (await ledgerRecords(f.root)).filter((record) => record.kind === "sealed");
+    assert.ok(sealed.some((record) => {
+      const payload = record.payload as { role?: string; accepted?: unknown; toolCallId?: string };
+      return payload.role === "coder"
+        && payload.toolCallId === "coder-infra"
+        && JSON.stringify(payload.accepted) === JSON.stringify(params);
+    }), "coder original payload with infrastructureFailure must seal");
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
-    assert.equal(outcomes.length, 1);
-    assert.equal((outcomes[0]?.payload as { outcome?: string }).outcome, "infrastructure");
-    assert.equal((outcomes[0]?.payload as { role?: string }).role, "coder");
-    assert.deepEqual((outcomes[0]?.payload as { accepted?: unknown }).accepted, params);
+    assert.equal(outcomes.length, 0, "declaration alone is not an infrastructure outcome");
   });
 });
 

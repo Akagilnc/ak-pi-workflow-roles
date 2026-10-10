@@ -220,3 +220,53 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
   }),
 );
+
+test("#1214 A5: officer transport_failure returns honestly; does not failInfrastructure parent",
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    const parentRun = parentRunDirectory(root);
+    let infraCalls = 0;
+    const officerTerminal = {
+      roleOutcome: {
+        kind: "failure" as const,
+        role: "notary" as const,
+        diagnostic: "officer host failed",
+        decisiveFacts: {},
+      },
+      navigator: { disposition: "no-advice" as const },
+      artifacts: [] as const,
+      runId: "01a01214-fail-7000-8000-000000000099",
+    };
+    const outcome = await requireSubmissionGate({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
+      } as never,
+      subject: { kind: "judge_draft" },
+      toolCallId: "t-transport",
+      hostActions: {
+        failInfrastructure(): never {
+          infraCalls += 1;
+          throw new Error("infra must not run for transport_failure");
+        },
+        bindSubmissionNonPass() {
+          throw new Error("transport_failure returns as outcome; no non-pass bind");
+        },
+      },
+      summonOfficer: async () => ({
+        exitCode: 1,
+        stderr: "officer host failed",
+        runDirectory: "/tmp/runs/01a01214-fail-7000-8000-000000000099@notary",
+        terminal: officerTerminal,
+      }),
+    });
+    assert.equal(infraCalls, 0, "A5: transport_failure must not call failInfrastructure");
+    assert.equal(outcome?.status, "transport_failure");
+    assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
+    assert.equal(
+      outcome && "runId" in outcome ? outcome.runId : undefined,
+      "01a01214-fail-7000-8000-000000000099",
+    );
+    assert.ok(outcome && "terminal" in outcome && outcome.terminal !== undefined);
+    assert.equal(outcome?.terminal?.roleOutcome.kind, "failure");
+  }),
+);

@@ -1,5 +1,4 @@
 import type { Static, TSchema } from "typebox";
-import type { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
 type HostMessage = { role: string; content?: unknown; toolName?: string; isError?: boolean; stopReason?: string };
@@ -280,12 +279,7 @@ export function courtAttemptIdFromHostContext(context: HostContext): string | un
     : undefined;
 }
 
-export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; /**
- * #641 chain② opt-in: when the output params carry the shared infrastructure
- * declaration but the seat can machine-verify a lawful normal completion, the
- * registration may bounce the submission as a correctable error instead of
- * failing the host. Return the correctable error to bounce, or undefined to
- * keep the shared host-failure path. */ bounceInfrastructureDeclaration?(params: unknown, toolCallId: string, context: C): CorrectableSubmissionError | undefined; };
+export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; };
 
 type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions: { skills?: readonly unknown[]; contextFiles?: readonly unknown[]; appendSystemPrompt?: string } };
 type InputEvent = { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }>; source?: string };

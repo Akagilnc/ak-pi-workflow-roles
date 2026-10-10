@@ -397,7 +397,7 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1057 a remaining gate host failure does not publish a pass", async () => {
+test("#1057/#1214 A5: a remaining gate host failure does not publish a pass or kill parent volume", async () => {
   let notaryCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -407,11 +407,14 @@ test("#1057 a remaining gate host failure does not publish a pass", async () => 
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
     const continued = await observed.resume(RULING);
-    assert.notEqual(continued.exitCode, 0);
+    // Officer failure is visible; not a forged parent pass.
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
+    // Parent judge original volume remains accepted on the ledger (A5).
     assert.equal(observed.judgeSubmissions.length, 1);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
+    // Parent is not rewritten as the failed seat identity.
+    assert.notEqual(continued.terminal?.roleOutcome.role, "judge");
   });
 });
 
