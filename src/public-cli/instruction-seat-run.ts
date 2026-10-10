@@ -20,7 +20,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { readRecordedSubmissionRows, readSubmissionAttemptId } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   latestQueuePayload,
@@ -84,6 +84,7 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  ledgerReadScope,
   presentStructuralRejection,
   readBoundSessionEntries,
   trySettlePublicSeat,
@@ -330,10 +331,27 @@ async function presentAuditedOriginalOfOfficer(
     auditedSource === undefined ? undefined : { runDirectory: auditedSource },
   );
   if (!AUDITED_ROLES.has(parent.admitted.role)) return;
+  // #1214 R2c: the audited original is the court that sealed the toolCallId this officer
+  // reviews (#1195 binding), not the parent's current court, which may be a later empty
+  // court. Preview only: presenting the original never rewrites the parent's terminal.
+  const sealId = readAdmittedAuditedSubmissionToolCallId(officer.runDirectory);
+  const courtAttemptId = sealId === undefined
+    ? (await readCurrentCourt(parent.admitted.runDirectory))?.courtAttemptId
+    : await readSubmissionAttemptId(
+      parent.admitted.projectRoot,
+      parent.admitted.runId,
+      sealId,
+      ledgerReadScope(parent.admitted),
+    );
+  if (sealId !== undefined && courtAttemptId === undefined) return;
   const terminal = await trySettlePublicSeat(
     parent.admitted,
     env.principalAuthority,
-    { ...await readCurrentCourt(parent.admitted.runDirectory), ...packageFaultScope(parent.admitted, env, io) },
+    {
+      ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+      previewOnly: true,
+      ...packageFaultScope(parent.admitted, env, io),
+    },
   );
   if (terminal?.roleOutcome.kind !== "accepted") return;
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory);

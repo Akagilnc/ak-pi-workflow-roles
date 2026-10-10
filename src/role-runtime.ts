@@ -1309,11 +1309,25 @@ export function createRoleRuntimeExtension(
       const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
         ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
         : undefined;
-      await settleNavigatorProjection(settlement);
+      // #1214 R1d: the declared infrastructure fact was taken above and is the round's
+      // terminal fault. A navigator projection failure must not consume it: the fact still
+      // reaches the envelope round slot, and the projection failure rides beside it.
+      let projectionFailure: string | undefined;
+      try {
+        await settleNavigatorProjection(settlement);
+      } catch (error) {
+        if (infrastructureDetails === undefined) throw error;
+        projectionFailure = errorText(error);
+      }
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { isError: true, details: infrastructureDetails };
+        return {
+          isError: true,
+          details: projectionFailure === undefined
+            ? infrastructureDetails
+            : { ...infrastructureDetails, projectionFailure },
+        };
       }
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has

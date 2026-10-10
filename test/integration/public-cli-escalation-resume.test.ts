@@ -428,7 +428,8 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
     const continued = await observed.resume(RULING);
-    // Officer failure is visible; not a forged parent pass.
+    // A real officer lifecycle failure stays non-zero; not a forged parent pass.
+    assert.notEqual(continued.exitCode, 0);
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     // Parent judge original volume remains accepted on the ledger (A5).
     assert.equal(observed.judgeSubmissions.length, 1);

@@ -395,6 +395,21 @@ export async function readAttemptScopedSubmissionRows(
   return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
 }
 
+/** #1214 R2c: the court-turn attempt that recorded this tool call's submission, if any. */
+export async function readSubmissionAttemptId(
+  cwd: string,
+  runId: string,
+  toolCallId: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): Promise<string | undefined> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
+  const record = owned.find((candidate) => {
+    const payload = candidate.payload as { toolCallId?: unknown } | undefined;
+    return payload?.toolCallId === toolCallId;
+  });
+  return record === undefined ? undefined : recordAttemptId(record);
+}
+
 /**
  * All raw role payloads in ledger order (#836 multi-submit).
  * Returns `accepted` bytes as stored — unknown, never re-wrapped.
