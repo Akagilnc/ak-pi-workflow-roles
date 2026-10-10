@@ -560,10 +560,14 @@ async function resolveReviewSeatDialogueBody(input: {
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }
 
-async function resolveInitialPrompt(
+/**
+ * Initial host prompt plus the raw 传召词 for ticket progress (#1199).
+ * Body is the dialogue text before file-flag delivery wrapping.
+ */
+async function resolveInitialTurnContent(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
-): Promise<string> {
+): Promise<{ readonly prompt: string; readonly summonsInstruction: string }> {
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
     const sourceRunPath = admittedSourceRunPath(admitted);
@@ -579,10 +583,20 @@ async function resolveInitialPrompt(
     // #1166 J11: merge existing file-flag delivery — never early-return body alone
     // when caller attach paths were admitted. Gate with no file flags stays body-only.
     if (body !== undefined) {
-      return appendCallerFileFlagPaths(body, admitted.attachments);
+      return {
+        prompt: appendCallerFileFlagPaths(body, admitted.attachments),
+        // Progress line keeps the body, not the file-flag wrapper.
+        summonsInstruction: body,
+      };
     }
   }
-  return buildInstructionTransportPrompt(admitted);
+  const admittedInstruction = typeof admitted.instruction === "string"
+    ? admitted.instruction
+    : "";
+  return {
+    prompt: buildInstructionTransportPrompt(admitted),
+    summonsInstruction: admittedInstruction,
+  };
 }
 
 function isBoardTicketSeat(
@@ -699,7 +713,7 @@ async function dispatchAdmitted(
     if (activeEnv.correlationId !== undefined && activeEnv.correlationId.trim() !== "") {
       await recordAdmittedCorrelation(admitted, activeEnv.correlationId);
     }
-    const initialPromptText = await resolveInitialPrompt(admitted, activeEnv);
+    const initial = await resolveInitialTurnContent(admitted, activeEnv);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
       return await runPostAdmissionResumable({
@@ -710,16 +724,19 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "initial",
-            prompt: initialPromptText,
-          }),
+            prompt: initial.prompt,
+          }, initial.summonsInstruction),
         ),
-        buildResumeRequest: () => buildInstructionSeatTurnRequest(
-          admitted,
-          roleTurnOptions(activeEnv, admitted, {
-            kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt(),
-          }),
-        ),
+        buildResumeRequest: () => {
+          const autoPrompt = buildAutoResumeContinuationPrompt();
+          return buildInstructionSeatTurnRequest(
+            admitted,
+            roleTurnOptions(activeEnv, admitted, {
+              kind: "resume",
+              prompt: autoPrompt,
+            }, autoPrompt),
+          );
+        },
         adapters,
         ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
       });
@@ -732,8 +749,8 @@ async function dispatchAdmitted(
         admitted,
         roleTurnOptions(activeEnv, admitted, {
           kind: "initial",
-          prompt: initialPromptText,
-        }),
+          prompt: initial.prompt,
+        }, initial.summonsInstruction),
       ),
       adapters,
       ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
@@ -955,14 +972,14 @@ async function runCountersignBody(
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
       // #1166 J11: review-body branch must merge the same file-flag delivery as
-      // resolveInitialPrompt / resumeTurnRequestProjectionOptions — never body alone.
+      // resolveInitialTurnContent / resumeTurnRequestProjectionOptions — never body alone.
       const reviewBody = env.reviewReask ?? env.gateReviewInstruction;
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
         prompt: reviewBody !== undefined
           ? appendCallerFileFlagPaths(reviewBody, admitted.attachments)
           : buildInstructionTransportPrompt(admitted),
-      });
+      }, reviewBody ?? (typeof admitted.instruction === "string" ? admitted.instruction : ""));
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
         admitted,

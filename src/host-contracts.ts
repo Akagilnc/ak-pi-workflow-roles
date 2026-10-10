@@ -206,6 +206,11 @@ export type RoleTurnRequest = {
    * number. Absent = package default. Never re-read from disk downstream.
    */
   readonly deliveryRequestLimit?: number;
+  /**
+   * #1199: this turn's summons / 催交 instruction bytes for ticket progress.
+   * When absent, progress falls back to continuation.prompt.
+   */
+  readonly summonsInstruction?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */

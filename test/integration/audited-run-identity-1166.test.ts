@@ -29,7 +29,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { NOTARY_FIXED_DISPATCH } from "../../src/public-cli/instruction-seat-run.ts";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -568,10 +567,10 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
 
 /**
  * #1195 ticket-court blind review: countersign → notary does not preload the
- * countersign submission into dialogue. Structured contract: the fixed Notary
- * dispatch + audited-run identity, on first summon and same-parent resubmit.
+ * countersign submission into dialogue. Structured contract: empty continuation
+ * prompt + audited-run identity. Same-parent resubmit stays empty.
  */
-test("#1195 countersign→notary blind: fixed dispatch, never the countersign body, on gate and same-parent resubmit", async () => {
+test("#1195 countersign→notary blind: empty dialogue on gate and same-parent resubmit", async () => {
   await withTempRoot("ak-1195-blind-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -610,10 +609,10 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
-        assert.equal(request.continuation.prompt, NOTARY_FIXED_DISPATCH);
+        assert.equal(request.continuation.prompt, "");
         notaryPrompts.push(request.continuation.prompt);
         const inspected = await inspectLiveRequest(request, packageRoot);
-        assert.equal(inspected.prompt, NOTARY_FIXED_DISPATCH);
+        assert.equal(inspected.prompt, "");
         assert.equal(inspected.identities.length, 1);
         notaryIdentities.push(inspected.identities[0]!.identity);
         const details = notaryPrompts.length <= 1
@@ -674,7 +673,7 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     );
     assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
     assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
+    assert.equal(notaryPrompts[0], "");
     assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
 
     if (notaryPrompts.length < 2) {
@@ -694,9 +693,9 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
+    assert.equal(notaryPrompts.at(-1), "");
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
-    // Peer body would differ across resubmits; blind dialogue stays the fixed dispatch.
+    // Peer body would differ across resubmits; blind dialogue stays empty both times.
     assert.notEqual(readableGateItem(first), readableGateItem(second));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.

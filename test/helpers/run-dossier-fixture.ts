@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 
@@ -188,7 +189,8 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
   ]) {
     assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`);
   }
-  const sessionDirectory = join(runDirectory, "session");
+  // #1199: ticket/unbound sessions sit beside runs/; legacy stays under run/session.
+  const sessionDirectory = sessionDirectoryOf(runDirectory);
   if (!existsSync(sessionDirectory)) return;
   for (const entry of readdirSync(sessionDirectory)) {
     assert.equal(
@@ -200,8 +202,9 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
- * #1161 / #1165: what a run directory may hold at rest — the dossier files, the session volume,
- * and seat input files still written at admission — and none of the retired names.
+ * #1161 / #1165: what a run directory may hold at rest — the dossier files
+ * (session is under ticket/sessions or legacy run/session, not required as a
+ * child leaf name) and seat input files still written at admission.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
 export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {

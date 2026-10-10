@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { activationBookDirectory, physicalPathIdentity } from "./activation-ledger-topology.ts";
 import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import { roleRunPlacement, sessionDirectoryOf } from "./role-run-placement.ts";
 import {
   INVOCATION_PAGE_PATH_FIELDS,
   PRINCIPAL_SESSION_PATH_FIELDS,
@@ -27,6 +27,7 @@ import {
   rewriteRunDirectoryPathValue,
   rewriteRunDirectoryPathValueAgainstRewrites,
   rewriteSummonsMaterials,
+  withSessionSiblingRewrites,
 } from "./role-run-path-rewrite.ts";
 import { readPageSync, updateSectionSync } from "./run-dossier.ts";
 import { isEnoent, isRecord } from "./unknown-value.ts";
@@ -267,7 +268,8 @@ async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  const sessionRoot = join(pagesDirectory, "session");
+  // #1199: ticket/unbound sessions sit beside runs/; legacy stays under run/session.
+  const sessionRoot = sessionDirectoryOf(pagesDirectory);
   async function walk(directory: string): Promise<void> {
     let entries;
     try {
@@ -311,7 +313,8 @@ export async function rewriteRoleRunDurablePages(input: {
   readonly crossRunRewrites?: readonly RunDirectoryPathRewrite[];
 }): Promise<void> {
   const { pagesDirectory } = input;
-  const rewrites = collectRewrites(input);
+  // #1199: include sibling sessions/ rewrites so durable session paths move with the run.
+  const rewrites = withSessionSiblingRewrites(collectRewrites(input));
 
   // One rewriter per page kind; each keeps its own field list.
   const pageRewriters: Readonly<Record<"admitted" | "invocation" | "runState", (page: Record<string, unknown>) => void>> = {

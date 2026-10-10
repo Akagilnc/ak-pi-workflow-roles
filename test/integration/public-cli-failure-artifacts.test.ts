@@ -4,6 +4,11 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import {
+  runDirectoryFromSessionDirectory,
+  sessionDirectoryOf,
+  sessionFileOf,
+} from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -74,7 +79,7 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     );
     const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
       .some((body) => typeof body.diagnostic === "string");
-    const sessionText = await readFile(join(runDirectory, "session", "session.jsonl"), "utf8");
+    const sessionText = await readFile(sessionFileOf(runDirectory), "utf8");
     const sessionNote = sessionText.split("\n").some((line) => {
       if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
       const entry = JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } };
@@ -112,7 +117,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = join(sessionDir, "..");
+            const runDir = runDirectoryFromSessionDirectory(sessionDir);
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             // Refuse every later write to the dossier's current.json after the child
@@ -157,7 +162,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
       assert.equal(recorded[0]!.face, "error");
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
       // The refused write is a note beside the host terminal, in the run's session.
-      const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
         .trim()
         .split("\n")
         .filter(Boolean)
@@ -205,7 +210,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
+          const runDir = runDirectoryFromSessionDirectory(sessionDir);
           // A read-only log.jsonl makes the post-admission stderr log line append raise EACCES.
           // The log line is best-effort — must not wash the already-observed child cause.
           await blockLogAppends(runDir);
@@ -268,7 +273,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = join(sessionDir, "..");
+            const runDir = runDirectoryFromSessionDirectory(sessionDir);
             sealedSessionFile = join(sessionDir, "session.jsonl");
             // A read-only log.jsonl makes the post-admission stderr log line
             // append raise EACCES — even though the child accepted a lawful verdict.
@@ -314,7 +319,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const sealedRunDirectory =
       (await findRunDirectoryById(home, "run-stderr-log-eisdir-accepted-001"))
-      ?? join(sealedSessionFile, "..", "..");
+      ?? runDirectoryFromSessionDirectory(dirname(sealedSessionFile));
     const outcomes = readHistoryRows(sealedRunDirectory)
       .filter((row) => row.kind === "attempt-history")
       .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
@@ -322,7 +327,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     const sealedTerminal = readRunTerminal(sealedRunDirectory);
     assert.equal(sealedTerminal.status, "present");
     if (sealedTerminal.status === "present") assert.equal(sealedTerminal.face, "report");
-    const liveSessionFile = join(sealedRunDirectory, "session", "session.jsonl");
+    const liveSessionFile = sessionFileOf(sealedRunDirectory);
     const noteText = (await readFile(liveSessionFile, "utf8"))
       .trim()
       .split("\n")
@@ -654,7 +659,8 @@ test("#953 a later success replaces an earlier failure terminal, and a later fai
       "runs",
       `${runId}@judge`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
+    await mkdir(runDirectory, { recursive: true });
     await mkdir(sessionDirectory, { recursive: true });
     await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
     const admitted = fixtureJudgeAdmitted({
@@ -714,7 +720,9 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
     const runsRoot = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
     const runDirectory = join(runsRoot, `${runId}@judge`);
     const siblingDirectory = join(runsRoot, `${siblingRunId}@judge`);
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
+    // Sibling session mint does not create the run leaf — both are required.
+    await mkdir(runDirectory, { recursive: true });
     await mkdir(sessionDirectory, { recursive: true });
     await mkdir(siblingDirectory, { recursive: true });
 

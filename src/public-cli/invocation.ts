@@ -27,8 +27,11 @@ import {
   isUnboundRunDirectory,
   listBookRunDirectories,
   roleRunPlacement,
+  sessionDirectoryOf,
+  sessionFileIn,
   type RoleRunSubject,
 } from "../role-run-placement.ts";
+import { relocateTicketProgressForLeg } from "../ticket-progress.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -596,9 +599,8 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
-  // Host sealing is pure identity projection, but may reject the coordinates.
-  // Keep that failure before the filesystem commit point.
-  const principal = authority.seal(target);
+  // Pre-flight seal of expand coordinates; final seal after the filesystem commit.
+  authority.seal(target);
 
   if (admitted.role !== "diarist") {
     const childRunIds = readPageSync(oldRunDirectory, "admitted")?.childDiaristRunIds;
@@ -617,6 +619,12 @@ export async function relocateAdmittedRunToTicket(
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+      relocateTicketProgressForLeg({
+        oldRunDirectory: childDirectory,
+        newRunDirectory: childTarget.runDirectory,
+        seat: "diarist",
+        runId: childRunId,
+      });
       await rename(childDirectory, childTarget.runDirectory);
       // Finished child legs will not settle again; refresh derived host.original
       // after the rename commit. A derived render fault must not undo or block
@@ -636,15 +644,31 @@ export async function relocateAdmittedRunToTicket(
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
   }
 
+  // #1199: sessions sit beside runs/. Move this leg's session / progress /
+  // receipts before live handles reseal onto the ticket session path.
+  relocateTicketProgressForLeg({
+    oldRunDirectory,
+    newRunDirectory: target.runDirectory,
+    seat: admitted.role,
+    runId: admitted.runId,
+  });
+
   // Rename commits the run placement. Diary assignment above is a Sitian append
   // outside the atomic directory move.
   // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup and
-  // admitted path ownership immediately after the commit — before any derived
-  // render that may refuse (#1161 L1 / BASE order).
+  // live path ownership immediately after the commit — before final seal/render
+  // (#1161 L1 / BASE order). Live handles first so mid-turn setSessionFile sees
+  // the ticket leaf; final seal uses the post-move existence landing.
   heldLease?.relocate(target.runDirectory);
+
+  const actualSessionDirectory = sessionDirectoryOf(target.runDirectory);
+  const principal = authority.seal({
+    sessionDirectory: actualSessionDirectory,
+    sessionFile: sessionFileIn(actualSessionDirectory),
+  });
 
   rewriteAdmittedRoleRunPage(
     admitted as unknown as Record<string, unknown>,

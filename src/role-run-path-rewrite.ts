@@ -12,6 +12,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "./host-contracts.ts";
+import { expandSessionDirectory } from "./role-run-placement.ts";
 import { isRecord } from "./unknown-value.ts";
 
 export const ADMITTED_PAGE_PATH_FIELDS = [
@@ -50,6 +51,37 @@ export type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
   readonly newRunDirectory: string;
 };
+
+/**
+ * #1199: when runs move unbound→ticket, sessions move as siblings under
+ * `<subject>/sessions/<leaf>`. Expand each run rewrite with that pair so typed
+ * sessionDirectory/sessionFile fields rewrite with the same authority.
+ */
+export function withSessionSiblingRewrites(
+  rewrites: readonly RunDirectoryPathRewrite[],
+): readonly RunDirectoryPathRewrite[] {
+  const out: RunDirectoryPathRewrite[] = [];
+  const seen = new Set<string>();
+  const push = (pair: RunDirectoryPathRewrite): void => {
+    const key = `${pair.oldRunDirectory}\0${pair.newRunDirectory}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(pair);
+  };
+  for (const pair of rewrites) {
+    push(pair);
+    const oldExpand = expandSessionDirectory(pair.oldRunDirectory);
+    const newExpand = expandSessionDirectory(pair.newRunDirectory);
+    if (
+      oldExpand !== undefined
+      && newExpand !== undefined
+      && oldExpand !== newExpand
+    ) {
+      push({ oldRunDirectory: oldExpand, newRunDirectory: newExpand });
+    }
+  }
+  return out;
+}
 
 /** Rewrite one path value that points at or under oldRunDirectory. */
 export function rewriteRunDirectoryPathValue(
@@ -131,11 +163,13 @@ export function rewritePrincipalSessionPaths(
   oldRunDirectory: string,
   newRunDirectory: string,
 ): void {
-  rewriteRunDirectoryPathFields(
+  // One authority with withSessionSiblingRewrites: legacy run prefix + expand sibling.
+  rewriteRunDirectoryPathFieldsAgainstRewrites(
     principal,
     PRINCIPAL_SESSION_PATH_FIELDS,
-    oldRunDirectory,
-    newRunDirectory,
+    withSessionSiblingRewrites([
+      { oldRunDirectory, newRunDirectory },
+    ]),
   );
 }
 
@@ -198,14 +232,15 @@ export function rewriteAdmittedRoleRunPage(
   page: Record<string, unknown>,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): void {
-  rewriteRunDirectoryPathFieldsAgainstRewrites(page, ADMITTED_PAGE_PATH_FIELDS, rewrites);
-  rewriteSourceRunLocator(page.sourceRun, rewrites);
+  const expanded = withSessionSiblingRewrites(rewrites);
+  rewriteRunDirectoryPathFieldsAgainstRewrites(page, ADMITTED_PAGE_PATH_FIELDS, expanded);
+  rewriteSourceRunLocator(page.sourceRun, expanded);
   // #1165: admitted attachments are caller paths outside the run directory — do not rewrite.
   if (isRecord(page.principal)) {
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page.principal,
       PRINCIPAL_SESSION_PATH_FIELDS,
-      rewrites,
+      expanded,
     );
   }
 }

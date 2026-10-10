@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -452,8 +453,8 @@ test("public runs write one identity-bound invocation ledger for every role", as
       assert.equal(ledger.bookKey, bookKey);
       assert.equal(ledger.projectRoot, project);
       assert.equal(ledger.runDirectory, runDirectory);
-      assert.equal(ledger.sessionDirectory, join(runDirectory, "session"));
-      assert.equal(ledger.sessionFile, join(runDirectory, "session", "session.jsonl"));
+      assert.equal(ledger.sessionDirectory, sessionDirectoryOf(runDirectory));
+      assert.equal(ledger.sessionFile, sessionFileOf(runDirectory));
     }
   });
 });

@@ -4,6 +4,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/t
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -516,7 +517,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     const runDirectory =
       (await findRunDirectoryById(home, "run-419-pointer-overwrite-001"))
       ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
-    const liveSessionFile = join(runDirectory, "session", "session.jsonl");
+    const liveSessionFile = sessionFileOf(runDirectory);
     const hostRows = (await readFile(liveSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
     assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
     const history = historyPayloads<{

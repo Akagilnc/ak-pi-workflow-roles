@@ -78,6 +78,8 @@ export type RoleTurnRequestProjectionOptions = {
    * execution seam count with the same configured number.
    */
   readonly deliveryRequestLimit?: number;
+  /** #1199 this-round summons instruction for ticket progress (may differ from transport prompt). */
+  readonly summonsInstruction?: string;
 };
 
 export type AdmittedTurnInvocation = {
@@ -131,6 +133,12 @@ export function projectRoleTurnRequest(
     ...(options.deliveryRequestLimit === undefined
       ? {}
       : { deliveryRequestLimit: options.deliveryRequestLimit }),
+    ...(options.host === undefined || options.host.trim() === ""
+      ? {}
+      : { host: options.host.trim() }),
+    ...(options.summonsInstruction === undefined
+      ? {}
+      : { summonsInstruction: options.summonsInstruction }),
   };
 }
 

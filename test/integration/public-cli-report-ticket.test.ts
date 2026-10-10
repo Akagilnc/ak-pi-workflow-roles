@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -29,7 +29,15 @@ import {
   REPORT_TICKET_TOOL_NAME,
   reportTicketFromHostContext,
 } from "../../src/report-ticket-tool.ts";
-import { formatRunLeaf, isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
+import {
+  formatRunLeaf,
+  isUnboundRunDirectory,
+  runDirectoryFromSessionDirectory,
+  sessionDirectoryOf,
+  sessionFileOf,
+} from "../../src/role-run-placement.ts";
+import { resolveHostDossierLandingPath } from "../../src/host-session-record.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
@@ -121,7 +129,9 @@ function envelopeHostThatReportsThen(input: {
     ?? Array.from({ length: input.reportCount ?? 1 }, () => input.ticketNumber);
   return {
     async executeTurn(request: RoleTurnRequest) {
-      const socketPath = join(await mkdtemp(join(tmpdir(), "ak-1171-sock-")), "mcp.sock");
+      // Socket root owned here — dispose closes the sock; finally removes the root (#1199 R5).
+      const socketDir = await mkdtemp(join(tmpdir(), "ak-1171-sock-"));
+      const socketPath = join(socketDir, "mcp.sock");
       const prepared = await prepareRoleEnvelope({
         request: { ...request, host: input.hostName },
         dependencies: createRoleRuntimeDependencies(packageRoot),
@@ -171,6 +181,7 @@ function envelopeHostThatReportsThen(input: {
       } finally {
         delete process.env.AK_ROLE_RUN_DIR;
         await prepared.dispose?.();
+        await rm(socketDir, { recursive: true, force: true });
       }
     },
   };
@@ -203,7 +214,7 @@ function piHostThatReportsThenSubmits(input: {
       const oldSession = argvFlagValue(args, "--session");
       const oldSessionDir = argvFlagValue(args, "--session-dir");
       assert.ok(oldSession && oldSessionDir);
-      const runDirectory = dirname(oldSessionDir);
+      const runDirectory = runDirectoryFromSessionDirectory(oldSessionDir);
       await mkdir(oldSessionDir, { recursive: true });
       if (!existsSync(oldSession)) {
         await writeFile(oldSession, "", "utf8");
@@ -234,7 +245,7 @@ function piHostThatReportsThenSubmits(input: {
               // seals the still-unbound path. Plant only on the relocate seal so bind
               // can render, then rename carries the poison to post-rename render.
               const live = context.runDirectory;
-              const targetRun = dirname(coordinates.sessionDirectory);
+              const targetRun = runDirectoryFromSessionDirectory(coordinates.sessionDirectory);
               if (
                 live !== undefined
                 && isUnboundRunDirectory(live)
@@ -295,7 +306,7 @@ function piHostThatReportsThenSubmits(input: {
       input.onAfterReport?.({ oldSession, newSession });
       const patched = args.flatMap((arg, i) => {
         if (args[i - 1] === "--session") return [newSession];
-        if (args[i - 1] === "--session-dir") return [dirname(newSession)];
+        if (args[i - 1] === "--session-dir") return [dirname(newSession)]; // session file parent = session dir
         return [arg];
       });
       return scriptedTerminatingToolSession({
@@ -432,7 +443,7 @@ test("#1171 F4-R2 derived render refuse after rename keeps live handles on ticke
     assert.equal(existsSync(unbound), false);
     assert.equal(existsSync(ticket), true);
     assert.equal(observed.contextRunDirectory, ticket);
-    assert.ok(observed.sessionFile?.startsWith(join(ticket, "session")));
+    assert.ok(observed.sessionFile?.startsWith(sessionDirectoryOf(ticket)));
     assert.equal(observed.appendOk, true, "native SessionManager must follow setSessionFile after rename");
     assert.notEqual(result.exitCode, 0, "real render refuse must not wash to exit 0");
   });
@@ -550,6 +561,24 @@ for (const caseRow of [
         assert.equal(result.exitCode, 0, `${caseRow.name} ${result.terminal?.roleOutcome.kind}`);
         assert.equal(result.admitted?.ticketNumber, TICKET);
         assert.equal(result.admitted?.runDirectory, placement);
+        // #1199: envelope hosts publish ticket progress pointing at the host-original
+        // landing path (ADR 0086: missing copy does not change the pointer contract).
+        if (caseRow.submit !== undefined) {
+          const ticketSubject = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+          const progress = readTicketProgressLines(ticketSubject)
+            .filter((line) => line.seat === "fixer");
+          assert.ok(progress.length >= 1, `${caseRow.name}: ticket progress row`);
+          const landing = resolveHostDossierLandingPath({
+            host: caseRow.hostName,
+            sessionDirectory: sessionDirectoryOf(placement),
+          });
+          assert.equal(
+            join(ticketSubject, progress[progress.length - 1]!.session),
+            landing,
+            `${caseRow.name}: progress session is host original landing`,
+          );
+          assert.equal(existsSync(join(ticketSubject, progress[progress.length - 1]!.receipt)), true);
+        }
         if ("ticketNumbers" in caseRow) {
           for (const foreignTicket of caseRow.ticketNumbers) {
             if (foreignTicket === TICKET) continue;
@@ -663,6 +692,7 @@ test("#1171 still no ticket on second submit: ask once, stay unbound, sealed rec
 test("#1171 submit with ticketNumber and no report tool: bind as today, no reask", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000direct";
+    const instruction = "Repair #1171.";
     const scripted = fixerTurnHost(() => ({
       status: "completed",
       report: "direct ticket",
@@ -670,15 +700,33 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       classResults: FIXER_DONE.classResults,
     }));
     const result = await runPublicInstructionSeat(
-      ["apply", "Repair #1171."],
+      ["apply", instruction],
       seatEnv(home, project, runId, "pi", scripted.host),
       captureIo().io,
       "fixer",
       (args) => parsePublicSeatArgv("fixer", args),
     );
     assert.equal(scripted.turns, 1);
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
     assert.equal(result.admitted?.ticketNumber, TICKET);
+    // #1199 J5: same path also owns ticket progress relocate (was a parallel case).
+    // Gate may summon inspector on the same ticket — assert this fixer leg only.
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
+    const fixerLines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(fixerLines.length, 1);
+    assert.equal(fixerLines[0]!.instruction, instruction);
+    assert.equal(existsSync(join(ticketDir, fixerLines[0]!.receipt)), true);
+    assert.equal(existsSync(join(ticketDir, fixerLines[0]!.session)), true);
+    assert.equal(
+      readTicketProgressLines(unboundDir).some((line) => line.session.includes(runId)),
+      false,
+    );
+    assert.equal(
+      existsSync(join(unboundDir, "sessions", formatRunLeaf(runId, "fixer"))),
+      false,
+    );
   });
 });
 
@@ -772,7 +820,7 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
       seatEnv(home, project, runId, "pi", resumeHost),
       captureIo().io,
     );
-    assert.ok(resumeSession?.startsWith(join(live, "session")));
+    assert.ok(resumeSession?.startsWith(sessionDirectoryOf(live)));
     assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(resumed.admitted?.runDirectory, live);
     // #1183: public resume keeps current.json location paths on the ticket leaf.
@@ -1056,7 +1104,7 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
         if (turn === 2) {
           if (reask === "report-only") {
             // Soft reask: report ticket only — no substitute sealed submission.
-            const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
+            const runDirectory = runDirectoryFromSessionDirectory(argvFlagValue(args, "--session-dir")!);
             await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
             const context: HostContext = {
               cwd: options.cwd,
@@ -1152,7 +1200,7 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
                 captureIo().io,
               );
             } else {
-              const runDirectory = dirname(argvFlagValue(args, "--session-dir")!);
+              const runDirectory = runDirectoryFromSessionDirectory(argvFlagValue(args, "--session-dir")!);
               await sealAcceptedSubmission({
                 cwd: project,
                 home,

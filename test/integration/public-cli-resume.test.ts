@@ -1,4 +1,5 @@
 import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
@@ -235,7 +236,7 @@ async function assertCleanupDiagnosticNoted(
   assert.equal(typeof diagnostic?.data?.diagnostic, "string");
 }
 
-test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
+test("lawful settlement keeps the accepted terminal when publication fails; bare resume without a new seal is no_receipt", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -275,7 +276,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
@@ -285,14 +286,17 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
 
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
-      const reportPath = join(runDirectory, "current.json");
       const recordedTerminals = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
+      assert.equal(
+        (submittedParams(runDirectory).at(-1) as { note?: string } | undefined)?.note,
+        "lawful despite later publication failure",
+      );
 
-      // Unlock so bare resume can rebuild the public report from sealed facts.
+      // Unlock so bare resume can reach the host; #1032: no old-report rebuild.
       await restoreWritable();
 
-      // #833 / #672 US6: bare resume reaches host; settlement rebuilds public report.
+      // #833: bare resume reaches host. No new seal → no_receipt (history stays).
       let resumeDispatches = 0;
       const passthroughHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -307,56 +311,29 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           };
         },
       });
-      const { io: rebuildIo } = captureIo();
-      const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      const { io: resumeIo } = captureIo();
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        io: rebuildIo,
+        io: resumeIo,
         roleTurnHost: passthroughHost,
       });
       assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
-      assert.equal(rebuilt.exitCode, 0);
-      assert.ok(rebuilt.terminal);
-      assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
-      if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
-        assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-        assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
-        assert.equal(
-          (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
-          "lawful despite later publication failure",
-        );
-      }
-      // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
-      const reportBody = terminalBodyAt(reportPath, "report") as {
-        role?: string;
-        runId?: string;
-        outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
-      };
-      assert.equal(reportBody.role, "judge");
-      assert.equal(reportBody.runId, runId);
-      assert.equal(reportBody.outcome?.kind, "accepted");
-      assert.equal(reportBody.outcome?.role, "judge");
-      assert.equal("payloads" in (reportBody.outcome ?? {}), false);
-      assert.equal(
-        (submittedParams(runDirectory).at(-1) as { note?: string } | undefined)?.note,
-        "lawful despite later publication failure",
-      );
-      assert.ok(
-        rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
-        "rebuilt terminal must reference the public report artifact",
-      );
+      assert.equal(resumed.exitCode, 0);
+      assert.ok(resumed.terminal);
+      assert.equal(resumed.terminal!.roleOutcome.kind, "no_receipt");
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
-        "recorded accepted payload must remain after report rebuild",
+        "recorded accepted payload must remain after bare resume without a new seal",
       );
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
-        "the actual resume adds its own accepted attempt");
+      assert.deepEqual(historyOutcomes(), ["accepted", "no_receipt"],
+        "bare resume without a new seal records no_receipt; history keeps the first accepted");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
+      assert.deepEqual(historyOutcomes(), ["accepted", "no_receipt"],
         "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
@@ -421,7 +398,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           "unbound", "runs",
           `${runId}@judge`,
         );
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.ok(
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must survive a later persist failure",
@@ -489,7 +466,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.ok(result.terminal);
       assert.equal(result.terminal!.autoResumeCount, 0);
       assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -518,7 +495,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 0);
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(join(runDirectory, "session", "session.jsonl"));
+      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
         { "history.jsonl": "EISDIR" },
@@ -593,7 +570,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       "unbound", "runs",
       `${runId}@judge`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     // Simulate a resumable run-state written before sessionFile was persisted.
     const legacyState = readCurrentSection(runDirectory, "runState");
     delete legacyState.sessionFile;
@@ -680,7 +657,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
     // Resume reopens the pre-relocate principal; seal ticketNumber then relocates.
-    assert.equal(durable?.sessionFile, join(liveRunDirectory, "session", "session.jsonl"));
+    assert.equal(durable?.sessionFile, sessionFileOf(liveRunDirectory));
     assert.deepEqual([...openedPrincipals], [
       join(sessionDirectory, "session.jsonl"),
     ]);
@@ -1136,7 +1113,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
         const liveRunDirectory =
           (await findRunDirectoryById(home, runId)) ?? runDirectory;
-        const entries = (await readFile(join(liveRunDirectory, "session", "session.jsonl"), "utf8"))
+        const entries = (await readFile(sessionFileOf(liveRunDirectory), "utf8"))
           .trim()
           .split("\n")
           .filter(Boolean)
@@ -1408,7 +1385,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
     assert.equal(
-      durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"),
+      durable.sessionFile.endsWith("/host-issued-principal.jsonl"),
       true,
       durable.sessionFile,
     );
@@ -1458,7 +1435,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
     const after = await readRoleRunState(liveRunDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
-    assert.equal(after?.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
+    assert.equal(after?.sessionFile.endsWith("/host-issued-principal.jsonl"), true);
   });
 });
 
@@ -1477,7 +1454,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       "unbound", "runs",
       `${runId}@judge`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
     seedCurrentSection(runDirectory, "admitted", {
@@ -1580,16 +1557,16 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         },
         }),
       });
-      const sessionDirectory = join(
+      const runDirectory = join(
         home,
         ".ak-roles",
         "books",
         resolveBookKeyFromGit(project),
         "unbound", "runs",
         `${runId}@${role}`,
-        "session",
       );
-      return { sessionDirectory, sessionFile: join(sessionDirectory, "session.jsonl") };
+      const sessionDirectory = sessionDirectoryOf(runDirectory);
+      return { sessionDirectory, sessionFile: sessionFileOf(runDirectory) };
     }
 
     const cases: ReadonlyArray<{
@@ -1715,7 +1692,7 @@ test("public resume failures persist structured diagnostics", async () => {
         readonly correlationId?: string;
       }) {
         const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
-        const sessionDirectory = join(runDirectory, "session");
+        const sessionDirectory = sessionDirectoryOf(runDirectory);
         const sessionFile = join(sessionDirectory, "session.jsonl");
         await mkdir(sessionDirectory, { recursive: true });
         if (input.session) await writeFile(sessionFile, "\n", "utf8");

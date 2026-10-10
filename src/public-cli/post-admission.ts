@@ -116,7 +116,15 @@ import {
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
 
+import { rememberRoundInstruction } from "../ticket-progress.ts";
 import { isRecord, errorText } from "../unknown-value.ts";
+
+/** #1199: retain this turn's actual summons / 催交 bytes for seal-time progress. */
+function retainTurnInstructionForProgress(request: RoleTurnRequest): void {
+  const instruction = request.summonsInstruction ?? request.continuation.prompt;
+  if (typeof instruction !== "string") return;
+  rememberRoundInstruction(request.runDirectory, instruction);
+}
 
 function projectRelocatedTurnIdentity(
   request: RoleTurnRequest,
@@ -840,15 +848,18 @@ function buildReceiptDeliveryRequest(input: {
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): RoleTurnRequest {
   const { request, receiptDelivery } = input;
+  // #1199: this turn's prompt IS the summonsInstruction for progress (not first mint).
+  const prompt = JSON.stringify({
+    ...receiptDelivery.deliveryState(),
+    deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
+  });
   return {
     ...request,
     continuation: {
       kind: "resume",
-      prompt: JSON.stringify({
-        ...receiptDelivery.deliveryState(),
-        deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
-      }),
+      prompt,
     },
+    summonsInstruction: prompt,
     deliveryRequestLimit: receiptDelivery.limit,
   };
 }
@@ -1413,6 +1424,7 @@ export async function dispatchPostAdmissionTurn<
       // that dispatch on prior conclusions, row counts or report presence;
       // the authoritative post-turn settlement reads whatever really happened.
       turnDispatched = true;
+      retainTurnInstructionForProgress(turnRequest);
       result = await env.roleTurnHost.executeTurn(turnRequest);
       hostTurnCompleted = true;
       // #1171: one placement refresh before settlement, same try as executeTurn.
@@ -1502,6 +1514,7 @@ export async function dispatchPostAdmissionTurn<
           ...(env.signal === undefined ? {} : { signal: env.signal }),
         };
         receiptDelivery.recordDeliveryRequest();
+        retainTurnInstructionForProgress(deliveryTurnRequest);
         deliveryResult = await env.roleTurnHost.executeTurn(deliveryTurnRequest);
         deliveryHostTurnCompleted = true;
         // Same single refresh-before-settle rule as the first turn (#1171):
@@ -1704,7 +1717,10 @@ export function resumeTurnRequestProjectionOptions(
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
   const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;
+  // #1199: raw 传召词 for the progress line (not file-flag delivery wrapper).
+  let summonsInstruction: string;
   if (request.message !== undefined) {
+    summonsInstruction = request.message;
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + caller file flags.
       prompt = officerDialogue && fileFlags.length === 0
@@ -1718,6 +1734,7 @@ export function resumeTurnRequestProjectionOptions(
     }
   } else if (summonsPrepared !== undefined) {
     const body = summonsPrepared.instruction;
+    summonsInstruction = body;
     // No file flags: body alone (gate peer words). With flags: merge delivery.
     prompt = officerDialogue && fileFlags.length === 0
       ? body
@@ -1726,8 +1743,10 @@ export function resumeTurnRequestProjectionOptions(
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
     prompt = "";
+    summonsInstruction = request.summons.instruction ?? "";
   } else {
     prompt = "";
+    summonsInstruction = "";
   }
   return {
     ...projectPublicTurnAxes(env),
@@ -1739,6 +1758,7 @@ export function resumeTurnRequestProjectionOptions(
       kind: "resume",
       prompt,
     },
+    summonsInstruction,
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     ...(env.navigatorByStatusPrepare === true
       ? { navigatorByStatusPrepare: true as const }
@@ -1751,10 +1771,21 @@ export function resumeTurnRequestProjectionOptions(
 /** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
 export function roleTurnOptions(
   env: PostAdmissionEnv,
-  admitted: { readonly correlationId?: string },
+  admitted: { readonly correlationId?: string; readonly instruction?: string },
   continuation: RoleTurnRequest["continuation"],
+  /**
+   * #1199 this-round 传召词. Initial turns omit and use admitted.instruction.
+   * Auto-resume passes the continuation prompt so the progress line is not the
+   * first-mint instruction.
+   */
+  summonsInstruction?: string,
 ): RoleTurnRequestProjectionOptions {
   const correlationId = env.correlationId ?? admitted.correlationId;
+  const progressInstruction = summonsInstruction !== undefined
+    ? summonsInstruction
+    : typeof admitted.instruction === "string"
+      ? admitted.instruction
+      : undefined;
   return {
     ...projectPublicTurnAxes(env),
     ...(env.host === undefined ? {} : { host: env.host }),
@@ -1762,6 +1793,7 @@ export function roleTurnOptions(
       ? {}
       : { correlationId }),
     continuation,
+    ...(progressInstruction === undefined ? {} : { summonsInstruction: progressInstruction }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
     ...(env.navigatorByStatusPrepare === true
       ? { navigatorByStatusPrepare: true as const }

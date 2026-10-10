@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -20,6 +20,11 @@ import {
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../../src/submission-ledger.ts";
+import {
+  readTicketProgressLines,
+  rememberRoundInstruction,
+} from "../../src/ticket-progress.ts";
+import { join } from "node:path";
 
 /** Sole unbound run path for this fixture (docs/dossier-topology.md no-ticket nest). */
 function fixtureUnboundRunDirectory(root: string, runLeaf: string): string {
@@ -170,17 +175,23 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
 
 test("one turn two submissions → two ledger rows; original payload returned; no abort (#836)", async () => {
   await withLedgerFixture(async (f) => {
+    const runDirectory = f.context.runDirectory!;
+    rememberRoundInstruction(runDirectory, "first summons for two-seal progress");
     await f.start("first");
-    const firstPayload = { status: "converged" };
+    const firstPayload = { status: "converged", summary: "first sealed summary text here ok" };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.equal(first.terminate, true);
     assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       { role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first" },
     ]);
+    // #1199: each seal lands progress immediately — no post-turn history pick.
+    const unbound = join(f.root, ".ak-roles", "books", "fixture", "unbound");
+    assert.equal(readTicketProgressLines(unbound).length, 1);
 
     // Second submission on the same attempt records again — no seal throw.
-    const secondDetails = { status: "continue", report: "more" };
+    rememberRoundInstruction(runDirectory, "second summons for two-seal progress");
+    const secondDetails = { status: "continue", report: "more", summary: "second sealed summary text here ok" };
     const secondHost = registerTool(
       f.root,
       async () => ({ content: [], details: secondDetails, terminate: true }),
@@ -192,10 +203,19 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 2);
-    assert.deepEqual(all[0], { status: "converged" });
+    assert.deepEqual(all[0], firstPayload);
     assert.deepEqual(all[1], secondDetails);
     assert.equal(f.deliveredRejections.length, 0);
     assert.equal(secondHost.deliveredRejections.length, 0);
+
+    const lines = readTicketProgressLines(unbound).filter((line) => line.seat === "judge");
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0]!.round, "1");
+    assert.equal(lines[1]!.round, "2");
+    assert.equal(lines[0]!.instruction, "first summons for two-seal progress");
+    assert.equal(lines[1]!.instruction, "second summons for two-seal progress");
+    assert.equal(existsSync(join(unbound, lines[0]!.receipt)), true);
+    assert.equal(existsSync(join(unbound, lines[1]!.receipt)), true);
   });
 });
 

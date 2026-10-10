@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -401,7 +402,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       "unbound", "runs",
       `${runId}@fixer`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as {
       phase: string; role: string; ticketNumber?: number;
     };

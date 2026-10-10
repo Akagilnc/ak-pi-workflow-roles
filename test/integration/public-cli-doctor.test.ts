@@ -4,6 +4,7 @@ import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -792,7 +793,7 @@ test(mode === "rows"
       assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
     }
-    const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+    const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
       .trim()
       .split("\n")
       .filter(Boolean)

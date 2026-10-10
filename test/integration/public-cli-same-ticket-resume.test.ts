@@ -4,7 +4,8 @@
  * resume that run under the live seat-table model with a new court attempt and
  * different source-run material (second court does not seal) → bare resume
  * continues the open court and seals a lawful non-pass status → further bare
- * resume after seal still reaches the host (pass-through #833).
+ * resume after seal still reaches the host (#833), but with no new seal this
+ * court settles no_receipt (#1199 — must not re-present prior accepted).
  * Temp home is worktree-owned and always cleaned.
  *
  * Observation face is RoleTurnRequest (continuation / activation / model /
@@ -19,9 +20,12 @@ import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { sessionDirectoryOf, sessionFileOf, subjectDirectoryOfRun } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -280,13 +284,19 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       firstSourcePath,
       "first summons activation.sourceRun is the first retained path",
     );
-    assert.equal(
-      seen[0]!.courtAttemptId,
-      undefined,
-      "first mint has no court-attempt id (session-stable sole-final)",
+    // #1199 J3: every dispatched turn carries this-turn courtAttemptId so
+    // settlement isolates this-court receipts (not session-stable sole-final).
+    assert.ok(
+      typeof seen[0]!.courtAttemptId === "string" && seen[0]!.courtAttemptId.length > 0,
+      "first mint must carry this-turn courtAttemptId for receipt isolation",
     );
     const firstRunId = seen[0]!.runId;
     const firstRunDirectory = seen[0]!.runDirectory;
+    assert.notEqual(
+      seen[0]!.courtAttemptId,
+      firstRunId,
+      "court-attempt id is not the run id",
+    );
 
     const notaryRunsAfterFirst = (await listBookRunDirs(home)).filter((d) =>
       d.includes("@notary"),
@@ -455,7 +465,8 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
 
     // 6) After open court seals non-pass, further bare resume still reaches the
-    // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
+    // host (#833). No re-seal → this court is no_receipt (#1199); run-scoped
+    // submissions still present prior sealed history (must not wash to accepted).
     const turnsBeforeBare = turn;
     const bareAfterSeal = await runAkRole(["resume", runId], {
       home,
@@ -471,13 +482,18 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "sealed bare resume must reach the host",
     );
     assert.equal(bareAfterSeal.exitCode, 0);
-    assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      bareAfterSeal.terminal?.roleOutcome.kind,
+      "no_receipt",
+      "bare resume with no new seal must not re-present prior-court accepted",
+    );
     assert.deepEqual(
-      bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
-        : [],
-      ["pass", secondCourtSeal.status],
-      "post-court pass-through presents full history with the current non-pass last",
+      bareAfterSeal.terminal?.submissions,
+      [
+        { status: "pass", findings: [], ticketNumber: 1171 },
+        secondCourtSeal,
+      ],
+      "run-scoped submissions still present sealed history after this-court no_receipt",
     );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
@@ -1127,14 +1143,15 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
         assert.equal(request.activation.role, "coder");
         coderTurns += 1;
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-        const socketDirectory = await mkdtemp(join(scratch.home, "coder-gate-socket-"));
+        // Node IPC path limit (macOS ~103 bytes): keep socket under /tmp, not scratch.home.
+        const socketPath = `/tmp/ak-993-${randomUUID()}.sock`;
         const prepared = await prepareRoleEnvelope({
           request: { ...request, host: "codex" },
           dependencies: {
             ...createRoleRuntimeDependencies(packageRoot),
             hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: nested }) }],
           },
-          socketPath: join(socketDirectory, "mcp.sock"),
+          socketPath,
           listTerminatingToolOnMcp: false,
           sessionFile,
           principalAuthority: piDurablePrincipalAuthority,
@@ -1181,10 +1198,11 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
       ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "session", "state.jsonl"],
+      ["current.json", "history.jsonl", "log.jsonl", "state.jsonl"],
     );
+    // #1199: session beside runs/ under the ticket subject.
     assert.deepEqual(
-      (await readdir(join(coderRunDirectory, "session"))).sort(),
+      (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),
       ["session.jsonl"],
     );
     // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
@@ -1439,15 +1457,31 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // standing duplicate). Assert only the typed shape: a structured
     // customType key, and that a diagnostic string landed — never its exact
     // wording, which stays observation-only (#840 bounce class 2).
-    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const sessionFile = sessionFileOf(runDirectory);
     const sessionLines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
     const dossierEntries = sessionLines
       .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
       .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-    // One entry per refused dossier write (the run-state persist and the terminal
-    // publish), none duplicated.
-    assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
+    // One entry per refused dossier write (run-state persist + terminal publish),
+    // plus the seal-time HEAD capture fault noted at progress write when this
+    // scratch has no usable commit (#1199 J1: settlement consumes seal fault
+    // without re-git; true cause still lands on the dossier channel).
+    assert.equal(
+      dossierEntries.length,
+      3,
+      "the dossier channel must carry one cleanup diagnostic per refused write plus the seal-time head fault",
+    );
+    // Structured channel only: customType + diagnostic string presence.
+    // Never assert free-text uniqueness (#1199 R4 / CLAUDE.md 锚定宪法).
     for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    // #1199 F5/J1: ticket progress row lands (seal-time head) even when terminal render is refused.
+    const subject = subjectDirectoryOfRun(runDirectory);
+    assert.ok(subject !== undefined, "run must sit under a ticket/unbound subject");
+    const progressRows = readTicketProgressLines(subject!);
+    assert.ok(
+      progressRows.some((row) => row.seat === "notary" && row.status === "pass"),
+      "ticket progress must land beside accepted even when terminal render fails",
+    );
   } finally {
     // The injected lock makes the run directory read-only; undo it so the scratch can go.
     if (currentJsonLocked !== "") {

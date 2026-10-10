@@ -14,6 +14,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -48,9 +49,10 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
         // Settlement reads the real session transcript to detect a lawful
         // activation happened at all; the submission ledger (sealed below) is
         // a separate sitian-backed record. A substituted host still owns both.
-        const sessionDir = join(request.runDirectory, "session");
-        await mkdir(sessionDir, { recursive: true });
-        await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+        // #1199 expand: write the live principal session path, not legacy run/session.
+        const coords = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coords.sessionDirectory, { recursive: true });
+        await writeFile(coords.sessionFile, "", "utf8");
         await sealAcceptedSubmission({
           cwd: request.cwd,
           runId,
@@ -58,6 +60,9 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
           home: request.home,
           role: "judge",
           details: { status: "converged", note: "faux host settled" },
+          ...(request.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: request.courtAttemptId }),
         });
         return {
           code: 0,

@@ -1,4 +1,5 @@
 import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
@@ -97,7 +98,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
       })});
     assert.equal(dispatched,true);
     assert.equal(seenEnvelope,false);
-    assert.ok(seenSessionFile.endsWith("/session/session.jsonl"));
+    assert.ok(seenSessionFile.endsWith("/session.jsonl"), seenSessionFile);
     assert.equal(resumed.exitCode,0);
     assert.equal(resumed.terminal?.autoResumeCount,0);
   });
@@ -200,7 +201,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
       })});
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
-    await rm(join(runDir,"session","session.jsonl"),{force:true});
+    await rm(sessionFileOf(runDir),{force:true});
     // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.runId,runId);
@@ -213,7 +214,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                         return{code:1,stderr:"host-session-gone\n",timedOut:false,args:[...a]};
                                                                                       },
                                                                                     })});
-    const sessionFile=join(runDir,"session","session.jsonl");
+    const sessionFile=sessionFileOf(runDir);
     // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
     const recorded = terminalBodyAt(join(runDir, "current.json"), "error") as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
@@ -277,8 +278,8 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
   assert.equal(isLawfulTypedTerminalOutcome({kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}}),true);
   await withTempHome(async(home)=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
-    const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(sessionDirectoryOf(runDir),{recursive:true});
+    const sessionFile=sessionFileOf(runDir);await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
@@ -298,8 +299,8 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
   assert.equal(isLawfulTypedTerminalOutcome({kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:{acceptedReceipt:false}} as unknown as Parameters<typeof isLawfulTypedTerminalOutcome>[0]),true);
   await withTempHome(async(home)=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
-    const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
+    const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(sessionDirectoryOf(runDir),{recursive:true});
+    const sessionFile=sessionFileOf(runDir);await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({

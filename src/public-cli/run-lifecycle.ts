@@ -28,7 +28,7 @@ import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
   retainedRunPathsMatch,
   rewriteAdmittedRoleRunPage,
-  rewriteRunDirectoryPathValue,
+  rewritePrincipalSessionPaths,
 } from "../role-run-relocation.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
@@ -309,14 +309,16 @@ async function readRoleRunStateDisk(
       : runDirectory;
   const runDir = runDirectory;
   // Principal wire stays uninterpreted — authority owns legacy sessionFile fallback.
+  // #1199: sessions may sit beside runs/; project both run and sibling session prefixes.
+  const principalCoords = {
+    sessionDirectory: record.sessionDirectory,
+    ...(typeof record.sessionFile === "string" ? { sessionFile: record.sessionFile } : {}),
+  };
+  rewritePrincipalSessionPaths(principalCoords, storedRunDirectory, runDirectory);
   const principalWire: RoleRunPrincipalWire = {
-    sessionDirectory: rewriteRunDirectoryPathValue(
-      record.sessionDirectory,
-      storedRunDirectory,
-      runDirectory,
-    ) as string,
-    ...(typeof record.sessionFile === "string"
-      ? { sessionFile: rewriteRunDirectoryPathValue(record.sessionFile, storedRunDirectory, runDirectory) as string }
+    sessionDirectory: principalCoords.sessionDirectory as string,
+    ...(typeof principalCoords.sessionFile === "string"
+      ? { sessionFile: principalCoords.sessionFile }
       : {}),
   };
   const phase =

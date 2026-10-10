@@ -22,6 +22,7 @@ import {
   reportTicketFromHostContext,
   REPORT_TICKET_TOOL_NAME,
 } from "./report-ticket-tool.ts";
+import { rememberRoundInstruction } from "./ticket-progress.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -1169,7 +1170,12 @@ export function createRoleRuntimeExtension(
         settleNavigatorProjection,
       );
     };
-    roleHost.on("input", (_event) => {
+    roleHost.on("input", (event, ctx) => {
+      // #1199: first/resume summons bytes for the seal-time progress row.
+      const runDirectory = runDirectoryFromHostContext(ctx);
+      if (runDirectory !== undefined && typeof event.text === "string") {
+        rememberRoundInstruction(runDirectory, event.text);
+      }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
@@ -1373,6 +1379,12 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
+        // #1199: still retain the actual催交原文 for the seal-time progress row.
+        const deliveryContent = JSON.stringify(receiptDelivery.deliveryState());
+        const deliveryRunDirectory = runDirectoryFromHostContext(ctx);
+        if (deliveryRunDirectory !== undefined) {
+          rememberRoundInstruction(deliveryRunDirectory, deliveryContent);
+        }
         const scopeId = ctx.invocationScopeId?.trim() ?? "";
         envelopeHost.appendEntry(
           RECEIPT_DELIVERY_REQUEST_ENTRY,
@@ -1388,7 +1400,7 @@ export function createRoleRuntimeExtension(
         });
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
-          content: JSON.stringify(receiptDelivery.deliveryState()),
+          content: deliveryContent,
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {

@@ -3,6 +3,7 @@ import { readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 /**
  * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
@@ -928,7 +929,7 @@ test("ak-role resume continues reviewer with fixed base", async () => {
     const runDirectory = join(
       home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as Record<string, unknown> & {
       role: string;
       baseRevision?: string;
