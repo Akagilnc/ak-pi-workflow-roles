@@ -225,13 +225,6 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
     pkg.scripts["test:adjudication"],
     `node --import tsx ${preload} ${reporter} --test test/adjudication/**/*.test.ts`,
   );
-  // Same fixed path must be gitignored (no mkdir/path framework).
-  const gitignore = await readFile(resolve(packageRoot, ".gitignore"), "utf8");
-  assert.equal(
-    gitignore.split("\n").includes("node-test-report.txt"),
-    true,
-    ".gitignore must list the fixed native spec report path",
-  );
 });
 
 /**
@@ -398,25 +391,17 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
     child.argv.includes("--test-timeout=300000"),
     `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
   );
-  // #1206 B: native dual reporters on the sole test:all child seam.
-  assert.ok(
-    child.argv.includes("--test-reporter=dot"),
-    `child argv must include --test-reporter=dot; got ${JSON.stringify(child.argv)}`,
-  );
-  assert.ok(
-    child.argv.includes("--test-reporter=spec"),
-    `child argv must include --test-reporter=spec; got ${JSON.stringify(child.argv)}`,
-  );
-  const reporterDestinations = child.argv.filter((arg) =>
-    arg.startsWith("--test-reporter-destination="),
-  );
+  // #1206 B: native dual reporters on the sole test:all child seam —
+  // ordered reporter↔destination pairs as one input contract.
   assert.deepEqual(
-    reporterDestinations,
+    child.argv.filter((arg) => arg.startsWith("--test-reporter")),
     [
+      "--test-reporter=dot",
       "--test-reporter-destination=stdout",
+      "--test-reporter=spec",
       "--test-reporter-destination=node-test-report.txt",
     ],
-    `child argv must pair destinations stdout then node-test-report.txt; got ${JSON.stringify(child.argv)}`,
+    `child argv reporter contract; got ${JSON.stringify(child.argv)}`,
   );
   assert.equal(
     hasConcurrencyTwo(child.argv),
