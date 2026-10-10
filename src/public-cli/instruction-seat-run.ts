@@ -274,6 +274,20 @@ async function presentUnsettledOfficer(
   return terminal;
 }
 
+/**
+ * #1214 A5/A12: audit incomplete and no officer volume is presentable.
+ * Parent original receipt stays on the ledger; public call must not forge
+ * accepted success (exit 0 + parent terminal). Surface the audit diagnostic.
+ */
+function incompleteAuditWithoutOfficerVolume(
+  admitted: AdmittedRoleInvocation,
+  io: CliIo,
+  diagnostic: string,
+): SeatRunResult {
+  io.stderr(diagnostic);
+  return { exitCode: 1, admitted };
+}
+
 async function reaskUnreadablePostSubmissionStatus(
   admitted: AdmittedRoleInvocation,
   terminal: TerminalResult | undefined,
@@ -1747,12 +1761,12 @@ async function auditSubmittedRole(
             terminal,
           };
         }
-        // #1214 A12: no officer terminal — present parent original volume; no_receipt fact.
-        if (turn.terminal !== undefined) {
-          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-          return turn;
-        }
-        return { exitCode: 0, admitted };
+        // #1214 A12: no officer volume — parent original stays on ledger; do not forge success.
+        return incompleteAuditWithoutOfficerVolume(
+          admitted,
+          io,
+          "doctor audit kept an unreadable reply with no terminal",
+        );
       }
       if (decision.status !== "converged") {
         // #1214 A5/A12: officer failure or non-pass stays on officer; parent volume kept.
@@ -1762,11 +1776,12 @@ async function auditSubmittedRole(
             ...(lastSummon.admitted === undefined ? {} : { admitted: lastSummon.admitted }),
             terminal: lastSummon.terminal };
         }
-        if (turn.terminal !== undefined) {
-          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-          return turn;
-        }
-        return { exitCode: 0, admitted };
+        const diagnostic = decision.status === "transport_failure"
+          && "diagnostic" in decision
+          && typeof decision.diagnostic === "string"
+          ? decision.diagnostic
+          : `doctor audit did not converge: ${decision.status}`;
+        return incompleteAuditWithoutOfficerVolume(admitted, io, diagnostic);
       }
     }
   } else {
@@ -1870,12 +1885,16 @@ async function auditSubmittedRole(
           terminal: officerTerminal,
         };
       }
-      // No officer terminal/run to present — keep parent original volume (A5/A12).
-      if (turn.terminal !== undefined) {
-        await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-        return turn;
-      }
-      return { exitCode: 0, admitted };
+      // No officer volume to present. Parent original stays on ledger (A5);
+      // public call must not forge accepted success (A12 / 不伪作通过).
+      return incompleteAuditWithoutOfficerVolume(
+        admitted,
+        io,
+        pass?.reason
+          ?? (chain.status === "transport_failure"
+            ? "audit officer transport failure with no presentable volume"
+            : "unreadable audit has no terminal result"),
+      );
     }
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);
@@ -1884,11 +1903,11 @@ async function auditSubmittedRole(
         ?? (escalatedRunDirectory === undefined
           ? undefined : runIdFromRunDirectory(escalatedRunDirectory));
       if (escalatedRunId === undefined) {
-        if (turn.terminal !== undefined) {
-          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-          return turn;
-        }
-        return { exitCode: 0, admitted };
+        return incompleteAuditWithoutOfficerVolume(
+          admitted,
+          io,
+          "escalated audit has no resumable run identity",
+        );
       }
       const officer = await loadResumablePublicRole(
         env.home,
@@ -1907,11 +1926,11 @@ async function auditSubmittedRole(
         );
       }
       if (terminal === undefined) {
-        if (turn.terminal !== undefined) {
-          await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
-          return turn;
-        }
-        return { exitCode: 0, admitted: officer.admitted };
+        return incompleteAuditWithoutOfficerVolume(
+          officer.admitted,
+          io,
+          "escalated audit has no terminal result",
+        );
       }
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.admitted.runDirectory);
       return { exitCode: 0, admitted: officer.admitted, terminal };

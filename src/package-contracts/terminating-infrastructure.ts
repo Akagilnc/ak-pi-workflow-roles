@@ -9,7 +9,6 @@
  * own channel.
  */
 import { Type, type TSchema } from "typebox";
-import { isRecord } from "../unknown-value.ts";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
@@ -18,9 +17,8 @@ export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 /**
  * Shared declaration fragment for model guidance (#541 / #676 C / ADR 0057).
  * Nested field declarations + descriptions only — host must not pure-shape-reject
- * the envelope (仓内 CLAUDE.md 开篇). Readers may recognize a non-empty diagnostic
- * string via `infrastructureFailureDiagnostic`. No required/minLength/type host
- * gates on the declaration fragment.
+ * the envelope (仓内 CLAUDE.md 开篇). No required/minLength/type host gates on
+ * the declaration fragment.
  */
 const infrastructureFailureNested = Type.Object(
   {
@@ -91,28 +89,4 @@ export function withTerminatingOutputDeclarations<
     : [];
   (object as unknown as { required: string[] }).required = preserved;
   return object as unknown as S;
-}
-
-/** Safe recognition of the typed declaration; non-shapes / hostile input fail closed. */
-function isInfrastructureFailureDeclaration(
-  parameters: unknown,
-): boolean {
-  if (!isRecord(parameters)) return false;
-  if (!Object.hasOwn(parameters, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
-  const declaration = parameters[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  if (!isRecord(declaration)) return false;
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" && diagnostic.trim().length > 0;
-}
-
-/** Non-empty trimmed diagnostic from the declaration, else undefined. */
-export function infrastructureFailureDiagnostic(
-  parameters: unknown,
-): string | undefined {
-  if (!isInfrastructureFailureDeclaration(parameters)) return undefined;
-  const declaration = (parameters as Record<string, unknown>)[
-    INFRASTRUCTURE_FAILURE_DECLARATION_KEY
-  ] as Record<string, unknown>;
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" ? diagnostic.trim() : undefined;
 }
