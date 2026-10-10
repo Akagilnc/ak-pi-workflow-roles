@@ -835,6 +835,7 @@ function buildReceiptDeliveryRequest(input: {
   receiptDelivery: ReturnType<typeof createReceiptDeliveryPolicy>;
 }): RoleTurnRequest {
   const { request, receiptDelivery } = input;
+  // #1199: progress instruction is this turn's prompt (envelope books continuation.prompt).
   return {
     ...request,
     continuation: {
@@ -1696,6 +1697,7 @@ export function resumeTurnRequestProjectionOptions(
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
   const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;
+  // #1199: progress instruction = this prompt (actual seat input, file flags included).
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + caller file flags.
@@ -1743,7 +1745,7 @@ export function resumeTurnRequestProjectionOptions(
 /** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
 export function roleTurnOptions(
   env: PostAdmissionEnv,
-  admitted: { readonly correlationId?: string },
+  admitted: { readonly correlationId?: string; readonly instruction?: string },
   continuation: RoleTurnRequest["continuation"],
 ): RoleTurnRequestProjectionOptions {
   const correlationId = env.correlationId ?? admitted.correlationId;

@@ -12,10 +12,11 @@
  */
 import { assertRunDirectoryHoldsOnlyDossier, historyPayloads } from "../helpers/run-dossier-fixture.ts";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
+import { runDirectoryFromSessionDirectory } from "../../src/role-run-placement.ts";
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { randomUUID } from "node:crypto";
@@ -157,6 +158,9 @@ async function runExternalJudge(
           details: { status: "converged", ticketNumber: 1171 },
           toolCallId: `judge-call-${call}`,
           home: request.home,
+          ...(request.courtAttemptId === undefined
+            ? {}
+            : { courtAttemptId: request.courtAttemptId }),
         });
       }
       return { code: 0, stderr: "", timedOut: false };
@@ -290,6 +294,9 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
             details: { status: "converged", ticketNumber: 1171 },
             toolCallId: "countersign-call-2",
             home: request.home,
+            ...(request.courtAttemptId === undefined
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
           });
         }
         return { code: 0, stderr: "", timedOut: false };
@@ -662,6 +669,9 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
               details: { status: "continue", ticketNumber: 1171},
               toolCallId: "judge-continue",
               home: request.home,
+              ...(request.courtAttemptId === undefined
+                ? {}
+                : { courtAttemptId: request.courtAttemptId }),
             });
           }
           return { code: 0, stderr: "", timedOut: false };
@@ -675,6 +685,9 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
             details: { status: "continue", ticketNumber: 1171},
             toolCallId: "notary-continue",
             home: request.home,
+            ...(request.courtAttemptId === undefined
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
           });
         }
         return { code: 0, stderr: "", timedOut: false };
@@ -733,6 +746,9 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
                 details: { status: "continue", ticketNumber: 1171},
                 toolCallId: "judge-continue",
                 home: request.home,
+                ...(request.courtAttemptId === undefined
+                  ? {}
+                  : { courtAttemptId: request.courtAttemptId }),
               });
             }
             return { code: 0, stderr: "", timedOut: false };
@@ -903,8 +919,10 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
           "utf8",
         );
         // Valid bind then syntax-corrupt state.jsonl — next resume load fails closed.
-        seedHostSessionId(dirname(coordinates.sessionDirectory), "grok-build", "old-native");
-        appendFileSync(join(dirname(coordinates.sessionDirectory), "state.jsonl"), "not JSON\n");
+        // Run directory owns state.jsonl (sibling session landing is not the run parent).
+        const owningRunDirectory = runDirectoryFromSessionDirectory(coordinates.sessionDirectory);
+        seedHostSessionId(owningRunDirectory, "grok-build", "old-native");
+        appendFileSync(join(owningRunDirectory, "state.jsonl"), "not JSON\n");
         return { code: 0, stderr: "", timedOut: false };
       },
     };

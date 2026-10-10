@@ -223,6 +223,9 @@ async function finishTerminal(input: {
       role: "judge",
       details: JUDGE_ACCEPTED,
       toolCallId: "judge-out",
+      ...(request.courtAttemptId === undefined
+        ? {}
+        : { courtAttemptId: request.courtAttemptId }),
     });
     return { code: 0, stderr: "", timedOut: false };
   }

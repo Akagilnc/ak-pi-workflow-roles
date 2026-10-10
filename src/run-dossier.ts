@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
-import { sessionFileOf } from "./role-run-placement.ts";
+import { sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
 import { projectRenderedPagePaths } from "./role-run-path-rewrite.ts";
 import { RUN_CURRENT_FILE, RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
@@ -213,8 +213,10 @@ function render(
     }
   }
   // The copy row keeps the absolute path it was written to; a run that was filed under its ticket
-  // since lives elsewhere. The original is projected from where this run directory is now.
-  if (typeof original === "string") original = join(runDirectory, "session", basename(original));
+  // since lives elsewhere. The original is projected from where this run's session lands now.
+  if (typeof original === "string") {
+    original = join(sessionDirectoryOf(runDirectory), basename(original));
+  }
   whole.host = { sessions, ...(original === undefined ? {} : { original }) };
   whole.submission = latest === undefined ? {} : { latest };
   if (Object.keys(unreadable).length > 0) whole.unreadable = unreadable;

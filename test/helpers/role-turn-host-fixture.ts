@@ -431,9 +431,12 @@ export function roleTurnHostFromLegacyPiRunner(options: {
   const spawnRunner: PiSpawnRunner = async (args, spawnOptions) => {
     const result = await options.piRunner(args, spawnOptions);
     if (result.sealedAcceptance !== undefined) {
+      const sessionFile = argvFlagValue(result.args ?? args, "--session");
       await sealAcceptedSubmissionForSpawn({
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
+        ...(spawnOptions.stdin === undefined ? {} : { stdin: spawnOptions.stdin }),
+        ...(sessionFile === undefined ? {} : { sessionFile }),
         role: result.sealedAcceptance.role,
         details: result.sealedAcceptance.details,
         ...(result.sealedAcceptance.outputDetails === undefined

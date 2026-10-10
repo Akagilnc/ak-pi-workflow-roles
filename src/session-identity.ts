@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
 import {
@@ -6,6 +6,7 @@ import {
   lookupHeadlessHostDescription,
   lookupHostDescription,
 } from "./host-descriptions.ts";
+import { runDirectoryFromSessionDirectory } from "./role-run-placement.ts";
 import { renderCurrentSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { readSitianRecords, reportRunRecord } from "./sitian-facade.ts";
 import { errorText, isRecord } from "./unknown-value.ts";
@@ -27,7 +28,7 @@ export function createSessionIdentityAuthority(
   hostName: string,
 ): SessionIdentityAuthority {
   const runDirectoryOf = (principal: DurablePrincipal): string =>
-    dirname(authority.decode(principal).sessionDirectory);
+    runDirectoryFromSessionDirectory(authority.decode(principal).sessionDirectory);
   return {
     principalAuthority: authority,
     resolveSessionFile(principal) {

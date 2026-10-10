@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -11,7 +11,10 @@ import {
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
-import { listBookRunDirectories } from "../../src/role-run-placement.ts";
+import {
+  listBookRunDirectories,
+  runDirectoryFromSessionDirectory,
+} from "../../src/role-run-placement.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
@@ -204,7 +207,11 @@ test("explicit resume hands the stored host session id to the selected host", as
           const suffix = `@${record.role}`;
           if (dirName.endsWith(suffix) && !request.runDirectory.includes(CANONICAL_SOURCE_RUN_ID)) {
             seatRunId = dirName.slice(0, -suffix.length);
-            seedHostSessionId(dirname(sessionDirectory), "grok-build", nativeId);
+            seedHostSessionId(
+              runDirectoryFromSessionDirectory(sessionDirectory),
+              "grok-build",
+              nativeId,
+            );
           }
           return { code: 1, stderr: "stop", timedOut: false };
         },
@@ -241,7 +248,11 @@ test("explicit resume hands the stored host session id to the selected host", as
           if (typeof admitted.sessionDirectory === "string" && typeof admitted.sessionFile === "string") {
             await mkdir(admitted.sessionDirectory, { recursive: true });
             await writeFile(admitted.sessionFile, "", "utf8");
-            seedHostSessionId(dirname(admitted.sessionDirectory), "grok-build", nativeId);
+            seedHostSessionId(
+              runDirectoryFromSessionDirectory(admitted.sessionDirectory),
+              "grok-build",
+              nativeId,
+            );
             const suffix = `@${record.role}`;
             seatRunId = basename(runDirectory).slice(0, -suffix.length);
           }

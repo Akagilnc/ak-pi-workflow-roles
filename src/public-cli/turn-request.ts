@@ -131,6 +131,9 @@ export function projectRoleTurnRequest(
     ...(options.deliveryRequestLimit === undefined
       ? {}
       : { deliveryRequestLimit: options.deliveryRequestLimit }),
+    ...(options.host === undefined || options.host.trim() === ""
+      ? {}
+      : { host: options.host.trim() }),
   };
 }
 

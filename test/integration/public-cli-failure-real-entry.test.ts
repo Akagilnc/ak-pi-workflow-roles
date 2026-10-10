@@ -1,5 +1,6 @@
 import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -114,7 +115,7 @@ test("public report publication failure stays beside the accepted terminal", asy
           "runs",
           `${runId}@collector`,
         );
-      const noteText = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
         .trim()
         .split("\n")
         .filter(Boolean)

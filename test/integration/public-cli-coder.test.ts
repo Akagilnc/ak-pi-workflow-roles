@@ -24,6 +24,7 @@ import {
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
@@ -552,7 +553,7 @@ test("ak-role resume continues relocated coder plan phase without a gate nest", 
       "1003", "runs",
       `${runId}@coder`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as {
       phase: string; role: string; ticketNumber?: number;
     };

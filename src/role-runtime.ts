@@ -1171,7 +1171,16 @@ export function createRoleRuntimeExtension(
         settleNavigatorProjection,
       );
     };
-    roleHost.on("input", (_event) => {
+    roleHost.on("input", (event, ctx) => {
+      // #1199: progress instruction = bytes actually received this turn.
+      // HostContext field only — never process.env body (nested identity / ARG_MAX).
+      // Transport unpack is sole at the host adapter (Pi strips envelope once).
+      // Do not re-parse model-facing body — a legal JSON literal must stay intact.
+      // Adapter already booked the unpacked body; fill only when still absent
+      // (plain hosts without a prior unpack).
+      if (typeof event.text === "string" && ctx.summonsInstruction === undefined) {
+        ctx.summonsInstruction = event.text;
+      }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
@@ -1377,7 +1386,9 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
-        // #1208: resend this turn's actual dialogue; stats stay on policy/lifecycle.
+        // #1208: resend this turn's dialogue; #1199 books the same actual input.
+        const deliveryContent = turnDialoguePrompt ?? "";
+        ctx.summonsInstruction = deliveryContent;
         const scopeId = ctx.invocationScopeId?.trim() ?? "";
         envelopeHost.appendEntry(
           RECEIPT_DELIVERY_REQUEST_ENTRY,
@@ -1393,7 +1404,7 @@ export function createRoleRuntimeExtension(
         });
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
-          content: turnDialoguePrompt ?? "",
+          content: deliveryContent,
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {

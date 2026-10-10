@@ -129,7 +129,10 @@ export async function recordTurnDelivery(
   }
 }
 
-export type ExternalPreparedTurn = Pick<PreparedRoleTurn, "prompt" | "abortSignal" | "closeRound">;
+export type ExternalPreparedTurn = Pick<
+  PreparedRoleTurn,
+  "prompt" | "abortSignal" | "closeRound" | "recordSentInstruction"
+>;
 
 export type ExternalHostRoundOutcome =
   | {
@@ -318,6 +321,9 @@ export async function driveExternalRoleTurnRounds(
       }
     }
     prompt = closure.retry.message;
+    // #1199: same-envelope 催交 / correctable retry — progress instruction is
+    // the bytes actually sent this round, not the first-mint summons.
+    prepared.recordSentInstruction?.(prompt);
     driver.afterRetry?.();
   }
 

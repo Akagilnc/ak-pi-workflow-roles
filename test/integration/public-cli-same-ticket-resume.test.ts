@@ -17,11 +17,22 @@ import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
-import { historyPayloads, statePayloads, readCurrentSection, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import {
+  historyPayloads,
+  statePayloads,
+  readCurrentSection,
+  lockCurrentJson,
+  unlockCurrentJson,
+  runLogPayloads,
+  RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+} from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { sessionDirectoryOf, sessionFileOf, subjectDirectoryOfRun } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -1127,14 +1138,15 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
         assert.equal(request.activation.role, "coder");
         coderTurns += 1;
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-        const socketDirectory = await mkdtemp(join(scratch.home, "coder-gate-socket-"));
+        // Node IPC path limit (macOS ~103 bytes): keep socket under /tmp, not scratch.home.
+        const socketPath = `/tmp/ak-993-${randomUUID()}.sock`;
         const prepared = await prepareRoleEnvelope({
           request: { ...request, host: "codex" },
           dependencies: {
             ...createRoleRuntimeDependencies(packageRoot),
             hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: nested }) }],
           },
-          socketPath: join(socketDirectory, "mcp.sock"),
+          socketPath,
           listTerminatingToolOnMcp: false,
           sessionFile,
           principalAuthority: piDurablePrincipalAuthority,
@@ -1170,22 +1182,26 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.equal(officerRequests.length, 2);
     assert.equal(coderTurns, 2);
-    // At rest after bounce -> resume -> accepted, the run holds only its dossier
-    // (#1161/#1168): current.json, history.jsonl, log.jsonl, state.jsonl, the session
-    // volume — no task.md copy. No artifacts/, stderr.log, headless-*, run-state /
-    // invocation / admitted-request json or .run-starts; no attachments/. The session
-    // volume holds the host session (and the gate officer's own session volume).
+    // At rest after bounce -> resume -> accepted: bound leg dossier + leg-local
+    // receipts/session (#1161/#1168/#1199). No task.md, artifacts/, stderr.log,
+    // headless-*, run-state / invocation / admitted-request json or .run-starts.
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const coderRunDirectory =
       (await findRunDirectoryById(scratch.home, "run-worker-gate-resume-993"))
       ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
-      ["current.json", "history.jsonl", "log.jsonl", "session", "state.jsonl"],
+      [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
     );
+    // #1199: session originals stay under the leg (`<run>/session`).
     assert.deepEqual(
-      (await readdir(join(coderRunDirectory, "session"))).sort(),
+      (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),
       ["session.jsonl"],
+    );
+    // Two accepted seals → leg-local receipts/1.json and receipts/2.json.
+    assert.deepEqual(
+      (await readdir(join(coderRunDirectory, "receipts"))).sort(),
+      ["1.json", "2.json"],
     );
     // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
     // this parent are lawful zero. Gate still summoned inspector (asserted above).
@@ -1439,7 +1455,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // standing duplicate). Assert only the typed shape: a structured
     // customType key, and that a diagnostic string landed — never its exact
     // wording, which stays observation-only (#840 bounce class 2).
-    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const sessionFile = sessionFileOf(runDirectory);
     const sessionLines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
     const dossierEntries = sessionLines
       .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
@@ -1448,6 +1464,14 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // publish), none duplicated.
     assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
     for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
+    const subject = subjectDirectoryOfRun(runDirectory);
+    assert.ok(subject !== undefined, "run must sit under a ticket/unbound subject");
+    const progressRows = readTicketProgressLines(subject!);
+    assert.ok(
+      progressRows.some((row) => row.seat === "notary" && row.status === "converged"),
+      "ticket progress must land beside accepted even when terminal render fails",
+    );
   } finally {
     // The injected lock makes the run directory read-only; undo it so the scratch can go.
     if (currentJsonLocked !== "") {

@@ -22,6 +22,10 @@ import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
+import {
+  captureWorktreeHead,
+  landTicketProgressForSealedSubmission,
+} from "./ticket-progress.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
 
@@ -463,6 +467,8 @@ export async function sealAcceptedSubmission(options: {
   const attemptId = attemptIdentity(options.context, runId);
   const sessionParent = sessionParentFromHostContext(options.context);
   const home = homeFromHostContext(options.context, options.home);
+  // #1199: same seal-time HEAD + progress landing as the terminating-tool wrap.
+  const sealHead = captureWorktreeHead(options.context.cwd);
   sitianReport({
     level: "event",
     kind: "sealed",
@@ -478,6 +484,12 @@ export async function sealAcceptedSubmission(options: {
     cwd: options.context.cwd,
     ...(home !== undefined ? { home } : {}),
     ...(sessionParent === undefined ? {} : { sessionParent }),
+  });
+  landTicketProgressForSealedSubmission({
+    context: options.context,
+    role: options.role,
+    accepted: options.accepted,
+    sealHead,
   });
 }
 
@@ -636,12 +648,27 @@ export function createSubmissionLedgerHost(
             kind: "accepted",
             accepted: params,
           };
+          // #1199: seal-time HEAD + ticket progress before projectClosure.
+          // One seal → one row; post-turn history guessing is not used.
+          const sealHead = captureWorktreeHead(context.cwd);
           append({
             type: "sealed",
             attemptId,
             toolCallId,
             role,
             accepted: params,
+          });
+          const rawLens = typeof host.getFlag === "function"
+            ? host.getFlag("ak-review-lens")
+            : undefined;
+          landTicketProgressForSealedSubmission({
+            context,
+            role,
+            accepted: params,
+            sealHead,
+            ...(rawLens === "completeness" || rawLens === "correctness"
+              ? { lens: rawLens }
+              : {}),
           });
           await projectClosure(closed, context);
           return result;

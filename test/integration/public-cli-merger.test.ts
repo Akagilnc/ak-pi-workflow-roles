@@ -2,6 +2,7 @@ import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -366,7 +367,7 @@ test("ak-role resume continues merger with exact session", async () => {
       "unbound", "runs",
       `${runId}@merger`,
     );
-    const sessionDirectory = join(runDirectory, "session");
+    const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
     assert.equal(admitted.ticketNumber, undefined);

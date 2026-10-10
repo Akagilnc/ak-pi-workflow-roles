@@ -704,6 +704,8 @@ export async function prepareRoleEnvelope(options: {
       const record = value as Record<string, unknown>;
       if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
     }
+    // #1199: progress instruction = bytes actually handed to the seat this turn.
+    context.summonsInstruction = prompt;
     // Book the user assignment so judge audit subjects recover it from parent books.
     if (typeof prompt === "string" && prompt.trim() !== "") {
       sessionEntries.push({
@@ -751,6 +753,9 @@ export async function prepareRoleEnvelope(options: {
       }],
       systemPrompt: { body: systemPromptBody, materials: readingMaterials },
       prompt,
+      recordSentInstruction(text: string) {
+        context.summonsInstruction = text;
+      },
       abortSignal: hostAbort.signal,
       closeRound,
       dispose,

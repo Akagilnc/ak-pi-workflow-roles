@@ -141,6 +141,7 @@ export async function reportTicketFromHostContext(
     if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
       process.env.AK_ROLE_RUN_DIR = nextDirectory;
     }
+    // Leg-local session/: rewrite the open handle under the renamed run prefix.
     const projectedSessionFile = typeof priorSessionFile === "string" && priorSessionFile.trim() !== ""
       ? rewriteRunDirectoryPathValue(priorSessionFile, runDirectory, nextDirectory)
       : sessionFileOf(nextDirectory);
@@ -148,9 +149,12 @@ export async function reportTicketFromHostContext(
       context.sessionManager.setSessionFile?.(projectedSessionFile);
     }
   };
-  const relocation = alreadyPlaced
-    ? undefined
-    : await relocateAdmittedRunToTicket(admitted, authority, { relocate: applyLiveHandles });
+  // Always enter relocate: unbound→rename+publish; already-on-ticket→publish leftover staging.
+  const relocation = await relocateAdmittedRunToTicket(
+    admitted,
+    authority,
+    alreadyPlaced ? undefined : { relocate: applyLiveHandles },
+  );
   const nextDirectory = relocation?.newRunDirectory ?? admitted.runDirectory;
   if (relocation === undefined) applyLiveHandles(nextDirectory);
 
