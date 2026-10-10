@@ -107,38 +107,6 @@ test("detour empty or invalid argv returns parameter error without aborting the 
   });
 });
 
-test("detour whitespace-only streams keep raw bytes on the seat-visible channel", async () => {
-  const tool = createEngineDetourToolDefinition({ engineName: "kimi" });
-  await withTempRoot("ak-detour-ws-", async (cwd) => {
-    const script = join(cwd, "whitespace-streams.mjs");
-    // Whitespace-only is still received process output; trim is only the failure
-    // predicate, not a content filter (#1213).
-    await writeFile(
-      script,
-      'process.stdout.write(" \\t\\n"); process.stderr.write("\\r\\n"); process.exit(23);\n',
-      "utf8",
-    );
-    const result = await tool.execute(
-      "call-ws-streams",
-      { argv: [process.execPath, script] },
-      undefined,
-      undefined,
-      fakeCtx(cwd),
-    );
-    assert.equal(result.isError, true);
-    const details = result.details as { stdout?: string; stderr?: string; code?: number };
-    assert.equal(details.code, 23);
-    assert.equal(details.stdout, " \t\n");
-    assert.equal(details.stderr, "\r\n");
-    const text = (result.content ?? [])
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    assert.ok(text.includes(" \t\n"), "seat content keeps whitespace stdout bytes");
-    assert.ok(text.includes("\r\n"), "seat content keeps whitespace stderr bytes");
-  });
-});
-
 test("silent detour child is not cut by a package-owned tool idle backstop", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   await withHangCwd(async (cwd, argv) => {

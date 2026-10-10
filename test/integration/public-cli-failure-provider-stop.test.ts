@@ -258,18 +258,21 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
                   stopReason: "toolUse",
                 },
               }),
-              // #380 soft-fail shape: detourFailed details, isError false — not infrastructure.
+              // #1213 production soft-fail shape: isError true with process streams;
+              // settlement must still keep later knownFailure as principal (#380).
               JSON.stringify({
                 type: "message",
                 message: {
                   role: "toolResult",
                   toolCallId: "engine-detour-parent",
                   toolName: ENGINE_DETOUR_TOOL_NAME,
-                  isError: false,
+                  isError: true,
                   content: [{ type: "text", text: `Engine detour failed: ${detourDiagnostic}` }],
                   details: {
                     tool: ENGINE_DETOUR_TOOL_NAME,
-                    detourFailed: true,
+                    code: 1,
+                    stdout: "",
+                    stderr: detourDiagnostic,
                   },
                 },
               }),

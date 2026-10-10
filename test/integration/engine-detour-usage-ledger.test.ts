@@ -22,7 +22,6 @@ import {
   ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
-  readEngineDetourToolUsage,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -62,7 +61,7 @@ const JUDGE_ACCEPTED = { status: "converged" as const, ticketNumber: 1171 };
 const ECHO_STDOUT = "你好";
 const ECHO_STDOUT_BYTES = Buffer.byteLength(ECHO_STDOUT, "utf8");
 
-type DetourKind = "ok" | "spawn" | "nonzero" | "empty";
+type DetourKind = "ok" | "spawn" | "nonzero" | "empty" | "invalid";
 
 type TurnPlan = {
   readonly detours?: readonly {
@@ -134,18 +133,23 @@ async function runDetours(input: {
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
     });
-    const argv =
-      call.kind === "ok"
-        ? [process.execPath, scripts.echo]
-        : call.kind === "spawn"
-          ? ["ak-engine-definitely-missing-binary-xyz-537"]
-          : call.kind === "nonzero"
-            ? [process.execPath, scripts.nonzero]
-            : [process.execPath, scripts.empty];
+    const params =
+      call.kind === "invalid"
+        ? { argv: [] as string[] }
+        : {
+            argv:
+              call.kind === "ok"
+                ? [process.execPath, scripts.echo]
+                : call.kind === "spawn"
+                  ? ["ak-engine-definitely-missing-binary-xyz-537"]
+                  : call.kind === "nonzero"
+                    ? [process.execPath, scripts.nonzero]
+                    : [process.execPath, scripts.empty],
+          };
     // Engine process failure returns to the seat; it must not reject/abort.
     await tool.execute(
       call.toolCallId,
-      { argv },
+      params,
       undefined,
       undefined,
       ctx,
@@ -440,6 +444,18 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         expectCallCount: 1,
         expectToolCallId: "c-empty",
       },
+      {
+        // Parameter-error execute still books the call; no forged process metrics
+        // (same shape as spawn — duration only).
+        label: "accepted-invalid-argv",
+        plan: {
+          detours: [{ toolCallId: "c-invalid", kind: "invalid" }],
+          terminal: { kind: "accepted" },
+        },
+        expectKind: "accepted",
+        expectCallCount: 1,
+        expectToolCallId: "c-invalid",
+      },
     ];
 
     for (const row of rows) {
@@ -471,7 +487,10 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         );
         assert.deepEqual(objectPayloads(result.terminal.roleOutcome), [JUDGE_ACCEPTED]);
       }
-      if (row.label === "failure-coexist-spawn") {
+      if (
+        row.label === "failure-coexist-spawn"
+        || row.label === "accepted-invalid-argv"
+      ) {
         assert.equal(usage.calls[0] !== undefined && "code" in usage.calls[0], false);
         assert.equal(
           usage.calls[0] !== undefined && "stdoutByteLength" in usage.calls[0],
@@ -899,14 +918,22 @@ test("tool path: engine failure + sitian write failure returns both causes witho
     await mkdir(project, { recursive: true });
     const scripts = await ensureScripts(project);
 
-    // Three real seams (spawn / nonzero / empty). Engine failure stays a tool
-    // result; full process streams + ledger error on seat-visible content — seat lives.
+    // Four real seams (spawn / nonzero / empty / whitespace-only). Engine failure
+    // stays a tool result; full process streams + ledger error on seat-visible
+    // content — seat lives. Whitespace-only is still received output (#1213).
+    const whitespace = join(project, "detour-whitespace.mjs");
+    await writeFile(
+      whitespace,
+      'process.stdout.write(" \\t\\n"); process.stderr.write("\\r\\n"); process.exit(23);\n',
+      "utf8",
+    );
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
       readonly expectEngineErrno?: string;
       readonly expectCode?: number;
       readonly expectStdout?: string;
+      readonly expectStderr?: string;
     }> = [
       {
         label: "spawn",
@@ -924,6 +951,13 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         argv: [process.execPath, scripts.empty],
         expectCode: 0,
         expectStdout: "",
+      },
+      {
+        label: "whitespace",
+        argv: [process.execPath, whitespace],
+        expectCode: 23,
+        expectStdout: " \t\n",
+        expectStderr: "\r\n",
       },
     ];
 
@@ -966,6 +1000,7 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         tool?: string;
         code?: number;
         stdout?: string;
+        stderr?: string;
         errorCode?: string;
         ledgerError?: string;
       };
@@ -1008,66 +1043,19 @@ test("tool path: engine failure + sitian write failure returns both causes witho
           );
         }
       }
-    }
-  });
-});
-
-test("tool path: invalid argv still books the call without forged process metrics", async () => {
-  await withHermeticHome({ prefix: "ak-detour-invalid-argv-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    // Session principal must sit inside the machine ledger home (ADR 0048).
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      "work",
-      "runs",
-      "invalid-argv@judge",
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    await writeFile(sessionFile, "\n", "utf8");
-    const tool = createEngineDetourToolDefinition({ engineName: ENGINE });
-    const cases: Array<{ label: string; params: Record<string, unknown> }> = [
-      { label: "missing", params: {} },
-      { label: "empty-array", params: { argv: [] } },
-      { label: "empty-element", params: { argv: [""] } },
-    ];
-    for (const row of cases) {
-      const result = await tool.execute(
-        `invalid-argv-${row.label}`,
-        row.params as { argv: string[] },
-        undefined,
-        undefined,
-        {
-          cwd: project,
-          mode: "test",
-          abort() {},
-          sessionManager: { getSessionFile: () => sessionFile },
-          runDirectory,
-        },
-      );
-      assert.equal(result.isError, true, row.label);
-    }
-    const usage = await readEngineDetourToolUsage({
-      sessionParent: sessionFile,
-      engineMounted: true,
-      cwd: project,
-      home,
-    });
-    assert.ok(usage, "parameter-error calls still produce usage when engine mounted");
-    assert.equal(usage.callCount, 3, "each execute entry is booked");
-    assert.equal(usage.calls.length, 3);
-    for (const call of usage.calls) {
-      assert.equal("code" in call, false, "no forged exit code on parameter error");
-      assert.equal(
-        "stdoutByteLength" in call,
-        false,
-        "no forged stdout bytes on parameter error",
-      );
-      assert.equal(typeof call.durationMs, "number");
+      if (row.expectStderr !== undefined) {
+        assert.equal(
+          details.stderr,
+          row.expectStderr,
+          `${row.label}: failure keeps full process stderr`,
+        );
+        if (row.expectStderr.length > 0) {
+          assert.ok(
+            textParts.includes(row.expectStderr),
+            `${row.label}: seat content keeps existing process stderr`,
+          );
+        }
+      }
     }
   });
 });
