@@ -1,13 +1,17 @@
 /**
  * #1214 A1: single package-tool execute error returns isError to the calling
  * seat session; it does not abort the round as infrastructure failure.
+ * #1214 R1/R1b: real ledger / ticket-bind / report-ticket accounting failures
+ * close the round as typed InfrastructureFailure (not plain isError).
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { REPORT_TICKET_TOOL_NAME } from "../../src/report-ticket-tool.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
@@ -16,6 +20,53 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+
+const R1B_TICKET = 1214;
+
+/** Unbound leaf + durable identity pages so bind/relocate can start, then fail on I/O. */
+async function prepareUnboundEnvelope(
+  home: string,
+  leaf: string,
+  role: "coder" | "diarist",
+) {
+  const bookRoot = join(home, ".ak-roles", "books", "probe");
+  const runDirectory = join(bookRoot, "unbound", "runs", leaf);
+  const sessionDir = join(runDirectory, "session");
+  await mkdir(sessionDir, { recursive: true });
+  const runId = leaf.includes("@") ? leaf.slice(0, leaf.lastIndexOf("@")) : leaf;
+  const identity = {
+    role,
+    runId,
+    bookKey: "probe",
+    projectRoot: packageRoot,
+  };
+  seedCurrentSection(runDirectory, "invocation", identity);
+  seedCurrentSection(runDirectory, "admitted", identity);
+  const socketPath = join(home, `mcp-${role}.sock`);
+  const prepared = await prepareRoleEnvelope({
+    request: {
+      principal: fixturePrincipal(sessionDir),
+      activation: role === "coder"
+        ? { role: "coder", phase: "apply" }
+        : { role: "diarist" },
+      methods: [],
+      continuation: { kind: "initial", prompt: leaf },
+      cwd: packageRoot,
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory,
+      stationChild: true,
+      host: "codex",
+    },
+    dependencies: createRoleRuntimeDependencies(packageRoot),
+    socketPath,
+    listTerminatingToolOnMcp: true,
+    sessionFile: join(sessionDir, "session.jsonl"),
+    principalAuthority: piDurablePrincipalAuthority,
+  });
+  return { prepared, socketPath, bookRoot, runDirectory };
+}
 
 test("#1214 A1: tool execute error returns isError without round infrastructure abort", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-1214-a1-"));
@@ -122,6 +173,156 @@ test("#1214 R1: ledger record write failure at submission is round infrastructur
         "failure" in closed ? closed.failure?.identity?.name : undefined,
         "InfrastructureFailure",
         "record write failure must surface as the typed round infrastructure failure",
+      );
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#1214 R1b: independent ak_report_ticket bind/relocate I/O failure is round infrastructure failure", async () => {
+  const priorExitCode = process.exitCode;
+  const home = await mkdtemp(join(tmpdir(), "ak-1214-r1b-rt-"));
+  try {
+    const { prepared, socketPath, bookRoot } = await prepareUnboundEnvelope(
+      home,
+      "run-1214-r1b-rt@coder",
+      "coder",
+    );
+    try {
+      // Block the ticket subject path so relocate cannot create the destination tree.
+      await writeFile(join(bookRoot, String(R1B_TICKET)), "blocked-ticket-leaf");
+      const token = mcpTokenFromPrepared(prepared);
+      await callMcpTool({
+        socketPath,
+        token,
+        name: REPORT_TICKET_TOOL_NAME,
+        args: { ticketNumber: R1B_TICKET },
+      });
+      const closed = await prepared.closeRound();
+      assert.equal(closed.accepted, false, "report-ticket I/O failure must not close as accepted");
+      assert.equal(
+        "failure" in closed ? closed.failure?.identity?.name : undefined,
+        "InfrastructureFailure",
+        "report-ticket bind/relocate I/O must surface as typed round infrastructure failure",
+      );
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#1214 R1b: submission-time ticket bind/relocate I/O failure is round infrastructure failure", async () => {
+  const priorExitCode = process.exitCode;
+  const home = await mkdtemp(join(tmpdir(), "ak-1214-r1b-sub-"));
+  try {
+    const { prepared, socketPath, bookRoot } = await prepareUnboundEnvelope(
+      home,
+      "run-1214-r1b-sub@coder",
+      "coder",
+    );
+    try {
+      await writeFile(join(bookRoot, String(R1B_TICKET)), "blocked-ticket-leaf");
+      const token = mcpTokenFromPrepared(prepared);
+      await callMcpTool({
+        socketPath,
+        token,
+        name: CODER_OUTPUT_TOOL_NAME,
+        args: { status: "completed", ticketNumber: R1B_TICKET },
+      });
+      const closed = await prepared.closeRound();
+      assert.equal(closed.accepted, false, "submission ticket bind I/O failure must not close as accepted");
+      assert.equal(
+        "failure" in closed ? closed.failure?.identity?.name : undefined,
+        "InfrastructureFailure",
+        "submission-time ticket bind/relocate I/O must surface as typed round infrastructure failure",
+      );
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#1214 R1b: diarist commitDiaristProjection I/O failure is round infrastructure failure", async () => {
+  // Distinct from ticket-bind members: already-on-ticket leaf, fail the diary append.
+  const priorExitCode = process.exitCode;
+  const home = await mkdtemp(join(tmpdir(), "ak-1214-r1b-di-"));
+  try {
+    const bookKey = resolveBookKeyFromGit(packageRoot);
+    const bookRoot = join(home, ".ak-roles", "books", bookKey);
+    const runDirectory = join(bookRoot, String(R1B_TICKET), "runs", "run-1214-r1b-di@diarist");
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const dialogueDir = join(home, ".claude", "projects", "probe");
+    await mkdir(dialogueDir, { recursive: true });
+    const dialoguePath = join(dialogueDir, "dialogue.jsonl");
+    await writeFile(
+      dialoguePath,
+      `${JSON.stringify({
+        type: "message",
+        role: "user",
+        content: [{ type: "text", text: "owner note" }],
+        id: "m1",
+      })}\n`,
+    );
+    const identity = {
+      role: "diarist",
+      runId: "run-1214-r1b-di",
+      bookKey,
+      projectRoot: packageRoot,
+      ticketNumber: R1B_TICKET,
+    };
+    seedCurrentSection(runDirectory, "invocation", identity);
+    seedCurrentSection(runDirectory, "admitted", identity);
+    // Block the ticket records file so commit append cannot open it.
+    await mkdir(join(bookRoot, String(R1B_TICKET), "records.jsonl"));
+    const socketPath = join(home, "mcp-diarist-commit.sock");
+    const prepared = await prepareRoleEnvelope({
+      request: {
+        principal: fixturePrincipal(sessionDir),
+        activation: { role: "diarist" },
+        methods: [],
+        continuation: { kind: "initial", prompt: "diarist commit I/O" },
+        cwd: packageRoot,
+        home,
+        agentDir: join(home, "agent"),
+        runDirectory,
+        stationChild: true,
+        host: "codex",
+      },
+      dependencies: createRoleRuntimeDependencies(packageRoot),
+      socketPath,
+      listTerminatingToolOnMcp: true,
+      sessionFile: join(sessionDir, "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
+    });
+    try {
+      const token = mcpTokenFromPrepared(prepared);
+      await callMcpTool({
+        socketPath,
+        token,
+        name: DIARIST_OUTPUT_TOOL_NAME,
+        args: {
+          status: "completed",
+          ticketNumber: R1B_TICKET,
+          sessions: [{ path: dialoguePath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+        },
+      });
+      const closed = await prepared.closeRound();
+      assert.equal(closed.accepted, false, "diarist commit I/O failure must not close as accepted");
+      assert.equal(
+        "failure" in closed ? closed.failure?.identity?.name : undefined,
+        "InfrastructureFailure",
+        "diarist commitDiaristProjection I/O must surface as typed round infrastructure failure",
       );
     } finally {
       await prepared.dispose?.();

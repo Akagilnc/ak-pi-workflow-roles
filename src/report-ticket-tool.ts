@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import type {
   DurablePrincipalAuthority,
   HostContext,
+  HostGatekeeperActions,
   HostToolResult,
   RoleHost,
 } from "./host-contracts.ts";
@@ -166,8 +167,16 @@ export async function reportTicketFromHostContext(
   };
 }
 
-/** Register the report-ticket tool on the shared host tool mouth (same as submission). */
-export function registerReportTicketTool(roleHost: RoleHost): void {
+/**
+ * Register the report-ticket tool on the shared host tool mouth (same as submission).
+ * #1214 R1b: past the identifiable-ticketNumber check, bind/relocate I/O is host
+ * infrastructure — rides failInfrastructure with toolCallId (engine-detour shape).
+ * Unidentifiable ticketNumber stays an ordinary tool error (A1).
+ */
+export function registerReportTicketTool(
+  roleHost: RoleHost,
+  hostActions: HostGatekeeperActions,
+): void {
   if (roleHost.getAllTools().some((tool) => tool.name === REPORT_TICKET_TOOL_NAME)) return;
   roleHost.registerTool({
     name: REPORT_TICKET_TOOL_NAME,
@@ -175,13 +184,22 @@ export function registerReportTicketTool(roleHost: RoleHost): void {
     description: REPORT_TICKET_TOOL_DESCRIPTION,
     promptSnippet: "已知票号时立即申报，包当场归位",
     parameters: reportTicketArgsSchema,
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx): Promise<HostToolResult<ReportTicketResult>> {
+    async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<HostToolResult<ReportTicketResult>> {
       const raw = isRecord(parameters) ? parameters.ticketNumber : undefined;
-      const details = await reportTicketFromHostContext(ctx, raw);
-      return {
-        content: [],
-        details,
-      };
+      // Parameter boundary: only unidentifiable ticketNumber is ordinary tool error.
+      const ticketNumber = readDeclaredTicketNumber(raw);
+      if (ticketNumber === undefined) {
+        throw new Error("ak_report_ticket requires an identifiable ticketNumber");
+      }
+      try {
+        const details = await reportTicketFromHostContext(ctx, ticketNumber);
+        return {
+          content: [],
+          details,
+        };
+      } catch (error) {
+        hostActions.failInfrastructure(error, ctx, toolCallId);
+      }
     },
   });
 }

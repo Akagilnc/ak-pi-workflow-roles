@@ -563,16 +563,7 @@ export function createSubmissionLedgerHost(
       host.registerTool({
         ...tool,
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
-          // #1183: valid typed ticket on the submission is identity acquisition —
-          // bind/relocate once here, before reask / ledger restore / seal outcomes.
-          // Host return must not be the first placement (dossier-topology).
-          const typedTicket = isRecord(params)
-            ? readDeclaredTicketNumber(params.ticketNumber)
-            : undefined;
-          if (typedTicket !== undefined) {
-            await reportTicketFromHostContext(context, typedTicket);
-          }
-          // #1214 R1: the ledger's own reads, record appends and seal-time landing
+          // #1214 R1/R1b: ledger reads/appends/seal landing AND ticket bind/relocate
           // are host infrastructure. Their failure rides the declared failure seam
           // (keeps 真因, closes the round as failure). Only tool.execute's own throws
           // stay on the tool-result face (correctable / ordinary isError).
@@ -580,6 +571,15 @@ export function createSubmissionLedgerHost(
           let result: HostToolResult<unknown>;
           let closed: ClosedSubmission;
           try {
+            // #1183 / #1214 R1b: valid typed ticket is identity acquisition —
+            // bind/relocate once here, before reask / ledger restore / seal.
+            // Past readDeclaredTicketNumber, throws are package-side accounting.
+            const typedTicket = isRecord(params)
+              ? readDeclaredTicketNumber(params.ticketNumber)
+              : undefined;
+            if (typedTicket !== undefined) {
+              await reportTicketFromHostContext(context, typedTicket);
+            }
             const runId = runIdentity(context);
             const attemptId = attemptIdentity(context, runId);
             const state = await stateFor(context, runId);

@@ -1111,7 +1111,7 @@ function courtPipelinePiRunner(
       let liveSessionFile = argvFlagValue(args, "--session") ?? "";
       const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
-        });
+        }, { failInfrastructure(error) { throw error; } });
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
         const params = { status: "completed", ticketNumber: ticketAssertion, sessions: [] };

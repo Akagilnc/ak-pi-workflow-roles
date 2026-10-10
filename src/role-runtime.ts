@@ -8,6 +8,7 @@ import {
 
   runDirectoryFromHostContext,
   type HostContext,
+  type HostGatekeeperActions,
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
@@ -845,6 +846,7 @@ const DIARIST_BOUNDS_REASK =
 export function createDiaristRoleRuntime(
   roleHost: RoleHost,
   dependencies: DiaristRuntimeDependencies,
+  hostActions: HostGatekeeperActions,
 ) {
   return createFiledOfficerRuntime(
     roleHost,
@@ -852,7 +854,7 @@ export function createDiaristRoleRuntime(
       role: "diarist",
       tool: DIARIST_TOOL_SPEC,
       soulTag: "diarist",
-      beforeAccept: async ({ parameters, ctx }) => {
+      beforeAccept: async ({ toolCallId, parameters, ctx }) => {
         const submitted =
           isRecord(parameters)
             ? (parameters as Record<string, unknown>)
@@ -865,12 +867,15 @@ export function createDiaristRoleRuntime(
         const assertion = readDiaristTicketAssertion(submitted);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        // #1183: typed ticket assertion is identity acquisition — one mid-turn
-        // bind/relocate here, before seal / reask / infra outcome branches.
-        // Reuses ak_report_ticket seam; already-placed is a no-op. Host return
-        // must not be the first placement (dossier-topology).
+        // #1183 / #1214 R1b: typed ticket is identity acquisition — one mid-turn
+        // bind/relocate here. Past assertion, package-side accounting failures
+        // ride failInfrastructure (worker/doctor shape); do not wash to isError.
         if (ticketNumber !== undefined) {
-          await reportTicketFromHostContext(ctx, ticketNumber);
+          try {
+            await reportTicketFromHostContext(ctx, ticketNumber);
+          } catch (error) {
+            hostActions.failInfrastructure(error, ctx, toolCallId);
+          }
         }
         // Live leaf after possible relocate (commit reads history under runDirectory).
         const coords = readDiaristRunCoordinates(ctx);
@@ -896,14 +901,14 @@ export function createDiaristRoleRuntime(
           });
         } catch (error) {
           // Bound/session input failures → reask via typed identity (not message prefix).
-          // Unexpected infrastructure keeps its own identity (do not wash).
+          // Unexpected infrastructure keeps its own identity via declared seam (#1214 R1b).
           if (error instanceof ParentQueueReaskError) throw error;
           if (error instanceof TicketProvenanceInputError) {
             throw new ParentQueueReaskError(
               `${DIARIST_BOUNDS_REASK}\n${error.message}`,
             );
           }
-          throw error;
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
         return parameters;
       },
@@ -1549,6 +1554,7 @@ export function createRoleRuntimeExtension(
       {
         loadSoul: () => requireRoleSoul("diarist"),
       },
+      hostActions,
     );
     const secretariat = createSecretariatRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("secretariat"),
@@ -1796,7 +1802,7 @@ export function createRoleRuntimeExtension(
 
         await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
         // #1171: same registration mouth as submission tools; when-to-call is on the tool itself.
-        registerReportTicketTool(roleHost);
+        registerReportTicketTool(roleHost, hostActions);
         roleHost.setActiveTools([
           ...new Set([...roleHost.getActiveTools(), REPORT_TICKET_TOOL_NAME]),
         ]);
