@@ -870,22 +870,11 @@ function resumeSameParentInstructionSeat(input: {
       // Review dialogue stays on summons → shared resolver (notary: fixed).
       // Do not stuff reask into summons.instruction for later passthrough.
       const reask = input.env.reviewReask;
-      if (reask !== undefined) {
-        return runPublicInstructionSeatResume(
-          {
-            runId,
-            runDirectory,
-            message: reask,
-            ...(materials === undefined ? {} : { summons: materials }),
-          },
-          input.env,
-          input.io,
-        );
-      }
       return runPublicInstructionSeatResume(
         {
           runId,
           runDirectory,
+          ...(reask === undefined ? {} : { message: reask }),
           ...(materials === undefined ? {} : { summons: materials }),
         },
         input.env,
