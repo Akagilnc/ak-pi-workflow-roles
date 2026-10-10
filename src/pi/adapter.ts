@@ -33,8 +33,6 @@ import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
-/** One HostContext per Pi activation so input-seam / 催交 mutations reach seal (#1199). */
-const hostByPiContext = new WeakMap<ExtensionContext, HostContext>();
 
 /** Pi-only entrypoint adapter around the host-neutral shared composition. */
 export function createPiRoleRuntimeExtension(
@@ -45,52 +43,6 @@ export function createPiRoleRuntimeExtension(
   } = {},
 ): (pi: ExtensionAPI) => void {
   return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, options));
-}
-
-/** Project Pi's activation context onto the package-owned host contract. */
-function projectPiContext(context: ExtensionContext, transcriptFromContext?: (context: ExtensionContext) => string): HostContext {
-  const cached = hostByPiContext.get(context);
-  if (cached !== undefined) {
-    piContexts.set(cached, context);
-    return cached;
-  }
-  const sessionManager = context.sessionManager as SessionManager;
-  // Identity pointers may ride child env (paths / ids). Body text does not —
-  // #1199 传召词 is recorded on this HostContext by the input / 催交 seam.
-  const host: HostContext = {
-    cwd: context.cwd,
-    mode: context.mode,
-    model: context.model === undefined ? undefined : { provider: context.model.provider },
-    ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
-      ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
-      : {}),
-    ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
-      ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
-      : {}),
-    ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
-      ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
-      : {}),
-    ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
-      ? { host: process.env.AK_ROLE_HOST.trim() }
-      : {}),
-    sessionManager: {
-      getLeafEntry: () => context.sessionManager.getLeafEntry(),
-      getLeafId: () => context.sessionManager.getLeafId(),
-      getEntries: () => context.sessionManager.getEntries(),
-      getSessionDir: () => context.sessionManager.getSessionDir(),
-      getSessionFile: () => context.sessionManager.getSessionFile(),
-      getHeader: () => context.sessionManager.getHeader(),
-      setSessionFile: (path) => sessionManager.setSessionFile(path),
-      appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
-    },
-    ...(context.signal === undefined ? {} : { signal: context.signal }),
-    ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
-    ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
-    abort: () => context.abort(),
-  };
-  hostByPiContext.set(context, host);
-  piContexts.set(host, context);
-  return host;
 }
 
 /** Recover the Pi context only at the Pi composition boundary. */
@@ -168,6 +120,57 @@ export function createPiRoleHostAdapter(
   let beforeAgentStartHandlers = 0;
   // Parameters of registered terminating tools — the schema Pi was handed.
   const registeredToolParameters = new Map<string, unknown>();
+  // Pi createContext() is fresh per emit/tool (runner.js). Do not cache HostContext by
+  // ExtensionContext identity. Share only this-turn 传召词 / 催交 on the adapter instance;
+  // model and identity pointers stay live on each fresh projection (#1199).
+  let turnSummonsInstruction: string | undefined;
+  const transcriptFromContext = options.transcriptFromContext;
+  const projectPiContext = (context: ExtensionContext): HostContext => {
+    const sessionManager = context.sessionManager as SessionManager;
+    const host: HostContext = {
+      cwd: context.cwd,
+      mode: context.mode,
+      model: context.model === undefined ? undefined : { provider: context.model.provider },
+      ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
+        ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
+        : {}),
+      ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
+        ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
+        : {}),
+      ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
+        ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
+        : {}),
+      ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
+        ? { host: process.env.AK_ROLE_HOST.trim() }
+        : {}),
+      sessionManager: {
+        getLeafEntry: () => context.sessionManager.getLeafEntry(),
+        getLeafId: () => context.sessionManager.getLeafId(),
+        getEntries: () => context.sessionManager.getEntries(),
+        getSessionDir: () => context.sessionManager.getSessionDir(),
+        getSessionFile: () => context.sessionManager.getSessionFile(),
+        getHeader: () => context.sessionManager.getHeader(),
+        setSessionFile: (path) => sessionManager.setSessionFile(path),
+        appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
+      },
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+      ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
+      ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
+      abort: () => context.abort(),
+    };
+    // exactOptionalPropertyTypes: wire via accessors so undefined stays "absent value"
+    // while every fresh projection shares the adapter-instance turn field.
+    Object.defineProperty(host, "summonsInstruction", {
+      enumerable: true,
+      configurable: true,
+      get: () => turnSummonsInstruction,
+      set: (value: string | undefined) => {
+        turnSummonsInstruction = value;
+      },
+    });
+    piContexts.set(host, context);
+    return host;
+  };
   // Decode transport exactly once before Pi's native handler chain. Pi retains
   // its own transform/image propagation and per-handler error isolation.
   pi.on("input", (value) => {
@@ -182,10 +185,7 @@ export function createPiRoleHostAdapter(
     getFlag: (name) => pi.getFlag(name),
     registerTool: (tool) => {
       registeredToolParameters.set(tool.name, tool.parameters);
-      return pi.registerTool(toPiToolDefinition(
-        tool,
-        (context) => projectPiContext(context, options.transcriptFromContext),
-      ));
+      return pi.registerTool(toPiToolDefinition(tool, projectPiContext));
     },
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
@@ -194,7 +194,7 @@ export function createPiRoleHostAdapter(
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
     on(...registration: HostEventRegistration) {
-      const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
+      const context = projectPiContext;
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
         const position = beforeAgentStartHandlers;

@@ -1,16 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-/** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
+/** Pi runner createContext() returns a fresh object per emit/tool (extensions runner). */
+function freshExtensionContext(cwd: string): ExtensionContext {
+  return {
+    cwd,
+    mode: "agent",
+    model: undefined,
+    sessionManager: {
+      getLeafEntry: () => undefined,
+      getLeafId: () => null,
+      getEntries: () => [],
+      getSessionDir: () => cwd,
+      getSessionFile: () => undefined,
+      getHeader: () => null,
+      setSessionFile() {},
+      appendCustomEntry() {},
+    },
+    abort() {},
+  } as unknown as ExtensionContext;
+}
+
+/** Minimal Pi surface: capture handlers / tools as the adapter registration path. */
 function piCapture() {
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => any>>();
+  let registeredTool: ToolDefinition | undefined;
   const pi = {
     on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
@@ -19,7 +45,9 @@ function piCapture() {
     getFlag() {
       return undefined;
     },
-    registerTool() {},
+    registerTool(tool: ToolDefinition) {
+      registeredTool = tool;
+    },
     getAllTools() {
       return [];
     },
@@ -29,23 +57,13 @@ function piCapture() {
     },
     sendMessage() {},
   };
-  const ctx = {
-    cwd: "/tmp/pi-adapter-agent-start",
-    mode: "agent",
-    model: undefined,
-    sessionManager: {
-      getLeafEntry: () => undefined,
-      getLeafId: () => null,
-      getEntries: () => [],
-      getSessionDir: () => "/tmp/pi-adapter-agent-start",
-      getSessionFile: () => undefined,
-      getHeader: () => null,
-      setSessionFile() {},
-      appendCustomEntry() {},
-    },
-    abort() {},
-  } as unknown as ExtensionContext;
-  return { pi: pi as unknown as ExtensionAPI, handlers, ctx };
+  const ctx = freshExtensionContext("/tmp/pi-adapter-agent-start");
+  return {
+    pi: pi as unknown as ExtensionAPI,
+    handlers,
+    ctx,
+    getRegisteredTool: () => registeredTool,
+  };
 }
 
 test("Pi adapter folds readingMaterial into provider systemPrompt and strips the typed field", async () => {
@@ -159,4 +177,103 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
     ctx,
   );
   assert.equal(seenPrompt, collision);
+});
+
+test("#1199 Pi adapter shares this-turn 传召词 across fresh ExtensionContext projections", async () => {
+  const prior = process.env.AK_ROLE_SUMMONS_INSTRUCTION;
+  delete process.env.AK_ROLE_SUMMONS_INSTRUCTION;
+  try {
+    const { pi, handlers, getRegisteredTool } = piCapture();
+    const adapter = createPiRoleHostAdapter(pi);
+    const seen: Array<string | undefined> = [];
+
+    adapter.host.on("input", (event, hostCtx) => {
+      hostCtx.summonsInstruction = event.text;
+      seen.push(hostCtx.summonsInstruction);
+      return { action: "continue" as const };
+    });
+    adapter.host.on("before_agent_start", (_event, hostCtx) => {
+      seen.push(hostCtx.summonsInstruction);
+      return {};
+    });
+    adapter.host.registerTool({
+      name: "ak-probe-summons",
+      label: "probe",
+      description: "probe this-turn summons across fresh tool ctx",
+      parameters: Type.Object({}),
+      async execute(_toolCallId, _params, _signal, _update, hostCtx) {
+        seen.push(hostCtx.summonsInstruction);
+        // 催交 updates the same turn-input responsibility (no env body).
+        hostCtx.summonsInstruction = "催交-same-turn";
+        return { content: [{ type: "text" as const, text: "ok" }], details: undefined };
+      },
+    });
+
+    const body = "this-turn summons bytes for seal";
+    const inputHandlers = handlers.get("input");
+    assert.ok(inputHandlers);
+    let inputEvent = { text: encodeUserDialogueStdin(body), source: "piped" };
+    const inputCtx = freshExtensionContext("/tmp/pi-adapter-summons-input");
+    for (const inputHandler of inputHandlers) {
+      const result = await inputHandler(inputEvent, inputCtx);
+      if (result?.action === "transform") inputEvent = { ...inputEvent, text: result.text };
+    }
+
+    const start = handlers.get("before_agent_start")?.[0];
+    assert.ok(start);
+    const startCtx = freshExtensionContext("/tmp/pi-adapter-summons-start");
+    assert.notEqual(inputCtx, startCtx);
+    await start({ prompt: body, systemPrompt: "", systemPromptOptions: {} }, startCtx);
+
+    const tool = getRegisteredTool();
+    assert.ok(tool);
+    const toolCtx = freshExtensionContext("/tmp/pi-adapter-summons-tool") as ExtensionToolContext;
+    assert.notEqual(toolCtx, inputCtx);
+    assert.notEqual(toolCtx, startCtx);
+    await tool.execute("probe-1", {}, undefined, undefined, toolCtx);
+
+    const after催交Ctx = freshExtensionContext("/tmp/pi-adapter-summons-after");
+    adapter.host.on("agent_end", (_event, hostCtx) => {
+      seen.push(hostCtx.summonsInstruction);
+    });
+    const agentEnd = handlers.get("agent_end")?.[0];
+    assert.ok(agentEnd);
+    await agentEnd({ messages: [] }, after催交Ctx);
+
+    assert.deepEqual(seen, [body, body, body, "催交-same-turn"]);
+    assert.equal(process.env.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
+  } finally {
+    if (prior === undefined) delete process.env.AK_ROLE_SUMMONS_INSTRUCTION;
+    else process.env.AK_ROLE_SUMMONS_INSTRUCTION = prior;
+  }
+});
+
+test("#1199 Pi spawn env must not carry summons body (stdin already holds dialogue)", async () => {
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const host = createPiRoleTurnHost({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    spawnRunner: async (_args, options) => {
+      capturedEnv = options.env;
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  });
+  const huge = "x".repeat(200_000);
+  await host.executeTurn({
+    home: "/tmp/pi-summons-no-env-body",
+    agentDir: "/tmp/pi-summons-no-env-body/agent",
+    cwd: "/tmp/pi-summons-no-env-body/cwd",
+    runDirectory: "/tmp/pi-summons-no-env-body/run",
+    principal: fixturePrincipal("/tmp/pi-summons-no-env-body/session"),
+    activation: { role: "judge" },
+    methods: [],
+    continuation: { kind: "initial", prompt: huge },
+    summonsInstruction: huge,
+  });
+  assert.ok(capturedEnv);
+  assert.equal(capturedEnv.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(capturedEnv, "AK_ROLE_SUMMONS_INSTRUCTION"),
+    false,
+  );
 });
