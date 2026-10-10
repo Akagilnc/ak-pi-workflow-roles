@@ -86,15 +86,6 @@ export type RoleRunRecord = {
   readonly phase?: CoderPhase | FixerPhase;
 };
 
-/**
- * Package-owned non-empty Chinese neutral resume transport (#959 / ADR 0073).
- * Used by:
- *   - auto-resume (all seats via buildAutoResumeContinuationPrompt) — required so
- *     hosts that reject empty stdin (codex) still receive a prompt.
- * Public manual resume forwards only the caller's bytes (#987).
- */
-export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
-
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
   readonly runId: string;
@@ -138,16 +129,6 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRunPath?: string;
   readonly sourceRun?: NotarySourceRunLocator;
 };
-
-/**
- * Auto-resume continuation only (#959 / ADR 0080).
- * Always non-empty Chinese neutral envelope. Engine / outsourcing material
- * rides startup readingMaterial (#1167), never this continuation.
- * Never call this from manual `ak-role resume`.
- */
-export function buildAutoResumeContinuationPrompt(): string {
-  return RESUME_TRANSPORT_ENVELOPE;
-}
 
 const WRITER_LOCK_FILE = "writer.lock";
 

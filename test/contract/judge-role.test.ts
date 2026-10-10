@@ -191,6 +191,18 @@ function extensionHarness(
       return extraFlags[name];
     },
     on(name: string, handler: Handler) {
+      // Pi chains before_agent_start; keep every registration so this-turn prompt
+      // capture and later role soul handlers both run when tests fire the hook.
+      if (name === "before_agent_start") {
+        const previous = handlers.get(name);
+        if (previous !== undefined) {
+          handlers.set(name, async (event, ctx) => {
+            await previous(event, ctx);
+            return handler(event, ctx);
+          });
+          return;
+        }
+      }
       handlers.set(name, handler);
     },
     registerTool(tool: Tool) {
@@ -844,6 +856,16 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
+  const turnPrompt = "Finish the unfinished adapter branch.";
+  // Real hook input: a later user turn must replace any earlier dialogue bytes.
+  await harness2.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: "stale-prior-turn" },
+    {},
+  );
+  await harness2.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: turnPrompt },
+    {},
+  );
   const deliveryPrompts: Array<{ customType: string; content: string }> = [];
   (harness2.pi as { sendMessage?: (message: { customType: string; content: string }) => void }).sendMessage = (message) => {
     deliveryPrompts.push(message);
@@ -870,18 +892,12 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       "ak-receipt-delivery-prompt",
       "ak-receipt-delivery-prompt",
     ]);
-    const delivered = deliveryPrompts.map((message) => JSON.parse(message.content) as {
-      terminalToolCalled: boolean;
-      deliveryTurns: number;
-      rejectedReceipts: Array<{ diagnosticAvailable: boolean }>;
-    });
-    assert.equal(delivered[0]?.terminalToolCalled, true);
-    assert.equal(delivered[0]?.deliveryTurns, 1);
-    assert.equal(delivered[0]?.rejectedReceipts.length, 1);
-    assert.equal(delivered[0]?.rejectedReceipts[0]?.diagnosticAvailable, true);
-    assert.equal(delivered[1]?.terminalToolCalled, true);
-    assert.equal(delivered[1]?.deliveryTurns, 2);
-    assert.equal(delivered[1]?.rejectedReceipts.length, 2);
+    // #1208: 催交 resends this-turn before_agent_start prompt; counts stay on lifecycle.
+    assert.deepEqual(deliveryPrompts.map((message) => message.content), [turnPrompt, turnPrompt]);
+    assert.equal(
+      harness2.appendedEntries.filter((entry) => entry.customType === "ak-receipt-delivery-request").length,
+      2,
+    );
     const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
     const { sealed } = await acceptThroughTypedRoundClosure({
       handlers: harness2.handlers,

@@ -294,9 +294,8 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    /** Court reask replaces the initial prompt. Otherwise the fixed kickoff. */
+    /** Dialogue via shared resolveReviewSeatDialogueBody (review = fixed dispatch). */
     reaskPrompt: true,
-    transportPrompt: "fixed-kickoff",
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */
     gateSummon: "source-run",
@@ -319,6 +318,8 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** Same shared dialogue resolver as other review seats (#1208 C1). */
+    reaskPrompt: true,
     gateStageLabel: "给事中",
     /** Gate summon carries the parent payload as the instruction and a parent run id. */
     gateSummon: "parent-instruction",

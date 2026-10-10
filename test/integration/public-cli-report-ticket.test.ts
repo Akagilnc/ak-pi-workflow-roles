@@ -1127,10 +1127,10 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
-    assert.notEqual(lines[0]!.instruction, firstInstruction);
-    // Resume prompt is this-turn instruction (not first mint).
+    // #1208 resends current dialogue; #1199 records those same actual bytes.
+    assert.equal(lines[0]!.instruction, firstInstruction);
     assert.equal(typeof autoSummons, "string");
-    assert.notEqual(autoSummons, firstInstruction);
+    assert.equal(autoSummons, firstInstruction);
     assert.equal(lines[0]!.instruction, autoSummons);
     const sessionRel = lines[0]!.session;
     const head1 = lines[0]!.head;

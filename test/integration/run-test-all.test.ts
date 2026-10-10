@@ -208,19 +208,22 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
   const preload = "--import ./scripts/test-process-env-preload.mjs";
   // #252: test:fast is a canonical entry — fixed per-test --test-timeout=300000, no config.
   const testTimeout = "--test-timeout=300000";
+  // #1206 B: native dual reporters — dot→stdout, spec→fixed repo-root report file.
+  const reporter =
+    "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt";
   const bareUnitContract =
-    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
+    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
   const fastUnitContract =
-    `node --import tsx ${preload} ${testTimeout} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
+    `node --import tsx ${preload} ${testTimeout} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
   assert.equal(pkg.scripts["test"], bareUnitContract);
   assert.equal(pkg.scripts["test:fast"], fastUnitContract);
   assert.equal(
     pkg.scripts["test:integration"],
-    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
+    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
   );
   assert.equal(
     pkg.scripts["test:adjudication"],
-    `node --import tsx ${preload} --test test/adjudication/**/*.test.ts`,
+    `node --import tsx ${preload} ${reporter} --test test/adjudication/**/*.test.ts`,
   );
 });
 
@@ -387,6 +390,18 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
   assert.ok(
     child.argv.includes("--test-timeout=300000"),
     `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
+  );
+  // #1206 B: native dual reporters on the sole test:all child seam —
+  // ordered reporter↔destination pairs as one input contract.
+  assert.deepEqual(
+    child.argv.filter((arg) => arg.startsWith("--test-reporter")),
+    [
+      "--test-reporter=dot",
+      "--test-reporter-destination=stdout",
+      "--test-reporter=spec",
+      "--test-reporter-destination=node-test-report.txt",
+    ],
+    `child argv reporter contract; got ${JSON.stringify(child.argv)}`,
   );
   assert.equal(
     hasConcurrencyTwo(child.argv),

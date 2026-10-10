@@ -723,21 +723,19 @@ export async function summonGateOfficer(options: {
   }
   // Officer host is seat-owned only (#821), not a parent override channel.
   // #879: binding pointer = parent run directory; dialogue content = submission body.
-  // Conclusion re-ask keeps sole ownership of reviewReask when present.
-  // #1195 ticket-court notary (countersign source): do not preload the parent body.
-  // Identity binds via --source-run; the notary reads the ticket and verdict itself
-  // and its dispatch comes from resolveReviewSeatDialogueBody.
-  // Other officers / non-countersign sources still receive the parent submission body.
+  // Conclusion re-ask owns reviewReask when present (no parallel gate body).
+  // #1208: notary never preloads parent body; review dialogue is the fixed
+  // dispatch from resolveReviewSeatDialogueBody. Named operational reasks
+  // ride reviewReask here (or the resume message seam elsewhere). Other
+  // officers still receive the parent submission body when reask is absent.
   let gateReviewInstruction: string | undefined;
-  if (options.reask === undefined && options.submission !== undefined) {
-    const { isTicketCourtCountersignSource } = await import("./run-terminal-artifacts.ts");
-    const blindTicketCourt =
-      options.officer === "notary"
-      && isTicketCourtCountersignSource(options.sourceRunDirectory);
-    if (!blindTicketCourt) {
-      const { readableGateItem } = await import("./readable-gate-item.ts");
-      gateReviewInstruction = readableGateItem(options.submission);
-    }
+  if (
+    options.reask === undefined
+    && options.submission !== undefined
+    && options.officer !== "notary"
+  ) {
+    const { readableGateItem } = await import("./readable-gate-item.ts");
+    gateReviewInstruction = readableGateItem(options.submission);
   }
   const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
   const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);
@@ -805,8 +803,21 @@ export async function summonGateOfficer(options: {
       ? (options.submission as { ticketNumber?: unknown }).ticketNumber
       : undefined;
     const courtTicket = isSafePositiveTicketNumber(submittedTicket) ? submittedTicket : parentTicket;
-    // Argv instruction = reask or parent payload bytes only (never a fabricated line).
-    const instruction = options.reask ?? gateReviewInstruction ?? "";
+    // #1208 C1: argv dialogue from the same shared resolver as every other seat
+    // (never a parallel reask/gate/empty choice here). Request-field wiring of
+    // reviewReask / gateReviewInstruction onto env stays field assembly only.
+    // Terminal "" only when the resolver itself has no body — not a third source.
+    const { resolveReviewSeatDialogueBody } = await import("./public-cli/instruction-seat-run.ts");
+    const instruction =
+      (await resolveReviewSeatDialogueBody({
+        role: options.officer,
+        ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
+        ...(gateReviewInstruction === undefined
+          ? {}
+          : { gateReviewInstruction }),
+        projectRoot: options.cwd,
+        home,
+      })) ?? "";
     return summonPublicRole({
       role: options.officer,
       argv: ["--project", options.cwd, "--", instruction],

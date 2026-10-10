@@ -44,11 +44,11 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
-    "test": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
-    "test:fast": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-timeout=300000 --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
-    "test:integration": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
+    "test": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
+    "test:fast": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-timeout=300000 --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
+    "test:integration": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
     "test:all": "node scripts/run-test-all.mjs",
-    "test:adjudication": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/adjudication/**/*.test.ts",
+    "test:adjudication": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/adjudication/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "migrate:book-topology": "node dist/migrate-book-topology.js"
   },
