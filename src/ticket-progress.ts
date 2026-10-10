@@ -396,11 +396,15 @@ export function relocateTicketProgressForLeg(input: {
     }
   } catch (error) {
     // Partial copy / failed append: destinations are not yet authoritative.
-    // Rollback must not mask the relocate failure.
+    // Rollback must not mask the relocate failure — keep both causes.
     try {
       rollbackStagedCopies();
-    } catch {
-      // ignore cleanup errors
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "ticket progress relocate failed and staged-copy rollback failed",
+        { cause: error },
+      );
     }
     throw error;
   }
