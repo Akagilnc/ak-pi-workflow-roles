@@ -485,7 +485,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
     });
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-    assert.ok(captured.length >= 2, `dual-lens must dispatch both axes; captured=${captured.length}`);
     assert.deepEqual(
       [...new Set(captured.map((args) => args[args.indexOf("--ak-review-lens") + 1]))].sort(),
       ["completeness", "correctness"],
@@ -511,9 +510,7 @@ test("default dual-lens admits both axes without a parent run", async () => {
 
     const bookKey = resolveBookKeyFromGit(project);
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
-    const staged = readTicketProgressLines(unboundDir).filter((line) => line.seat === "reviewer");
-    assert.ok(staged.length >= 2, "both lenses must stage under unbound before report");
-    assert.ok(staged.every((line) => line.round === ""), "unbound staging keeps round empty");
+    // Query external structured receipts before cardinality asserts.
     const completenessRunId = result.terminal?.reviewerChildren?.completeness?.runId;
     const correctnessRunId = result.terminal?.reviewerChildren?.correctness?.runId;
     if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
@@ -533,6 +530,47 @@ test("default dual-lens admits both axes without a parent run", async () => {
       ).lens as string,
       "correctness",
     );
+    const readLegReceipts = async (runId: string, root: string): Promise<readonly Record<string, unknown>[]> => {
+      const dir = join(root, "runs", `${runId}@reviewer`, "receipts");
+      const names = (await readdir(dir)).filter((name) => name.endsWith(".json")).sort(
+        (a, b) => Number(a.replace(/\.json$/, "")) - Number(b.replace(/\.json$/, "")),
+      );
+      return Promise.all(
+        names.map(async (name) =>
+          JSON.parse(await readFile(join(dir, name), "utf8")) as Record<string, unknown>
+        ),
+      );
+    };
+    const batchByLens = {
+      completeness: await readLegReceipts(completenessRunId, unboundDir),
+      correctness: await readLegReceipts(correctnessRunId, unboundDir),
+    } as const;
+    const staged = readTicketProgressLines(unboundDir).filter((line) => line.seat === "reviewer");
+    assert.equal(
+      captured.length,
+      batchByLens.completeness.length + batchByLens.correctness.length,
+      `dispatch count must match queried sealed receipts; captured=${captured.length}`,
+    );
+    assert.equal(
+      staged.length,
+      batchByLens.completeness.length + batchByLens.correctness.length,
+      "staged progress rows must match queried sealed receipts",
+    );
+    assert.ok(staged.every((line) => line.round === ""), "unbound staging keeps round empty");
+    for (const [lens, runId] of [
+      ["completeness", completenessRunId],
+      ["correctness", correctnessRunId],
+    ] as const) {
+      const lensStaged = staged.filter((line) => line.receipt.includes(`${runId}@reviewer`));
+      const received = batchByLens[lens];
+      assert.equal(lensStaged.length, received.length, `${lens}: staged rows vs sealed receipts`);
+      for (let index = 0; index < received.length; index += 1) {
+        const body = JSON.parse(
+          await readFile(join(unboundDir, lensStaged[index]!.receipt), "utf8"),
+        ) as unknown;
+        assert.deepEqual(body, received[index], `${lens} staged receipt ${index + 1}`);
+      }
+    }
 
     // Report ticket on each unbound leg — publish must keep sealed lens suffixes.
     for (const runId of [completenessRunId, correctnessRunId]) {
@@ -548,23 +586,48 @@ test("default dual-lens admits both axes without a parent run", async () => {
         },
       );
       assert.equal(resumed.exitCode, 0, resumeStdout.join("") || `resume ${runId} failed`);
+      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     }
 
     // #1199: dual-lens rounds are independent (`<n>.<lens>`); no occupancy placeholders.
-    const progressRounds = readTicketProgressLines(
-      join(home, ".ak-roles", "books", bookKey, "1171"),
-    )
-      .filter((line) => line.seat === "reviewer")
-      .map((line) => line.round)
-      .sort();
-    assert.ok(
-      progressRounds.every((round) =>
-        round.endsWith(".completeness") || round.endsWith(".correctness")
-      ),
-      `stash-then-report must keep lens suffixes; got ${JSON.stringify(progressRounds)}`,
-    );
-    assert.ok(progressRounds.includes("1.completeness"));
-    assert.ok(progressRounds.includes("1.correctness"));
+    // Query ticket-leg sealed receipts (external structured) vs progress — 1:1, continuous, no dup.
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, "1171");
+    const publishedByLens = {
+      completeness: await readLegReceipts(completenessRunId, ticketDir),
+      correctness: await readLegReceipts(correctnessRunId, ticketDir),
+    } as const;
+    const progress = readTicketProgressLines(ticketDir).filter((line) => line.seat === "reviewer");
+    for (const [lens, runId] of [
+      ["completeness", completenessRunId],
+      ["correctness", correctnessRunId],
+    ] as const) {
+      const received = publishedByLens[lens];
+      const lensRows = progress.filter((line) => line.round.endsWith(`.${lens}`));
+      assert.equal(
+        lensRows.length,
+        received.length,
+        `${lens}: progress rows must match queried sealed receipts`,
+      );
+      assert.deepEqual(
+        lensRows.map((line) => line.round),
+        received.map((_, index) => `${index + 1}.${lens}`),
+        `${lens}: rounds must be continuous 1..n with no duplicates`,
+      );
+      assert.equal(new Set(lensRows.map((line) => line.round)).size, lensRows.length);
+      for (let index = 0; index < received.length; index += 1) {
+        const row = lensRows[index]!;
+        assert.ok(
+          row.receipt.includes(`${runId}@reviewer`),
+          `${lens} round ${row.round}: receipt path must stay on this leg`,
+        );
+        const receiptBody = JSON.parse(await readFile(join(ticketDir, row.receipt), "utf8")) as unknown;
+        assert.deepEqual(
+          receiptBody,
+          received[index],
+          `${lens} round ${row.round}: progress receipt must equal sealed receipt`,
+        );
+      }
+    }
     await assert.rejects(
       () => access(join(
         home, ".ak-roles", "books", bookKey, "unbound", "runs",
