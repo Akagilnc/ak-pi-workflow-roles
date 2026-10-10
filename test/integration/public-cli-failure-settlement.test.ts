@@ -3,7 +3,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -566,11 +566,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
               role: "judge",
               details: bounceParams,
               toolCallId: "call-bounce",
-              executeError: new GatekeeperDecisionError({
-                status: "continue",
-                officer: "inspector",
-                receipt: { status: "continue", findings: ["x"] },
-              }),
+              executeError: new WorkerUnfinishedReasonReminderError(),
             });
             await recordNonSealedSubmissionForSpawn({
               cwd: spawnOptions.cwd,

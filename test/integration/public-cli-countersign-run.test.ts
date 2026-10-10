@@ -57,7 +57,7 @@ import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
 } from "../helpers/ticket-provenance-fixture.ts";
@@ -561,14 +561,6 @@ function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
   });
 }
 
-function notaryBounceError(findings: readonly string[]) {
-  return new GatekeeperDecisionError({
-    status: "continue",
-    officer: "notary",
-    receipt: { status: "continue", findings: [...findings] },
-  });
-}
-
 async function recordCountersignBounce(input: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
@@ -576,13 +568,15 @@ async function recordCountersignBounce(input: {
   readonly toolCallId: string;
   readonly findings: readonly string[];
 }): Promise<void> {
+  void input.findings;
   await recordNonSealedSubmissionForSpawn({
     cwd: input.cwd,
     env: input.env,
     role: "countersign",
     details: input.details,
     toolCallId: input.toolCallId,
-    executeError: notaryBounceError(input.findings),
+    // Live correctable class — GatekeeperDecisionError deleted with F2 throw path (#1214 N1).
+    executeError: new WorkerUnfinishedReasonReminderError(),
   });
 }
 

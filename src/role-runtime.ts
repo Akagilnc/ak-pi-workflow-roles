@@ -148,7 +148,6 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -316,18 +315,16 @@ export type {
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
   runGatekeeper,
   gateOfficerForSubject,
 } from "./gatekeeper-role.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
   runGatekeeper,
   gateOfficerForSubject,
 };
-export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
@@ -1071,8 +1068,6 @@ export function createRoleRuntimeExtension(
     let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
-    // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
-    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionGateNonPassResult>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner.
     // #1132: one ceiling for this turn, closed over from the execution seam.
@@ -1304,13 +1299,6 @@ export function createRoleRuntimeExtension(
       if (infrastructureDetails !== undefined) {
         return { isError: true };
       }
-      // Submission non-pass: throw kept message text for the model; project the
-      // envelope-bound structured result onto session details at this tool_result seam.
-      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
-      if (submissionNonPass !== undefined) {
-        pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
-        return { details: submissionNonPass, isError: true };
-      }
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is
@@ -1464,7 +1452,6 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = undefined;
         disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
         pendingInfrastructureFailures.clear();
-        pendingSubmissionNonPassByToolCallId.clear();
       }
     });
 
@@ -1474,9 +1461,6 @@ export function createRoleRuntimeExtension(
           pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
         failInfrastructure(error, ctx);
-      },
-      bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void {
-        pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
     const requireRoleSoul = (role: PackagedRole): Promise<string> => dependencies.loadRoleSoul(role);
@@ -1655,7 +1639,6 @@ export function createRoleRuntimeExtension(
       navigatorDeliveryClosed = false;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingSubmissionNonPassByToolCallId.clear();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.

@@ -332,13 +332,9 @@ type HostEventResultMap = {
 type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], ctx: HostContext) => HostEventResultMap[K] | void | Promise<HostEventResultMap[K] | void>;
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
-/** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
-type HostGatekeeperNonPass = { readonly status: "continue" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
-export type HostSubmissionNonPass = HostGatekeeperNonPass;
+/** Host actions shared by worker / engine seams that may still fail infrastructure. */
 export type HostGatekeeperActions = {
   failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never;
-  /** Envelope-owned execute→tool_result bridge for any structured submission non-pass. */
-  bindSubmissionNonPass(toolCallId: string, result: HostSubmissionNonPass): void;
 };
 
 /** Host-owned effects used by the shared activation envelope. */

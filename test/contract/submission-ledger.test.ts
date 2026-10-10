@@ -8,7 +8,6 @@ import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
-import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
@@ -308,28 +307,23 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
 
 test("pipeline ledger records typed bounce anchors as correctable-rejection", async () => {
   await withLedgerFixture(async (f) => {
-    const anchors: Array<{ label: string; error: Error }> = [
-      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "continue", officer: "inspector", receipt: { status: "continue", findings: ["x"] } }) },
-      { label: "unfinished-reason", error: new WorkerUnfinishedReasonReminderError() },
-    ];
-    for (const anchor of anchors) {
-      const params = { status: "converged", report: anchor.label };
-      const failing = registerTool(f.root, async () => { throw anchor.error; });
-      await assert.rejects(
-        failing.tool().execute(anchor.label, params, undefined, undefined, failing.context),
-      );
-      const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
-      assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
-      assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", anchor.label);
-      assert.equal((outcome?.payload as { role?: string }).role, "judge", anchor.label);
-      // #881: correctable-rejection original params project once (candidate+outcome deduped).
-      const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-      const projected = rows.find(
-        (row) => row.kind === "correctable-rejection" && row.toolCallId === anchor.label,
-      );
-      assert.ok(projected, anchor.label);
-      assert.deepEqual(projected?.accepted, params, anchor.label);
-    }
+    const label = "unfinished-reason";
+    const params = { status: "converged", report: label };
+    const failing = registerTool(f.root, async () => { throw new WorkerUnfinishedReasonReminderError(); });
+    await assert.rejects(
+      failing.tool().execute(label, params, undefined, undefined, failing.context),
+    );
+    const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
+    assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", label);
+    assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", label);
+    assert.equal((outcome?.payload as { role?: string }).role, "judge", label);
+    // #881: correctable-rejection original params project once (candidate+outcome deduped).
+    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const projected = rows.find(
+      (row) => row.kind === "correctable-rejection" && row.toolCallId === label,
+    );
+    assert.ok(projected, label);
+    assert.deepEqual(projected?.accepted, params, label);
   });
 });
 
@@ -337,11 +331,7 @@ test("#881 reader projects non-sealed original params once per tool call (correc
   await withLedgerFixture(async (f) => {
     const bounceParams = { status: "converged", report: "bounce-1" };
     const bounce = registerTool(f.root, async () => {
-      throw new GatekeeperDecisionError({
-        status: "continue",
-        officer: "inspector",
-        receipt: { status: "continue", findings: ["x"] },
-      });
+      throw new WorkerUnfinishedReasonReminderError();
     });
     await assert.rejects(bounce.tool().execute("call-bounce", bounceParams, undefined, undefined, bounce.context));
 

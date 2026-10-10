@@ -321,8 +321,8 @@ export async function prepareRoleEnvelope(options: {
           ? rawCode
           : undefined;
     if (code === undefined) return;
-    // Officer bounce/escalate text is already the tool_result content (GatekeeperDecisionError
-    // message = raw receipt). Adapters resume with this message — never a host-invented line (#813).
+    // Typed bounce/reminder text is already the tool_result content. Adapters resume
+    // with this message — never a host-invented line (#813).
     rejection = {
       code,
       toolCallIds: [toolCallId],

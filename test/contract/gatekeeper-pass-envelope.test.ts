@@ -127,7 +127,6 @@ test("#1028 secretariat_verdict reads the shared review status",
 test("#969 secretariat_verdict returns escalation for direct officer resume",
   async () => withTempRoot("ak-gate-envelope-", async (root) => {
     const parentRun = parentRunDirectory(root);
-    const nonPass: unknown[] = [];
     const receipt = {
       status: "escalate",
       decisionGate: { question: "q", options: ["a"] },
@@ -139,14 +138,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t1",
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra");
-        },
-        bindSubmissionNonPass(_id, result) {
-          nonPass.push(result);
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 0,
         runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
@@ -162,7 +153,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
         },
       }),
     });
-    assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
     // #1195: parent no longer books officer-pointer copies; resume uses officer runId.
     const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
     assert.equal(booked.length, 0, "parent history must not book officer-pointer rows");
@@ -191,14 +181,6 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t-pass",
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra");
-        },
-        bindSubmissionNonPass() {
-          throw new Error("pass must not bind non-pass");
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 0,
         runDirectory: "/tmp/runs/01a0cs969-pass-7000-8000-000000000042@countersign",
@@ -221,10 +203,9 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
   }),
 );
 
-test("#1214 A5: officer transport_failure returns honestly; does not failInfrastructure parent",
+test("#1214 A5: officer transport_failure returns honestly as typed outcome",
   async () => withTempRoot("ak-gate-envelope-", async (root) => {
     const parentRun = parentRunDirectory(root);
-    let infraCalls = 0;
     const officerTerminal = {
       roleOutcome: {
         kind: "failure" as const,
@@ -243,15 +224,6 @@ test("#1214 A5: officer transport_failure returns honestly; does not failInfrast
       } as never,
       subject: { kind: "judge_draft" },
       toolCallId: "t-transport",
-      hostActions: {
-        failInfrastructure(): never {
-          infraCalls += 1;
-          throw new Error("infra must not run for transport_failure");
-        },
-        bindSubmissionNonPass() {
-          throw new Error("transport_failure returns as outcome; no non-pass bind");
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 1,
         stderr: "officer host failed",
@@ -259,7 +231,6 @@ test("#1214 A5: officer transport_failure returns honestly; does not failInfrast
         terminal: officerTerminal,
       }),
     });
-    assert.equal(infraCalls, 0, "A5: transport_failure must not call failInfrastructure");
     assert.equal(outcome?.status, "transport_failure");
     assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
     assert.equal(
@@ -271,10 +242,9 @@ test("#1214 A5: officer transport_failure returns honestly; does not failInfrast
   }),
 );
 
-test("#1214 F2: officer no_receipt returns as typed outcome; does not throw or bind non-pass",
+test("#1214 F2: officer no_receipt returns as typed outcome without throw",
   async () => withTempRoot("ak-gate-noreceipt-", async (root) => {
     const parentRun = parentRunDirectory(root);
-    let bindCalls = 0;
     const officerTerminal = {
       roleOutcome: {
         kind: "no_receipt" as const,
@@ -293,22 +263,12 @@ test("#1214 F2: officer no_receipt returns as typed outcome; does not throw or b
       } as never,
       subject: { kind: "judge_draft" },
       toolCallId: "t-noreceipt",
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra must not run for no_receipt");
-        },
-        bindSubmissionNonPass() {
-          bindCalls += 1;
-          throw new Error("no_receipt returns as outcome; no non-pass bind");
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 0,
         runDirectory: "/tmp/runs/01a01214-nore-7000-8000-000000000042@notary",
         terminal: officerTerminal,
       }),
     });
-    assert.equal(bindCalls, 0, "F2: no_receipt must not bindSubmissionNonPass");
     assert.equal(outcome?.status, "no_receipt");
     assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
     assert.equal(

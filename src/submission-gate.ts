@@ -22,7 +22,6 @@ import { readRunParentPath, readRoleRunIdentity } from "./public-cli/run-lifecyc
 import {
   officerConclusionReask,
   projectGatekeeperRun,
-  type SubmissionGateHostActions,
   type GatekeeperSubject,
   type GateOfficer,
   type GateOfficerSummon,
@@ -143,7 +142,6 @@ export async function requireSubmissionGate(options: {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly hostActions: SubmissionGateHostActions;
   readonly toolCallId: string;
   /**
    * In-flight parent typed payload for this gate turn (#879). Relayed verbatim

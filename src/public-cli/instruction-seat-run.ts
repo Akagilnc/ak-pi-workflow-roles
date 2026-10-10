@@ -1824,10 +1824,6 @@ async function auditSubmittedRole(
         summonOfficer,
         ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
         ...(env.signal === undefined ? {} : { signal: env.signal }),
-        hostActions: {
-          failInfrastructure(error): never { throw error; },
-          bindSubmissionNonPass() {},
-        },
       });
     if (admitted.role === "judge") {
       // Same order as runJudgeGates — sole source JUDGE_GATES + gateOfficerForSubject.
