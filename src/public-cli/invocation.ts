@@ -589,7 +589,18 @@ export async function relocateAdmittedRunToTicket(
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
 ): Promise<RunDirectoryRelocation | undefined> {
-  if (admitted.ticketNumber === undefined || !isUnboundRunDirectory(admitted.runDirectory)) return undefined;
+  if (admitted.ticketNumber === undefined) return undefined;
+
+  // Already under the ticket: still publish leftover progress.jsonl (append-fail retry).
+  if (!isUnboundRunDirectory(admitted.runDirectory)) {
+    relocateTicketProgressForLeg({
+      runDirectory: admitted.runDirectory,
+      seat: admitted.role,
+      runId: admitted.runId,
+    });
+    return undefined;
+  }
+
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -599,7 +610,7 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
-  // Pre-flight seal of expand coordinates; final seal after the filesystem commit.
+  // Pre-flight seal; final seal after the filesystem commit.
   authority.seal(target);
 
   if (admitted.role !== "diarist") {
@@ -619,13 +630,13 @@ export async function relocateAdmittedRunToTicket(
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+      // #1199: whole-leg rename first; originals travel with the directory.
+      await rename(childDirectory, childTarget.runDirectory);
       relocateTicketProgressForLeg({
-        oldRunDirectory: childDirectory,
-        newRunDirectory: childTarget.runDirectory,
+        runDirectory: childTarget.runDirectory,
         seat: "diarist",
         runId: childRunId,
       });
-      await rename(childDirectory, childTarget.runDirectory);
       // Finished child legs will not settle again; refresh derived host.original
       // after the rename commit. A derived render fault must not undo or block
       // the committed placement (#1161 L1) — note and keep the true cause.
@@ -644,18 +655,8 @@ export async function relocateAdmittedRunToTicket(
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
   }
 
-  // #1199: sessions sit beside runs/. Move this leg's session / progress /
-  // receipts before live handles reseal onto the ticket session path.
-  relocateTicketProgressForLeg({
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-    seat: admitted.role,
-    runId: admitted.runId,
-  });
-
   // Rename commits the run placement. Diary assignment above is a Sitian append
-  // outside the atomic directory move.
-  // Persisted paths are resolved from typed run identity on read.
+  // outside the atomic directory move. Session/receipts/progress travel with the leg.
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup and
@@ -675,6 +676,13 @@ export async function relocateAdmittedRunToTicket(
     [{ oldRunDirectory, newRunDirectory: target.runDirectory }],
   );
   (admitted as { principal: DurablePrincipal }).principal = principal;
+
+  // After whole-leg rename + live-handle handoff: fill rounds and append ticket current.
+  relocateTicketProgressForLeg({
+    runDirectory: target.runDirectory,
+    seat: admitted.role,
+    runId: admitted.runId,
+  });
 
   // current.json projects host.original from this run directory. Ownership is
   // already transferred; a refuse still carries the true cause to the caller

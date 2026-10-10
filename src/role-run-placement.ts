@@ -36,14 +36,9 @@ export function parseRunLeaf(name: string): { readonly runId: string; readonly r
 
 export const ROLE_RUN_SESSION_FILENAME = "session.jsonl";
 
-/** Flat legacy books (not under ticket/unbound): `<run>/session`. */
-function legacySessionDirectory(runDirectory: string): string {
-  return join(runDirectory, "session");
-}
-
 /**
  * Ticket or unbound subject directory owning a run under `<subject>/runs/<leaf>`.
- * Sole runs→subject shape check — expandSessionDirectory and consumers share this.
+ * Used by ticket-progress relative paths — not a second session landing.
  */
 export function subjectDirectoryOfRun(runDirectory: string): string | undefined {
   const runsParent = dirname(runDirectory);
@@ -56,24 +51,9 @@ export function subjectDirectoryOfRun(runDirectory: string): string | undefined 
   return undefined;
 }
 
-/**
- * #1199 sibling landing `<subject>/sessions/<leaf>` (pure path, no existence).
- * Undefined when the run is not under `<ticket|unbound>/runs/<leaf>`.
- */
-export function expandSessionDirectory(runDirectory: string): string | undefined {
-  const subjectDirectory = subjectDirectoryOfRun(runDirectory);
-  if (subjectDirectory === undefined) return undefined;
-  return join(subjectDirectory, "sessions", basename(runDirectory));
-}
-
-/**
- * Session directory for a run leaf.
- *
- * Path shape only: ticket/unbound → `<subject>/sessions/<leaf>`; otherwise
- * flat legacy `<run>/session`. No existence guessing for old-format legs.
- */
+/** #1199 / main: session originals stay under the leg — `<run>/session`. */
 export function sessionDirectoryOf(runDirectory: string): string {
-  return expandSessionDirectory(runDirectory) ?? legacySessionDirectory(runDirectory);
+  return join(runDirectory, "session");
 }
 
 export function sessionFileIn(sessionDirectory: string): string {
@@ -84,12 +64,12 @@ export function sessionFileOf(runDirectory: string): string {
   return sessionFileIn(sessionDirectoryOf(runDirectory));
 }
 
-/** Session file → run directory (ticket/unbound sessions/ or legacy run/session). */
+/** `<run>/session/session.jsonl` → run directory. */
 export function runDirectoryOfSessionFile(sessionFile: string): string {
-  return runDirectoryFromSessionDirectory(dirname(sessionFile));
+  return dirname(dirname(sessionFile));
 }
 
-/** Climb session file → run directory when the host exposes a session file. */
+/** Climb session/session.jsonl → run directory when the host exposes a session file. */
 export function auditorRunDirectory(context: {
   readonly sessionManager?: { getSessionFile?: () => string | undefined };
 }): string | undefined {
@@ -98,16 +78,8 @@ export function auditorRunDirectory(context: {
   return resolve(runDirectoryOfSessionFile(sessionFile));
 }
 
-/** Session directory → run directory. */
+/** `<run>/session` → run directory. */
 export function runDirectoryFromSessionDirectory(sessionDirectory: string): string {
-  const sessionsParent = dirname(sessionDirectory);
-  if (basename(sessionsParent) === "sessions") {
-    const subjectDirectory = dirname(sessionsParent);
-    const subjectName = basename(subjectDirectory);
-    if (subjectName === "unbound" || /^[1-9]\d*$/.test(subjectName)) {
-      return join(subjectDirectory, "runs", basename(sessionDirectory));
-    }
-  }
   return dirname(sessionDirectory);
 }
 
@@ -196,7 +168,6 @@ export function roleRunPlacement(
     "runs",
     formatRunLeaf(input.runId, input.role),
   );
-  // New admissions mint the ticket/unbound sessions/ sibling (path shape only).
   const sessionDirectory = sessionDirectoryOf(runDirectory);
   return {
     runDirectory,
@@ -222,7 +193,6 @@ export function ensureRoleRunPlacement(
   ledgerHome: string,
   placement: RoleRunPlacement,
 ): void {
-  // #1199: session sits beside runs/ under the subject — create both leaves.
   ensureRoleRunDirectory(ledgerHome, placement.runDirectory);
   ensureRoleRunDirectory(ledgerHome, placement.sessionDirectory);
 }

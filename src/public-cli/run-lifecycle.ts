@@ -309,7 +309,7 @@ async function readRoleRunStateDisk(
       : runDirectory;
   const runDir = runDirectory;
   // Principal wire stays uninterpreted — authority owns legacy sessionFile fallback.
-  // #1199: sessions may sit beside runs/; project both run and sibling session prefixes.
+  // #1199: leg-local session/ moves with the run-prefix rewrite.
   const principalCoords = {
     sessionDirectory: record.sessionDirectory,
     ...(typeof record.sessionFile === "string" ? { sessionFile: record.sessionFile } : {}),

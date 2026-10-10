@@ -2254,13 +2254,19 @@ export async function runPostAdmissionOneShot<
     env: input.env,
     io: input.io,
     buildInitialRequest: () => input.request,
-    buildResumeRequest: () => ({
-      ...input.request,
-      continuation: {
-        kind: "resume",
-        prompt: buildAutoResumeContinuationPrompt(),
-      },
-    }),
+    buildResumeRequest: () => {
+      // #1199 R2: one-shot auto-resume must refresh summonsInstruction to this
+      // continuation — do not keep the initial request's first-summons field.
+      const prompt = buildAutoResumeContinuationPrompt();
+      return {
+        ...input.request,
+        continuation: {
+          kind: "resume" as const,
+          prompt,
+        },
+        summonsInstruction: prompt,
+      };
+    },
     adapters: input.adapters,
     ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
   });

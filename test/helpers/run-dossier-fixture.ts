@@ -189,7 +189,7 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
   ]) {
     assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`);
   }
-  // #1199: ticket/unbound sessions sit beside runs/; legacy stays under run/session.
+  // #1199: session originals stay under `<run>/session`.
   const sessionDirectory = sessionDirectoryOf(runDirectory);
   if (!existsSync(sessionDirectory)) return;
   for (const entry of readdirSync(sessionDirectory)) {

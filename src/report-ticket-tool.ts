@@ -20,7 +20,7 @@ import {
   type AdmittedRoleInvocation,
 } from "./public-cli/invocation.ts";
 import { isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
-import { rewritePrincipalSessionPaths } from "./role-run-path-rewrite.ts";
+import { rewriteRunDirectoryPathValue } from "./role-run-path-rewrite.ts";
 import { readPageSync } from "./run-dossier.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import { isRecord } from "./unknown-value.ts";
@@ -141,23 +141,20 @@ export async function reportTicketFromHostContext(
     if (process.env.AK_ROLE_RUN_DIR === runDirectory) {
       process.env.AK_ROLE_RUN_DIR = nextDirectory;
     }
-    // #1199: sessions may sit beside runs/ under the subject — project both the
-    // run-prefix rewrite and the sibling sessions/ rewrite.
-    let projectedSessionFile: string | undefined;
-    if (typeof priorSessionFile === "string" && priorSessionFile.trim() !== "") {
-      const coords = { sessionFile: priorSessionFile, sessionDirectory: sessionDirectoryOf(runDirectory) };
-      rewritePrincipalSessionPaths(coords, runDirectory, nextDirectory);
-      projectedSessionFile = coords.sessionFile;
-    } else {
-      projectedSessionFile = sessionFileOf(nextDirectory);
-    }
+    // Leg-local session/: rewrite the open handle under the renamed run prefix.
+    const projectedSessionFile = typeof priorSessionFile === "string" && priorSessionFile.trim() !== ""
+      ? rewriteRunDirectoryPathValue(priorSessionFile, runDirectory, nextDirectory)
+      : sessionFileOf(nextDirectory);
     if (typeof projectedSessionFile === "string") {
       context.sessionManager.setSessionFile?.(projectedSessionFile);
     }
   };
-  const relocation = alreadyPlaced
-    ? undefined
-    : await relocateAdmittedRunToTicket(admitted, authority, { relocate: applyLiveHandles });
+  // Always enter relocate: unbound→rename+publish; already-on-ticket→publish leftover staging.
+  const relocation = await relocateAdmittedRunToTicket(
+    admitted,
+    authority,
+    alreadyPlaced ? undefined : { relocate: applyLiveHandles },
+  );
   const nextDirectory = relocation?.newRunDirectory ?? admitted.runDirectory;
   if (relocation === undefined) applyLiveHandles(nextDirectory);
 

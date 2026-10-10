@@ -755,8 +755,12 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       false,
     );
     assert.equal(
-      existsSync(join(unboundDir, "sessions", formatRunLeaf(runId, "fixer"))),
-      false,
+      fixerLines[0]!.session,
+      `runs/${formatRunLeaf(runId, "fixer")}/session/session.jsonl`,
+    );
+    assert.equal(
+      fixerLines[0]!.receipt,
+      `runs/${formatRunLeaf(runId, "fixer")}/receipts/1.json`,
     );
 
     // Same seat, new session: rounds accumulate; sessions differ.
@@ -785,7 +789,7 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
   });
 });
 
-test("#1199 public resume relocate: ticket current write fail keeps unbound staging", async () => {
+test("#1199 public resume relocate: ticket current write fail keeps leg staging after rename", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-relfail01";
     const stayId = "01a011710-0000-7000-8000-relstay01";
@@ -857,22 +861,32 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
     }
     assert.notEqual(firstExit, 0, "target current append fail must not wash to exit 0");
 
-    const afterMove = readTicketProgressLines(unboundDir)
-      .filter((line) => line.session.includes(runId));
-    assert.ok(
-      afterMove.length >= beforeMove.length,
-      "staging progress must survive failed ticket current append",
-    );
+    // Whole-leg rename commits before ticket append; staging stays on the ticket leg.
+    const movedLeaf = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
+    assert.equal(existsSync(movedLeaf), true, "rename must commit before ticket append");
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
+    const stagedProgressPath = join(movedLeaf, "progress.jsonl");
     assert.equal(
-      existsSync(join(unboundLeaf(home, bookKey, runId, "fixer"), "ticket-progress.jsonl")),
+      existsSync(stagedProgressPath),
       true,
       "private progress file must remain when target append fails",
     );
+    const stagedLines = (await readFile(stagedProgressPath, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as { receipt: string; session: string }];
+        } catch {
+          return [];
+        }
+      });
+    assert.ok(stagedLines.length >= beforeMove.length, "staging rows survive failed append");
     const stagingReceipts: unknown[] = [];
-    for (const row of afterMove) {
-      assert.equal(existsSync(join(unboundDir, row.receipt)), true, `failed-leg receipt ${row.receipt}`);
-      assert.equal(existsSync(join(unboundDir, row.session)), true, `failed-leg session ${row.session}`);
-      const receipt = JSON.parse(await readFile(join(unboundDir, row.receipt), "utf8")) as unknown;
+    for (const row of stagedLines) {
+      assert.equal(existsSync(join(ticketSubject, row.receipt)), true, `failed-leg receipt ${row.receipt}`);
+      assert.equal(existsSync(join(ticketSubject, row.session)), true, `failed-leg session ${row.session}`);
+      const receipt = JSON.parse(await readFile(join(ticketSubject, row.receipt), "utf8")) as unknown;
       stagingReceipts.push(receipt);
     }
     assert.ok(
@@ -918,14 +932,15 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       otherSubmit,
     );
     // Staging for the failed bind leg must still be intact after the peer seal.
-    for (const row of afterMove) {
-      assert.equal(existsSync(join(unboundDir, row.receipt)), true, row.receipt);
-      assert.equal(existsSync(join(unboundDir, row.session)), true, row.session);
+    assert.equal(existsSync(stagedProgressPath), true, "peer seal must not drop failed-leg staging");
+    for (const row of stagedLines) {
+      assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
+      assert.equal(existsSync(join(ticketSubject, row.session)), true, row.session);
     }
     for (const expected of stagingReceipts) {
       assert.ok(
-        afterMove.some((row) => {
-          const path = join(unboundDir, row.receipt);
+        stagedLines.some((row) => {
+          const path = join(ticketSubject, row.receipt);
           return existsSync(path)
             && JSON.stringify(JSON.parse(readFileSync(path, "utf8"))) === JSON.stringify(expected);
         }),
@@ -948,6 +963,7 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       captureIo().io,
     );
     assert.equal(rebound.exitCode, 0, `${rebound.terminal?.roleOutcome.kind}`);
+    assert.equal(existsSync(stagedProgressPath), false, "successful publish drops staging");
     const ticketRows = readTicketProgressLines(ticketSubject)
       .filter((line) => line.seat === "fixer");
     assert.ok(ticketRows.some((line) => line.session.includes(otherId)), "peer row remains");

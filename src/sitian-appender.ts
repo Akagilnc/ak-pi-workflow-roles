@@ -9,7 +9,6 @@ import { basename, dirname, join } from "node:path";
 
 import {
   parseRunLeaf,
-  runDirectoryFromSessionDirectory,
   sessionDirectoryOf,
 } from "./role-run-placement.ts";
 import { RUN_HISTORY_FILE, RUN_HISTORY_KINDS, RUN_LOG_FILE, RUN_STATE_FILE, RUN_STATE_KINDS } from "./run-dossier-files.ts";
@@ -52,19 +51,12 @@ export function resolveSitianVolumeCategory(kind: string): string {
   return kind;
 }
 
-/**
- * Run directory owning a session parent directory.
- * Legacy: `<run>/session`. #1199: `<subject>/sessions/<leaf>`.
- */
+/** Run directory owning `<run>/session` (leg-local originals; #1199 keeps this landing). */
 function runDirectoryOwningSessionParent(sessionParentDir: string): string | undefined {
-  const isLegacy = basename(sessionParentDir) === "session";
-  const isExpand = basename(dirname(sessionParentDir)) === "sessions";
-  if (!isLegacy && !isExpand) return undefined;
-  const leafName = isLegacy
-    ? basename(dirname(sessionParentDir))
-    : basename(sessionParentDir);
-  if (parseRunLeaf(leafName) === undefined) return undefined;
-  return runDirectoryFromSessionDirectory(sessionParentDir);
+  if (basename(sessionParentDir) !== "session") return undefined;
+  const runDirectory = dirname(sessionParentDir);
+  if (parseRunLeaf(basename(runDirectory)) === undefined) return undefined;
+  return runDirectory;
 }
 
 type SitianRecordPath = {
@@ -139,7 +131,6 @@ export function resolveSitianRecordPathInLedger(
     const runDirectory = runDirectoryOwningSessionParent(sessionParentDir);
     if (runDirectory !== undefined) {
       // A role run's own session: every record kind shares the run's one log (#1161).
-      // #1199 ticket/unbound sessions sit at <subject>/sessions/<leaf>/.
       sessionDir = runDirectory;
       recordFile = join(runDirectory, RUN_HISTORY_KINDS.has(input.kind) ? RUN_HISTORY_FILE : RUN_STATE_KINDS.has(input.kind) ? RUN_STATE_FILE : RUN_LOG_FILE);
     } else {

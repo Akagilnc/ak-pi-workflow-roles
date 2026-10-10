@@ -27,7 +27,6 @@ import {
   rewriteRunDirectoryPathValue,
   rewriteRunDirectoryPathValueAgainstRewrites,
   rewriteSummonsMaterials,
-  withSessionSiblingRewrites,
 } from "./role-run-path-rewrite.ts";
 import { readPageSync, updateSectionSync } from "./run-dossier.ts";
 import { isEnoent, isRecord } from "./unknown-value.ts";
@@ -268,7 +267,6 @@ async function rewriteNestedMachinePathPages(
   pagesDirectory: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
-  // #1199: ticket/unbound sessions sit beside runs/; legacy stays under run/session.
   const sessionRoot = sessionDirectoryOf(pagesDirectory);
   async function walk(directory: string): Promise<void> {
     let entries;
@@ -313,8 +311,7 @@ export async function rewriteRoleRunDurablePages(input: {
   readonly crossRunRewrites?: readonly RunDirectoryPathRewrite[];
 }): Promise<void> {
   const { pagesDirectory } = input;
-  // #1199: include sibling sessions/ rewrites so durable session paths move with the run.
-  const rewrites = withSessionSiblingRewrites(collectRewrites(input));
+  const rewrites = collectRewrites(input);
 
   // One rewriter per page kind; each keeps its own field list.
   const pageRewriters: Readonly<Record<"admitted" | "invocation" | "runState", (page: Record<string, unknown>) => void>> = {

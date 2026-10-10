@@ -277,7 +277,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
-      // #1199 sessions/ path via placement helpers (not hard-coded session/ nest).
+      // #1199 leg-local session/ via placement helpers.
       await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;

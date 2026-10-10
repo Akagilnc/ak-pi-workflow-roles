@@ -194,7 +194,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     // Torn/corrupt append-only progress must not block the next seal (dossier posture).
     const runDirectory = f.context.runDirectory;
     assert.ok(runDirectory, "ledger fixture must admit a run directory");
-    const progressPath = join(runDirectory, "ticket-progress.jsonl");
+    const progressPath = join(runDirectory, "progress.jsonl");
     assert.equal(existsSync(progressPath), true);
     await appendFile(progressPath, "{not-json-torn-line\n", "utf8");
     // Valid HEAD so a non-empty stderr capture cannot be an unrelated rev-parse fault.
@@ -235,12 +235,15 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 
     const lines = readTicketProgressLines(unbound).filter((line) => line.seat === "judge");
     assert.equal(lines.length, 2);
-    assert.equal(lines[0]!.round, "1");
-    assert.equal(lines[1]!.round, "2");
+    // Unbound staging: round empty until whole-leg bind publishes into ticket current.
+    assert.equal(lines[0]!.round, "");
+    assert.equal(lines[1]!.round, "");
     assert.equal(lines[0]!.instruction, "first summons for two-seal progress");
     assert.equal(lines[1]!.instruction, "second summons for two-seal progress");
     assert.equal(existsSync(join(unbound, lines[0]!.receipt)), true);
     assert.equal(existsSync(join(unbound, lines[1]!.receipt)), true);
+    assert.ok(lines[0]!.receipt.endsWith("/receipts/1.json"), lines[0]!.receipt);
+    assert.ok(lines[1]!.receipt.endsWith("/receipts/2.json"), lines[1]!.receipt);
     // Whole sealed JSON retained — unknown fields survive (票面原样回执).
     assert.deepEqual(
       JSON.parse(await readFile(join(unbound, lines[0]!.receipt), "utf8")),

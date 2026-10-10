@@ -18,10 +18,6 @@ import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
 import {
-  readUserDialogueSummonsInstruction,
-  tryParseUserDialogueStdin,
-} from "./user-dialogue-stdin.ts";
-import {
   registerReportTicketTool,
   reportTicketFromHostContext,
   REPORT_TICKET_TOOL_NAME,
@@ -1176,16 +1172,12 @@ export function createRoleRuntimeExtension(
     roleHost.on("input", (event, ctx) => {
       // #1199: this-turn 传召词 from the input seam (票面当轮实际输入).
       // HostContext field only — never process.env body (nested identity / ARG_MAX).
-      // Typed envelope still present → always refresh (same-session later input is
-      // a new summons). Plain text after Pi strips the envelope keeps authority
-      // already set by the adapter / turn-request seed / 催交 — do not take the
-      // attach-wrapped body as progress instruction (no free-text flag peeling).
-      if (typeof event.text === "string") {
-        if (tryParseUserDialogueStdin(event.text) !== undefined) {
-          ctx.summonsInstruction = readUserDialogueSummonsInstruction(event.text);
-        } else if (ctx.summonsInstruction === undefined) {
-          ctx.summonsInstruction = event.text;
-        }
+      // Transport unpack is sole at the host adapter (Pi strips envelope once).
+      // Do not re-parse model-facing body — a legal JSON literal must stay intact.
+      // Adapter / turn-request / 催交 already seeded summonsInstruction; fill only
+      // when still absent (plain hosts without a prior unpack).
+      if (typeof event.text === "string" && ctx.summonsInstruction === undefined) {
+        ctx.summonsInstruction = event.text;
       }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };

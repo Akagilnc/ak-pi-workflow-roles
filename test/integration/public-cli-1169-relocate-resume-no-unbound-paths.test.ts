@@ -247,9 +247,9 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     for (const required of ["current.json", "history.jsonl", "state.jsonl", "log.jsonl"]) {
       assert.equal(topLevel.has(required), true, `topology requires ${required}`);
     }
-    // #1199: session lands at <ticket>/sessions/<leaf>, beside runs/.
+    // #1199: session originals stay under the leg (`<run>/session`).
     const { sessionDirectoryOf } = await import("../../src/role-run-placement.ts");
-    assert.equal(existsSync(sessionDirectoryOf(ticketRunDirectory)), true, "topology requires ticket sessions leaf");
+    assert.equal(existsSync(sessionDirectoryOf(ticketRunDirectory)), true, "topology requires leg session/");
     for (const forbidden of ["attachments", "fix-packet.md", "task.md", "prerequisites.json"]) {
       assert.equal(topLevel.has(forbidden), false, `topology forbids ${forbidden}`);
     }

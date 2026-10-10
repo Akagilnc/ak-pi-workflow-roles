@@ -1187,7 +1187,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
       (await readdir(coderRunDirectory)).sort(),
       ["current.json", "history.jsonl", "log.jsonl", "state.jsonl"],
     );
-    // #1199: session beside runs/ under the ticket subject.
+    // #1199: session originals stay under the leg (`<run>/session`).
     assert.deepEqual(
       (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),
       ["session.jsonl"],

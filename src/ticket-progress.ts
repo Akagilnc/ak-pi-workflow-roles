@@ -1,22 +1,19 @@
 /**
- * #1199 ticket-level progress: current.jsonl + receipts/ + sessions/ pointers.
+ * #1199 ticket-level progress: current.jsonl + leg-local receipts/session.
  * Write at seal (createSubmissionLedgerHost → projectClosure), never by
  * post-turn history guessing. Per-leg dossiers stay until #1202.
  *
- * Unbound legs stage inside the run directory (owner 41f7c164): progress +
- * receipts copy onto the ticket, then bind appends into ticket current.jsonl.
+ * Originals stay in the leg directory (owner 14b58f6c / a8d2e72d):
+ * `runs/<leg>/receipts/<n>.json`, `runs/<leg>/session/<原件>`.
+ * Unbound legs stage rows in `progress.jsonl` (round empty); bind renames the
+ * whole leg, then this module fills rounds and appends ticket current.jsonl.
  * Round authority is progress lines only — no receipt-filename counting,
  * occupancy placeholders, or claim-retry loops. Reviewer dual-lens series
  * count independently (`<n>.<lens>`).
- *
- * Relocate copies then publishes ticket current before removing sources
- * (Node/POSIX: leave staged originals recoverable until destination lands).
  */
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
-  copyFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -36,7 +33,6 @@ import {
 } from "./package-contracts/terminating-tools.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
-  formatRunLeaf,
   isUnboundRunDirectory,
   sessionDirectoryOf,
   sessionFileOf,
@@ -48,15 +44,13 @@ import { isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
 const RECEIPTS_DIRNAME = "receipts" as const;
-const SESSIONS_DIRNAME = "sessions" as const;
-const LEG_PROGRESS_FILENAME = "ticket-progress.jsonl" as const;
-const LEG_RECEIPTS_DIRNAME = "ticket-receipts" as const;
+const LEG_PROGRESS_FILENAME = "progress.jsonl" as const;
 
 /** One accepted-receipt progress row on the ticket (or unbound leg) subject. */
 export type TicketProgressLine = {
   readonly at: string;
   readonly seat: string;
-  /** Seat-local round; reviewer dual-lens uses `<n>.<lens>`. */
+  /** Seat-local round; reviewer dual-lens uses `<n>.<lens>`. Empty while unbound. */
   readonly round: string;
   /** This-round summons instruction bytes; empty string when none. */
   readonly instruction: string;
@@ -103,7 +97,7 @@ function readProgressFile(path: string): TicketProgressLine[] {
 /**
  * Read progress rows under a subject.
  * Ticket: append-only `current.jsonl`.
- * Unbound: each leg's `runs/<leaf>/ticket-progress.jsonl` (no shared file).
+ * Unbound: each leg's `runs/<leaf>/progress.jsonl` (no shared file).
  */
 export function readTicketProgressLines(subjectDirectory: string): TicketProgressLine[] {
   if (basename(subjectDirectory) === "unbound") {
@@ -119,6 +113,7 @@ export function readTicketProgressLines(subjectDirectory: string): TicketProgres
 }
 
 function roundBaseNumber(round: string): number {
+  if (round.trim() === "") return 0;
   const base = round.includes(".") ? round.slice(0, round.indexOf(".")) : round;
   const n = Number(base);
   return Number.isSafeInteger(n) && n > 0 ? n : 0;
@@ -144,8 +139,18 @@ function nextRoundFromLines(
   return want === undefined ? String(base) : `${base}.${want}`;
 }
 
-function receiptFileName(seat: string, round: string): string {
-  return `${seat}#${round}.json`;
+/** Leg-local receipt ordinal: `receipts/<n>.json` (not seat#round). */
+function nextLegReceiptIndex(runDirectory: string): number {
+  const dir = join(runDirectory, RECEIPTS_DIRNAME);
+  if (!existsSync(dir)) return 1;
+  let max = 0;
+  for (const name of readdirSync(dir)) {
+    const match = /^(\d+)\.json$/.exec(name);
+    if (match === null) continue;
+    const n = Number(match[1]);
+    if (Number.isSafeInteger(n) && n > max) max = n;
+  }
+  return max + 1;
 }
 
 /**
@@ -267,10 +272,10 @@ export function landTicketProgressForSealedSubmission(input: {
   const existing = unbound
     ? readProgressFile(progressPath)
     : readTicketProgressLines(subjectDirectory);
-  const round = nextRoundFromLines(existing, input.role, lens);
-  const relativePath = unbound
-    ? `runs/${leaf}/${LEG_RECEIPTS_DIRNAME}/${receiptFileName(input.role, round)}`
-    : `${RECEIPTS_DIRNAME}/${receiptFileName(input.role, round)}`;
+  // Unbound: round stays empty until whole-leg bind publishes into ticket current.
+  const round = unbound ? "" : nextRoundFromLines(existing, input.role, lens);
+  const receiptIndex = nextLegReceiptIndex(runDirectory);
+  const relativePath = `runs/${leaf}/${RECEIPTS_DIRNAME}/${receiptIndex}.json`;
   const absolutePath = join(subjectDirectory, relativePath);
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, `${JSON.stringify(input.accepted, null, 2)}\n`, "utf8");
@@ -304,123 +309,55 @@ export function landTicketProgressForSealedSubmission(input: {
 }
 
 /**
- * Move this leg's staged progress, receipts, and session directory from unbound
- * onto the ticket. Staging is private to the run — relocate appends into ticket
- * current.jsonl only. head / instruction / status / summary keep seal-time
- * values; rounds re-key into the ticket seat series.
- *
- * Copy → publish ticket current → drop sources. Rollback of destination copies
- * stops at publish (Node/POSIX copy-then-delete: a post-publish source rm
- * failure must not delete already-published destinations — 票面归位 / #1199 R1).
+ * After whole-leg rename (or retry when already under the ticket): fill rounds
+ * on staged `progress.jsonl`, append ticket `current.jsonl`, then drop staging.
+ * Receipt / session / head / instruction keep seal-time values and relative
+ * paths — no copy, delete-source, or rollback of originals.
  */
 export function relocateTicketProgressForLeg(input: {
-  readonly oldRunDirectory: string;
-  readonly newRunDirectory: string;
+  readonly runDirectory: string;
   readonly seat: string;
   readonly runId: string;
 }): void {
-  const oldSubject = subjectDirectoryOfRun(input.oldRunDirectory);
-  const newSubject = subjectDirectoryOfRun(input.newRunDirectory);
-  if (oldSubject === undefined || newSubject === undefined) return;
-  if (oldSubject === newSubject) return;
-  if (!isUnboundRunDirectory(input.oldRunDirectory)) return;
+  void input.seat;
+  void input.runId;
+  if (isUnboundRunDirectory(input.runDirectory)) return;
 
-  const leaf = formatRunLeaf(input.runId, input.seat);
-  const oldProgressPath = join(input.oldRunDirectory, LEG_PROGRESS_FILENAME);
-  const mine = readProgressFile(oldProgressPath);
+  const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
+  if (subjectDirectory === undefined) return;
+  if (basename(subjectDirectory) === "unbound") return;
 
-  const oldSibling = join(oldSubject, SESSIONS_DIRNAME, leaf);
-  const newSibling = join(newSubject, SESSIONS_DIRNAME, leaf);
-  const stagedCopies: string[] = [];
-  const sourcesToRemove: string[] = [];
-
-  const rollbackStagedCopies = (): void => {
-    for (const copy of stagedCopies) {
-      rmSync(copy, { recursive: true, force: true });
+  const stagedPath = join(input.runDirectory, LEG_PROGRESS_FILENAME);
+  const mine = readProgressFile(stagedPath);
+  if (mine.length === 0) {
+    if (existsSync(stagedPath)) {
+      rmSync(stagedPath, { force: true });
     }
-  };
-
-  try {
-    if (existsSync(oldSibling)) {
-      mkdirSync(dirname(newSibling), { recursive: true });
-      if (existsSync(newSibling)) {
-        throw new Error(
-          `ticket progress relocate refuses to overwrite session ${newSibling} with ${oldSibling}`,
-        );
-      }
-      // Track before copy: mid-cpSync failure must still roll back the destination
-      // so retry is not blocked by existsSync(newSibling).
-      stagedCopies.push(newSibling);
-      cpSync(oldSibling, newSibling, { recursive: true });
-      sourcesToRemove.push(oldSibling);
-    }
-
-    const ticketLines = [...readTicketProgressLines(newSubject)];
-    const movedLines: TicketProgressLine[] = [];
-    for (const line of mine) {
-      const lens = roundLens(line.round);
-      const round = nextRoundFromLines(ticketLines, line.seat, lens);
-      const relativePath = `${RECEIPTS_DIRNAME}/${receiptFileName(line.seat, round)}`;
-      const absolutePath = join(newSubject, relativePath);
-      const oldReceiptAbs = join(oldSubject, line.receipt);
-      if (existsSync(oldReceiptAbs)) {
-        mkdirSync(dirname(absolutePath), { recursive: true });
-        if (existsSync(absolutePath)) {
-          throw new Error(
-            `ticket progress relocate refuses to overwrite receipt ${absolutePath} with ${oldReceiptAbs}`,
-          );
-        }
-        stagedCopies.push(absolutePath);
-        copyFileSync(oldReceiptAbs, absolutePath);
-        sourcesToRemove.push(oldReceiptAbs);
-      }
-      const moved: TicketProgressLine = {
-        ...line,
-        round,
-        receipt: relativePath,
-        session: line.session.replaceAll("\\", "/"),
-      };
-      movedLines.push(moved);
-      ticketLines.push(moved);
-    }
-
-    // Publish ticket current before dropping staging / sources.
-    if (movedLines.length > 0) {
-      const newCurrent = join(newSubject, CURRENT_FILENAME);
-      mkdirSync(dirname(newCurrent), { recursive: true });
-      appendFileSync(
-        newCurrent,
-        `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-        "utf8",
-      );
-    }
-  } catch (error) {
-    // Partial copy / failed append: destinations are not yet authoritative.
-    // Rollback must not mask the relocate failure — keep both causes.
-    try {
-      rollbackStagedCopies();
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "ticket progress relocate failed and staged-copy rollback failed",
-        { cause: error },
-      );
-    }
-    throw error;
+    return;
   }
 
-  // After publish, destination copies are the originals for published rows.
-  // Source cleanup must not roll them back (same root as pre-publish rename loss).
-  if (existsSync(oldProgressPath)) {
-    rmSync(oldProgressPath, { force: true });
+  const ticketLines = [...readTicketProgressLines(subjectDirectory)];
+  const movedLines: TicketProgressLine[] = [];
+  for (const line of mine) {
+    const lens = roundLens(line.round);
+    const round = nextRoundFromLines(ticketLines, line.seat, lens);
+    const moved: TicketProgressLine = {
+      ...line,
+      round,
+      receipt: line.receipt.replaceAll("\\", "/"),
+      session: line.session.replaceAll("\\", "/"),
+    };
+    movedLines.push(moved);
+    ticketLines.push(moved);
   }
-  const oldLegReceipts = join(input.oldRunDirectory, LEG_RECEIPTS_DIRNAME);
-  if (existsSync(oldLegReceipts)) {
-    rmSync(oldLegReceipts, { recursive: true, force: true });
-  }
-  for (const source of sourcesToRemove) {
-    if (existsSync(source)) {
-      rmSync(source, { recursive: true, force: true });
-    }
-  }
+
+  const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
+  mkdirSync(dirname(newCurrent), { recursive: true });
+  appendFileSync(
+    newCurrent,
+    `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+    "utf8",
+  );
+  // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
+  rmSync(stagedPath, { force: true });
 }
