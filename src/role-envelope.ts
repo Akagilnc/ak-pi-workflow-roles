@@ -483,10 +483,12 @@ export async function prepareRoleEnvelope(options: {
     }
     try {
       const result = await tool.execute(toolCallId, (args ?? {}) as never, undefined, undefined, context);
+      // Pass through native isError from the tool result (Pi AgentToolResult).
+      // Identified failures must not be projected as tool success (#1213).
       const projected = await projectToolResult(toolCallId, name, {
         content: result.content,
         details: result.details,
-        isError: false,
+        isError: result.isError === true,
       });
       if (result.terminate === false) {
         rejection = {

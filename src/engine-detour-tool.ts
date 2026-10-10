@@ -109,6 +109,8 @@ function engineFailureResult(input: {
   return {
     content: [{ type: "text" as const, text }],
     details,
+    // Identified detour failure is a tool error, not a seat-run death (#1213).
+    isError: true as const,
   };
 }
 
@@ -145,12 +147,6 @@ export function createEngineDetourToolDefinition(input: {
     ): Promise<HostToolResult> {
       const args = params as EngineDetourArgs;
       const argv = Array.isArray(args.argv) ? args.argv : [];
-      if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
-        // A3: parameter error returns to the seat — do not abort the run.
-        return engineFailureResult({
-          text: "劳务引擎 argv 须为非空字符串数组",
-        });
-      }
 
       const sessionParent = ctx.sessionManager?.getSessionFile?.();
       const startedAt = Date.now();
@@ -200,6 +196,16 @@ export function createEngineDetourToolDefinition(input: {
           return serializeThrownValue(recordError);
         }
       };
+
+      if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
+        // A3: parameter error returns to the seat — do not abort the run.
+        // Call actually entered execute: book it with no forged process metrics (#1213 / #537).
+        const ledgerError = recordCallOrLedgerError({});
+        return engineFailureResult({
+          text: "劳务引擎 argv 须为非空字符串数组",
+          ...(ledgerError === undefined ? {} : { ledgerError }),
+        });
+      }
 
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {

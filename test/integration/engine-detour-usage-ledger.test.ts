@@ -22,6 +22,7 @@ import {
   ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
+  readEngineDetourToolUsage,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -956,6 +957,11 @@ test("tool path: engine failure + sitian write failure returns both causes witho
       }
 
       assert.ok(result, `${row.label}: engine failure returns a tool result`);
+      assert.equal(
+        result.isError,
+        true,
+        `${row.label}: identified engine failure is a tool error`,
+      );
       const details = result.details as {
         tool?: string;
         code?: number;
@@ -1002,6 +1008,66 @@ test("tool path: engine failure + sitian write failure returns both causes witho
           );
         }
       }
+    }
+  });
+});
+
+test("tool path: invalid argv still books the call without forged process metrics", async () => {
+  await withHermeticHome({ prefix: "ak-detour-invalid-argv-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    // Session principal must sit inside the machine ledger home (ADR 0048).
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      "work",
+      "runs",
+      "invalid-argv@judge",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    await writeFile(sessionFile, "\n", "utf8");
+    const tool = createEngineDetourToolDefinition({ engineName: ENGINE });
+    const cases: Array<{ label: string; params: Record<string, unknown> }> = [
+      { label: "missing", params: {} },
+      { label: "empty-array", params: { argv: [] } },
+      { label: "empty-element", params: { argv: [""] } },
+    ];
+    for (const row of cases) {
+      const result = await tool.execute(
+        `invalid-argv-${row.label}`,
+        row.params as { argv: string[] },
+        undefined,
+        undefined,
+        {
+          cwd: project,
+          mode: "test",
+          abort() {},
+          sessionManager: { getSessionFile: () => sessionFile },
+          runDirectory,
+        },
+      );
+      assert.equal(result.isError, true, row.label);
+    }
+    const usage = await readEngineDetourToolUsage({
+      sessionParent: sessionFile,
+      engineMounted: true,
+      cwd: project,
+      home,
+    });
+    assert.ok(usage, "parameter-error calls still produce usage when engine mounted");
+    assert.equal(usage.callCount, 3, "each execute entry is booked");
+    assert.equal(usage.calls.length, 3);
+    for (const call of usage.calls) {
+      assert.equal("code" in call, false, "no forged exit code on parameter error");
+      assert.equal(
+        "stdoutByteLength" in call,
+        false,
+        "no forged stdout bytes on parameter error",
+      );
+      assert.equal(typeof call.durationMs, "number");
     }
   });
 });
