@@ -202,23 +202,10 @@ export function assertNoRetiredDossierFiles(runDirectory: string): void {
 }
 
 /**
- * #1161 / #1165 / #1199: leaf names a run directory may hold at rest.
- * Leg-local originals: `session/`, `receipts/`; unbound staging: `progress.jsonl`.
- * Seat input still written at admission: `merger-input.json`.
- * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
+ * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
+ * (dossier + leg-local `receipts/` / `session/`). Sole list of the six;
+ * allowlist below spreads this and adds unbound / seat-only leaves.
  */
-export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
-  "current.json",
-  "history.jsonl",
-  "state.jsonl",
-  "log.jsonl",
-  "session",
-  "receipts",
-  "progress.jsonl",
-  "merger-input.json",
-] as const;
-
-/** Bound-at-rest inventory after accepted seal (no unbound staging / seat-only input). */
 export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
   "current.json",
   "history.jsonl",
@@ -226,6 +213,17 @@ export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
   "receipts",
   "session",
   "state.jsonl",
+] as const;
+
+/**
+ * Leaf names a run directory may hold at rest: bound six plus unbound
+ * staging `progress.jsonl` and seat input `merger-input.json`.
+ * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
+ */
+export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
+  ...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+  "progress.jsonl",
+  "merger-input.json",
 ] as const;
 
 export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {

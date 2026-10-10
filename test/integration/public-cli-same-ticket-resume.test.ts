@@ -18,7 +18,6 @@ import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import {
-  assertRunDirectoryHoldsOnlyDossier,
   historyPayloads,
   statePayloads,
   readCurrentSection,
@@ -1190,7 +1189,6 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     const coderRunDirectory =
       (await findRunDirectoryById(scratch.home, "run-worker-gate-resume-993"))
       ?? seen.find((turn) => turn.kind === "initial")!.runDirectory;
-    assertRunDirectoryHoldsOnlyDossier(coderRunDirectory);
     assert.deepEqual(
       (await readdir(coderRunDirectory)).sort(),
       [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
