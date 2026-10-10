@@ -16,6 +16,12 @@ export type PreparedRoleTurn = Readonly<{
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
   /**
+   * #1199: book the prompt bytes actually sent this round onto HostContext
+   * summonsInstruction (same-envelope 催交 / correctable retry).
+   * Production prepareRoleEnvelope always provides this; test stubs may omit.
+   */
+  recordSentInstruction?(text: string): void;
+  /**
    * Host abort signal armed only by typed infrastructure failure (envelope
    * rememberInfrastructureFailure / non-correctable MCP catch). Lawful
    * context.abort() (seal / non-sole) does not arm it. executeTurn races

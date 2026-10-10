@@ -16,6 +16,7 @@ import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import {
   encodeUserDialogueStdin,
   readUserDialogueStdin,
+  readUserDialogueSummonsInstruction,
   USER_DIALOGUE_STDIN_KIND,
 } from "../../src/user-dialogue-stdin.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -27,6 +28,15 @@ test("#879 typed stdin recovers original body after pipe trim", () => {
   assert.equal(readUserDialogueStdin(encoded), body);
   assert.equal(readUserDialogueStdin(`  ${encoded}  \n`), body);
   assert.equal(readUserDialogueStdin(encoded.trim()), body);
+});
+
+test("#1199 typed stdin keeps progress 传召词 beside transport body", () => {
+  const transport = "caller body only\n\n--attach /tmp/x.json";
+  const summons = "caller body only";
+  const encoded = encodeUserDialogueStdin(transport, summons);
+  assert.equal(readUserDialogueStdin(encoded), transport);
+  assert.equal(readUserDialogueSummonsInstruction(encoded), summons);
+  assert.equal(readUserDialogueSummonsInstruction(encodeUserDialogueStdin(summons)), summons);
 });
 
 test("#879 typed stdin keeps empty and flag-like opaque messages", () => {

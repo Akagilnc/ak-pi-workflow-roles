@@ -49,6 +49,7 @@ import {
   readCurrentSection,
   seedCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -801,6 +802,10 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       .filter((line) => line.session.includes(stayId));
     assert.ok(beforeMove.length >= 1, "move leg must stage progress before bind");
     assert.ok(beforeStay.length >= 1, "stay leg must stage progress before bind");
+    // #1199 R1: staged receipt originals must stay reachable after fail.
+    for (const row of beforeMove) {
+      assert.equal(existsSync(join(unboundDir, row.receipt)), true, row.receipt);
+    }
 
     const ticketSubject = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     await mkdir(ticketSubject, { recursive: true });
@@ -832,6 +837,9 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
       true,
       "private progress file must remain when target append fails",
     );
+    for (const row of afterMove) {
+      assert.equal(existsSync(join(unboundDir, row.receipt)), true, `failed-leg receipt ${row.receipt}`);
+    }
     // Sibling isolation: stay leg untouched whether bind threw or not.
     const afterStay = readTicketProgressLines(unboundDir)
       .filter((line) => line.session.includes(stayId));
@@ -839,6 +847,33 @@ test("#1199 public resume relocate: ticket current write fail keeps unbound stag
     for (const row of afterStay) {
       assert.equal(existsSync(join(unboundDir, row.receipt)), true);
     }
+
+    // Restore write permission and bind again — moved receipts must land and open.
+    chmodSync(currentPath, 0o644);
+    const rebind = fixerTurnHost(() => ({
+      status: "completed",
+      report: "rebind after restore",
+      summary: "rebind summary text here is long enough",
+      ticketNumber: TICKET,
+      classResults: FIXER_DONE.classResults,
+    }));
+    const rebound = await runPublicInstructionSeatResume(
+      { runId, message: "retry declare ticket after restore" },
+      seatEnv(home, project, runId, "pi", rebind.host),
+      captureIo().io,
+    );
+    assert.equal(rebound.exitCode, 0, `${rebound.terminal?.roleOutcome.kind}`);
+    const ticketRows = readTicketProgressLines(ticketSubject)
+      .filter((line) => line.seat === "fixer" && line.session.includes(runId));
+    assert.ok(ticketRows.length >= 1, "relocated rows must publish after restore");
+    for (const row of ticketRows) {
+      assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
+    }
+    // Session originals land under ticket sessions/ (not revived unbound paths).
+    assert.ok(
+      ticketRows.every((row) => !row.session.includes("/unbound/")),
+      ticketRows.map((row) => row.session).join(","),
+    );
   });
 });
 
@@ -846,29 +881,49 @@ test("#1199 envelope 催交原文 is the progress instruction (not first mint)",
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-progresume";
     const firstInstruction = "first summons for progress resume";
-    let sealingSummons: string | undefined;
-    let turns = 0;
-    // External envelope: silent first turn → AK 没交卷催交; seal on the 催交 turn.
-    const sealing = envelopeHostThatReportsThen({
-      hostName: "codex",
-      ticketNumber: TICKET,
-      submit: {
-        status: "completed",
-        report: "sealed after delivery reask",
-        summary: "summary after delivery reask text ok",
-        classResults: FIXER_DONE.classResults,
-      },
-    });
+    const seenPrompts: string[] = [];
+    // Same prepared envelope: first completed seals → commit reminder retry;
+    // second completed accepts. Progress instruction must be the retry bytes.
     const host = withPassingReviewHost({
       async executeTurn(request: RoleTurnRequest) {
-        turns += 1;
-        if (turns === 1) {
-          return { timedOut: false, code: 0, stderr: "" };
+        const socketDir = await mkdtemp(join(tmpdir(), "ak-1199-retry-"));
+        const socketPath = join(socketDir, "mcp.sock");
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath,
+          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
+        });
+        try {
+          process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+          let sealed = false;
+          return await driveExternalRoleTurnRounds(prepared, request, {
+            roundLimitName: "ReportTicketRoundLimit",
+            currentSessionId: () => undefined,
+            async runRound({ prompt }) {
+              seenPrompts.push(prompt);
+              await callMcpTool({
+                socketPath,
+                token: mcpTokenFromPrepared(prepared),
+                name: REPORT_TICKET_TOOL_NAME,
+                args: { ticketNumber: TICKET },
+              });
+              await prepared.ingestStructuredOutput({
+                status: "completed",
+                report: sealed ? "sealed after commit reminder" : "first completed without commit",
+                summary: "summary after envelope retry text ok",
+                classResults: FIXER_DONE.classResults,
+              });
+              sealed = true;
+              return { status: "delivered" as const };
+            },
+          });
+        } finally {
+          delete process.env.AK_ROLE_RUN_DIR;
+          await prepared.dispose?.();
+          await rm(socketDir, { recursive: true, force: true });
         }
-        if (request.continuation.kind === "resume") {
-          sealingSummons = request.summonsInstruction ?? request.continuation.prompt;
-        }
-        return sealing.executeTurn(request);
       },
     });
     const first = await runPublicInstructionSeat(
@@ -882,16 +937,102 @@ test("#1199 envelope 催交原文 is the progress instruction (not first mint)",
       (args) => parsePublicSeatArgv("fixer", args),
     );
     assert.equal(first.exitCode, 0, `${first.terminal?.roleOutcome.kind}`);
-    assert.ok(turns >= 2, `催交 must run; turns=${turns}`);
+    assert.ok(seenPrompts.length >= 2, `same-envelope retry must run; seen=${seenPrompts.length}`);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
     assert.notEqual(lines[0]!.instruction, firstInstruction);
-    assert.ok(lines[0]!.instruction.length > 0);
-    if (sealingSummons !== undefined) {
-      assert.equal(lines[0]!.instruction, sealingSummons);
-    }
+    assert.equal(lines[0]!.instruction, seenPrompts[1]);
     assert.equal(existsSync(join(ticketDir, lines[0]!.receipt)), true);
+  });
+});
+
+test("#1199 attach wrapper does not replace progress 传召词 body", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-attachbody";
+    const body = "caller body only";
+    const attachPath = join(project, "caller.json");
+    await writeFile(attachPath, `${JSON.stringify({ note: "attach" })}\n`, "utf8");
+    let transportPrompt = "";
+    const scripted = fixerTurnHost(() => ({
+      ...FIXER_DONE,
+      summary: "attach body progress summary text ok",
+      ticketNumber: TICKET,
+    }));
+    const host = withPassingReviewHost({
+      async executeTurn(request: RoleTurnRequest) {
+        transportPrompt = request.continuation.prompt;
+        return scripted.host.executeTurn(request);
+      },
+    });
+    const result = await runPublicInstructionSeat(
+      ["apply", body, "--attach", attachPath],
+      seatEnv(home, project, runId, "pi", host),
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
+    assert.ok(transportPrompt.includes("--attach"), "transport carries file flags");
+    assert.notEqual(transportPrompt, body);
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]!.instruction, body);
+  });
+});
+
+test("#1199 progress session uses host-issued sessionFile coordinate", async () => {
+  await withSeatProject(async ({ home, project, bookKey }) => {
+    const runId = "01a011710-0000-7000-8000-customses";
+    const principalAuthority = {
+      issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
+        const coords = piDurablePrincipalAuthority.decode(piDurablePrincipalAuthority.issue(request));
+        return fixturePrincipal(
+          coords.sessionDirectory,
+          join(coords.sessionDirectory, "host-issued-principal.jsonl"),
+        );
+      },
+      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+        return fixturePrincipal(
+          coordinates.sessionDirectory,
+          join(coordinates.sessionDirectory, "host-issued-principal.jsonl"),
+        );
+      },
+      decode(value: unknown) {
+        return piDurablePrincipalAuthority.decode(value);
+      },
+    };
+    const host = withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "fixer",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        details: {
+          ...FIXER_DONE,
+          summary: "custom session progress summary text",
+          ticketNumber: TICKET,
+        },
+      })(args, options),
+    }));
+    const result = await runPublicInstructionSeat(
+      ["apply", "seal with host-issued session file"],
+      { ...seatEnv(home, project, runId, "pi", host), principalAuthority },
+      captureIo().io,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
+    );
+    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
+    const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
+    assert.equal(lines.length, 1);
+    assert.ok(
+      lines[0]!.session.endsWith("/host-issued-principal.jsonl")
+        || lines[0]!.session.endsWith("host-issued-principal.jsonl"),
+      lines[0]!.session,
+    );
+    assert.equal(existsSync(join(ticketDir, lines[0]!.session)), true);
   });
 });
 

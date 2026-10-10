@@ -17,6 +17,7 @@ import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
+import { readUserDialogueSummonsInstruction } from "./user-dialogue-stdin.ts";
 import {
   registerReportTicketTool,
   reportTicketFromHostContext,
@@ -1172,8 +1173,10 @@ export function createRoleRuntimeExtension(
     roleHost.on("input", (event, ctx) => {
       // #1199: first/continue input seam retains this-turn 传召词 (票面当轮实际输入).
       // HostContext field only — never process.env body (nested identity / ARG_MAX).
-      if (typeof event.text === "string") {
-        ctx.summonsInstruction = event.text;
+      // Do not overwrite a turn-request body already seeded (in-process envelope).
+      // Pi stdin may carry summonsInstruction beside the model-facing transport body.
+      if (typeof event.text === "string" && ctx.summonsInstruction === undefined) {
+        ctx.summonsInstruction = readUserDialogueSummonsInstruction(event.text);
       }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };

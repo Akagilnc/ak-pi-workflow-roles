@@ -438,7 +438,10 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
-      const stdin = encodeUserDialogueStdin(piUserDialogueBody(turnRequest));
+      const transportBody = piUserDialogueBody(turnRequest);
+      // #1199: model-facing transport may wrap file flags; progress 传召词 is the
+      // already-separated request field, riding the same typed stdin envelope.
+      const stdin = encodeUserDialogueStdin(transportBody, turnRequest.summonsInstruction);
       // Shared envelope isolates this call's court identity: omitting courtAttemptId
       // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {
@@ -459,7 +462,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
       else env.AK_ROLE_HOST = request.host.trim();
       // #1199: 传召词 is unknown-length body — never argv/env (execve ARG_MAX / E2BIG).
-      // Dialogue already rides stdin; the child input seam records it on HostContext.
+      // Typed stdin envelope carries dialogue + optional progress 传召词.
       delete env.AK_ROLE_SUMMONS_INSTRUCTION;
       // #1132: the one effective delivery-request ceiling travels to the child
       // on its own env so the in-child role runtime and the worker submission

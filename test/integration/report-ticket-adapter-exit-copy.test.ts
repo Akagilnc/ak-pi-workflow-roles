@@ -6,6 +6,7 @@
  * same seam as public-cli-report-ticket.test.ts (no second admission model).
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,6 +88,57 @@ function subjectDir(home: string, bookKey: string, ticket: number): string {
   return join(home, ".ak-roles", "books", bookKey, String(ticket));
 }
 
+/** Move HEAD after worker baseline so completed seals without commit-reminder 催交. */
+function advanceSeatHead(project: string): void {
+  execFileSync(
+    "git",
+    ["-c", "user.email=a@b.c", "-c", "user.name=adapter", "commit", "--allow-empty", "-m", "ak-roles: adapter fixture head"],
+    { cwd: project, stdio: "ignore" },
+  );
+}
+
+/**
+ * One ACP session restore machine for grok fake connections (#1199 R4).
+ * load resumes an existing id; new mints a peer — never the bound SESSION_ID.
+ */
+function createGrokAcpSessionRestore(input: {
+  readonly home: string;
+  readonly project: string;
+  getActiveSessionId(): string;
+  setActiveSessionId(id: string): void;
+}) {
+  const nativeDirFor = (sessionId: string) => join(
+    input.home,
+    ".grok",
+    "sessions",
+    encodeURIComponent(input.project),
+    sessionId,
+  );
+  return {
+    nativeDirFor,
+    handle(method: string, params: unknown): { sessionId: string } | Record<string, unknown> | undefined {
+      if (method === "initialize") {
+        return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
+      }
+      if (method === "session/load") {
+        const id = typeof (params as { sessionId?: unknown } | undefined)?.sessionId === "string"
+          ? (params as { sessionId: string }).sessionId
+          : "";
+        if (id.length === 0) throw new Error("session/load missing sessionId");
+        if (!existsSync(nativeDirFor(id))) throw new Error(`session/load unknown sessionId: ${id}`);
+        input.setActiveSessionId(id);
+        return { sessionId: id };
+      }
+      if (method === "session/new") {
+        const minted = `ak-1199-new-${Date.now().toString(36)}`;
+        input.setActiveSessionId(minted);
+        return { sessionId: minted };
+      }
+      return undefined;
+    },
+  };
+}
+
 /** One ACP mid-turn report assembly shared by happy-path and close-fault cases. */
 async function runAcpMidTurnReportViaPublicEntry(input: {
   readonly home: string;
@@ -113,43 +165,19 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
   let preparedToken = "";
   let disposeCalls = 0;
   let activeSessionId = SESSION_ID;
+  const sessionRestore = createGrokAcpSessionRestore({
+    home: input.home,
+    project: input.project,
+    getActiveSessionId: () => activeSessionId,
+    setActiveSessionId: (id) => { activeSessionId = id; },
+  });
   const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
   const connection: AcpConnection = {
     async request(method, params) {
-      if (method === "initialize") {
-        return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
-      }
-      // #1199 J4/S3: load resumes an existing id; new must mint a peer — never
-      // return the bound SESSION_ID from session/new (that washes wrong new→resume).
-      if (method === "session/load") {
-        const id = typeof (params as { sessionId?: unknown } | undefined)?.sessionId === "string"
-          ? (params as { sessionId: string }).sessionId
-          : "";
-        if (id.length === 0) throw new Error("session/load missing sessionId");
-        const native = join(
-          input.home,
-          ".grok",
-          "sessions",
-          encodeURIComponent(input.project),
-          id,
-        );
-        if (!existsSync(native)) throw new Error(`session/load unknown sessionId: ${id}`);
-        activeSessionId = id;
-        return { sessionId: id };
-      }
-      if (method === "session/new") {
-        const minted = `ak-1199-new-${Date.now().toString(36)}`;
-        activeSessionId = minted;
-        return { sessionId: minted };
-      }
+      const restored = sessionRestore.handle(method, params);
+      if (restored !== undefined) return restored;
       if (method === "session/prompt") {
-        const native = join(
-          input.home,
-          ".grok",
-          "sessions",
-          encodeURIComponent(input.project),
-          activeSessionId,
-        );
+        const native = sessionRestore.nativeDirFor(activeSessionId);
         await mkdir(native, { recursive: true });
         // Native originals for exit-copy: chat_history + usage (ADR 0086 grok pair).
         await writeFile(
@@ -165,6 +193,7 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
           args: { ticketNumber: TICKET },
         });
         if (input.submit !== undefined) {
+          advanceSeatHead(input.project);
           await callMcpTool({
             socketPath,
             token: preparedToken,
@@ -233,6 +262,7 @@ test("#1171 headless true adapter via public entry: mid-turn report → exit-cop
     await writeFile(
       fakeBin,
       `#!/usr/bin/env -S node --import tsx
+import { execFileSync } from "node:child_process";
 import { readFileSync, mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { callMcpTool } from ${JSON.stringify(MCP_HELPER)};
@@ -273,6 +303,8 @@ if (typeof resumeId === "string" && !existsSync(nativePath)) {
 const row = JSON.stringify({ native: "claude-after-report", at: Date.now() }) + "\\n";
 if (existsSync(nativePath)) appendFileSync(nativePath, row);
 else writeFileSync(nativePath, row);
+// Move HEAD after worker baseline so completed seals on the first summons.
+execFileSync("git", ["-c", "user.email=a@b.c", "-c", "user.name=adapter", "commit", "--allow-empty", "-m", "ak-roles: adapter fixture head"], { stdio: "ignore" });
 process.stdout.write(JSON.stringify({
   type: "result", subtype: "success", uuid: "1171-adapter",
   session_id: sessionId, is_error: false,
@@ -411,41 +443,18 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
     const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
     const resumeInstruction = "continue on bound grok session after relocate";
     let activeSessionId = SESSION_ID;
+    const sessionRestore = createGrokAcpSessionRestore({
+      home,
+      project,
+      getActiveSessionId: () => activeSessionId,
+      setActiveSessionId: (id) => { activeSessionId = id; },
+    });
     const connection: AcpConnection = {
       async request(method, params) {
-        if (method === "initialize") {
-          return { protocolVersion: 1, _meta: { modelState: { availableModels: [{ modelId: "grok" }] } } };
-        }
-        // #1199 J4/S3: load resumes existing id; new mints a peer id (never the bound one).
-        if (method === "session/load") {
-          const id = typeof (params as { sessionId?: unknown } | undefined)?.sessionId === "string"
-            ? (params as { sessionId: string }).sessionId
-            : "";
-          if (id.length === 0) throw new Error("session/load missing sessionId");
-          const native = join(
-            home,
-            ".grok",
-            "sessions",
-            encodeURIComponent(project),
-            id,
-          );
-          if (!existsSync(native)) throw new Error(`session/load unknown sessionId: ${id}`);
-          activeSessionId = id;
-          return { sessionId: id };
-        }
-        if (method === "session/new") {
-          const minted = `ak-1199-new-${Date.now().toString(36)}`;
-          activeSessionId = minted;
-          return { sessionId: minted };
-        }
+        const restored = sessionRestore.handle(method, params);
+        if (restored !== undefined) return restored;
         if (method === "session/prompt") {
-          const native = join(
-            home,
-            ".grok",
-            "sessions",
-            encodeURIComponent(project),
-            activeSessionId,
-          );
+          const native = sessionRestore.nativeDirFor(activeSessionId);
           await mkdir(native, { recursive: true });
           await writeFile(
             join(native, "chat_history.jsonl"),
@@ -453,6 +462,7 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
             { flag: "a" },
           );
           await writeFile(join(native, "usage.json"), `${JSON.stringify({ tokens: 2 })}\n`, "utf8");
+          advanceSeatHead(project);
           await callMcpTool({
             socketPath,
             token: preparedToken,
@@ -530,6 +540,7 @@ test("#1199 codex headless true adapter via public entry: exit-copy + resume sam
     await writeFile(
       fakeBin,
       `#!/usr/bin/env -S node --import tsx
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -554,6 +565,9 @@ if (resumed) {
 } else {
   writeFileSync(rollout, row);
 }
+
+// Move HEAD after worker baseline so completed seals on the first summons.
+execFileSync("git", ["-c", "user.email=a@b.c", "-c", "user.name=adapter", "commit", "--allow-empty", "-m", "ak-roles: adapter fixture head"], { stdio: "ignore" });
 
 // Same lawful fixer receipt every turn — first-call auto-resume (if any) and
 // explicit public resume both settle through structured agent_message.

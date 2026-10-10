@@ -755,6 +755,9 @@ export async function prepareRoleEnvelope(options: {
       }],
       systemPrompt: { body: systemPromptBody, materials: readingMaterials },
       prompt,
+      recordSentInstruction(text: string) {
+        context.summonsInstruction = text;
+      },
       abortSignal: hostAbort.signal,
       closeRound,
       dispose,

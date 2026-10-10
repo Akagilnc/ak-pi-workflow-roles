@@ -4,22 +4,23 @@
  * post-turn history guessing. Per-leg dossiers stay until #1202.
  *
  * Unbound legs stage inside the run directory (owner 41f7c164): progress +
- * receipts ride the existing rename, then bind appends into the ticket
- * current.jsonl. Round authority is progress lines only — no receipt-filename
- * counting, occupancy placeholders, or claim-retry loops. Reviewer dual-lens
- * series count independently (`<n>.<lens>`).
+ * receipts copy onto the ticket, then bind appends into ticket current.jsonl.
+ * Round authority is progress lines only — no receipt-filename counting,
+ * occupancy placeholders, or claim-retry loops. Reviewer dual-lens series
+ * count independently (`<n>.<lens>`).
  *
- * Relocate publishes ticket current before removing this leg's staging
- * (Node/POSIX: leave the only source until the destination write succeeds).
+ * Relocate copies then publishes ticket current before removing sources
+ * (Node/POSIX: leave staged originals recoverable until destination lands).
  */
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
+  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -216,9 +217,15 @@ export function captureWorktreeHead(projectRoot: string): WorktreeHeadCapture {
 function progressSessionAbsolute(runDirectory: string, context: HostContext): string {
   const host = typeof context.host === "string" ? context.host.trim() : "";
   const sessionDirectory = sessionDirectoryOf(runDirectory);
-  // Admission landing (ticket/unbound sessions/), not a lagging live handle.
+  // External hosts: ADR 0086 copy landing (codex.jsonl / grok-build / …), not the
+  // principal wire file. Responsibility unchanged (#1199 R3 disposition).
   if (host !== "" && host !== "pi" && host !== "hermes") {
     return resolveHostDossierLandingPath({ host, sessionDirectory });
+  }
+  // Pi/hermes: prefer the issued durable coordinate on the live handle.
+  const issued = context.sessionManager.getSessionFile?.();
+  if (typeof issued === "string" && issued.trim() !== "") {
+    return issued;
   }
   return sessionFileOf(runDirectory);
 }
@@ -302,8 +309,8 @@ export function landTicketProgressForSealedSubmission(input: {
  * current.jsonl only. head / instruction / status / summary keep seal-time
  * values; rounds re-key into the ticket seat series.
  *
- * Target current must land before this leg's staging is removed — otherwise a
- * failed append destroys the only progress rows (票面归位 / quality-law mutation).
+ * Copy into the ticket first, publish current, then drop sources. A failed
+ * append must leave staged originals recoverable (票面归位 / #1199 R1).
  */
 export function relocateTicketProgressForLeg(input: {
   readonly oldRunDirectory: string;
@@ -323,54 +330,73 @@ export function relocateTicketProgressForLeg(input: {
 
   const oldSibling = join(oldSubject, SESSIONS_DIRNAME, leaf);
   const newSibling = join(newSubject, SESSIONS_DIRNAME, leaf);
-  if (existsSync(oldSibling)) {
-    mkdirSync(dirname(newSibling), { recursive: true });
-    if (existsSync(newSibling)) {
-      throw new Error(
-        `ticket progress relocate refuses to overwrite session ${newSibling} with ${oldSibling}`,
+  const publishedCopies: string[] = [];
+  const sourcesToRemove: string[] = [];
+
+  try {
+    if (existsSync(oldSibling)) {
+      mkdirSync(dirname(newSibling), { recursive: true });
+      if (existsSync(newSibling)) {
+        throw new Error(
+          `ticket progress relocate refuses to overwrite session ${newSibling} with ${oldSibling}`,
+        );
+      }
+      cpSync(oldSibling, newSibling, { recursive: true });
+      publishedCopies.push(newSibling);
+      sourcesToRemove.push(oldSibling);
+    }
+
+    const ticketLines = [...readTicketProgressLines(newSubject)];
+    const movedLines: TicketProgressLine[] = [];
+    for (const line of mine) {
+      const lens = roundLens(line.round);
+      const round = nextRoundFromLines(ticketLines, line.seat, lens);
+      const relativePath = `${RECEIPTS_DIRNAME}/${receiptFileName(line.seat, round)}`;
+      const absolutePath = join(newSubject, relativePath);
+      const oldReceiptAbs = join(oldSubject, line.receipt);
+      if (existsSync(oldReceiptAbs)) {
+        mkdirSync(dirname(absolutePath), { recursive: true });
+        copyFileSync(oldReceiptAbs, absolutePath);
+        publishedCopies.push(absolutePath);
+        sourcesToRemove.push(oldReceiptAbs);
+      }
+      const moved: TicketProgressLine = {
+        ...line,
+        round,
+        receipt: relativePath,
+        session: line.session.replaceAll("\\", "/"),
+      };
+      movedLines.push(moved);
+      ticketLines.push(moved);
+    }
+
+    // Publish ticket current before dropping staging / sources.
+    if (movedLines.length > 0) {
+      const newCurrent = join(newSubject, CURRENT_FILENAME);
+      mkdirSync(dirname(newCurrent), { recursive: true });
+      appendFileSync(
+        newCurrent,
+        `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+        "utf8",
       );
     }
-    renameSync(oldSibling, newSibling);
-  }
 
-  const ticketLines = [...readTicketProgressLines(newSubject)];
-  const movedLines: TicketProgressLine[] = [];
-  for (const line of mine) {
-    const lens = roundLens(line.round);
-    const round = nextRoundFromLines(ticketLines, line.seat, lens);
-    const relativePath = `${RECEIPTS_DIRNAME}/${receiptFileName(line.seat, round)}`;
-    const absolutePath = join(newSubject, relativePath);
-    const oldReceiptAbs = join(oldSubject, line.receipt);
-    if (existsSync(oldReceiptAbs)) {
-      mkdirSync(dirname(absolutePath), { recursive: true });
-      renameSync(oldReceiptAbs, absolutePath);
+    if (existsSync(oldProgressPath)) {
+      rmSync(oldProgressPath, { force: true });
     }
-    const moved: TicketProgressLine = {
-      ...line,
-      round,
-      receipt: relativePath,
-      session: line.session.replaceAll("\\", "/"),
-    };
-    movedLines.push(moved);
-    ticketLines.push(moved);
-  }
-
-  // Publish ticket current first; only then drop this leg's staging.
-  if (movedLines.length > 0) {
-    const newCurrent = join(newSubject, CURRENT_FILENAME);
-    mkdirSync(dirname(newCurrent), { recursive: true });
-    appendFileSync(
-      newCurrent,
-      `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-      "utf8",
-    );
-  }
-
-  if (existsSync(oldProgressPath)) {
-    rmSync(oldProgressPath, { force: true });
-  }
-  const oldLegReceipts = join(input.oldRunDirectory, LEG_RECEIPTS_DIRNAME);
-  if (existsSync(oldLegReceipts)) {
-    rmSync(oldLegReceipts, { recursive: true, force: true });
+    const oldLegReceipts = join(input.oldRunDirectory, LEG_RECEIPTS_DIRNAME);
+    if (existsSync(oldLegReceipts)) {
+      rmSync(oldLegReceipts, { recursive: true, force: true });
+    }
+    for (const source of sourcesToRemove) {
+      if (existsSync(source)) {
+        rmSync(source, { recursive: true, force: true });
+      }
+    }
+  } catch (error) {
+    for (const copy of publishedCopies) {
+      rmSync(copy, { recursive: true, force: true });
+    }
+    throw error;
   }
 }
