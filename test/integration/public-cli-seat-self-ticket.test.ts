@@ -412,7 +412,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
           piRunner: scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [], ticketNumber: 999 },
+            details: { status: "converged", findings: [], ticketNumber: 999 },
           }),
         }),
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",

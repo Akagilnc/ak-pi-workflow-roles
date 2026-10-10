@@ -137,10 +137,18 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   judge: {
     statuses: REVIEW_QUEUE_STATUSES,
   },
-  // #1208 C1: independent notary uses the shared unreadable-status seam
-  // (officerConclusionReask). Gate summons still own the outer budget via
-  // nestedIncomplete when this seat exhausts unsettled.
+  // #1208 C1 / ADR 0055: every review-queue seat uses the shared
+  // unreadable-status seam (officerConclusionReask). Independent public
+  // entry for notary/auditor/inspector was the same miss — route here, do
+  // not invent a parallel loop. Gate summons still own the outer budget
+  // via nestedIncomplete when this seat exhausts unsettled.
   notary: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
+  auditor: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
+  inspector: {
     statuses: REVIEW_QUEUE_STATUSES,
   },
   coder: {
@@ -1223,6 +1231,10 @@ export async function runPublicInstructionSeat(
     await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
     admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
   }
+  // #1208 C2: same helper as resume — known board ticket on the audited
+  // source binds and relocates before the missing-ticket soft reask can
+  // fire. True no-ticket sources stay unbound (#1171 asks once).
+  admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
@@ -1439,11 +1451,12 @@ async function queueConclusionFromChild(
     return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
   }
   let current: AdmittedRoleInvocation = child;
-  // #1208: notary also has seat-local POST_SUBMISSION_ROUTING. This
-  // parent-side loop remains the gate/correlation budget; nestedIncomplete
-  // from an exhausted seat-local chain surfaces without a second spend.
-  // The child resume keeps the caller's env so delivery, failure recovery,
-  // and other reask loops stay separate.
+  // #1208: review-queue gate children also have seat-local
+  // POST_SUBMISSION_ROUTING. This parent-side loop remains the
+  // gate/correlation budget; nestedIncomplete from an exhausted seat-local
+  // chain surfaces without a second spend. The child resume keeps the
+  // caller's env so delivery, failure recovery, and other reask loops
+  // stay separate.
   let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
     const terminal = await trySettlePublicSeat(

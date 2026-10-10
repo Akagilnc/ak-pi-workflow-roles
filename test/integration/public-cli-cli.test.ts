@@ -39,7 +39,7 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   return withTempRoot("ak-public-cli-cli-", scenario);
 }
 
-test("Inspector public runner preserves typed pass, bounce, escalate, and non-three-state reply", async () => {
+test("Inspector public runner preserves typed converged/continue/escalate, and non-three-state reply", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project);
@@ -50,14 +50,15 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
     // One nested unknown key on the affected accepted path (#696 sample, not schema).
     const freeExtra = { nested: { ok: true } } as const;
     for (const [index, row] of [
-      { status: "pass", exitCode: 0, findings: ["pass-finding"] },
-      { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
+      { status: "converged", exitCode: 0, findings: ["converged-finding"] },
+      { status: "continue", exitCode: 0, findings: ["continue-finding"] },
       { status: "escalate", exitCode: 0, findings: ["escalate-finding"] },
-      // #757: non-three-state is not shape-rejected — reply passes through as accepted.
+      // #757 / ADR 0055: non-three-state is not shape-rejected — reply stays
+      // accepted; seat-local unreadable reask may exhaust before present.
       { status: "unknown", exitCode: 0, findings: "unaltered" as unknown },
     ].entries()) {
       const runId = `inspector-public-${index}`;
-      const details = row.status === "pass"
+      const details = row.status === "converged"
         ? { status: row.status, findings: row.findings, freeExtra }
         : { status: row.status, findings: row.findings };
       const result = await runAkRole([
@@ -93,7 +94,7 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
       if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
       assert.equal((objectPayloads(outcome)[0] ?? {}).status, row.status);
       assert.deepEqual((objectPayloads(outcome)[0] ?? {}).findings, row.findings);
-      if (row.status === "pass") {
+      if (row.status === "converged") {
         assert.deepEqual((objectPayloads(outcome)[0] ?? {}).freeExtra, freeExtra);
       }
       if (row.status === "escalate") {
