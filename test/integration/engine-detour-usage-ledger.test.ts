@@ -894,12 +894,13 @@ test("tool path: engine failure + sitian write failure returns both causes witho
     const scripts = await ensureScripts(project);
 
     // Three real seams (spawn / nonzero / empty). Engine failure stays a tool
-    // result; ledger write failure is carried in structured details — seat lives.
+    // result; full process streams + full ledger error in details — seat lives.
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
       readonly expectEngineErrno?: string;
       readonly expectCode?: number;
+      readonly expectStdout?: string;
     }> = [
       {
         label: "spawn",
@@ -910,11 +911,13 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         label: "nonzero",
         argv: [process.execPath, scripts.nonzero],
         expectCode: 2,
+        expectStdout: "partial",
       },
       {
         label: "empty",
         argv: [process.execPath, scripts.empty],
         expectCode: 0,
+        expectStdout: "",
       },
     ];
 
@@ -951,14 +954,17 @@ test("tool path: engine failure + sitian write failure returns both causes witho
       const details = result.details as {
         tool?: string;
         code?: number;
+        stdout?: string;
         errorCode?: string;
-        ledgerErrorName?: string;
+        ledgerError?: string;
       };
       assert.equal(details.tool, "ak_engine_detour", row.label);
-      assert.equal(
-        details.ledgerErrorName,
-        SitianInfrastructureError.name,
-        `${row.label}: ledger cause kept as structured fact`,
+      // Full thrown value — class name alone is not the cause (#1213).
+      assert.equal(typeof details.ledgerError, "string", row.label);
+      assert.ok(
+        (details.ledgerError as string).includes(SitianInfrastructureError.name)
+          && (details.ledgerError as string) !== SitianInfrastructureError.name,
+        `${row.label}: ledger error keeps more than class name`,
       );
       if (row.expectEngineErrno !== undefined) {
         assert.equal(
@@ -969,6 +975,23 @@ test("tool path: engine failure + sitian write failure returns both causes witho
       }
       if (row.expectCode !== undefined) {
         assert.equal(details.code, row.expectCode, row.label);
+      }
+      if (row.expectStdout !== undefined) {
+        assert.equal(
+          details.stdout,
+          row.expectStdout,
+          `${row.label}: failure keeps full process stdout`,
+        );
+        const textParts = (result.content ?? [])
+          .filter((part): part is { type: "text"; text: string } => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+        if (row.expectStdout.length > 0) {
+          assert.ok(
+            textParts.includes(row.expectStdout),
+            `${row.label}: seat content keeps existing process stdout`,
+          );
+        }
       }
     }
   });

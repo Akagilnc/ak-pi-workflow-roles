@@ -11,7 +11,7 @@ import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "
 
 import {
   ENGINE_DETOUR_TOOL_NAME,
-  engineDetourFailureDiagnostic,
+  engineDetourFailureSeatText,
   isEngineDetourFailure,
   resolveEngineModel,
   resolveEngineName,
@@ -22,6 +22,7 @@ import {
   reportEngineDetourCall,
 } from "./engine-detour-usage.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { serializeThrownValue } from "./serialize-thrown-value.ts";
 
 // #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
 // must obtain the first item as the executable and spawn it (below; #82-98).
@@ -73,28 +74,30 @@ function asError(error: unknown, fallback: string): Error {
 type EngineDetourResultDetails = {
   tool: typeof ENGINE_DETOUR_TOOL_NAME;
   code?: number;
+  /** Full child stdout when the process closed (failure keeps labor output). */
+  stdout?: string;
   stderr?: string;
   /** Node errno on spawn failure (e.g. ENOENT). */
   errorCode?: string;
-  /** Present when the usage-ledger write also failed (失败诚实, seat still lives). */
-  ledgerErrorName?: string;
+  /** Full ledger-write failure when dual-fail (serializeThrownValue; seat still lives). */
+  ledgerError?: string;
 };
 
 function engineFailureResult(input: {
   text: string;
   code?: number;
+  stdout?: string;
   stderr?: string;
   errorCode?: string;
-  ledgerErrorName?: string;
+  ledgerError?: string;
 }): HostToolResult<EngineDetourResultDetails> {
   const details: EngineDetourResultDetails = {
     tool: ENGINE_DETOUR_TOOL_NAME,
     ...(input.code === undefined ? {} : { code: input.code }),
+    ...(input.stdout === undefined ? {} : { stdout: input.stdout }),
     ...(input.stderr === undefined ? {} : { stderr: input.stderr }),
     ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
-    ...(input.ledgerErrorName === undefined
-      ? {}
-      : { ledgerErrorName: input.ledgerErrorName }),
+    ...(input.ledgerError === undefined ? {} : { ledgerError: input.ledgerError }),
   };
   return {
     content: [{ type: "text" as const, text: input.text }],
@@ -179,15 +182,15 @@ export function createEngineDetourToolDefinition(input: {
         });
       };
 
-      /** Record usage; on ledger failure keep the name for 失败诚实 without aborting. */
-      const recordCallOrName = (
+      /** Record usage; on ledger failure keep the full thrown value (失败诚实, no abort). */
+      const recordCallOrLedgerError = (
         observed: { code?: number; stdoutByteLength?: number },
       ): string | undefined => {
         try {
           recordCall(observed);
           return undefined;
         } catch (recordError) {
-          return asError(recordError, "engine detour usage ledger write failed").name;
+          return serializeThrownValue(recordError);
         }
       };
 
@@ -203,7 +206,7 @@ export function createEngineDetourToolDefinition(input: {
         // Spawn path: duration only — code/stdout bytes absent (not forged 0).
         // Return the real cause to the seat; do not abort the run (#1213).
         const engineError = asError(error, "劳务引擎 spawn 失败");
-        const ledgerErrorName = recordCallOrName({});
+        const ledgerError = recordCallOrLedgerError({});
         const errno =
           typeof (engineError as NodeJS.ErrnoException).code === "string"
             ? (engineError as NodeJS.ErrnoException).code
@@ -211,7 +214,7 @@ export function createEngineDetourToolDefinition(input: {
         return engineFailureResult({
           text: engineError.message,
           ...(errno === undefined ? {} : { errorCode: errno }),
-          ...(ledgerErrorName === undefined ? {} : { ledgerErrorName }),
+          ...(ledgerError === undefined ? {} : { ledgerError }),
         });
       }
 
@@ -221,12 +224,13 @@ export function createEngineDetourToolDefinition(input: {
       // Classify closed-child failure before ledger write so a sitian failure
       // cannot erase nonzero/empty engine facts. Still a tool result (#1213).
       if (isEngineDetourFailure(result)) {
-        const ledgerErrorName = recordCallOrName(observed);
+        const ledgerError = recordCallOrLedgerError(observed);
         return engineFailureResult({
-          text: engineDetourFailureDiagnostic(result),
+          text: engineDetourFailureSeatText(result),
           code: result.code,
+          stdout: result.stdout,
           stderr: result.stderr,
-          ...(ledgerErrorName === undefined ? {} : { ledgerErrorName }),
+          ...(ledgerError === undefined ? {} : { ledgerError }),
         });
       }
 
