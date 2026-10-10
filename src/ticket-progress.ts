@@ -269,16 +269,19 @@ export function landTicketProgressForSealedSubmission(input: {
   const progressPath = unbound
     ? join(runDirectory, LEG_PROGRESS_FILENAME)
     : join(subjectDirectory, CURRENT_FILENAME);
-  const existing = unbound
-    ? readProgressFile(progressPath)
-    : readTicketProgressLines(subjectDirectory);
-  // Unbound: round stays empty until whole-leg bind publishes into ticket current.
-  const round = unbound ? "" : nextRoundFromLines(existing, input.role, lens);
+  // Original receipt first — independent of derived progress read/append.
+  // Progress I/O failure must not erase an already-accepted payload (#1199 F1).
   const receiptIndex = nextLegReceiptIndex(runDirectory);
   const relativePath = `runs/${leaf}/${RECEIPTS_DIRNAME}/${receiptIndex}.json`;
   const absolutePath = join(subjectDirectory, relativePath);
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, `${JSON.stringify(input.accepted, null, 2)}\n`, "utf8");
+
+  const existing = unbound
+    ? readProgressFile(progressPath)
+    : readTicketProgressLines(subjectDirectory);
+  // Unbound: round stays empty until whole-leg bind publishes into ticket current.
+  const round = unbound ? "" : nextRoundFromLines(existing, input.role, lens);
 
   const sessionFile = progressSessionAbsolute(runDirectory, input.context);
   const sessionRelative = relative(subjectDirectory, sessionFile).split(sep).join("/");
@@ -335,8 +338,21 @@ export function relocateTicketProgressForLeg(input: {
   }
 
   const ticketLines = [...readTicketProgressLines(subjectDirectory)];
+  // Receipt path is the seal identity. Append-then-unlink partial success must
+  // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
+  const publishedReceipts = new Set(
+    ticketLines
+      .map((line) => line.receipt)
+      .filter((receipt) => typeof receipt === "string" && receipt !== ""),
+  );
+  const pending = mine.filter((line) => !publishedReceipts.has(line.receipt));
+  if (pending.length === 0) {
+    rmSync(stagedPath, { force: true });
+    return;
+  }
+
   const movedLines: TicketProgressLine[] = [];
-  for (const line of mine) {
+  for (const line of pending) {
     // Current unbound staging publishes empty rounds; lens comes only from this
     // leg's admitted page. No legacy staged-round mirror-suffix branch.
     const lens = lensFromRunDirectory(input.runDirectory, line.seat);
