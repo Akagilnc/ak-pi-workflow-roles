@@ -1078,6 +1078,8 @@ export function createRoleRuntimeExtension(
     // #1132: one ceiling for this turn, closed over from the execution seam.
     let receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
     let noReceiptRecorded = false;
+    /** #1208: this-turn dialogue bytes from before_agent_start for receipt催交 resend. */
+    let turnDialoguePrompt: string | undefined;
     /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
     const disposeNavigatorAttendanceNonBlocking = (
       attendance: NavigatorAttendanceDependency | undefined,
@@ -1182,6 +1184,8 @@ export function createRoleRuntimeExtension(
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       const prompt = event.prompt;
+      // #1208: each before_agent_start carries this turn's actual prompt (incl. empty).
+      if (typeof prompt === "string") turnDialoguePrompt = prompt;
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
@@ -1373,6 +1377,7 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
+        // #1208: resend this turn's actual dialogue; stats stay on policy/lifecycle.
         const scopeId = ctx.invocationScopeId?.trim() ?? "";
         envelopeHost.appendEntry(
           RECEIPT_DELIVERY_REQUEST_ENTRY,
@@ -1388,7 +1393,7 @@ export function createRoleRuntimeExtension(
         });
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
-          content: JSON.stringify(receiptDelivery.deliveryState()),
+          content: turnDialoguePrompt ?? "",
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
@@ -1644,6 +1649,7 @@ export function createRoleRuntimeExtension(
       activeCollector = undefined;
       receiptDelivery = createReceiptDeliveryPolicy(deliveryLimit);
       noReceiptRecorded = false;
+      turnDialoguePrompt = undefined;
       pendingNavigatorPresentation = undefined;
       navigatorActivation += 1;
       navigatorDeliveryClosed = false;

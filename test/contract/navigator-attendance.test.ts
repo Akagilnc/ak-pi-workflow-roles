@@ -138,16 +138,12 @@ test("default delivery ceiling sends two Navigator corrections and then stops", 
     while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 3, "one initial prompt plus two corrections, then stop");
-    const deliveryFeed = JSON.parse(harness.promptTexts()[1] ?? "") as {
-      terminalToolCalled?: boolean;
-      acceptedReceipt?: boolean;
-      deliveryTurns?: number;
-      rejectedReceipts?: Array<{ reason?: string }>;
-    };
-    assert.equal(deliveryFeed.terminalToolCalled, true);
-    assert.equal(deliveryFeed.acceptedReceipt, false);
-    assert.equal(deliveryFeed.deliveryTurns, 1);
-    assert.equal(deliveryFeed.rejectedReceipts?.[0]?.reason, "root rejection one");
+    // #1208: corrections resend the prepare request; counts stay on delivery policy / events.
+    const prepareRequest = harness.promptTexts()[0] ?? "";
+    assert.equal(harness.promptTexts()[1], prepareRequest);
+    assert.equal(harness.promptTexts()[2], prepareRequest);
+    const prepared = JSON.parse(prepareRequest) as { kind?: string };
+    assert.equal(prepared.kind, "prepare");
     assert.equal(events[0]?.disposition, "no-advice");
     // #1178: no parallel parent ak-no-receipt-lifecycle off a dead side-branch pointer.
     assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);

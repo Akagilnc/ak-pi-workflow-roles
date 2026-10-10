@@ -382,16 +382,6 @@ test("#1132: a countersign first turn carries the configured delivery ceiling", 
   }
 });
 
-function isDeliveryPrompt(request: RoleTurnRequest): boolean {
-  if (request.continuation.kind !== "resume") return false;
-  try {
-    const parsed = JSON.parse(request.continuation.prompt) as { deliveryTurns?: unknown };
-    return typeof parsed.deliveryTurns === "number";
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Production closeRound (prepareRoleEnvelope + driveExternalRoleTurnRounds).
  * The first round submits unfinished with no reason; later rounds submit nothing.
@@ -462,17 +452,18 @@ test("#1132: closeRound reasks and failure recovery stay off the delivery count"
     const rounds = { count: 0 };
     let failedDelivery = false;
     let outerCalls = 0;
+    // Deterministic fixture ops: initial = closeRound; later resumes = 催交 then
+    // failure recovery — do not infer identity from prompt text (#1208).
     const host = {
       async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
         outerCalls += 1;
-        if (isDeliveryPrompt(request)) {
-          if (!failedDelivery) {
-            failedDelivery = true;
-            return { code: 1, stderr: "host exploded\n", timedOut: false };
-          }
-          return { code: 0, stderr: "", timedOut: false };
+        if (request.continuation.kind === "initial") {
+          return driveFixerCloseRound(request, rounds);
         }
-        if (rounds.count === 0) return driveFixerCloseRound(request, rounds);
+        if (!failedDelivery) {
+          failedDelivery = true;
+          return { code: 1, stderr: "host exploded\n", timedOut: false };
+        }
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -525,8 +516,8 @@ test("#1132: no_receipt records the delivery requests actually issued", async ()
   }
 });
 
-// 首轮之外最多 N 次 — the 催交 bodies carry the count already spent.
-test("#1132: each催交 turn carries pi's existing delivery-state content", async () => {
+// 首轮之外最多 N 次 — #1208: 催交重发本轮实际输入；次数在终局 deliveryTurns。
+test("#1132/#1208: each催交 turn resends this turn's actual prompt", async () => {
   await withSeatHome(async (home) => {
     const run = await runExternalJudge(home, {
       runId: "1132-external-content",
@@ -534,13 +525,12 @@ test("#1132: each催交 turn carries pi's existing delivery-state content", asyn
       limit: 2,
     });
     assert.equal(run.turns.length, 3);
-    // Not the initial prompt — the same typed delivery state pi already uses.
-    assert.notEqual(run.turns[1]?.prompt, "go");
-    const first = JSON.parse(run.turns[1]!.prompt) as { deliveryTurns: number; acceptedReceipt: boolean };
-    assert.equal(first.acceptedReceipt, false);
-    assert.equal(first.deliveryTurns, 1);
-    const second = JSON.parse(run.turns[2]!.prompt) as { deliveryTurns: number };
-    assert.equal(second.deliveryTurns, 2);
+    assert.equal(run.turns[0]?.prompt, "go");
+    assert.equal(run.turns[1]?.prompt, "go");
+    assert.equal(run.turns[2]?.prompt, "go");
+    assert.equal(run.terminal?.roleOutcome.kind, "no_receipt");
+    if (run.terminal?.roleOutcome.kind !== "no_receipt") return;
+    assert.equal(run.terminal.roleOutcome.deliveryTurns, 2);
   });
 });
 

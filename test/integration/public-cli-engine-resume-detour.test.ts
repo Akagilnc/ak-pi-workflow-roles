@@ -4,8 +4,9 @@
  * projects engine onto current.json invocation section. Engine present→absent resume clears
  * invocation.engine (authoritative seat axis).
  *
- * #1167: auto-resume continuation stays the package envelope (no outsourcing append);
- * startup materials still carry the engine segment on every turn of that loop.
+ * #1167 / #1208: auto-resume continuation resends this turn's actual prompt (no
+ * filler phrase / outsourcing append); startup materials still carry the engine
+ * segment on every turn of that loop.
  *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
  * (`createMinimalHost`) so the proof exercises the production composition root.
@@ -14,7 +15,7 @@
  * - Explicit: all seven resumable seats (+ countersign / gleaner-left).
  * - Unset: engine-bearing run → unset-engine → resume clears invocation.engine.
  *
- * Contract surface: `request.engine`, `invocation.engine`, envelope-only continuation,
+ * Contract surface: `request.engine`, `invocation.engine`, actual-prompt continuation,
  * and engine-session-material presence via the same prepareRoleEnvelope path production uses.
  */
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
@@ -36,7 +37,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -64,7 +65,7 @@ const SEAT_TERMINAL: Record<
   { readonly toolName: string; readonly details: Record<string, unknown> }
 > = {
   // #1171 / #1167: ordinary auto-resume cases carry ticketNumber so the soft
-  // missing-ticket reask does not steal the envelope-only continuation turn.
+  // missing-ticket reask does not steal the actual-prompt continuation turn.
   judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged", ticketNumber: 1171 } },
   coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof", ticketNumber: 1171 } },
   fixer: {
@@ -281,6 +282,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       const captured: Array<string | undefined> = [];
       const autoResumePrompts: string[] = [];
       const materialNamesPerTurn: string[][] = [];
+      let initialPrompt: string | undefined;
       let first = true;
       const { io } = captureIo();
       await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
@@ -296,13 +298,14 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
           materialNamesPerTurn.push([...await engineMaterialNames(request)]);
           if (first) {
             first = false;
+            initialPrompt = request.continuation.prompt;
             // Resumability gates (loop + resume load) require the principal session
             // file to exist; seed it through the authoritative coordinates.
             await seedPrincipalSession(request);
             // Unclassified nonzero host exit: the auto-resume loop retries once.
             return { code: 1, stderr: "quota", timedOut: false };
           }
-          // #959 / #1167: real-entry auto-resume stays the non-empty transport envelope.
+          // #1208: real-entry auto-resume resends this turn's actual prompt.
           autoResumePrompts.push(request.continuation.prompt);
           // Second (auto-resume) dispatch: lawful accepted terminal.
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
@@ -325,14 +328,12 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
         captured.every((e) => e === ENGINE),
         `${seat}: every auto-resume typed request keeps effective engine`,
       );
+      assert.ok(initialPrompt !== undefined && initialPrompt.trim() !== "",
+        `${seat}: initial turn must carry non-empty prompt`);
       assert.ok(autoResumePrompts.length >= 1, `${seat}: auto-resume must supply continuation.prompt`);
       assert.ok(
-        autoResumePrompts.every((prompt) => prompt.trim() !== ""),
-        `${seat}: auto-resume continuation.prompt must stay non-empty`,
-      );
-      assert.ok(
-        autoResumePrompts.every((prompt) => prompt === RESUME_TRANSPORT_ENVELOPE),
-        `${seat}: auto-resume continuation must stay envelope-only (no outsourcing append)`,
+        autoResumePrompts.every((prompt) => prompt === initialPrompt),
+        `${seat}: auto-resume continuation must resend this turn's actual prompt`,
       );
       assert.ok(
         materialNamesPerTurn.length >= 2

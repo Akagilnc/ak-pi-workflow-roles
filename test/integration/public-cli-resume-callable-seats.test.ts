@@ -168,7 +168,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         boundTicketNumber: 1171,
       });
     },
-    sealedDetails: () => ({ status: "pass", findings: [] }),
+    sealedDetails: () => ({ status: "converged", findings: [] }),
   },
   {
     role: "inspector",
@@ -184,7 +184,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         createRunId: () => runId,
         boundTicketNumber: 1171,
       }),
-    sealedDetails: () => ({ status: "pass", findings: [] }),
+    sealedDetails: () => ({ status: "converged", findings: [] }),
     originalInstruction: "original admitted inspector instruction",
   },
 ];

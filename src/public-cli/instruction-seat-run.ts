@@ -75,7 +75,6 @@ import {
 } from "./post-admission.ts";
 import { presentTerminal } from "./auto-resume.ts";
 import {
-  buildAutoResumeContinuationPrompt,
   loadResumablePublicRole,
   markRunAdmitted,
   readCurrentCourt,
@@ -136,6 +135,20 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   readonly reask?: string;
 }>> = {
   judge: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
+  // #1208 C1 / ADR 0055: every review-queue seat uses the shared
+  // unreadable-status seam (officerConclusionReask). Independent public
+  // entry for notary/auditor/inspector was the same miss — route here, do
+  // not invent a parallel loop. Gate summons still own the outer budget
+  // via nestedIncomplete when this seat exhausts unsettled.
+  notary: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
+  auditor: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
+  inspector: {
     statuses: REVIEW_QUEUE_STATUSES,
   },
   coder: {
@@ -271,11 +284,14 @@ async function reaskUnreadablePostSubmissionStatus(
   if (message === undefined) return undefined;
   const next = withUnreadableReask(env);
   if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
+  // Named status-reask: summons opens a new court; message carries the diagnostic
+  // (not arbitrary summons.instruction passthrough through the review resolver).
   return runPublicInstructionSeatResume(
     {
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: message },
+      message,
+      summons: { instructionEmpty: true },
     },
     next,
     io,
@@ -329,11 +345,14 @@ async function reaskMissingTicketOnce(
     softTicketReaskTurn: true,
     softTicketReaskOwnership,
   };
+  // Named #1171 missing-ticket: summons opens a new court; message carries the
+  // package reask copy (not arbitrary summons.instruction passthrough).
   const result = await runPublicInstructionSeatResume(
     {
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction },
+      message: instruction,
+      summons: { instructionEmpty: true },
     },
     softReaskEnv,
     io,
@@ -505,8 +524,8 @@ export function buildInstructionSeatTurnRequest(
 
 /**
  * Direct review-seat call: reconnect ledger peer-body delivery (ADR 0085 / #1166).
- * Gate summons already ride gateReviewInstruction; direct --source-run must not
- * leave a blank fixed-kickoff.
+ * Gate summons already ride gateReviewInstruction; direct --source-run falls
+ * through the shared dialogue resolver (notary: fixed dispatch).
  */
 async function loadLedgerPeerBody(
   sourceRunDirectory: string,
@@ -529,34 +548,40 @@ async function loadLedgerPeerBody(
   return readableGateItem(latest.accepted);
 }
 
-/** Owner-approved fixed Notary dispatch (2026-10-09); never the parent verdict. */
+/** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */
 export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
 
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
- * (#1166 / ADR 0085 / ADR 0087): explicit reask → non-empty caller dispatch →
- * source-only ledger peer body. Identity stays in startup materials.
- * #1195: ticket-court notary skips peer-body preload (countersign source only) and
- * receives the fixed dispatch instead (codex rejects an empty prompt).
+ * (#1166 / ADR 0085 / ADR 0087 / #1208): notary review uses fixed dispatch;
+ * named operational reasks ride reviewReask (first-mint / gate) or the resume
+ * request message seam — never arbitrary non-empty caller/summons passthrough.
+ * Other seats prefer format reask, then gate body, then caller dispatch, then
+ * ledger peer. Identity stays in startup materials. Notary never takes
+ * gate/parent verdict as dialogue (gateReviewInstruction stays unread for notary).
  */
-async function resolveReviewSeatDialogueBody(input: {
+export async function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
-  readonly reask?: string;
+  readonly reviewReask?: string;
+  readonly gateReviewInstruction?: string;
   readonly callerInstruction?: string;
   readonly sourceRunPath?: string;
   readonly projectRoot: string;
   readonly home: string;
 }): Promise<string | undefined> {
-  const reask = input.reask;
-  if (reask !== undefined && reask.length > 0) return reask;
+  // #1208: fixed sentence is the review function only (owner 37bfe80d /
+  // 393daf98). reviewReask is the named operational override; caller/summons
+  // body is not a free passthrough (countersign rejected that prescription).
+  if (input.role === "notary") {
+    if (input.reviewReask !== undefined) return input.reviewReask;
+    return NOTARY_FIXED_DISPATCH;
+  }
+  const preferred = input.reviewReask ?? input.gateReviewInstruction;
+  if (preferred !== undefined && preferred.length > 0) return preferred;
   const caller = input.callerInstruction ?? "";
   if (caller.length > 0) return caller;
   const sourceRunPath = admittedSourceRunPath(input)?.trim();
   if (sourceRunPath === undefined) return undefined;
-  if (input.role === "notary") {
-    const { isTicketCourtCountersignSource } = await import("../run-terminal-artifacts.ts");
-    if (isTicketCourtCountersignSource(sourceRunPath)) return NOTARY_FIXED_DISPATCH;
-  }
   return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
 }
 
@@ -567,10 +592,12 @@ async function resolveInitialPrompt(
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
     const sourceRunPath = admittedSourceRunPath(admitted);
-    const reask = env.reviewReask ?? env.gateReviewInstruction;
     const body = await resolveReviewSeatDialogueBody({
       role: admitted.role,
-      ...(reask === undefined ? {} : { reask }),
+      ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
+      ...(env.gateReviewInstruction === undefined
+        ? {}
+        : { gateReviewInstruction: env.gateReviewInstruction }),
       callerInstruction: admitted.instruction,
       ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       projectRoot: admitted.projectRoot,
@@ -702,6 +729,7 @@ async function dispatchAdmitted(
     const initialPromptText = await resolveInitialPrompt(admitted, activeEnv);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
+      // #1208: auto-resume resends this turn's actual content, never a filler phrase.
       return await runPostAdmissionResumable({
         admitted,
         env: activeEnv,
@@ -717,7 +745,7 @@ async function dispatchAdmitted(
           admitted,
           roleTurnOptions(activeEnv, admitted, {
             kind: "resume",
-            prompt: buildAutoResumeContinuationPrompt(),
+            prompt: initialPromptText,
           }),
         ),
         adapters,
@@ -851,21 +879,28 @@ function resumeSameParentInstructionSeat(input: {
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
     freshSummons: input.env.freshSummons,
     summons: input.summons,
-    resume: (runId, materials, runDirectory) => runPublicInstructionSeatResume(
-      {
-        runId,
-        runDirectory,
-        ...(materials === undefined ? {} : { summons: materials }),
-      },
-      input.env,
-      input.io,
-    ),
+    resume: (runId, materials, runDirectory) => {
+      // Named operational reask on this summon: explicit message seam.
+      // Review dialogue stays on summons → shared resolver (notary: fixed).
+      // Do not stuff reask into summons.instruction for later passthrough.
+      const reask = input.env.reviewReask;
+      return runPublicInstructionSeatResume(
+        {
+          runId,
+          runDirectory,
+          ...(reask === undefined ? {} : { message: reask }),
+          ...(materials === undefined ? {} : { summons: materials }),
+        },
+        input.env,
+        input.io,
+      );
+    },
   });
 }
 
 /**
  * Same delivery rule as resolveInitialPrompt for same-parent resume summons.
- * Reask / explicit caller text / source-only ledger peer — one authority.
+ * Shared resolver owns the input choice — callers only pass env fields.
  */
 async function sameParentDialogue(
   env: InstructionSeatRunEnv,
@@ -874,10 +909,12 @@ async function sameParentDialogue(
   projectRoot: string,
   role: string,
 ): Promise<{ readonly instruction: string; readonly instructionEmpty: boolean }> {
-  const reask = env.reviewReask ?? env.gateReviewInstruction;
   const body = await resolveReviewSeatDialogueBody({
     role,
-    ...(reask === undefined ? {} : { reask }),
+    ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
+    ...(env.gateReviewInstruction === undefined
+      ? {}
+      : { gateReviewInstruction: env.gateReviewInstruction }),
     callerInstruction: fallback.instruction,
     sourceRunPath,
     projectRoot,
@@ -898,16 +935,27 @@ async function runCountersignBody(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
+  const projectRoot = resolve(parsed.project ?? env.cwd);
   const gateParentRunPath =
     typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
       ? env.parentRunPath
       : undefined;
   if (gateParentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
+    // #1208 C1: same shared dialogue resolver as every other same-parent seat.
+    const dialogue = await sameParentDialogue(
+      env,
+      {
+        instruction: parsed.instruction ?? "",
+        instructionEmpty: (parsed.instruction ?? "").length === 0,
+      },
+      gateParentRunPath,
+      projectRoot,
+      "countersign",
+    );
     const resumed = await resumeSameParentInstructionSeat({
       env,
       io,
-      projectRoot: resolve(parsed.project ?? env.cwd),
+      projectRoot,
       role: "countersign",
       parentRunPath: gateParentRunPath,
       ...(isSafePositiveTicketNumber(env.boundTicketNumber)
@@ -915,8 +963,8 @@ async function runCountersignBody(
         : {}),
       summons: {
         sourceRunPath: gateParentRunPath,
-        instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.length === 0,
+        instruction: dialogue.instruction,
+        instructionEmpty: dialogue.instructionEmpty,
         // #1166 J11: same-parent resume delivers this call's file-flag paths
         // through the shared summons → appendCallerFileFlagPaths rule.
         attachmentPaths: parsed.attachmentPaths ?? [],
@@ -954,14 +1002,10 @@ async function runCountersignBody(
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
-      // #1166 J11: review-body branch must merge the same file-flag delivery as
-      // resolveInitialPrompt / resumeTurnRequestProjectionOptions — never body alone.
-      const reviewBody = env.reviewReask ?? env.gateReviewInstruction;
+      // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
-        prompt: reviewBody !== undefined
-          ? appendCallerFileFlagPaths(reviewBody, admitted.attachments)
-          : buildInstructionTransportPrompt(admitted),
+        prompt: await resolveInitialPrompt(admitted, env),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
@@ -1187,6 +1231,10 @@ export async function runPublicInstructionSeat(
     await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
     admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
   }
+  // #1208 C2: same helper as resume — known board ticket on the audited
+  // source binds and relocates before the missing-ticket soft reask can
+  // fire. True no-ticket sources stay unbound (#1171 asks once).
+  admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
@@ -1235,6 +1283,25 @@ export async function runPublicInstructionSeat(
   return runAdmitted();
 }
 
+/**
+ * #1208 C2: same as new source-locator admission — when this leg is still
+ * unbound, inherit the board ticket already on the audited source and relocate.
+ * True no-ticket sources stay unbound so #1171 still asks once.
+ */
+async function inheritKnownTicketFromSource(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<AdmittedRoleInvocation> {
+  if (admitted.ticketNumber !== undefined) return admitted;
+  const sourcePath = admittedSourceRunPath(admitted);
+  if (sourcePath === undefined) return admitted;
+  const sourceTicket = await readBoardTicketNumber(sourcePath);
+  if (sourceTicket === undefined) return admitted;
+  await bindAdmittedTicketNumber(admitted, sourceTicket);
+  await relocateAdmittedRunToTicket(admitted, authority);
+  return admitted;
+}
+
 export async function runPublicInstructionSeatResume(
   request: PublicResumeRequest,
   env: InstructionSeatRunEnv,
@@ -1259,30 +1326,53 @@ export async function runPublicInstructionSeatResume(
         env.principalAuthority,
         effective.runDirectory === undefined ? undefined : { runDirectory: effective.runDirectory },
       );
+      let admitted = loaded.admitted;
       if (
-        packagedRebindSourceOnResume(loaded.admitted.role)
+        packagedRebindSourceOnResume(admitted.role)
         && effective.summons?.sourceRunPath !== undefined
         && effective.summons.sourceRun !== undefined
       ) {
-        return {
-          ...loaded,
-          admitted: {
-            ...loaded.admitted,
-            sourceRunPath: effective.summons.sourceRunPath,
-            sourceRun: effective.summons.sourceRun,
-          },
-        };
+        // source-locator seats only (notary); sourceRun is on that admission face.
+        admitted = {
+          ...admitted,
+          sourceRunPath: effective.summons.sourceRunPath,
+          sourceRun: effective.summons.sourceRun,
+        } as AdmittedRoleInvocation;
       }
-      return loaded;
+      admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
+      return { ...loaded, admitted };
     },
     buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
-      return buildInstructionSeatTurnRequest(
-        admitted,
-        {
-          ...resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
-        },
+      const projection = resumeTurnRequestProjectionOptions(
+        admitted, effective, env, summonsPrepared,
       );
+      // #1208: internal summons only — shared resolver owns review dialogue.
+      // Public bare resume / explicit message keep projection (operational
+      // reasks use the message seam). Do not reselect stale env dialogue over
+      // this-round summons (#1208 R1).
+      if (effective.summons === undefined || effective.message !== undefined) {
+        return buildInstructionSeatTurnRequest(admitted, { ...projection });
+      }
+      const sourceRunPath = admittedSourceRunPath(admitted);
+      const body = await resolveReviewSeatDialogueBody({
+        role: admitted.role,
+        callerInstruction: summonsPrepared?.instruction ?? "",
+        ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+      });
+      if (body === undefined) {
+        return buildInstructionSeatTurnRequest(admitted, { ...projection });
+      }
+      const fileFlags = summonsPrepared?.attachments ?? [];
+      const prompt = fileFlags.length === 0
+        ? body
+        : appendCallerFileFlagPaths(body, fileFlags);
+      return buildInstructionSeatTurnRequest(admitted, {
+        ...projection,
+        continuation: { kind: "resume", prompt },
+      });
     },
     adapters: {
       trySettle: async () => undefined,
@@ -1361,9 +1451,12 @@ async function queueConclusionFromChild(
     return { stop: { exitCode: 0, ...(terminal === undefined ? {} : { terminal }) } };
   }
   let current: AdmittedRoleInvocation = child;
-  // Notary, auditor, and inspector have no seat-local status reask. This loop
-  // is their one budget. The child resume keeps the caller's env so delivery,
-  // failure recovery, and other reask loops stay separate.
+  // #1208: review-queue gate children also have seat-local
+  // POST_SUBMISSION_ROUTING. This parent-side loop remains the
+  // gate/correlation budget; nestedIncomplete from an exhausted seat-local
+  // chain surfaces without a second spend. The child resume keeps the
+  // caller's env so delivery, failure recovery, and other reask loops
+  // stay separate.
   let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
     const terminal = await trySettlePublicSeat(
@@ -1548,7 +1641,8 @@ async function auditSubmittedRole(
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: SECRETARIAT_STATUS_REASK },
+      message: SECRETARIAT_STATUS_REASK,
+      summons: { instructionEmpty: true },
     }, next, io);
   }
   if (admitted.role === "countersign" && (typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status))) {
@@ -1562,7 +1656,8 @@ async function auditSubmittedRole(
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: officerConclusionReask(status) },
+      message: officerConclusionReask(status),
+      summons: { instructionEmpty: true },
     }, next, io);
   }
   // Self-escalation is a valid open routing state for these seats only.

@@ -9,11 +9,9 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 
 import {
-  buildAutoResumeContinuationPrompt,
   findRunDirectoryById,
   resolveLiveRunDirectoryPath,
   readRoleRunState,
-  RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -820,17 +818,14 @@ function settlementScopeForTurn(request: RoleTurnRequest): SettlementCourtScope 
 }
 
 /**
- * #1132: one 没交卷催交 turn, dispatched through the SAME settlement path as the
- * first turn.
+ * #1132 / #1208: one 没交卷催交 turn, dispatched through the SAME settlement path
+ * as the first turn.
  *
- * There is deliberately no second settlement implementation here. A delivery
- * turn is an ordinary host turn on this same run/session: this builds the
- * host-neutral resume request (the adapter's stored native session id, ADR 0082;
- * pi's existing delivery-state content reused verbatim — no new prompt wording,
- * no new host capability). The caller settles it through the same
- * `settleCompletedHostTurn` the first turn uses (ADR 0080): the runner/host
- * failure re-read, the shouldPresent gate, the fresh-seal check, open-court
- * cleanup, cancel re-reads, run-state persist, and the stderr mirror.
+ * A delivery turn is an ordinary host turn on this same run/session: this builds
+ * the host-neutral resume request (the adapter's stored native session id,
+ * ADR 0082). #1208: resend this turn's actual prompt — never substitute
+ * delivery-state / run-stats JSON for dialogue. Counts, rejections, and
+ * no_receipt facts stay on receiptDelivery / lifecycle settlement.
  *
  * The caller owns the live delivery policy; the request projects its next send.
  */
@@ -844,10 +839,7 @@ function buildReceiptDeliveryRequest(input: {
     ...request,
     continuation: {
       kind: "resume",
-      prompt: JSON.stringify({
-        ...receiptDelivery.deliveryState(),
-        deliveryTurns: receiptDelivery.issuedDeliveryRequests() + 1,
-      }),
+      prompt: request.continuation.prompt,
     },
     deliveryRequestLimit: receiptDelivery.limit,
   };
@@ -1723,8 +1715,8 @@ export function resumeTurnRequestProjectionOptions(
       ? body
       : appendCallerFileFlagPaths(body, fileFlags);
   } else if (request.summons !== undefined) {
-    // #879: same-ticket summons with no instruction (e.g. notary source-run binding
-    // only). Pointer is activation/sourceRun material — not dialogue content.
+    // Same-ticket summons without prepared dialogue. Notary review fills via
+    // resolveReviewSeatDialogueBody (#1208); other seats carry parent/caller words.
     prompt = "";
   } else {
     prompt = "";
@@ -2050,21 +2042,15 @@ export async function runPostAdmissionSeatResume<
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         toRequest: async (payload) => {
-          // #840 r8 判词 class 2: this call-local retry must keep this
-          // court's frozen summons / 交卷 body / attachments verbatim
-          // (same object as firstTurn) and project only the minimal
-          // host-needed resume trigger — never engine handbook material,
-          // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
-          // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
-          // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
-          // non-semantic trigger that projection already uses for a
-          // same-ticket summons carrying no instruction/attachments.
+          // #840 r8 / #1208: call-local retry keeps this court's frozen summons /
+          // 交卷 body / attachments and resends the same turn prompt — never a
+          // filler phrase or engine handbook substitute.
           if (payload.resumeTurn && firstTurn !== undefined) {
             return {
               ...firstTurn,
               continuation: {
                 kind: "resume",
-                prompt: RESUME_TRANSPORT_ENVELOPE,
+                prompt: firstTurn.continuation.prompt,
               },
             };
           }
@@ -2227,6 +2213,7 @@ export async function runPostAdmissionOneShot<
   admitted?: A;
   terminal?: T;
 }> {
+  // #1208: auto-resume resends this turn's actual prompt, never a filler phrase.
   return await runPostAdmissionResumable({
     admitted: input.admitted,
     env: input.env,
@@ -2236,7 +2223,7 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
-        prompt: buildAutoResumeContinuationPrompt(),
+        prompt: input.request.continuation.prompt,
       },
     }),
     adapters: input.adapters,

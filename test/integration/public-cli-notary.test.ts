@@ -78,8 +78,8 @@ function scriptedNotarySession(
     typeof details === "object" &&
     details !== null &&
     "status" in details &&
-    ((details as { status?: unknown }).status === "pass" ||
-      (details as { status?: unknown }).status === "bounce" ||
+    ((details as { status?: unknown }).status === "converged" ||
+      (details as { status?: unknown }).status === "continue" ||
       (details as { status?: unknown }).status === "escalate");
   return scriptedTerminatingToolSession({
     role: "notary",
@@ -335,7 +335,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+            piRunner: scriptedNotarySession({ status: "converged", findings: [] }),
           }),
       },
     );
@@ -364,7 +364,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
   });
 });
 
-test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () => {
+test("layer ① lawful converged/continue/escalate exit 0 via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -372,9 +372,9 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
 
     const receipts = [
-      { status: "pass", findings: [] as string[] },
+      { status: "converged", findings: [] as string[] },
       {
-        status: "bounce",
+        status: "continue",
         findings: ["quote has no source"],
         disposition: "rewrite",
       },

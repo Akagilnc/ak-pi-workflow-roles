@@ -325,7 +325,11 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        assert.equal(inspected.prompt, expectedPromptForGate);
+        // #1208: notary always receives the fixed dispatch; other officers get peer body.
+        const expectedPrompt = request.activation.role === "notary"
+          ? NOTARY_FIXED_DISPATCH
+          : expectedPromptForGate;
+        assert.equal(inspected.prompt, expectedPrompt);
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
         if (gate.expectedIdentity !== undefined) {
@@ -355,7 +359,7 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
   });
 });
 
-test("#1166 same parent re-submits: officer first utterance is the new ledger copy", async () => {
+test("#1166/#1208 same parent re-submits: notary fixed dispatch; auditor gets new ledger copy", async () => {
   await withTempRoot("ak-1166-resubmit-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -448,7 +452,7 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
     );
     assert.equal(firstResult.exitCode, 0, firstIo.stderr.join(""));
     assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], readableGateItem(first));
+    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
 
     if (notaryPrompts.length < 2) {
       const resumeIo = captureIo();
@@ -467,12 +471,11 @@ test("#1166 same parent re-submits: officer first utterance is the new ledger co
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), readableGateItem(second));
-    assert.notEqual(notaryPrompts[0], notaryPrompts.at(-1));
+    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
   });
 });
 
-test("#1166 direct notary/auditor public entry: same identity; first utterance is ledger peer body", async () => {
+test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixed, auditor peer body", async () => {
   await withTempRoot("ak-1166-direct-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -558,7 +561,10 @@ test("#1166 direct notary/auditor public entry: same identity; first utterance i
         identity: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
-      assert.equal(inspected.prompt, expectedPrompt);
+      assert.equal(
+        inspected.prompt,
+        seat.role === "notary" ? NOTARY_FIXED_DISPATCH : expectedPrompt,
+      );
       if (seat.role === "auditor") {
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
@@ -696,8 +702,6 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
     assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
-    // Peer body would differ across resubmits; blind dialogue stays the fixed dispatch.
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");
