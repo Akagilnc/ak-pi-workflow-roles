@@ -293,7 +293,10 @@ export async function prepareRoleEnvelope(options: {
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
-  /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
+  /**
+   * Typed correctable non-pass only arms closeRound retry.
+   * Ordinary tool isError must not register as submission/audit rejection (#1214 F3).
+   */
   function rememberProjectedRejection(
     details: unknown,
     toolCallId: string,
@@ -303,11 +306,20 @@ export async function prepareRoleEnvelope(options: {
     const record = details as Record<string, unknown>;
     if (record.cause === "infrastructure") return;
     if (record.kind === "role_infrastructure_failure") return;
-    const code = typeof record.code === "string" && record.code.length > 0
+    const status = typeof record.status === "string" ? record.status : undefined;
+    const rawCode = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "continue" || record.status === "escalate" || record.status === "no_receipt"
-        ? record.status
-        : undefined;
+      : undefined;
+    // Queue words and known reminder/reask codes only — never arbitrary execute codes.
+    const code =
+      status === "continue" || status === "escalate" || status === "no_receipt"
+        ? status
+        : rawCode === "worker_commit_reminder"
+          || rawCode === "worker_prefix_reminder"
+          || rawCode === "worker_unfinished_reason_reminder"
+          || rawCode === "parent_queue_reask"
+          ? rawCode
+          : undefined;
     if (code === undefined) return;
     // Officer bounce/escalate text is already the tool_result content (GatekeeperDecisionError
     // message = raw receipt). Adapters resume with this message — never a host-invented line (#813).

@@ -20,7 +20,6 @@ import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import { persistAdmittedAuditedSubmissionToolCallId } from "./public-cli/invocation.ts";
 import { readRunParentPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import {
-  GatekeeperDecisionError,
   officerConclusionReask,
   projectGatekeeperRun,
   type SubmissionGateHostActions,
@@ -121,14 +120,14 @@ export function createDefaultGateOfficerSummon(options: {
  * Parent does not book officer pointers or project other-seat finals (#1195).
  */
 export type SubmissionGateOutcome = {
-  readonly status: ReviewQueueWord | "needs_reask" | "transport_failure";
+  readonly status: ReviewQueueWord | "needs_reask" | "transport_failure" | "no_receipt";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
   /** Officer terminal already returned by the summon. Present when the reply was not a queue word. */
   readonly terminal?: TerminalResult;
-  /** transport_failure reason from the officer summon/process. */
+  /** transport_failure / no_receipt reason from the officer summon/process. */
   readonly reason?: string;
 };
 
@@ -185,6 +184,7 @@ export async function requireSubmissionGate(options: {
         || gatekeeper.status === "escalate"
         || gatekeeper.status === "needs_reask"
         || gatekeeper.status === "transport_failure"
+        || gatekeeper.status === "no_receipt"
       )
     ) {
       const officerRunDirectory = await directoryForSummonedOfficer(
@@ -290,9 +290,24 @@ export async function requireSubmissionGate(options: {
           : { terminal: projected.summoned.terminal }),
       };
     }
-    // no_receipt: keep the lifecycle failure channel; continue is an ordinary
-    // nonterminal tool result above, not an exception or correctable rejection.
-    options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
-    throw new GatekeeperDecisionError(gatekeeper);
+    // #1214 F2: lawful officer no_receipt is a typed incomplete outcome, not a
+    // call-killing exception. Present honestly; do not bind/throw as non-pass.
+    return {
+      status: "no_receipt",
+      officer: projected.officer,
+      receipt: gatekeeper.facts ?? { reason: gatekeeper.reason },
+      reason: gatekeeper.reason,
+      ...(typeof projected.summoned?.terminal?.runId === "string"
+        && projected.summoned.terminal.runId.trim() !== ""
+        ? { runId: projected.summoned.terminal.runId }
+        : {}),
+      ...(typeof projected.summoned?.runDirectory === "string"
+        && projected.summoned.runDirectory.trim() !== ""
+        ? { runDirectory: projected.summoned.runDirectory }
+        : {}),
+      ...(projected.summoned?.terminal === undefined
+        ? {}
+        : { terminal: projected.summoned.terminal }),
+    };
   }
 }

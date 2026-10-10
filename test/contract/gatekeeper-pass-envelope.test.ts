@@ -270,3 +270,51 @@ test("#1214 A5: officer transport_failure returns honestly; does not failInfrast
     assert.equal(outcome?.terminal?.roleOutcome.kind, "failure");
   }),
 );
+
+test("#1214 F2: officer no_receipt returns as typed outcome; does not throw or bind non-pass",
+  async () => withTempRoot("ak-gate-noreceipt-", async (root) => {
+    const parentRun = parentRunDirectory(root);
+    let bindCalls = 0;
+    const officerTerminal = {
+      roleOutcome: {
+        kind: "no_receipt" as const,
+        role: "notary" as const,
+        status: "no-accepted-receipt" as const,
+        decisiveFacts: {},
+      },
+      navigator: { disposition: "no-advice" as const },
+      artifacts: [] as const,
+      runId: "01a01214-nore-7000-8000-000000000042",
+    };
+    const outcome = await requireSubmissionGate({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
+      } as never,
+      subject: { kind: "judge_draft" },
+      toolCallId: "t-noreceipt",
+      hostActions: {
+        failInfrastructure(): never {
+          throw new Error("infra must not run for no_receipt");
+        },
+        bindSubmissionNonPass() {
+          bindCalls += 1;
+          throw new Error("no_receipt returns as outcome; no non-pass bind");
+        },
+      },
+      summonOfficer: async () => ({
+        exitCode: 0,
+        runDirectory: "/tmp/runs/01a01214-nore-7000-8000-000000000042@notary",
+        terminal: officerTerminal,
+      }),
+    });
+    assert.equal(bindCalls, 0, "F2: no_receipt must not bindSubmissionNonPass");
+    assert.equal(outcome?.status, "no_receipt");
+    assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
+    assert.equal(
+      outcome && "runId" in outcome ? outcome.runId : undefined,
+      "01a01214-nore-7000-8000-000000000042",
+    );
+    assert.equal(outcome?.terminal?.roleOutcome.kind, "no_receipt");
+  }),
+);

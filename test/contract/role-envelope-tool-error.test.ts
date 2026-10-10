@@ -59,14 +59,14 @@ test("#1214 A1: tool execute error returns isError without round infrastructure 
       );
       const closed = await prepared.closeRound();
       assert.equal(
-        closed.accepted,
-        false,
-        "no terminating submission was sealed this round",
-      );
-      assert.equal(
         "failure" in closed && closed.failure !== undefined,
         false,
         "single tool execute error must not become round infrastructure failure",
+      );
+      assert.equal(
+        "retry" in closed && (closed as { retry?: unknown }).retry !== undefined,
+        false,
+        "#1214 F3: ordinary tool isError must not arm typed rejection retry",
       );
     } finally {
       await prepared.dispose?.();

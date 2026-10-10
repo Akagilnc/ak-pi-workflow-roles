@@ -18,7 +18,7 @@ export const JUDGE_GATES: readonly GatekeeperSubject[] = [
   { kind: "judge_compliance" },
 ];
 
-export type JudgeGateStatus = ReviewQueueWord | "needs_reask" | "transport_failure";
+export type JudgeGateStatus = ReviewQueueWord | "needs_reask" | "transport_failure" | "no_receipt";
 
 export async function runJudgeGates(input: {
   readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
@@ -61,7 +61,8 @@ export async function runJudgeGates(input: {
       typeof received !== "string"
       || (!REVIEW_QUEUE_STATUSES.has(received)
         && received !== "needs_reask"
-        && received !== "transport_failure")
+        && received !== "transport_failure"
+        && received !== "no_receipt")
     )) {
       // #1214 A12: do not convert missing/unreadable gate conclusion into a
       // parent-killing throw. Surface needs_reask so callers present honestly.
@@ -78,7 +79,7 @@ export async function runJudgeGates(input: {
       };
     }
     const status = received as JudgeGateStatus;
-    if (status === "needs_reask" || status === "transport_failure") {
+    if (status === "needs_reask" || status === "transport_failure" || status === "no_receipt") {
       return {
         status,
         passes: [{

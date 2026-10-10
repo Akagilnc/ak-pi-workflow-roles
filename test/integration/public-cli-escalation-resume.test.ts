@@ -53,6 +53,8 @@ type Observation = {
     readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
+  /** stdout chunks from the most recent resume/resumeRun call. */
+  lastResumeStdout(): readonly string[];
   resume(message?: string): Promise<CliResult>;
   resumeRun(runId: string, message?: string): Promise<CliResult>;
 };
@@ -179,6 +181,7 @@ async function runJudge(
         .filter((identity) => identity !== undefined);
       const parent = identities.find((identity) => identity.role === "judge");
       assert.ok(parent);
+      let lastResumeStdout: string[] = [];
       await assertIn({
         first,
         firstStdout: capture.stdout,
@@ -189,16 +192,20 @@ async function runJudge(
         parentMessages,
         judgeSubmissions,
         officerSessions,
+        lastResumeStdout: () => lastResumeStdout,
         async resumeRun(runId: string, message?: string) {
           const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
-          return runAkRole(args, {
+          const resumeCapture = captureIo();
+          const result = await runAkRole(args, {
             packageRoot,
             home,
             cwd: project,
-            io: captureIo().io,
+            io: resumeCapture.io,
             principalAuthority: piDurablePrincipalAuthority,
             hostAdapters: [adapter("pi", routed)],
           });
+          lastResumeStdout = resumeCapture.stdout;
+          return result;
         },
         async resume(message?: string) {
           const officerRunId = first.terminal?.runId;
@@ -397,7 +404,7 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1057/#1214 A5: a remaining gate host failure does not publish a pass or kill parent volume", async () => {
+test("#1057/#1214 A5/F1: gate host failure presents parent original and officer scene; does not forge pass", async () => {
   let notaryCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -415,6 +422,15 @@ test("#1057/#1214 A5: a remaining gate host failure does not publish a pass or k
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
     // Parent is not rewritten as the failed seat identity.
     assert.notEqual(continued.terminal?.roleOutcome.role, "judge");
+    // #1214 F1: public stdout carries the audited original (judge) and the officer scene.
+    // Feature observation only — do not lock free-text wording or table headers.
+    const resumeOut = observed.lastResumeStdout().join("\n");
+    assert.equal(resumeOut.includes("judge"), true, "F1: parent original must appear on public stdout");
+    assert.equal(
+      resumeOut.includes("auditor") || continued.terminal?.roleOutcome.role === "auditor",
+      true,
+      "F1: officer scene must remain visible",
+    );
   });
 });
 
