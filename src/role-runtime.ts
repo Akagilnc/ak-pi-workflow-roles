@@ -7,7 +7,6 @@ import {
   ExplicitInternalActivationError,
 
   runDirectoryFromHostContext,
-  SUMMONS_INSTRUCTION_ENV,
   type HostContext,
   type RoleEnvelopeHost,
   type RoleHost,
@@ -1170,10 +1169,12 @@ export function createRoleRuntimeExtension(
         settleNavigatorProjection,
       );
     };
-    roleHost.on("input", (_event, _ctx) => {
-      // #1199: 传召词 rides RoleTurnRequest.summonsInstruction → HostContext /
-      // child env. Do not overwrite from pi input text — that may be the
-      // file-flag delivery wrapper, not the public raw 传召词.
+    roleHost.on("input", (event, ctx) => {
+      // #1199: first/continue input seam retains this-turn 传召词 (票面当轮实际输入).
+      // HostContext field only — never process.env body (nested identity / ARG_MAX).
+      if (typeof event.text === "string") {
+        ctx.summonsInstruction = event.text;
+      }
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
@@ -1377,11 +1378,9 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // receipt delivery must not be mistaken for later caller input.
-        // #1199: envelope 包内催交 updates this-turn HostContext instruction
-        // (and child env so later pi projections see the same bytes).
+        // #1199: 包内催交补记 on the same HostContext input responsibility (no env body).
         const deliveryContent = JSON.stringify(receiptDelivery.deliveryState());
         ctx.summonsInstruction = deliveryContent;
-        process.env[SUMMONS_INSTRUCTION_ENV] = deliveryContent;
         const scopeId = ctx.invocationScopeId?.trim() ?? "";
         envelopeHost.appendEntry(
           RECEIPT_DELIVERY_REQUEST_ENTRY,

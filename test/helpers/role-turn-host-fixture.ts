@@ -434,6 +434,7 @@ export function roleTurnHostFromLegacyPiRunner(options: {
       await sealAcceptedSubmissionForSpawn({
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
+        ...(spawnOptions.stdin === undefined ? {} : { stdin: spawnOptions.stdin }),
         role: result.sealedAcceptance.role,
         details: result.sealedAcceptance.details,
         ...(result.sealedAcceptance.outputDetails === undefined

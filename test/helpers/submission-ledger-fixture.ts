@@ -5,12 +5,12 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { SUMMONS_INSTRUCTION_ENV } from "../../src/host-contracts.ts";
 import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /**
  * #1183: ledger-mouth place may move the leaf while the faux in-process spawn
@@ -48,7 +48,7 @@ async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
-  /** #1199 this-turn summons / 催交 from the input seam (spawn env / HostContext). */
+  /** #1199 this-turn summons / 催交 from the input seam (HostContext field). */
   readonly summonsInstruction?: string;
   /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
@@ -160,6 +160,8 @@ export async function sealAcceptedSubmission(input: {
 export async function sealAcceptedSubmissionForSpawn(input: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  /** #1199: same stdin dialogue the live Pi child input seam records. */
+  readonly stdin?: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
   readonly outputDetails?: unknown;
@@ -183,11 +185,9 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     input.env.AK_ROLE_COURT_ATTEMPT.length > 0
       ? input.env.AK_ROLE_COURT_ATTEMPT
       : undefined;
-  // Same child-env projection the live pi adapter uses for HostContext (#1199).
+  // #1199: faux spawn mirrors the live input seam — dialogue body on stdin, not env.
   const summonsInstruction =
-    typeof input.env[SUMMONS_INSTRUCTION_ENV] === "string"
-      ? input.env[SUMMONS_INSTRUCTION_ENV]
-      : undefined;
+    typeof input.stdin === "string" ? readUserDialogueStdin(input.stdin) : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,

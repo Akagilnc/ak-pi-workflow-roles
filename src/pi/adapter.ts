@@ -18,7 +18,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
-import { runDirectoryFromHostContext, SUMMONS_INSTRUCTION_ENV } from "../host-contracts.ts";
+import { runDirectoryFromHostContext } from "../host-contracts.ts";
 import { sitianReportSafe } from "../host-session-record.ts";
 import { isTerminatingToolName } from "../package-contracts/terminating-tools.ts";
 import { sessionFileOf } from "../role-run-placement.ts";
@@ -33,6 +33,8 @@ import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
+/** One HostContext per Pi activation so input-seam / 催交 mutations reach seal (#1199). */
+const hostByPiContext = new WeakMap<ExtensionContext, HostContext>();
 
 /** Pi-only entrypoint adapter around the host-neutral shared composition. */
 export function createPiRoleRuntimeExtension(
@@ -47,7 +49,14 @@ export function createPiRoleRuntimeExtension(
 
 /** Project Pi's activation context onto the package-owned host contract. */
 function projectPiContext(context: ExtensionContext, transcriptFromContext?: (context: ExtensionContext) => string): HostContext {
+  const cached = hostByPiContext.get(context);
+  if (cached !== undefined) {
+    piContexts.set(cached, context);
+    return cached;
+  }
   const sessionManager = context.sessionManager as SessionManager;
+  // Identity pointers may ride child env (paths / ids). Body text does not —
+  // #1199 传召词 is recorded on this HostContext by the input / 催交 seam.
   const host: HostContext = {
     cwd: context.cwd,
     mode: context.mode,
@@ -64,9 +73,6 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
       ? { host: process.env.AK_ROLE_HOST.trim() }
       : {}),
-    ...(typeof process.env[SUMMONS_INSTRUCTION_ENV] === "string"
-      ? { summonsInstruction: process.env[SUMMONS_INSTRUCTION_ENV] }
-      : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),
@@ -82,6 +88,7 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
     abort: () => context.abort(),
   };
+  hostByPiContext.set(context, host);
   piContexts.set(host, context);
   return host;
 }
