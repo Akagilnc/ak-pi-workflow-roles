@@ -18,9 +18,7 @@ import type { SitianRecord } from "./sitian-contracts.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
-import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic } from "./package-contracts/terminating-infrastructure.ts";
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import {
   captureWorktreeHead,
@@ -502,8 +500,8 @@ export async function sealAcceptedSubmission(options: {
 export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName | readonly TerminalRoleName[]>,
-  failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
-  projectClosure: (closed: ClosedSubmission, context: HostContext) => void | Promise<void> = () => undefined,
+  failInfrastructure: (error: unknown, context: HostContext, toolCallId?: string) => never = (error) => { throw error; },
+  projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
@@ -565,112 +563,104 @@ export function createSubmissionLedgerHost(
       host.registerTool({
         ...tool,
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
-          // #1183: valid typed ticket on the submission is identity acquisition —
-          // bind/relocate once here, before reask / ledger restore / seal outcomes.
-          // Host return must not be the first placement (dossier-topology).
-          const typedTicket = isRecord(params)
-            ? readDeclaredTicketNumber(params.ticketNumber)
-            : undefined;
-          if (typedTicket !== undefined) {
-            await reportTicketFromHostContext(context, typedTicket);
-          }
-          const runId = runIdentity(context);
-          const attemptId = attemptIdentity(context, runId);
-          const state = await stateFor(context, runId);
-          const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
-          // #541 / #575: shared infra-declaration fail lives on the ledger seam.
-          // #641 chain②: seats may bounce a misdeclared infrastructure failure
-          // as correctable (2.1/2.2/2.3 keep paths).
-          append({
-            type: "candidate",
-            attemptId,
-            toolCallId,
-            toolName: tool.name,
-            sequence: ++state.sequence,
-            role,
-            params,
-          });
+          // #1214 R1/R1b: ledger reads/appends/seal landing AND ticket bind/relocate
+          // are host infrastructure. Their failure rides the declared failure seam
+          // (keeps 真因, closes the round as failure). Only tool.execute's own throws
+          // stay on the tool-result face (correctable / ordinary isError).
+          let toolThrew = false;
           let result: HostToolResult<unknown>;
+          let closed: ClosedSubmission;
           try {
-            // A review escalate that carries the failure declaration is the
-            // seat's own submission. Every other declaration stays on the
-            // host-failure seam. Tool identity comes from the registry map.
-            const reviewEscalate = tool.name === REVIEW_SUBMISSION_OUTPUT_TOOL_NAME
-              && infrastructureFailureDiagnostic(params) !== undefined
-              && isRecord(params)
-              && (params as Record<string, unknown>).status === "escalate";
-            if (!reviewEscalate) {
-              failOnInfrastructureFailureDeclaration(
-                params,
-                {
-                  failInfrastructure(error, ctx) {
-                    failInfrastructure(error, ctx);
-                  },
-                },
-                context,
-                toolCallId,
-                tool.bounceInfrastructureDeclaration,
-              );
+            // #1183 / #1214 R1b: valid typed ticket is identity acquisition —
+            // bind/relocate once here, before reask / ledger restore / seal.
+            // Past readDeclaredTicketNumber, throws are package-side accounting.
+            const typedTicket = isRecord(params)
+              ? readDeclaredTicketNumber(params.ticketNumber)
+              : undefined;
+            if (typedTicket !== undefined) {
+              await reportTicketFromHostContext(context, typedTicket);
             }
-            result = await tool.execute(toolCallId, params, signal, update, context);
+            const runId = runIdentity(context);
+            const attemptId = attemptIdentity(context, runId);
+            const state = await stateFor(context, runId);
+            const append = (event: SubmissionLedgerEvent) => appendFor(context, runId, attemptId, event);
+            append({
+              type: "candidate",
+              attemptId,
+              toolCallId,
+              toolName: tool.name,
+              sequence: ++state.sequence,
+              role,
+              params,
+            });
+            try {
+              // #1214 A2: infrastructureFailure rides the original params as receipt
+              // content. Declaration alone never host-fails the leg.
+              result = await tool.execute(toolCallId, params, signal, update, context);
+            } catch (error) {
+              if (isCorrectableExecuteError(error)) {
+                append({
+                  type: "outcome",
+                  attemptId,
+                  toolCallId,
+                  outcome: "correctable-rejection",
+                  code: "typed-bounce",
+                  diagnostic: errorText(error),
+                  role,
+                  accepted: params,
+                });
+              } else {
+                append({
+                  type: "outcome",
+                  attemptId,
+                  toolCallId,
+                  outcome: "infrastructure",
+                  diagnostic: errorText(error),
+                  role,
+                  accepted: params,
+                });
+              }
+              toolThrew = true;
+              throw error;
+            }
+            // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
+            // Machine facts on result.details stay on the tool-result face returned to the model.
+            // A continuing gate leaves the candidate recorded but has not accepted it.
+            if (result.terminate === false) return result;
+            closed = {
+              role,
+              kind: "accepted",
+              accepted: params,
+            };
+            // #1199: seal-time HEAD + ticket progress before projectClosure.
+            // One seal → one row; post-turn history guessing is not used.
+            const sealHead = captureWorktreeHead(context.cwd);
+            append({
+              type: "sealed",
+              attemptId,
+              toolCallId,
+              role,
+              accepted: params,
+            });
+            const rawLens = typeof host.getFlag === "function"
+              ? host.getFlag("ak-review-lens")
+              : undefined;
+            landTicketProgressForSealedSubmission({
+              context,
+              role,
+              accepted: params,
+              sealHead,
+              ...(rawLens === "completeness" || rawLens === "correctness"
+                ? { lens: rawLens }
+                : {}),
+            });
           } catch (error) {
-            if (isCorrectableExecuteError(error)) {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "correctable-rejection",
-                code: "typed-bounce",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
-              throw error;
-            } else {
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "infrastructure",
-                diagnostic: errorText(error),
-                role,
-                accepted: params,
-              });
-              throw error;
-            }
+            if (toolThrew) throw error;
+            return failInfrastructure(error, context, toolCallId);
           }
-          // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
-          // Machine facts on result.details stay on the tool-result face returned to the model.
-          // A continuing gate leaves the candidate recorded but has not accepted it.
-          if (result.terminate === false) return result;
-          const closed: ClosedSubmission = {
-            role,
-            kind: "accepted",
-            accepted: params,
-          };
-          // #1199: seal-time HEAD + ticket progress before projectClosure.
-          // One seal → one row; post-turn history guessing is not used.
-          const sealHead = captureWorktreeHead(context.cwd);
-          append({
-            type: "sealed",
-            attemptId,
-            toolCallId,
-            role,
-            accepted: params,
-          });
-          const rawLens = typeof host.getFlag === "function"
-            ? host.getFlag("ak-review-lens")
-            : undefined;
-          landTicketProgressForSealedSubmission({
-            context,
-            role,
-            accepted: params,
-            sealHead,
-            ...(rawLens === "completeness" || rawLens === "correctness"
-              ? { lens: rawLens }
-              : {}),
-          });
-          await projectClosure(closed, context);
+          // Closure projection owns its own record seam: a closure write failure rides
+          // failInfrastructure there; a Navigator settle failure does not erase the closure (#959).
+          await projectClosure(closed, context, toolCallId);
           return result;
         },
       });

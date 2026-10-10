@@ -191,11 +191,12 @@ async function runJudge(
         officerSessions,
         async resumeRun(runId: string, message?: string) {
           const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
+          const resumeCapture = captureIo();
           return runAkRole(args, {
             packageRoot,
             home,
             cwd: project,
-            io: captureIo().io,
+            io: resumeCapture.io,
             principalAuthority: piDurablePrincipalAuthority,
             hostAdapters: [adapter("pi", routed)],
           });
@@ -397,7 +398,27 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1057 a remaining gate host failure does not publish a pass", async () => {
+test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
+  let auditorCalls = 0;
+  await runJudge(async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") return officer("notary", { status: "converged", mark: 2 })(args, options);
+    if (role === "auditor") {
+      auditorCalls += 1;
+      return officer("auditor", auditorCalls === 1
+        ? { status: "escalate", mark: 4 }
+        : { status: "undecidable", mark: 6 })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  }, () => ({ code: 0, stderr: "" }), async (observed) => {
+    const continued = await observed.resume(RULING);
+    assert.equal(continued.exitCode, 0);
+    assert.equal(continued.terminal?.roleOutcome.role, "auditor");
+    assert.equal(continued.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true);
+  });
+});
+
+test("#1057/#1214 A5/F1: gate host failure presents parent original and officer scene; does not forge pass", async () => {
   let notaryCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -407,11 +428,18 @@ test("#1057 a remaining gate host failure does not publish a pass", async () => 
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
     const continued = await observed.resume(RULING);
-    assert.notEqual(continued.exitCode, 0);
+    // Officer failure is visible; not a forged parent pass.
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
+    // Parent judge original volume remains accepted on the ledger (A5).
     assert.equal(observed.judgeSubmissions.length, 1);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
+    // Parent is not rewritten as the failed seat identity.
+    assert.notEqual(continued.terminal?.roleOutcome.role, "judge");
+    // #1214 F1: officer scene remains visible on the structured terminal; public
+    // stdout presentation is proven by mutation true-run in the fixer receipt,
+    // not by locking free-text wording or table headers (C2).
+    assert.equal(continued.terminal?.roleOutcome.role, "auditor");
   });
 });
 

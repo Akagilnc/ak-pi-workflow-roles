@@ -1,17 +1,23 @@
 /**
- * Shared MCP tools/call helper for public-entry + fake-host tests (#1171).
+ * Shared MCP tools/call helper for public-entry + fake-host tests (#1171 / #1214).
  * One seam definition — consumers must not fork a second copy.
  */
 import { connect } from "node:net";
 import assert from "node:assert/strict";
+
+export type McpToolCallReply = {
+  readonly content?: unknown;
+  readonly isError?: boolean;
+  readonly error?: unknown;
+};
 
 export async function callMcpTool(input: {
   readonly socketPath: string;
   readonly token: string;
   readonly name: string;
   readonly args: unknown;
-}): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+}): Promise<McpToolCallReply> {
+  return await new Promise<McpToolCallReply>((resolve, reject) => {
     const sock = connect(input.socketPath);
     let buf = "";
     sock.setEncoding("utf8");
@@ -19,9 +25,20 @@ export async function callMcpTool(input: {
       buf += chunk;
       if (!buf.includes("\n")) return;
       sock.destroy();
-      const reply = JSON.parse(buf.split("\n")[0]!) as { error?: unknown };
-      if (reply.error !== undefined) reject(new Error(JSON.stringify(reply.error)));
-      else resolve();
+      try {
+        const reply = JSON.parse(buf.split("\n")[0]!) as {
+          result?: McpToolCallReply;
+          error?: unknown;
+        };
+        if (reply.error !== undefined) {
+          // Protocol/RPC error (not tool isError).
+          reject(new Error(JSON.stringify(reply.error)));
+          return;
+        }
+        resolve(reply.result ?? {});
+      } catch (error) {
+        reject(error);
+      }
     });
     sock.on("error", reject);
     sock.on("connect", () => {

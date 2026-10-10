@@ -1,19 +1,14 @@
 /**
  * Package-owned shared infrastructure-failure declaration for every primary
- * packaged-role output tool (#541).
+ * packaged-role output tool (#541 / #1214 A2).
  *
- * One module owns what the judge mandates be shared (not reimplemented per
- * seat): the typed `infrastructureFailure.diagnostic` declaration composed into
- * each output tool's schema, and the single early host `failInfrastructure`
- * call each output `execute` makes before any role business validation / gate /
- * audit / ledger / Git work. The accepted status sets are intentionally NOT
- * extended: an infra declaration fails BEFORE accepted validation, never
- * becomes an accepted receipt. The diagnostic is carried verbatim on the thrown
- * Error so settlement keeps the original cause (kind=failure, exit 1).
+ * One module owns the typed `infrastructureFailure.diagnostic` declaration
+ * composed into each output tool's schema. The field is part of the role's
+ * original receipt: ledger records it as-is. Declaration alone does not abort
+ * the host (#1214 A2). True host/lifecycle failure still fails honestly on its
+ * own channel.
  */
 import { Type, type TSchema } from "typebox";
-import type { CorrectableSubmissionError } from "../submission-correctable-error.ts";
-import { isRecord } from "../unknown-value.ts";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
@@ -22,9 +17,8 @@ export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 /**
  * Shared declaration fragment for model guidance (#541 / #676 C / ADR 0057).
  * Nested field declarations + descriptions only — host must not pure-shape-reject
- * the envelope (仓内 CLAUDE.md 开篇). Runtime `failOnInfrastructureFailureDeclaration` still
- * recognizes a real non-empty diagnostic string as the failure declaration.
- * No required/minLength/type host gates on the declaration fragment.
+ * the envelope (仓内 CLAUDE.md 开篇). No required/minLength/type host gates on
+ * the declaration fragment.
  */
 const infrastructureFailureNested = Type.Object(
   {
@@ -95,71 +89,4 @@ export function withTerminatingOutputDeclarations<
     : [];
   (object as unknown as { required: string[] }).required = preserved;
   return object as unknown as S;
-}
-
-/** Structural host seam subset shared by every terminating execute path. */
-type TerminatingInfrastructureHostActions<C> = {
-  failInfrastructure(error: unknown, ctx: C, toolCallId?: string): never;
-};
-
-/** Safe recognition of the typed declaration; non-shapes / hostile input fail closed. */
-function isInfrastructureFailureDeclaration(
-  parameters: unknown,
-): boolean {
-  if (!isRecord(parameters)) return false;
-  if (!Object.hasOwn(parameters, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
-  const declaration = parameters[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  if (!isRecord(declaration)) return false;
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" && diagnostic.trim().length > 0;
-}
-
-/** Non-empty trimmed diagnostic from the declaration, else undefined. */
-export function infrastructureFailureDiagnostic(
-  parameters: unknown,
-): string | undefined {
-  if (!isInfrastructureFailureDeclaration(parameters)) return undefined;
-  const declaration = (parameters as Record<string, unknown>)[
-    INFRASTRUCTURE_FAILURE_DECLARATION_KEY
-  ] as Record<string, unknown>;
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" ? diagnostic.trim() : undefined;
-}
-
-/** diagnostic → Error, name stamped so the host error identity is observable. */
-function infrastructureFailureError(diagnostic: string): Error {
-  const error = new Error(diagnostic);
-  error.name = "InfrastructureFailure";
-  return error;
-}
-
-/**
- * The one early call for every terminating output `execute`: if the parameters
- * carry the infra declaration, hand the diagnostic error to the shared host
- * `failInfrastructure` seam (which aborts the run). No-op otherwise.
- *
- * #641 chain②: an optional seat-owned bounce hook may intercept the
- * declaration first — when the seat can machine-verify a lawful normal
- * completion, it returns a correctable error and the declaration is treated as
- * model misuse (交件契约封驳) instead of a host failure. Returning undefined
- * keeps the shared failure path.
- */
-export function failOnInfrastructureFailureDeclaration<C>(
-  parameters: unknown,
-  hostActions: TerminatingInfrastructureHostActions<C>,
-  ctx: C,
-  toolCallId: string,
-  bounceInfrastructureDeclaration?: (params: unknown, toolCallId: string, ctx: C) => CorrectableSubmissionError | undefined,
-): void {
-  const diagnostic = infrastructureFailureDiagnostic(parameters);
-  if (diagnostic === undefined) return;
-  if (bounceInfrastructureDeclaration !== undefined) {
-    const bounce = bounceInfrastructureDeclaration(parameters, toolCallId, ctx);
-    if (bounce !== undefined) throw bounce;
-  }
-  hostActions.failInfrastructure(
-    infrastructureFailureError(diagnostic),
-    ctx,
-    toolCallId,
-  );
 }

@@ -24,7 +24,7 @@ import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { readRunLogRows } from "../helpers/run-dossier-fixture.ts";
 import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-dispatch-throw-", fn);
@@ -79,11 +79,7 @@ async function plantRecordedSubmissions(input:{
     home:input.home,
     runDirectory:input.runDirectory,
     toolCallId:"call-bounce",
-    executeError:new GatekeeperDecisionError({
-      status:"continue",
-      officer:"inspector",
-      receipt:{status:"continue",findings:["x"]},
-    }),
+    executeError:new WorkerUnfinishedReasonReminderError(),
   });
 }
 

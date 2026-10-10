@@ -1,39 +1,5 @@
-import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { isRecord } from "./unknown-value.ts";
-
-/**
- * Tool-result text the parent model sees (#753 / #750 evidence).
- * continue | escalate → officer receipt verbatim (JSON when structured).
- * no_receipt → honest lifecycle fact. No findings rewrite, no「（无 findings）」.
- * #775: structured field content via readableGateItem (DRY with other gate seams).
- */
-function serializeReceipt(receipt: unknown): string {
-  return readableGateItem(receipt);
-}
-
-function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
-  if (result.status === "continue") {
-    return serializeReceipt(result.receipt);
-  }
-  if (result.status === "transport_failure") {
-    const head = `门下省 ${result.status}（${result.stage}）：${result.reason}`;
-    return result.submission === undefined
-      ? head
-      : `${head}\n${serializeReceipt(result.submission)}`;
-  }
-  return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
-}
-
-/** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-export class GatekeeperDecisionError extends Error {
-  readonly result: SubmissionGateNonPassResult;
-  constructor(result: SubmissionGateNonPassResult, message?: string) {
-    super(message ?? gatekeeperNonPassMessage(result));
-    this.name = "GatekeeperDecisionError";
-    this.result = result;
-  }
-}
 
 export class WorkerCommitReminderError extends Error {
   readonly code = "worker_commit_reminder" as const;

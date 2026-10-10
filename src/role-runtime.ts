@@ -8,6 +8,7 @@ import {
 
   runDirectoryFromHostContext,
   type HostContext,
+  type HostGatekeeperActions,
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
@@ -148,7 +149,6 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -316,18 +316,16 @@ export type {
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
   runGatekeeper,
   gateOfficerForSubject,
 } from "./gatekeeper-role.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
   runGatekeeper,
   gateOfficerForSubject,
 };
-export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
@@ -557,6 +555,7 @@ export async function projectClosedSubmissionLifecycle(
   phase: NavigatorPhase,
   recordAccepted: () => void,
   settle: (settlement: NavigatorSettlement | undefined) => Promise<NavigatorEvent | undefined>,
+  failRecord: (error: unknown) => never,
 ): Promise<void> {
   recordAccepted();
   const closure = {
@@ -570,10 +569,15 @@ export async function projectClosedSubmissionLifecycle(
   } finally {
     // A Navigator failure cannot erase an already accepted role closure.
     // Missing attendance remains a typed unavailable at public settlement.
-    context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
-      ...closure,
-      ...(navigator === undefined ? {} : { navigator }),
-    });
+    // #1214 K1: the closure record write is package-side accounting; its failure rides the declared seam.
+    try {
+      context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
+        ...closure,
+        ...(navigator === undefined ? {} : { navigator }),
+      });
+    } catch (error) {
+      failRecord(error);
+    }
   }
 }
 
@@ -848,6 +852,7 @@ const DIARIST_BOUNDS_REASK =
 export function createDiaristRoleRuntime(
   roleHost: RoleHost,
   dependencies: DiaristRuntimeDependencies,
+  hostActions: HostGatekeeperActions,
 ) {
   return createFiledOfficerRuntime(
     roleHost,
@@ -855,7 +860,7 @@ export function createDiaristRoleRuntime(
       role: "diarist",
       tool: DIARIST_TOOL_SPEC,
       soulTag: "diarist",
-      beforeAccept: async ({ parameters, ctx }) => {
+      beforeAccept: async ({ toolCallId, parameters, ctx }) => {
         const submitted =
           isRecord(parameters)
             ? (parameters as Record<string, unknown>)
@@ -868,29 +873,27 @@ export function createDiaristRoleRuntime(
         const assertion = readDiaristTicketAssertion(submitted);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
-        // #1183: typed ticket assertion is identity acquisition — one mid-turn
-        // bind/relocate here, before seal / reask / infra outcome branches.
-        // Reuses ak_report_ticket seam; already-placed is a no-op. Host return
-        // must not be the first placement (dossier-topology).
-        if (ticketNumber !== undefined) {
-          await reportTicketFromHostContext(ctx, ticketNumber);
-        }
-        // Live leaf after possible relocate (commit reads history under runDirectory).
-        const coords = readDiaristRunCoordinates(ctx);
-        // Strict-schema hosts emit ticketSessions: null for a single ticket.
-        const multiTicket = submitted?.ticketSessions != null;
-        const singleSessions = submitted && !multiTicket
-          ? projectDiaristSessions(parameters)
-          : undefined;
-        const ticketSessions = submitted && multiTicket
-          ? projectDiaristTicketSessions(submitted)
-          : singleSessions === undefined
-            ? undefined
-            : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
-        if (ticketSessions === undefined) {
-          throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
-        }
+        // #1183 / #1214 R1b/R1c: typed ticket is identity acquisition — one mid-turn
+        // bind/relocate, then the diary record (durable coordinates, commit). Every
+        // package-side record failure in this span rides failInfrastructure; only
+        // typed bounds/provenance input errors bounce to reask.
         try {
+          if (ticketNumber !== undefined) await reportTicketFromHostContext(ctx, ticketNumber);
+          // Live leaf after possible relocate (commit reads history under runDirectory).
+          const coords = readDiaristRunCoordinates(ctx);
+          // Strict-schema hosts emit ticketSessions: null for a single ticket.
+          const multiTicket = submitted?.ticketSessions != null;
+          const singleSessions = submitted && !multiTicket
+            ? projectDiaristSessions(parameters)
+            : undefined;
+          const ticketSessions = submitted && multiTicket
+            ? projectDiaristTicketSessions(submitted)
+            : singleSessions === undefined
+              ? undefined
+              : [{ ticketNumber: ticketNumber ?? null, sessions: singleSessions }];
+          if (ticketSessions === undefined) {
+            throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
+          }
           await commitDiaristProjection({
             cwd: coords.projectRoot,
             home: coords.home,
@@ -899,14 +902,14 @@ export function createDiaristRoleRuntime(
           });
         } catch (error) {
           // Bound/session input failures → reask via typed identity (not message prefix).
-          // Unexpected infrastructure keeps its own identity (do not wash).
+          // Unexpected infrastructure keeps its own identity via declared seam (#1214 R1b).
           if (error instanceof ParentQueueReaskError) throw error;
           if (error instanceof TicketProvenanceInputError) {
             throw new ParentQueueReaskError(
               `${DIARIST_BOUNDS_REASK}\n${error.message}`,
             );
           }
-          throw error;
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
         return parameters;
       },
@@ -1009,7 +1012,7 @@ export function createRoleRuntimeExtension(
     ? deliveryLimitFromEnv(process.env)
     : deliveryLimitFromConfig(deliveryRequestLimit);
   return (envelopeHost) => {
-    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
+    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext, toolCallId: string) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
@@ -1023,8 +1026,8 @@ export function createRoleRuntimeExtension(
         }
         return entries;
       }, [])),
-      failInfrastructure,
-      async (closed, context) => projectClosedSubmission(closed, context),
+      (error, ctx, toolCallId) => hostActions.failInfrastructure(error, ctx, toolCallId),
+      async (closed, context, toolCallId) => projectClosedSubmission(closed, context, toolCallId),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1071,8 +1074,6 @@ export function createRoleRuntimeExtension(
     let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
-    // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
-    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionGateNonPassResult>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner.
     // #1132: one ceiling for this turn, closed over from the execution seam.
@@ -1160,7 +1161,7 @@ export function createRoleRuntimeExtension(
       await pending;
       return pendingNavigatorPresentation?.event;
     };
-    projectClosedSubmission = async (closed, context) => {
+    projectClosedSubmission = async (closed, context, toolCallId) => {
       // #1183: typed ticket identity is acquired on the ledger seam when params
       // are first read — not here after seal. Closure only projects lifecycle.
       await projectClosedSubmissionLifecycle(
@@ -1169,6 +1170,7 @@ export function createRoleRuntimeExtension(
         navigatorPhase(roleHost, closed.role),
         () => receiptDelivery.recordAccepted(),
         settleNavigatorProjection,
+        (error) => hostActions.failInfrastructure(error, context, toolCallId),
       );
     };
     roleHost.on("input", (event, ctx) => {
@@ -1311,14 +1313,7 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { isError: true };
-      }
-      // Submission non-pass: throw kept message text for the model; project the
-      // envelope-bound structured result onto session details at this tool_result seam.
-      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
-      if (submissionNonPass !== undefined) {
-        pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
-        return { details: submissionNonPass, isError: true };
+        return { isError: true, details: infrastructureDetails };
       }
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
@@ -1346,15 +1341,17 @@ export function createRoleRuntimeExtension(
         const prose = lastAssistantProse(event.messages);
         if (prose !== undefined && prose.trim() !== "") {
           const accepted = { prose };
+          const toolCallId = `navigator-prose-exit:${randomUUID()}`;
           await sealAcceptedSubmission({
             context: ctx,
             role: "navigator",
             accepted,
-            toolCallId: `navigator-prose-exit:${randomUUID()}`,
+            toolCallId,
           });
           await projectClosedSubmission(
             { role: "navigator", kind: "accepted", accepted },
             ctx,
+            toolCallId,
           );
           return;
         }
@@ -1475,7 +1472,6 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = undefined;
         disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
         pendingInfrastructureFailures.clear();
-        pendingSubmissionNonPassByToolCallId.clear();
       }
     });
 
@@ -1485,9 +1481,6 @@ export function createRoleRuntimeExtension(
           pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
         failInfrastructure(error, ctx);
-      },
-      bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void {
-        pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
     const requireRoleSoul = (role: PackagedRole): Promise<string> => dependencies.loadRoleSoul(role);
@@ -1565,6 +1558,7 @@ export function createRoleRuntimeExtension(
       {
         loadSoul: () => requireRoleSoul("diarist"),
       },
+      hostActions,
     );
     const secretariat = createSecretariatRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("secretariat"),
@@ -1666,7 +1660,6 @@ export function createRoleRuntimeExtension(
       navigatorDeliveryClosed = false;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingSubmissionNonPassByToolCallId.clear();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
@@ -1813,7 +1806,7 @@ export function createRoleRuntimeExtension(
 
         await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
         // #1171: same registration mouth as submission tools; when-to-call is on the tool itself.
-        registerReportTicketTool(roleHost);
+        registerReportTicketTool(roleHost, hostActions);
         roleHost.setActiveTools([
           ...new Set([...roleHost.getActiveTools(), REPORT_TICKET_TOOL_NAME]),
         ]);

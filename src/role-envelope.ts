@@ -293,30 +293,6 @@ export async function prepareRoleEnvelope(options: {
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
-  /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
-  function rememberProjectedRejection(
-    details: unknown,
-    toolCallId: string,
-    content: ContentPart[],
-  ): void {
-    if (typeof details !== "object" || details === null) return;
-    const record = details as Record<string, unknown>;
-    if (record.cause === "infrastructure") return;
-    if (record.kind === "role_infrastructure_failure") return;
-    const code = typeof record.code === "string" && record.code.length > 0
-      ? record.code
-      : record.status === "continue" || record.status === "escalate" || record.status === "no_receipt"
-        ? record.status
-        : undefined;
-    if (code === undefined) return;
-    // Officer bounce/escalate text is already the tool_result content (GatekeeperDecisionError
-    // message = raw receipt). Adapters resume with this message — never a host-invented line (#813).
-    rejection = {
-      code,
-      toolCallIds: [toolCallId],
-      message: textDiagnostic(content) ?? code,
-    };
-  }
   function textDiagnostic(content: ContentPart[]): string | undefined {
     // Keep each text item's bytes intact and its boundary readable on the
     // string-only host continuation channel.
@@ -427,7 +403,6 @@ export async function prepareRoleEnvelope(options: {
     sessionEntries.push(toolResultEntry);
     if (projected.isError) {
       rememberInfrastructureFailure(projected.details, projected.content);
-      rememberProjectedRejection(projected.details, toolCallId, projected.content);
     }
     await emit("tool_execution_end", { toolCallId, toolName, isError: projected.isError });
     return projected;
@@ -502,22 +477,45 @@ export async function prepareRoleEnvelope(options: {
     } catch (error) {
       let content: ContentPart[];
       let details: Record<string, unknown>;
-      if (isCorrectableExecuteError(error)) {
-        const projected = projectCorrectableExecuteRejection(error);
-        content = [{ type: "text", text: projected.diagnostic }];
-        details = projected.details;
+      // Authority for correctable: isCorrectableExecuteError only — arm retry here,
+      // never re-list codes from projected details (#1214 F3/C1).
+      const correctable = isCorrectableExecuteError(error)
+        ? projectCorrectableExecuteRejection(error)
+        : undefined;
+      if (correctable !== undefined) {
+        content = [{ type: "text", text: correctable.diagnostic }];
+        details = correctable.details;
       } else {
-        // Slot-before-abort; projectToolResult may still project durable details.
-        ({ content, details } = declareRoundInfrastructureFailure(error));
+        // #1214 A1: ordinary tool execute errors return to the calling seat as
+        // isError tool results. Do not promote them to round infrastructure
+        // failure / hostAbort — the seat decides next steps.
+        const diagnostic = errorText(error);
+        content = [{ type: "text", text: diagnostic }];
+        details = {
+          code: typeof (error as { code?: unknown })?.code === "string"
+            ? (error as { code: string }).code
+            : "ak-tool-execution-failed",
+          error: serializeThrownValue(error),
+        };
       }
-      // The shared envelope's tool_result handler is the sole classifier:
-      // it projects either the structured submission non-pass (correctable
-      // rejection) or the typed infrastructure fact onto the reply.
+      // Shared tool_result projection: correctable non-pass or plain isError.
       const projected = await projectToolResult(toolCallId, name, {
         content,
         details,
         isError: true,
       });
+      if (correctable !== undefined) {
+        const code = typeof correctable.details.code === "string"
+          && correctable.details.code.length > 0
+          ? correctable.details.code
+          : "correctable-submission-error";
+        // Typed bounce/reminder text is already the tool_result content.
+        rejection = {
+          code,
+          toolCallIds: [toolCallId],
+          message: textDiagnostic(projected.content) ?? correctable.diagnostic,
+        };
+      }
       return { content: projected.content, isError: projected.isError };
     }
   }

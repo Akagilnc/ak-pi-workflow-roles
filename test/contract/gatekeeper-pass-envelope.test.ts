@@ -127,7 +127,6 @@ test("#1028 secretariat_verdict reads the shared review status",
 test("#969 secretariat_verdict returns escalation for direct officer resume",
   async () => withTempRoot("ak-gate-envelope-", async (root) => {
     const parentRun = parentRunDirectory(root);
-    const nonPass: unknown[] = [];
     const receipt = {
       status: "escalate",
       decisionGate: { question: "q", options: ["a"] },
@@ -139,14 +138,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t1",
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra");
-        },
-        bindSubmissionNonPass(_id, result) {
-          nonPass.push(result);
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 0,
         runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
@@ -162,7 +153,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
         },
       }),
     });
-    assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
     // #1195: parent no longer books officer-pointer copies; resume uses officer runId.
     const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
     assert.equal(booked.length, 0, "parent history must not book officer-pointer rows");
@@ -191,14 +181,6 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
       } as never,
       subject: { kind: "secretariat_verdict" },
       toolCallId: "t-pass",
-      hostActions: {
-        failInfrastructure(): never {
-          throw new Error("infra");
-        },
-        bindSubmissionNonPass() {
-          throw new Error("pass must not bind non-pass");
-        },
-      },
       summonOfficer: async () => ({
         exitCode: 0,
         runDirectory: "/tmp/runs/01a0cs969-pass-7000-8000-000000000042@countersign",
@@ -218,5 +200,81 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
     assert.equal(outcome!.officer, "countersign");
     assert.deepEqual(outcome!.receipt, receipt);
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
+  }),
+);
+
+test("#1214 A5: officer transport_failure returns honestly as typed outcome",
+  async () => withTempRoot("ak-gate-envelope-", async (root) => {
+    const parentRun = parentRunDirectory(root);
+    const officerTerminal = {
+      roleOutcome: {
+        kind: "failure" as const,
+        role: "notary" as const,
+        diagnostic: "officer host failed",
+        decisiveFacts: {},
+      },
+      navigator: { disposition: "no-advice" as const },
+      artifacts: [] as const,
+      runId: "01a01214-fail-7000-8000-000000000099",
+    };
+    const outcome = await requireSubmissionGate({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
+      } as never,
+      subject: { kind: "judge_draft" },
+      toolCallId: "t-transport",
+      summonOfficer: async () => ({
+        exitCode: 1,
+        stderr: "officer host failed",
+        runDirectory: "/tmp/runs/01a01214-fail-7000-8000-000000000099@notary",
+        terminal: officerTerminal,
+      }),
+    });
+    assert.equal(outcome?.status, "transport_failure");
+    assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
+    assert.equal(
+      outcome && "runId" in outcome ? outcome.runId : undefined,
+      "01a01214-fail-7000-8000-000000000099",
+    );
+    assert.ok(outcome && "terminal" in outcome && outcome.terminal !== undefined);
+    assert.equal(outcome?.terminal?.roleOutcome.kind, "failure");
+  }),
+);
+
+test("#1214 F2: officer no_receipt returns as typed outcome without throw",
+  async () => withTempRoot("ak-gate-noreceipt-", async (root) => {
+    const parentRun = parentRunDirectory(root);
+    const officerTerminal = {
+      roleOutcome: {
+        kind: "no_receipt" as const,
+        role: "notary" as const,
+        status: "no-accepted-receipt" as const,
+        decisiveFacts: {},
+      },
+      navigator: { disposition: "no-advice" as const },
+      artifacts: [] as const,
+      runId: "01a01214-nore-7000-8000-000000000042",
+    };
+    const outcome = await requireSubmissionGate({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => sessionFileOf(parentRun) },
+      } as never,
+      subject: { kind: "judge_draft" },
+      toolCallId: "t-noreceipt",
+      summonOfficer: async () => ({
+        exitCode: 0,
+        runDirectory: "/tmp/runs/01a01214-nore-7000-8000-000000000042@notary",
+        terminal: officerTerminal,
+      }),
+    });
+    assert.equal(outcome?.status, "no_receipt");
+    assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "notary");
+    assert.equal(
+      outcome && "runId" in outcome ? outcome.runId : undefined,
+      "01a01214-nore-7000-8000-000000000042",
+    );
+    assert.equal(outcome?.terminal?.roleOutcome.kind, "no_receipt");
   }),
 );
