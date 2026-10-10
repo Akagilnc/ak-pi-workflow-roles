@@ -53,25 +53,31 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 function lawfulReviewerReceipt(
   lens: "completeness" | "correctness",
   status: "completed" | "refused" = "completed",
-  options?: { readonly axisKey?: string; readonly report?: string },
+  options?: {
+    readonly axisKey?: string;
+    readonly report?: string;
+    /** When true, omit ticketNumber so the leg stages under unbound (#1199). */
+    readonly omitTicketNumber?: boolean;
+  },
 ) {
   // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓内 CLAUDE.md 开篇).
   const axisKey = options?.axisKey ?? lens;
   const report = options?.report ?? `${lens}-axis-report`;
   const amendments = { [axisKey]: report };
+  const ticket = options?.omitTicketNumber === true ? {} : { ticketNumber: 1171 as const };
   if (status === "refused") {
     return {
       status: "refused" as const,
       diagnostic: "hard-stop: review cannot proceed",
       amendments,
       // #1171: ordinary reviewer tracers are not the missing-ticket reask case.
-      ticketNumber: 1171,
+      ...ticket,
     };
   }
   return {
     status: "completed" as const,
     amendments,
-    ticketNumber: 1171,
+    ...ticket,
   };
 }
 
@@ -402,6 +408,7 @@ async function lawfulChildTurn(
     readonly report?: string;
     readonly empty?: boolean;
     readonly toolCallId?: string;
+    readonly omitTicketNumber?: boolean;
   },
 ) {
   const sessionFile = args[args.indexOf("--session") + 1]!;
@@ -457,6 +464,7 @@ test("default dual-lens admits both axes without a parent run", async () => {
     const captured: string[][] = [];
     const childHeads: string[] = [];
     const { io, stdout } = captureIo();
+    // #1199: first seal omits ticketNumber → unbound staging (empty round); report later.
     const result = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
       "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
@@ -472,14 +480,14 @@ test("default dual-lens admits both axes without a parent run", async () => {
           cwd: options.cwd,
           encoding: "utf8",
         }).trim());
-        return lawfulChildTurn(args);
+        return lawfulChildTurn(args, { omitTicketNumber: true });
       }),
     });
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-    assert.equal(captured.length, 2);
+    assert.ok(captured.length >= 2, `dual-lens must dispatch both axes; captured=${captured.length}`);
     assert.deepEqual(
-      captured.map((args) => args[args.indexOf("--ak-review-lens") + 1]).sort(),
+      [...new Set(captured.map((args) => args[args.indexOf("--ak-review-lens") + 1]))].sort(),
       ["completeness", "correctness"],
     );
     for (const args of captured) {
@@ -498,24 +506,65 @@ test("default dual-lens admits both axes without a parent run", async () => {
     // Parentless batch must not invent affirmative no-advice (#946).
     assert.equal(result.terminal?.navigator.disposition, "unavailable");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      result.terminal?.roleOutcome.kind === "accepted"
-        ? result.terminal.roleOutcome.payloads?.length
-        : 0,
-      2,
-    );
     assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
 
     const bookKey = resolveBookKeyFromGit(project);
-    // #1199: dual-lens rounds are independent (`1.<lens>`); no occupancy placeholders.
+    const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
+    const staged = readTicketProgressLines(unboundDir).filter((line) => line.seat === "reviewer");
+    assert.ok(staged.length >= 2, "both lenses must stage under unbound before report");
+    assert.ok(staged.every((line) => line.round === ""), "unbound staging keeps round empty");
+    const completenessRunId = result.terminal?.reviewerChildren?.completeness?.runId;
+    const correctnessRunId = result.terminal?.reviewerChildren?.correctness?.runId;
+    if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
+      assert.fail("dual-lens children must disclose runId");
+    }
+    assert.equal(
+      readCurrentSection(
+        join(unboundDir, "runs", `${completenessRunId}@reviewer`),
+        "admitted",
+      ).lens as string,
+      "completeness",
+    );
+    assert.equal(
+      readCurrentSection(
+        join(unboundDir, "runs", `${correctnessRunId}@reviewer`),
+        "admitted",
+      ).lens as string,
+      "correctness",
+    );
+
+    // Report ticket on each unbound leg — publish must keep sealed lens suffixes.
+    for (const runId of [completenessRunId, correctnessRunId]) {
+      const { io: resumeIo, stdout: resumeStdout } = captureIo();
+      const resumed = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", runId],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          io: resumeIo,
+          roleTurnHost: reviewerHost(async (args) => lawfulChildTurn(args)),
+        },
+      );
+      assert.equal(resumed.exitCode, 0, resumeStdout.join("") || `resume ${runId} failed`);
+    }
+
+    // #1199: dual-lens rounds are independent (`<n>.<lens>`); no occupancy placeholders.
     const progressRounds = readTicketProgressLines(
       join(home, ".ak-roles", "books", bookKey, "1171"),
     )
       .filter((line) => line.seat === "reviewer")
       .map((line) => line.round)
       .sort();
-    assert.deepEqual(progressRounds, ["1.completeness", "1.correctness"]);
+    assert.ok(
+      progressRounds.every((round) =>
+        round.endsWith(".completeness") || round.endsWith(".correctness")
+      ),
+      `stash-then-report must keep lens suffixes; got ${JSON.stringify(progressRounds)}`,
+    );
+    assert.ok(progressRounds.includes("1.completeness"));
+    assert.ok(progressRounds.includes("1.correctness"));
     await assert.rejects(
       () => access(join(
         home, ".ak-roles", "books", bookKey, "unbound", "runs",

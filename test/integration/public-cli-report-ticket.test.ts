@@ -1127,9 +1127,10 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
     assert.notEqual(lines[0]!.instruction, firstInstruction);
-    if (autoSummons !== undefined) {
-      assert.equal(lines[0]!.instruction, autoSummons);
-    }
+    // Resume request must carry this-turn summonsInstruction (not first mint).
+    assert.equal(typeof autoSummons, "string");
+    assert.notEqual(autoSummons, firstInstruction);
+    assert.equal(lines[0]!.instruction, autoSummons);
     const sessionRel = lines[0]!.session;
     const head1 = lines[0]!.head;
 

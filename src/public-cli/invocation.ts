@@ -595,8 +595,6 @@ export async function relocateAdmittedRunToTicket(
   if (!isUnboundRunDirectory(admitted.runDirectory)) {
     relocateTicketProgressForLeg({
       runDirectory: admitted.runDirectory,
-      seat: admitted.role,
-      runId: admitted.runId,
     });
     return undefined;
   }
@@ -634,8 +632,6 @@ export async function relocateAdmittedRunToTicket(
       await rename(childDirectory, childTarget.runDirectory);
       relocateTicketProgressForLeg({
         runDirectory: childTarget.runDirectory,
-        seat: "diarist",
-        runId: childRunId,
       });
       // Finished child legs will not settle again; refresh derived host.original
       // after the rename commit. A derived render fault must not undo or block
@@ -680,8 +676,6 @@ export async function relocateAdmittedRunToTicket(
   // After whole-leg rename + live-handle handoff: fill rounds and append ticket current.
   relocateTicketProgressForLeg({
     runDirectory: target.runDirectory,
-    seat: admitted.role,
-    runId: admitted.runId,
   });
 
   // current.json projects host.original from this run directory. Ownership is

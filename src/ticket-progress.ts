@@ -312,20 +312,18 @@ export function landTicketProgressForSealedSubmission(input: {
  * After whole-leg rename (or retry when already under the ticket): fill rounds
  * on staged `progress.jsonl`, append ticket `current.jsonl`, then drop staging.
  * Receipt / session / head / instruction keep seal-time values and relative
- * paths — no copy, delete-source, or rollback of originals.
+ * paths — no copy, delete-source, or rewrite of relative pointers.
+ *
+ * Unbound staging leaves `round` empty; publish takes the leg's sealed lens from
+ * the admitted page (`lensFromRunDirectory`), never from receipt prose.
  */
 export function relocateTicketProgressForLeg(input: {
   readonly runDirectory: string;
-  readonly seat: string;
-  readonly runId: string;
 }): void {
-  void input.seat;
-  void input.runId;
   if (isUnboundRunDirectory(input.runDirectory)) return;
 
   const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
   if (subjectDirectory === undefined) return;
-  if (basename(subjectDirectory) === "unbound") return;
 
   const stagedPath = join(input.runDirectory, LEG_PROGRESS_FILENAME);
   const mine = readProgressFile(stagedPath);
@@ -339,13 +337,13 @@ export function relocateTicketProgressForLeg(input: {
   const ticketLines = [...readTicketProgressLines(subjectDirectory)];
   const movedLines: TicketProgressLine[] = [];
   for (const line of mine) {
-    const lens = roundLens(line.round);
+    // Empty unbound round: recover lens from this leg's admitted page only.
+    const lens = roundLens(line.round)
+      ?? lensFromRunDirectory(input.runDirectory, line.seat);
     const round = nextRoundFromLines(ticketLines, line.seat, lens);
     const moved: TicketProgressLine = {
       ...line,
       round,
-      receipt: line.receipt.replaceAll("\\", "/"),
-      session: line.session.replaceAll("\\", "/"),
     };
     movedLines.push(moved);
     ticketLines.push(moved);
