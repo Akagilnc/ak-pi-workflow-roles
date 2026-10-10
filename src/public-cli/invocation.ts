@@ -23,7 +23,6 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
-  formatRunLeaf,
   isUnboundRunDirectory,
   listBookRunDirectories,
   roleRunPlacement,
@@ -583,53 +582,47 @@ export async function recordAdmittedCorrelation(
   mutable.correlationIds = correlationIds;
 }
 
-/** File a role run under its latest typed ticket identity. */
-export async function relocateAdmittedRunToTicket(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  heldLease?: { relocate(runDirectory: string): void },
-): Promise<RunDirectoryRelocation | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
-
-  // Already under the ticket: still publish leftover progress.jsonl (append-fail retry).
-  if (!isUnboundRunDirectory(admitted.runDirectory)) {
-    relocateTicketProgressForLeg({
-      runDirectory: admitted.runDirectory,
+/**
+ * #1199 R2: registered 起居郎 legs that already belong on this ticket.
+ * Unbound source → whole-leg rename + publish; already under ticket → publish
+ * leftover staging only. No scan of unregistered siblings.
+ */
+async function relocateRegisteredChildDiarists(input: {
+  readonly parentRunDirectory: string;
+  readonly bookKey: string;
+  readonly ticketNumber: number;
+  readonly projectRoot: string;
+  readonly ledgerHome: string;
+  readonly authority: DurablePrincipalAuthority;
+}): Promise<void> {
+  const childRunIds = readPageSync(input.parentRunDirectory, "admitted")?.childDiaristRunIds;
+  for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
+    if (typeof childRunId !== "string") continue;
+    const childTarget = roleRunPlacement(input.ledgerHome, {
+      bookKey: input.bookKey,
+      subject: { ticketNumber: input.ticketNumber },
+      runId: childRunId,
+      role: "diarist",
     });
-    return undefined;
-  }
+    const unboundChildDirectory = roleRunPlacement(input.ledgerHome, {
+      bookKey: input.bookKey,
+      subject: { unbound: true },
+      runId: childRunId,
+      role: "diarist",
+    }).runDirectory;
 
-  const oldRunDirectory = admitted.runDirectory;
-  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
-  const target = roleRunPlacement(ledgerHome, {
-    bookKey: admitted.bookKey,
-    subject: { ticketNumber: admitted.ticketNumber },
-    runId: admitted.runId,
-    role: admitted.role,
-  });
-  ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
-  // Pre-flight seal; final seal after the filesystem commit.
-  authority.seal(target);
-
-  if (admitted.role !== "diarist") {
-    const childRunIds = readPageSync(oldRunDirectory, "admitted")?.childDiaristRunIds;
-    for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
-      if (typeof childRunId !== "string") continue;
-      const childDirectory = join(dirname(oldRunDirectory), formatRunLeaf(childRunId, "diarist"));
-      // A child that already filed under a ticket keeps its own assertion.
-      if (!existsSync(childDirectory)) continue;
-      const childTarget = roleRunPlacement(ledgerHome, {
-        bookKey: admitted.bookKey,
-        subject: { ticketNumber: admitted.ticketNumber },
-        runId: childRunId,
-        role: "diarist",
-      });
-      authority.seal(childTarget);
-      await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
-      await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
-      ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+    if (existsSync(unboundChildDirectory)) {
+      input.authority.seal(childTarget);
+      await bindTicketNumberOnRunDirectory(unboundChildDirectory, input.ticketNumber);
+      await rehomeUnboundTicketProvenance(
+        unboundChildDirectory,
+        input.ticketNumber,
+        input.projectRoot,
+        homeFromRunDirectory(input.parentRunDirectory),
+      );
+      ensureRoleRunDirectory(input.ledgerHome, dirname(childTarget.runDirectory));
       // #1199: whole-leg rename first; originals travel with the directory.
-      await rename(childDirectory, childTarget.runDirectory);
+      await rename(unboundChildDirectory, childTarget.runDirectory);
       relocateTicketProgressForLeg({
         runDirectory: childTarget.runDirectory,
       });
@@ -643,7 +636,66 @@ export async function relocateAdmittedRunToTicket(
           `[invocation] current.json render refused after child relocate; placement kept: ${childTarget.runDirectory}: ${errorText(error)}\n`,
         );
       }
+      continue;
     }
+
+    // Prior partial relocate left the child under the ticket with staging still held.
+    if (existsSync(childTarget.runDirectory)) {
+      relocateTicketProgressForLeg({
+        runDirectory: childTarget.runDirectory,
+      });
+    }
+  }
+}
+
+/** File a role run under its latest typed ticket identity. */
+export async function relocateAdmittedRunToTicket(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  heldLease?: { relocate(runDirectory: string): void },
+): Promise<RunDirectoryRelocation | undefined> {
+  if (admitted.ticketNumber === undefined) return undefined;
+
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(admitted.runDirectory));
+
+  // Already under the ticket: publish leftover progress.jsonl (self + registered children).
+  if (!isUnboundRunDirectory(admitted.runDirectory)) {
+    relocateTicketProgressForLeg({
+      runDirectory: admitted.runDirectory,
+    });
+    if (admitted.role !== "diarist") {
+      await relocateRegisteredChildDiarists({
+        parentRunDirectory: admitted.runDirectory,
+        bookKey: admitted.bookKey,
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        ledgerHome,
+        authority,
+      });
+    }
+    return undefined;
+  }
+
+  const oldRunDirectory = admitted.runDirectory;
+  const target = roleRunPlacement(ledgerHome, {
+    bookKey: admitted.bookKey,
+    subject: { ticketNumber: admitted.ticketNumber },
+    runId: admitted.runId,
+    role: admitted.role,
+  });
+  ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  // Pre-flight seal; final seal after the filesystem commit.
+  authority.seal(target);
+
+  if (admitted.role !== "diarist") {
+    await relocateRegisteredChildDiarists({
+      parentRunDirectory: oldRunDirectory,
+      bookKey: admitted.bookKey,
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      ledgerHome,
+      authority,
+    });
   }
 
   // The first ticket assignment moves only an unbound diarist's own diary.

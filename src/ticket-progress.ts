@@ -277,6 +277,12 @@ export function landTicketProgressForSealedSubmission(input: {
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, `${JSON.stringify(input.accepted, null, 2)}\n`, "utf8");
 
+  // #1199 R1: bound leg with leftover progress.jsonl must publish before this
+  // seal takes the next ticket round — optional ticketNumber must not be required.
+  if (!unbound) {
+    relocateTicketProgressForLeg({ runDirectory });
+  }
+
   const existing = unbound
     ? readProgressFile(progressPath)
     : readTicketProgressLines(subjectDirectory);
