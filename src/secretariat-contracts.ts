@@ -1,13 +1,11 @@
 /**
  * Public Secretariat (中书省) terminating receipt contracts.
  * Public terminal domain: converged (署) | escalate (上呈).
- * A countersign continue is an internal rewrite-and-resubmit fact, not a
- * Secretariat terminal.
  * (#924) — 原卷保真: the verdict is recognized read-only; no field
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
 
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
@@ -33,26 +31,21 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
       ticketNumber: Type.Optional(
         Type.Unknown({ description: "本票号；署时指向最终正文所在票" }),
       ),
-      note: Type.Unknown({ description: "附注" }),
+      note: Type.Unknown({
+        description:
+          "附注；署（converged）时逐题列答案、依据与落在哪一句；封还（escalate）时首写「封还」。原样留存。",
+      }),
       evidence: Type.Optional(Type.Unknown({ description: "留存证据" })),
       decisionGate: Type.Unknown({
-        description: "需陛下处置的问题与选项；可写 question 与 options，原样留存。",
+        description:
+          "本轮题目：每题 question、options（稿里做法／另一做法）、两边代价、建议。原样留存。",
       }),
     },
     { additionalProperties: true },
   ),
 );
 (secretariatVerdictSchema as unknown as { required: string[] }).required = [];
+// Reflect the declaration's empty required set and open additional properties,
+// including the shared terminating fields composed at runtime.
 export type SecretariatVerdict =
-  | {
-      secretariatStatus: "converged";
-      ticketNumber?: number;
-      note?: string;
-      evidence?: unknown;
-    }
-  | {
-      secretariatStatus: "escalate";
-      decisionGate?: { question: string; options: string[] };
-      note?: string;
-      evidence?: unknown;
-    };
+  Partial<Static<typeof secretariatVerdictSchema>> & Record<string, unknown>;

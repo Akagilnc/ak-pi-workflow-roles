@@ -26,7 +26,7 @@
 - **未完终态(Unfinished)**：见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)、[worker 输出契约](src/package-contracts/worker-output.ts)。
 - **Reviewer(御史台)**：职掌见 [Soul](souls/reviewer.md)，调用见 `ak-role help reviewer`。
 - **门下省(Gate province)**：职掌见 [Soul](souls/gatekeeper.md)，制度沿革见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。_Avoid_：把「门下省」当作通进司的公开角色名。
-- **中书省(Secretariat)**：职掌见 [Soul](souls/secretariat.md)，票面法见 [ticket-law](souls/ticket-law.md)。
+- **中书省(Secretariat)**：本厂的架构师。职掌见 [Soul](souls/secretariat.md)，票面法见 [ticket-law](souls/ticket-law.md)。
 - **给事中(Countersign)**：职掌见 [Soul](souls/countersign.md)。
 - **左拾遗(Gleaner-left)**：职掌见 [Soul](souls/gleaner-left.md)。
 - **台院(Inspector)**：职掌见 [Soul](souls/inspector.md)。

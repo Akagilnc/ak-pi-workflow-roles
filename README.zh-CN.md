@@ -120,7 +120,7 @@ ak-role diarist --model <provider/model[:thinking]> "整理 #582、#583 自上�
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # 中书省
-ak-role secretariat --model <provider/model[:thinking]> "整理 #924 票面并送庭。"
+ak-role secretariat --model <provider/model[:thinking]> "审 #924 票面的设计。"
 
 # 左拾遗
 ak-role gleaner-left --model <provider/model[:thinking]> --base main
