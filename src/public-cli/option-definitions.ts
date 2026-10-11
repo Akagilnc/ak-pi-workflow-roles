@@ -1248,7 +1248,7 @@ const ROLE_COMMAND_HELP = {
   secretariat: {
     command: "secretariat",
     summary:
-      "Secretariat (中书省): review the drafted ticket's design by asking the caller questions; converges once the revised ticket lands every answer, then the gate summons countersign.",
+      "Secretariat (中书省): reviews the drafted ticket's design by asking the caller questions, writes the answered decisions into the ticket, then converges and the gate summons countersign.",
     usage: ["ak-role secretariat [options] [instruction]"],
     examples: [
       'ak-role secretariat "审 #924 票面的设计。"',
