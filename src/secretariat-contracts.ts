@@ -38,6 +38,10 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
       decisionGate: Type.Unknown({
         description: "需陛下处置的问题与选项；可写 question 与 options，原样留存。",
       }),
+      decisions: Type.Unknown({
+        description:
+          "决定表：稿里每个难改决定一项——draft（稿里原文）、alternative（截然不同的另一做法）、winner（draft 或 alternative）、reason（按《设计法》合、一致、少比）。原样留存。",
+      }),
     },
     { additionalProperties: true },
   ),

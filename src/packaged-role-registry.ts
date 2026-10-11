@@ -350,6 +350,8 @@ export const PUBLIC_ROLE_RECORDS = [
     sessionMaterials: [
       "CLAUDE.md",
       "souls/secretariat.md",
+      "souls/design-law.md",
+      "souls/quality-law.md",
       "souls/ticket-law.md",
       "resources/secretariat-ticket-identity.md",
       "souls/countersign.md",
