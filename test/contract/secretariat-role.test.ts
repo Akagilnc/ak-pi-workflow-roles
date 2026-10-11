@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
-import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-role.ts";
+import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict, type SecretariatVerdictParameters } from "../../src/secretariat-role.ts";
+import type { SecretariatVerdict as TerminatingSecretariatVerdict } from "../../src/package-contracts/terminating-tools.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import {
   createSubmissionLedgerHost,
@@ -82,39 +83,45 @@ test("secretariat activation exposes only the terminating package tool (G6)", as
 
 test("secretariat output records any status without shape reject (仓内 CLAUDE.md 开篇)", async () => {
   const { tools } = await activateSecretariat();
+  const convergedReceipt: SecretariatVerdictParameters = { secretariatStatus: "converged", ticketNumber: "#924" };
   const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c1",
-    { secretariatStatus: "converged", ticketNumber: 924 },
+    convergedReceipt,
     undefined,
     undefined,
     ctx,
   );
   assert.equal(converged.terminate, true);
-  assert.equal(
-    (converged.details as { secretariatStatus: string }).secretariatStatus,
-    "converged",
-  );
+  assert.deepEqual(converged.details, convergedReceipt);
 
+  const receipt: SecretariatVerdict = {
+    secretariatStatus: "escalate",
+    ticketNumber: "#924",
+    decisionGate: [
+      { question: "拆不拆席？", options: ["暂不", "拆"] },
+      { question: "留不留旧稿？", options: ["留", "不留"] },
+    ],
+    note: { answers: [], grounds: [], locations: [] },
+    summary: { questionsPending: true },
+    extra: [1, 2],
+  };
+  const parameters: SecretariatVerdictParameters = receipt;
+  const terminatingReceipt: TerminatingSecretariatVerdict = parameters;
   const escalated = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c2",
-    {
-      secretariatStatus: "escalate",
-      decisionGate: { question: "拆不拆席？", options: ["暂不", "拆"] },
-    },
+    terminatingReceipt,
     undefined,
     undefined,
     ctx,
   );
   assert.equal(escalated.terminate, true);
-  assert.equal(
-    (escalated.details as { secretariatStatus: string }).secretariatStatus,
-    "escalate",
-  );
+  assert.deepEqual(escalated.details, receipt);
 
   // 仓内 CLAUDE.md 开篇 / #924: tool only records; non-canonical status is not code-rejected.
+  const otherReceipt: SecretariatVerdictParameters = { secretariatStatus: "unexpected" };
   const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c3",
-    { secretariatStatus: "unexpected" },
+    otherReceipt,
     undefined,
     undefined,
     ctx,
