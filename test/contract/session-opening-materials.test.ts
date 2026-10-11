@@ -62,7 +62,6 @@ const TICKET_MAIN_MATERIALS = {
     "CLAUDE.md",
     "souls/secretariat.md",
     "souls/design-law.md",
-    "souls/quality-law.md",
     "souls/ticket-law.md",
     "resources/secretariat-ticket-identity.md",
     "souls/countersign.md",

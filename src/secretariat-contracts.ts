@@ -1,8 +1,6 @@
 /**
  * Public Secretariat (中书省) terminating receipt contracts.
  * Public terminal domain: converged (署) | escalate (上呈).
- * A countersign continue is an internal rewrite-and-resubmit fact, not a
- * Secretariat terminal.
  * (#924) — 原卷保真: the verdict is recognized read-only; no field
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
@@ -36,11 +34,8 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
       note: Type.Unknown({ description: "附注" }),
       evidence: Type.Optional(Type.Unknown({ description: "留存证据" })),
       decisionGate: Type.Unknown({
-        description: "需陛下处置的问题与选项；可写 question 与 options，原样留存。",
-      }),
-      decisions: Type.Unknown({
         description:
-          "决定表：稿里每个难改决定一项——draft（稿里原文）、alternative（截然不同的另一做法）、winner（draft 或 alternative）、reason（按《设计法》合、一致、少比）。原样留存。",
+          "本轮题目：每题 question、options（稿里做法／另一做法）、两边代价、建议。原样留存。",
       }),
     },
     { additionalProperties: true },
