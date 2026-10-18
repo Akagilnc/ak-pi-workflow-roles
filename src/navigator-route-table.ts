@@ -9,8 +9,10 @@
 import type { DiaristOutput } from "./diarist-contracts.ts";
 import type { MergerOutput } from "./merger-contracts.ts";
 import type { PackagedRole } from "./packaged-role-registry.ts";
+import type { GatekeeperDirectOutput } from "./package-contracts/gatekeeper-output.ts";
+import type { ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import type { CoderOutput } from "./package-contracts/worker-output.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
-import type { WorkerStatusWord } from "./worker-submission-contracts.ts";
 
 export const NAVIGATOR_ADVICE_MAX_CHARS = 20;
 
@@ -25,22 +27,22 @@ export type NavigatorRouteRows = Readonly<Record<string, string>>;
 type Rows<Status extends string> = Readonly<Partial<Record<Status, string>>>;
 
 /**
- * Status keys follow the seats' existing receipt types where they export one
- * (review words, worker words, diarist, merger). Seats whose contract only
- * describes the words in prose (reviewer, gatekeeper, secretariat) stay `string`.
+ * Status keys follow each seat's existing receipt type. The fixer's output type
+ * leaves status open (its words are the coder's, per the fixer contract) and the
+ * secretariat's receipt has no status type, so those two stay on their words.
  */
 type RoleRows = {
   readonly judge: Rows<ReviewQueueWord>;
   readonly countersign: Rows<ReviewQueueWord>;
   readonly notary: Rows<ReviewQueueWord>;
   readonly inspector: Rows<ReviewQueueWord>;
-  readonly coder: Rows<WorkerStatusWord>;
-  readonly fixer: Rows<WorkerStatusWord>;
+  readonly coder: Rows<CoderOutput["status"]>;
+  readonly fixer: Rows<CoderOutput["status"]>;
   readonly diarist: Rows<DiaristOutput["status"]>;
   readonly merger: Rows<MergerOutput["status"]>;
   readonly secretariat: NavigatorRouteRows;
-  readonly reviewer: NavigatorRouteRows;
-  readonly gatekeeper: NavigatorRouteRows;
+  readonly reviewer: Rows<ReviewerIntent["status"]>;
+  readonly gatekeeper: Rows<GatekeeperDirectOutput["status"]>;
 };
 
 export type NavigatorRouteTable = Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>>;

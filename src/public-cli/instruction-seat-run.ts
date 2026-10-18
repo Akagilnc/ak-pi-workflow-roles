@@ -15,7 +15,7 @@ import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from 
 import { receivedDiscriminator } from "../submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "../review-submission.ts";
 import { JUDGE_GATES, runJudgeGates } from "../judge-role.ts";
-import { WORKER_DONE_STATUSES, WORKER_STATUS_WORDS } from "../worker-submission-contracts.ts";
+import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
@@ -124,7 +124,9 @@ type SeatRunResult = {
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
 const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，secretariatStatus 写明其一。";
-const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set(WORKER_STATUS_WORDS);
+const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set([
+  "planned", "completed", "refused", "partially_completed", "unfinished",
+]);
 const WORKER_STATUS_REASK =
   "status 不是 planned、completed、refused、partially_completed、unfinished 之一。请重新交卷，status 写明其一。";
 const DOCTOR_ROUTING_STATUSES: ReadonlySet<string> = new Set(["completed", "refused"]);

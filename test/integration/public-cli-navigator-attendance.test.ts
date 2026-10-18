@@ -5,7 +5,7 @@
  * parent's actual status. Oracles: structured events and run records.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,18 +36,20 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 
 type Case = {
   readonly name: string;
-  readonly role: "judge" | "coder";
+  readonly role: "judge" | "coder" | "reviewer";
   readonly argv: readonly string[];
   readonly output: Record<string, unknown>;
   /** Row expected from the table; "none" = affirmative no-advice; "unavailable" = lookup run failed. */
   readonly expect: { readonly advice: string } | "none" | "unavailable";
-  /** Whether a real @navigator lookup run is expected at all. */
-  readonly lookupRuns: boolean;
+  /** A settled @navigator lookup run, none at all, or one whose own recording failed. */
+  readonly lookupRuns: boolean | "failed";
+  /** The parent role itself fails at the host: its result and cause stand. */
+  readonly parentFails?: true;
   readonly mismatchedSeat?: true;
   readonly failingLookup?: true;
 };
 
-function rowOf(role: "judge" | "coder", status: string): string {
+function rowOf(role: "judge" | "coder" | "reviewer", status: string): string {
   const advice = (NAVIGATOR_ROUTE_TABLE[role] as Readonly<Record<string, string>> | undefined)?.[status];
   assert.ok(advice, `${role}/${status} must have a table row`);
   return advice;
@@ -69,6 +71,18 @@ const CASES: readonly Case[] = [
     expect: { advice: rowOf("judge", status) }, lookupRuns: true,
   })),
   {
+    name: "reviewer (single lens) completed: its row",
+    role: "reviewer",
+    argv: ["--lens", "correctness", "--base", "HEAD", "--authority-ref", "CLAUDE.md", "Review."],
+    output: { status: "completed", amendments: { correctness: "ok" }, ticketNumber: 1192 },
+    expect: { advice: rowOf("reviewer", "completed") }, lookupRuns: true,
+  },
+  {
+    name: "parent host failure: its real cause stands, no advice is invented",
+    role: "judge", argv: ["Canonical nonblank prose Judge request."], output: judgeOut("converged"),
+    expect: "none", lookupRuns: false, parentFails: true,
+  },
+  {
     name: "navigator seat whose model and host do not match (xai/grok-4.5 on codex): still the row",
     role: "judge", argv: ["Canonical nonblank prose Judge request."], output: judgeOut("converged"),
     expect: { advice: rowOf("judge", "converged") }, lookupRuns: true, mismatchedSeat: true,
@@ -89,9 +103,9 @@ const CASES: readonly Case[] = [
     expect: "none", lookupRuns: false,
   },
   {
-    name: "the lookup run fails: unavailable with its real cause, the role result is untouched",
+    name: "the lookup run cannot record itself: unavailable with its real cause, the role result is untouched",
     role: "judge", argv: ["Canonical nonblank prose Judge request."], output: judgeOut("converged"),
-    expect: "unavailable", lookupRuns: false, failingLookup: true,
+    expect: "unavailable", lookupRuns: "failed", failingLookup: true,
   },
 ];
 
@@ -127,7 +141,20 @@ for (const scenario of CASES) {
             phase: options.phase,
             subjectKey: options.subjectKey,
             invocationId: options.invocationId,
-            lookup: createNavigatorLookup({ summonPublicRole: async () => { throw new Error("navigator run refused to start"); } }),
+            // The real summons; the fault is in the filesystem: the lookup run's own state file is a directory.
+            lookup: createNavigatorLookup({
+              summonPublicRole: async (summonOptions) => {
+                const { summonPublicRole } = await import("../../src/public-role-summons.ts");
+                return summonPublicRole({
+                  ...summonOptions,
+                  createRunId: () => {
+                    const id = "01a0navi00-0000-7000-8000-00000000f001";
+                    mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${id}@navigator`, "state.jsonl"), { recursive: true });
+                    return id;
+                  },
+                });
+              },
+            }),
             onEvent: async (event, report) => {
               events.push(event);
               await options.onEvent?.(event, report);
@@ -174,8 +201,9 @@ for (const scenario of CASES) {
               roundLimitName: "StructuredOutputRoundLimit",
               currentSessionId: () => undefined,
               async runRound() {
+                if (scenario.parentFails === true) return { status: "terminal" as const, result: { code: 1, stderr: "PARENT HOST BOOM", timedOut: false } };
                 await prepared.ingestStructuredOutput(scenario.output);
-                if (scenario.expect !== "none" || scenario.lookupRuns) {
+                if (scenario.expect !== "none" || scenario.lookupRuns === true) {
                   await waitForEventLoopCondition(() => events.some((item) => item.disposition !== "arrival"), {
                     label: "navigator attendance must settle", timeoutMs: 8_000,
                   });
@@ -191,7 +219,7 @@ for (const scenario of CASES) {
 
       const { stdout, stderr, io } = captureIo();
       const result = await runPublicInstructionSeat(
-        scenario.argv.slice(-1),
+        scenario.argv,
         {
           home,
           agentDir: join(home, ".pi"),
@@ -209,8 +237,15 @@ for (const scenario of CASES) {
         },
         io,
         scenario.role,
-        (args) => parsePublicSeatArgv(scenario.role, scenario.argv.length > 1 ? [scenario.argv[0]!, ...args] : args),
+        (args) => parsePublicSeatArgv(scenario.role, args),
       );
+      if (scenario.parentFails === true) {
+        assert.equal(result.exitCode, 1);
+        assert.equal(result.terminal?.roleOutcome.kind, "failure");
+        assert.match(JSON.stringify(result.terminal?.roleOutcome), /PARENT HOST BOOM/);
+        assert.notEqual(result.terminal?.navigator.disposition, "advice");
+        return;
+      }
       assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
 
@@ -220,7 +255,7 @@ for (const scenario of CASES) {
         assert.equal(fact?.disposition, "no-advice");
       } else if (scenario.expect === "unavailable") {
         assert.equal(fact?.disposition, "unavailable");
-        assert.equal(fact?.disposition === "unavailable" ? fact.reason : "", "navigator run refused to start");
+        assert.match(fact?.disposition === "unavailable" ? fact.reason : "", /EISDIR/);
       } else {
         assert.deepEqual(fact, { disposition: "advice", prose: scenario.expect.advice });
       }
@@ -228,8 +263,10 @@ for (const scenario of CASES) {
       // The lookup run, observed before cleanup: recorded as a lookup, with its own receipt, no session.
       const books = join(home, ".ak-roles", "books");
       const navigatorRuns = (await readdir(books, { recursive: true })).filter((path) => path.endsWith("@navigator"));
-      assert.equal(navigatorRuns.length, scenario.lookupRuns ? 1 : 0);
-      if (scenario.lookupRuns) {
+      assert.equal(navigatorRuns.length, scenario.lookupRuns === false ? 0 : 1);
+      if (scenario.lookupRuns === "failed") {
+        assert.equal(existsSync(join(books, navigatorRuns[0]!, "receipts", "1.json")), false);
+      } else if (scenario.lookupRuns) {
         const runDirectory = join(books, navigatorRuns[0]!);
         assert.equal(existsSync(join(runDirectory, "session", "session.jsonl")), false);
         assert.equal(existsSync(join(runDirectory, "receipts", "1.json")), true);
