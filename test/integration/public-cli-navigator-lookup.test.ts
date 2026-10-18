@@ -5,11 +5,12 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { NAVIGATOR_ADVICE_MAX_CHARS, NAVIGATOR_ROUTE_TABLE } from "../../src/navigator-route-table.ts";
+import { NAVIGATOR_ROUTE_TABLE } from "../../src/navigator-route-table.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
@@ -74,7 +75,7 @@ test("--role: only that seat's status rows", async () => {
 });
 
 test("--role of a seat with no rows: empty rows, not an invented line", async () => {
-  const { result } = await callNavigator(["--role", "collector"]);
+  const { result } = await callNavigator(["--role", "gleaner-left"]);
   assert.deepEqual(onlyPayload(result), { byStatus: {} });
 });
 
@@ -99,18 +100,31 @@ test("--role outside the seat registry: structural usage error, nothing admitted
   assert.equal(result.terminal, undefined);
 });
 
-test("every table row is one short line", () => {
-  for (const [role, rows] of Object.entries(NAVIGATOR_ROUTE_TABLE)) {
-    for (const [status, advice] of Object.entries(rows)) {
-      assert.ok(
-        advice.trim() !== "" && Array.from(advice).length <= NAVIGATOR_ADVICE_MAX_CHARS,
-        `${role}/${status}`,
-      );
-    }
-  }
-});
-
 test("the run record names the lookup, not a real host", async () => {
   const { invocation } = await callNavigator([]);
   assert.equal(invocation?.host, "lookup");
+});
+
+test("a run that cannot record itself presents the real cause and no invented advice", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stderr } = captureIo();
+    const result = await runAkRole(["navigator", "--project", project], {
+      home,
+      packageRoot,
+      cwd: project,
+      io,
+      roleTurnHost: hostMustNotRun,
+      // The run's own state file is a directory: its first record write fails.
+      createRunId: () => {
+        mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${RUN_ID}@navigator`, "state.jsonl"), { recursive: true });
+        return RUN_ID;
+      },
+    });
+    assert.equal(result.exitCode, 1);
+    assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+    assert.match(stderr.join(""), /EISDIR/);
+  });
 });

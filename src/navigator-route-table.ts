@@ -2,7 +2,8 @@
  * 游奕使的唯一路线表（#1192）：(衙门角色, 结局 status) → 一句建议。
  * 本表是路线的唯一真源；游奕使不调模型，只按行取出。建议只供调用者参考，
  * 不执行下一站，也不读判词正文猜分支——需判词点名下一步的写「按判词处置」。
- * 没有结局 status 的情况（如宿主故障）与未列出的 status 不设行，走无建议。
+ * 没有结局 status 的情况（如宿主故障；通进司的回执也没有 status 字段）与未列出的
+ * status（如 coder 的 planned）不设行，走无建议。
  * 每句 20 字以内。
  */
 import type { PackagedRole } from "./packaged-role-registry.ts";
@@ -16,7 +17,9 @@ const RESUME_SAME_WORKER = "续修，勿送大理寺";
 
 export type NavigatorRouteRows = Readonly<Record<string, string>>;
 
-export const NAVIGATOR_ROUTE_TABLE: Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>> = {
+export type NavigatorRouteTable = Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>>;
+
+export const NAVIGATOR_ROUTE_TABLE: NavigatorRouteTable = {
   secretariat: { converged: "送给事中审读", escalate: ESCALATE_TO_OWNER },
   countersign: { converged: "派将作监开工", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
   notary: { converged: "按流程进下一站", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
@@ -33,7 +36,7 @@ export const NAVIGATOR_ROUTE_TABLE: Readonly<Partial<Record<PackagedRole, Naviga
     refused: SETTLED_TO_JUDGE,
     unfinished: RESUME_SAME_WORKER,
   },
-  reviewer: { completed: "派大理寺裁决", refused: DISPOSE_BY_VERDICT },
+  reviewer: { completed: "派大理寺裁决", refused: "呈调用者处置" },
   judge: {
     converged: "调用者合并、关票",
     continue: DISPOSE_BY_VERDICT,
@@ -50,6 +53,6 @@ export function navigatorRowsForRole(role: PackagedRole): NavigatorRouteRows {
 }
 
 /** 整表：衙门 → (status → 建议)。 */
-export function navigatorFullTable(): Readonly<Record<string, NavigatorRouteRows>> {
-  return NAVIGATOR_ROUTE_TABLE as Readonly<Record<string, NavigatorRouteRows>>;
+export function navigatorFullTable(): NavigatorRouteTable {
+  return NAVIGATOR_ROUTE_TABLE;
 }
