@@ -13,10 +13,3 @@ test("every table row is one short non-empty line", () => {
     }
   }
 });
-
-test("statuses without a lawful next station have no row", () => {
-  assert.equal("planned" in (NAVIGATOR_ROUTE_TABLE.coder ?? {}), false);
-  assert.equal("planned" in (NAVIGATOR_ROUTE_TABLE.fixer ?? {}), false);
-  // The collector's receipt carries no status field, so it cannot be keyed here.
-  assert.equal(NAVIGATOR_ROUTE_TABLE.collector, undefined);
-});

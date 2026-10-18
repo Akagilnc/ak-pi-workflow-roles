@@ -73,7 +73,8 @@ function onlyPayload(result: Awaited<ReturnType<typeof callNavigator>>["result"]
 }
 
 test("no argument: whole table, recorded as a lookup with no host session", async () => {
-  const { result, sessionFileExists, receipts, receiptBodies, progress } = await callNavigator([]);
+  const { result, invocation, sessionFileExists, receipts, receiptBodies, progress } = await callNavigator([]);
+  assert.equal(invocation?.host, "lookup");
   assert.deepEqual(onlyPayload(result), { byRole: NAVIGATOR_ROUTE_TABLE });
   assert.equal(sessionFileExists, false);
   // The same original-receipt and progress landing as every sealed submission, naming no session.
@@ -114,11 +115,6 @@ test("--role outside the seat registry: structural usage error, nothing admitted
   const { result } = await callNavigator(["--role", "nobody"]);
   assert.equal(result.exitCode, 2);
   assert.equal(result.terminal, undefined);
-});
-
-test("the run record names the lookup, not a real host", async () => {
-  const { invocation } = await callNavigator([]);
-  assert.equal(invocation?.host, "lookup");
 });
 
 test("a run that cannot record itself presents the real cause and no invented advice", async () => {

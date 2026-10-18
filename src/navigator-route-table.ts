@@ -4,6 +4,8 @@
  * 不执行下一站，也不读判词正文猜分支——需判词点名下一步的写「按判词处置」。
  * 没有结局 status 的情况（如宿主故障；通进司的回执也没有 status 字段）与未列出的
  * status（如 coder 的 planned）不设行，走无建议。
+ * 闸在同一次公开调用内自动传召的站（中书省→给事中→符宝郎、大理寺→审刑院、
+ * 修内司／将作监→台院）不再建议；建议写闸线之后的下一站。
  * 每句 20 字以内。
  */
 import type { DiaristOutput } from "./diarist-contracts.ts";
@@ -18,6 +20,7 @@ export const NAVIGATOR_ADVICE_MAX_CHARS = 20;
 
 const DISPOSE_BY_VERDICT = "按判词处置";
 const ESCALATE_TO_OWNER = "呈陛下裁决";
+const DISPATCH_WORKER = "派将作监开工";
 const SETTLED_TO_JUDGE = "可送大理寺审计";
 const RESUME_SAME_WORKER = "续修，勿送大理寺";
 
@@ -48,8 +51,8 @@ type RoleRows = {
 export type NavigatorRouteTable = Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>>;
 
 const ROUTE_ROWS = {
-  secretariat: { converged: "送给事中审读", escalate: ESCALATE_TO_OWNER },
-  countersign: { converged: "派将作监开工", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
+  secretariat: { converged: DISPATCH_WORKER, escalate: ESCALATE_TO_OWNER },
+  countersign: { converged: DISPATCH_WORKER, continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
   notary: { converged: "按流程进下一站", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
   inspector: { converged: "按流程进下一站", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
   coder: {
