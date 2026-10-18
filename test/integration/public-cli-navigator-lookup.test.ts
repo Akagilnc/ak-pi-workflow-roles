@@ -4,8 +4,7 @@
  * Oracles: typed terminal payloads and run records, never advice wording.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -50,8 +49,18 @@ async function callNavigator(
       roleTurnHost: hostMustNotRun,
     });
     const coords = issuePiDurablePrincipalCoordinates({ cwd: project, runId: RUN_ID, role: "navigator", home });
-    const invocation = readPageSync(dirname(coords.sessionDirectory), "invocation");
-    return { result, coords, invocation };
+    const runDirectory = dirname(coords.sessionDirectory);
+    // Observed before the temp home is cleaned up.
+    const invocation = readPageSync(runDirectory, "invocation");
+    const sessionFileExists = existsSync(coords.sessionFile);
+    const receiptsDirectory = join(runDirectory, "receipts");
+    const receipts = existsSync(receiptsDirectory) ? readdirSync(receiptsDirectory).sort() : [];
+    const progressPath = join(runDirectory, "progress.jsonl");
+    const progress = existsSync(progressPath)
+      ? readFileSync(progressPath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { seat?: string; receipt?: string; session?: string })
+      : [];
+    const receiptBodies = receipts.map((name) => JSON.parse(readFileSync(join(receiptsDirectory, name), "utf8")) as unknown);
+    return { result, invocation, sessionFileExists, receipts, receiptBodies, progress };
   });
 }
 
@@ -64,9 +73,16 @@ function onlyPayload(result: Awaited<ReturnType<typeof callNavigator>>["result"]
 }
 
 test("no argument: whole table, recorded as a lookup with no host session", async () => {
-  const { result, coords } = await callNavigator([]);
+  const { result, sessionFileExists, receipts, receiptBodies, progress } = await callNavigator([]);
   assert.deepEqual(onlyPayload(result), { byRole: NAVIGATOR_ROUTE_TABLE });
-  assert.equal(existsSync(coords.sessionFile), false);
+  assert.equal(sessionFileExists, false);
+  // The same original-receipt and progress landing as every sealed submission, naming no session.
+  assert.deepEqual(receipts, ["1.json"]);
+  assert.deepEqual(receiptBodies, [{ byRole: NAVIGATOR_ROUTE_TABLE }]);
+  assert.equal(progress.length, 1);
+  assert.equal(progress[0]?.seat, "navigator");
+  assert.equal(progress[0]?.receipt, `runs/${RUN_ID}@navigator/receipts/1.json`);
+  assert.equal(progress[0]?.session, "");
 });
 
 test("--role: only that seat's status rows", async () => {

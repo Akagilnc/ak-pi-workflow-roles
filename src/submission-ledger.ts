@@ -22,6 +22,7 @@ import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import {
   captureWorktreeHead,
+  landTicketProgress,
   landTicketProgressForSealedSubmission,
 } from "./ticket-progress.ts";
 
@@ -466,8 +467,9 @@ function homeFromHostContext(context: HostContext, home?: string): string | unde
 
 /**
  * #1192: seal one accepted submission without a model tool call or host session
- * (the navigator lookup run). Same sealed ledger event as the terminating-tool
- * wrap; no ticket-progress line, because there is no session to point it at.
+ * (the navigator lookup run). Same sealed ledger event and the same original
+ * receipt / progress landing as the terminating-tool wrap; the progress line
+ * names no session because the run has none.
  */
 export function sealAcceptedSubmission(options: {
   readonly runDirectory: string;
@@ -477,10 +479,12 @@ export function sealAcceptedSubmission(options: {
   readonly toolCallId: string;
   readonly home?: string;
   readonly courtAttemptId?: string;
+  readonly instruction?: string;
 }): void {
   const runId = runIdFromRunDirectory(options.runDirectory);
   if (runId === undefined) throw new Error("提交账需要已受理的 run 身份");
   const attemptId = options.courtAttemptId ?? `${runId}:initial`;
+  const sealHead = captureWorktreeHead(options.cwd);
   const sessionParent = sessionFileOf(options.runDirectory);
   const home = options.home ?? tryHomeFromAkRolesPath(sessionParent);
   sitianReport({
@@ -498,6 +502,14 @@ export function sealAcceptedSubmission(options: {
     cwd: options.cwd,
     ...(home !== undefined ? { home } : {}),
     sessionParent,
+  });
+  landTicketProgress({
+    runDirectory: options.runDirectory,
+    role: options.role,
+    accepted: options.accepted,
+    sealHead,
+    sessionFile: undefined,
+    instruction: options.instruction ?? "",
   });
 }
 

@@ -157,7 +157,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
 
   return {
     prepare(): void {
-      if (disposed || preparation !== undefined) return;
+      // Soul: 「plan 阶段停用」— a plan-phase parent gets no lookup at all.
+      if (disposed || preparation !== undefined || options.phase === "plan") return;
       preparationFailure = undefined;
       preparedAdvice = undefined;
       preparationInFlight = true;

@@ -35,6 +35,7 @@ export function createNavigatorLookupHost(): RoleTurnHost {
         home: request.home,
         role: "navigator",
         accepted,
+        instruction: request.continuation.prompt,
         toolCallId: `navigator-lookup:${randomUUID()}`,
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });

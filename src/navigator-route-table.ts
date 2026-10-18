@@ -6,7 +6,11 @@
  * status（如 coder 的 planned）不设行，走无建议。
  * 每句 20 字以内。
  */
+import type { DiaristOutput } from "./diarist-contracts.ts";
+import type { MergerOutput } from "./merger-contracts.ts";
 import type { PackagedRole } from "./packaged-role-registry.ts";
+import type { ReviewQueueWord } from "./review-submission.ts";
+import type { WorkerStatusWord } from "./worker-submission-contracts.ts";
 
 export const NAVIGATOR_ADVICE_MAX_CHARS = 20;
 
@@ -17,9 +21,31 @@ const RESUME_SAME_WORKER = "续修，勿送大理寺";
 
 export type NavigatorRouteRows = Readonly<Record<string, string>>;
 
+/** Rows keyed by a seat's own status words; a lawful status may have no row. */
+type Rows<Status extends string> = Readonly<Partial<Record<Status, string>>>;
+
+/**
+ * Status keys follow the seats' existing receipt types where they export one
+ * (review words, worker words, diarist, merger). Seats whose contract only
+ * describes the words in prose (reviewer, gatekeeper, secretariat) stay `string`.
+ */
+type RoleRows = {
+  readonly judge: Rows<ReviewQueueWord>;
+  readonly countersign: Rows<ReviewQueueWord>;
+  readonly notary: Rows<ReviewQueueWord>;
+  readonly inspector: Rows<ReviewQueueWord>;
+  readonly coder: Rows<WorkerStatusWord>;
+  readonly fixer: Rows<WorkerStatusWord>;
+  readonly diarist: Rows<DiaristOutput["status"]>;
+  readonly merger: Rows<MergerOutput["status"]>;
+  readonly secretariat: NavigatorRouteRows;
+  readonly reviewer: NavigatorRouteRows;
+  readonly gatekeeper: NavigatorRouteRows;
+};
+
 export type NavigatorRouteTable = Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>>;
 
-export const NAVIGATOR_ROUTE_TABLE: NavigatorRouteTable = {
+const ROUTE_ROWS = {
   secretariat: { converged: "送给事中审读", escalate: ESCALATE_TO_OWNER },
   countersign: { converged: "派将作监开工", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
   notary: { converged: "按流程进下一站", continue: DISPOSE_BY_VERDICT, escalate: ESCALATE_TO_OWNER },
@@ -45,7 +71,9 @@ export const NAVIGATOR_ROUTE_TABLE: NavigatorRouteTable = {
   gatekeeper: { dispatch: "召所点名的官员", pass: "放行，进下一站" },
   merger: { completed: "调用者收尾、关票", escalate: ESCALATE_TO_OWNER },
   diarist: { completed: "继续后续衙门", escalate: ESCALATE_TO_OWNER },
-};
+} as const satisfies RoleRows;
+
+export const NAVIGATOR_ROUTE_TABLE: NavigatorRouteTable = ROUTE_ROWS;
 
 /** 某衙门的全部行；表中无此衙门时为空对象。 */
 export function navigatorRowsForRole(role: PackagedRole): NavigatorRouteRows {
