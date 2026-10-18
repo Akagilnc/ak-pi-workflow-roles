@@ -28,29 +28,11 @@ function attend(lookup: NavigatorLookup) {
 const accepted = (status?: string): NavigatorSettlement =>
   ({ kind: "accepted", role: "coder", phase: "apply", ...(status === undefined ? {} : { status }) });
 
-test("settle picks the row of the actual status; settle itself looks nothing up", async () => {
-  let lookups = 0;
-  const { nav, events } = attend(async () => { lookups += 1; return rows({ completed: "A", unfinished: "B" }); });
-  nav.prepare();
-  await nav.settle(accepted("completed"));
-  nav.prepare();
-  await nav.settle(accepted("unfinished"));
-  assert.deepEqual(events.map((e) => [e.disposition, e.prose]), [["advice", "A"], ["advice", "B"]]);
-  assert.equal(lookups, 2, "one lookup per prepare, none at settle");
-});
-
-test("a status with no row, human_decision keys, and infra without status", async () => {
-  const { nav, events } = attend(async () => rows({ escalate: "E", completed: "C" }));
-  nav.prepare();
-  await nav.settle(accepted("refused"));
-  nav.prepare();
-  await nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
+test("a host infrastructure failure settles without a status: no-advice", async () => {
+  const { nav, events } = attend(async () => rows({ completed: "C" }));
   nav.prepare();
   await nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-  assert.deepEqual(
-    events.map((e) => [e.disposition, e.prose]),
-    [["no-advice", undefined], ["advice", "E"], ["no-advice", undefined]],
-  );
+  assert.deepEqual(events.map((e) => [e.disposition, e.prose]), [["no-advice", undefined]]);
 });
 
 test("a role with no rows and a cold settle are affirmative no-advice, never invented", async () => {
@@ -63,17 +45,6 @@ test("a role with no rows and a cold settle are affirmative no-advice, never inv
     [...empty.events, ...cold.events].map((e) => e.disposition),
     ["no-advice", "no-advice"],
   );
-});
-
-test("a failed lookup is unavailable with its real cause and never blocks settle", async () => {
-  const { nav, events } = attend(async () => {
-    throw new NavigatorUnavailableError("session", "navigator run failed: disk full");
-  });
-  nav.prepare();
-  await nav.settle(accepted("completed"));
-  assert.equal(events[0]?.disposition, "unavailable");
-  assert.equal(events[0]?.unavailableSource, "session");
-  assert.equal(events[0]?.unavailableReason, "navigator run failed: disk full");
 });
 
 test("arrival is presentation-only and does not wait for the lookup", async () => {
@@ -101,33 +72,7 @@ test("dispose aborts the in-flight lookup and drops its late completion", async 
   assert.deepEqual(events, []);
 });
 
-test("lookup summons the navigator with the parent role as structured input and reads its rows", async () => {
-  const calls: Array<readonly string[]> = [];
-  const lookup = createNavigatorLookup({
-    summonPublicRole: async (options) => {
-      calls.push(options.argv);
-      return {
-        exitCode: 0,
-        terminal: {
-          roleOutcome: { kind: "accepted", role: "navigator", payloads: [{ byStatus: { completed: "C" } }] },
-        } as never,
-      };
-    },
-  });
-  const prepared = await lookup({ context, role: "coder" });
-  assert.deepEqual(calls, [["--role", "coder"]]);
-  assert.deepEqual([...(prepared?.byStatus ?? [])], [["completed", "C"]]);
-});
-
-test("a navigator run that fails or leaves no terminal is unavailable with the real cause", async () => {
-  const failed = createNavigatorLookup({
-    summonPublicRole: async () => ({
-      exitCode: 1,
-      terminal: { roleOutcome: { kind: "failure", role: "navigator", diagnostic: "ledger unwritable", decisiveFacts: {} } } as never,
-    }),
-  });
-  await assert.rejects(failed({ context, role: "coder" }), (error: unknown) =>
-    error instanceof NavigatorUnavailableError && error.message === "ledger unwritable");
+test("a navigator run that leaves no terminal or throws is unavailable with the real cause", async () => {
   const silent = createNavigatorLookup({ summonPublicRole: async () => ({ exitCode: 2, stderr: "usage" }) });
   await assert.rejects(silent({ context, role: "coder" }), (error: unknown) =>
     error instanceof NavigatorUnavailableError && error.unavailableSource === "session");

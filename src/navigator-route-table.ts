@@ -4,8 +4,9 @@
  * 不执行下一站，也不读判词正文猜分支——需判词点名下一步的写「按判词处置」。
  * 没有结局 status 的情况（如宿主故障；通进司的回执也没有 status 字段）与未列出的
  * status（如 coder 的 planned）不设行，走无建议。
- * 闸在同一次公开调用内自动传召的站（中书省→给事中→符宝郎、大理寺→审刑院、
- * 修内司／将作监→台院）不再建议；建议写闸线之后的下一站。
+ * 闸在同一次公开调用内自动传召的站（闸表真源：gatekeeper-role.ts 的
+ * GATE_OFFICER_BY_SUBJECT 与 judge-role.ts 的 JUDGE_GATES）不再建议；
+ * 建议写闸线之后的下一站。
  * 每句 20 字以内。
  */
 import type { DiaristOutput } from "./diarist-contracts.ts";
