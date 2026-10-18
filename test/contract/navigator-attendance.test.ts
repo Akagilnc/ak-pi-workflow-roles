@@ -72,11 +72,16 @@ test("dispose aborts the in-flight lookup and drops its late completion", async 
   assert.deepEqual(events, []);
 });
 
-test("a navigator run that leaves no terminal or throws is unavailable with the real cause", async () => {
+test("a navigator run that fails or leaves no terminal is unavailable with the real cause", async () => {
+  const failed = createNavigatorLookup({
+    summonPublicRole: async () => ({
+      exitCode: 1,
+      terminal: { roleOutcome: { kind: "failure", role: "navigator", diagnostic: "ledger unwritable", decisiveFacts: {} } } as never,
+    }),
+  });
+  await assert.rejects(failed({ context, role: "coder" }), (error: unknown) =>
+    error instanceof NavigatorUnavailableError && error.message === "ledger unwritable");
   const silent = createNavigatorLookup({ summonPublicRole: async () => ({ exitCode: 2, stderr: "usage" }) });
   await assert.rejects(silent({ context, role: "coder" }), (error: unknown) =>
     error instanceof NavigatorUnavailableError && error.unavailableSource === "session");
-  const thrown = createNavigatorLookup({ summonPublicRole: async () => { throw new Error("spawn failed"); } });
-  await assert.rejects(thrown({ context, role: "coder" }), (error: unknown) =>
-    error instanceof NavigatorUnavailableError && error.message === "spawn failed");
 });
