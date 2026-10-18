@@ -13,3 +13,7 @@ Status: accepted
 继续把裸 Pi 与 session 文件包装成公开用法、分别提供人读与机器输出、把表格呈现机械化为 schema、为 shell CLI 再全局 npm 安装一份——均驳回。方法 Skill 的「运行时下载外部 Skill」驳回已由 #1043 替代，改为用户自行运行 setup。
 
 原 Decision key `reviewer-packaged-method` 的方法身份引用 [ADR 0032](0032-keep-canonical-skill-expansion-binding.md)。原「整份逐字携带上游、packageAdaptation=`verbatim-upstream`」的随包分发已由 #1043 替代。公开 CLI 仍是唯一外部接口本身不动。
+
+## 修订（#1192）
+
+`ak-role navigator` 仍是公开角色，建议来源由模型改为查表：不给 `--role` 给出整张路线表，给出角色则给该衙门那几行；instruction 散文不解析、不报用法错误。依据：陛下 uuid `66d0648d-0cb0-4662-a230-e527ad72f815`、`5c784ea0-e03f-41a8-b901-2a065d985449`。

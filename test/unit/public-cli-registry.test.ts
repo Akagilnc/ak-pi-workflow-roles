@@ -28,7 +28,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     auditTool: "ak_soul_audit_decision",
     settlement: "sealed",
     boardPlacement: "judge-history",
-    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "status",
   },
@@ -49,7 +48,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       reportPhase: true,
     },
     boardPlacement: "marshal",
-    navigatorSubject: "public-instruction",
     activationFlags: [
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
     ],
@@ -71,7 +69,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     artifactFace: {
       reportPhase: true,
     },
-    navigatorSubject: "public-instruction",
     activationFlags: [
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
     ],
@@ -143,7 +140,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     artifactFace: {
       doctorReportFacts: true,
     },
-    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -189,7 +185,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_submission_output",
     settlement: "accepted",
     reaskPrompt: true,
-    navigatorSubject: "source-run",
     gateStageLabel: "符宝郎",
     gateSummon: "source-run",
     activationFlags: [
@@ -295,12 +290,13 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     role: "navigator",
     inCallAutoResume: false,
     presentSettled: "always",
-    summonResume: true,
+    summonResume: false,
     admission: "instruction",
     sameParent: "none",
     phases: [null],
     outputTool: "ak_navigator_output",
     settlement: "accepted",
+    activationFlags: [{ field: "forRole" }],
     activationStage: "load-and-install",
   },
   {

@@ -45,11 +45,9 @@ import {
   homeFromRunDirectory,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
+import { findLatestDurablePackagedRoleTerminal } from "../navigator-invocation-identity.ts";
 import {
-  findLatestDurablePackagedRoleTerminal,
-  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
-} from "../navigator-invocation-identity.ts";
-import {
+  isNavigatorSeat,
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   type PackagedArtifactFace,
@@ -462,11 +460,13 @@ async function settleNoReceiptTerminal(
   }
   return attachEngineDetourToolUsage({
     roleOutcome,
-    navigator: await extractNavigatorFactFromAdmittedSession(
-      coordinates.sessionFile,
-      admitted.runDirectory,
-      scope,
-    ),
+    navigator: isNavigatorSeat(admitted.role)
+      ? NAVIGATOR_SEAT_OWN_FACT
+      : await extractNavigatorFactFromAdmittedSession(
+        coordinates.sessionFile,
+        admitted.runDirectory,
+        scope,
+      ),
     artifacts: [],
     runId: admitted.runId,
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
@@ -1075,9 +1075,6 @@ function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
   const disposition = details.disposition;
-  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
-    ? { advisoryDiagnostic: details.routePlaybookReadFailure }
-    : {};
   // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason/
   // command is projected into prose so historical sessions still render — never wash
   // a real recommendation into no-advice when any advice body is recoverable.
@@ -1108,20 +1105,13 @@ function parseNavigatorAttendanceDetails(
     }
     if (prose === undefined || prose.trim() === "") {
       // Attended but empty body is affirmative no-advice, not unavailable (#959).
-      return {
-        disposition: "no-advice",
-        ...advisoryDiagnostic,
-      };
+      return { disposition: "no-advice" };
     }
-    return adviceNavigatorFact({
-      prose,
-      ...advisoryDiagnostic,
-    });
+    return adviceNavigatorFact({ prose });
   }
   if (disposition === "unavailable") {
     return {
       disposition: "unavailable",
-      ...advisoryDiagnostic,
       source:
         typeof details.unavailableSource === "string"
           ? details.unavailableSource
@@ -1134,10 +1124,7 @@ function parseNavigatorAttendanceDetails(
   }
   // arrival and legacy silence both mean affirmative lawful no next-role advice.
   if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return {
-      disposition: "no-advice",
-      ...advisoryDiagnostic,
-    };
+    return { disposition: "no-advice" };
   }
   return {
     disposition: "unavailable",
@@ -1235,27 +1222,7 @@ function detourUsageContext(
   };
 }
 
-function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY) continue;
-    const data = entry.data;
-    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") return undefined;
-    return data.message;
-  }
-  return undefined;
-}
-
 export function extractNavigatorFact(
-  entries: readonly SessionEntry[],
-): TerminalNavigatorFact {
-  const fact = extractNavigatorAttendanceFact(entries);
-  if (fact.advisoryDiagnostic !== undefined) return fact;
-  const message = routePlaybookFailureMessage(entries);
-  return message === undefined ? fact : { ...fact, advisoryDiagnostic: message };
-}
-
-function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / unparseable is never no-advice.
@@ -1290,6 +1257,9 @@ function extractNavigatorAttendanceFact(
  * Never infers no-advice from omission; session read failures stay typed unavailable
  * so the controlled-failure Terminal itself still settles.
  */
+/** The navigator run is the advice itself; it has no attendance of its own (#1192). */
+const NAVIGATOR_SEAT_OWN_FACT: TerminalNavigatorFact = { disposition: "no-advice" };
+
 async function extractNavigatorFactFromAdmittedSession(
   sessionFile: string,
   runDirectory: string,
@@ -1495,7 +1465,7 @@ async function finishLawfulSeat(
     : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope);
   const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
-    navigator: extractNavigatorFact(entries),
+    navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
     artifacts,
     runId: admitted.runId,
     ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
@@ -1698,11 +1668,13 @@ export async function settleFailureTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(
-    sessionFile,
-    admitted.runDirectory,
-    options,
-  );
+  const navigator = isNavigatorSeat(admitted.role)
+    ? NAVIGATOR_SEAT_OWN_FACT
+    : await extractNavigatorFactFromAdmittedSession(
+      sessionFile,
+      admitted.runDirectory,
+      options,
+    );
   let artifacts: TerminalArtifactRef[] = [];
   if (options.previewOnly !== true) {
     try {

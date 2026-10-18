@@ -2,8 +2,8 @@
  * #505 route, submission, and settlement tracer.
  * One public entry (runAkRole) per active registry seat.
  * The host argv role is the route. The sealed terminal and report.json are the
- * submission and settlement faces. Navigator routebook read failure stays an
- * advisory diagnostic and leaves the accepted receipt in place.
+ * submission and settlement faces. The navigator is the one exception: it is a
+ * table lookup (#1192), so it settles without any host turn.
  */
 import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
@@ -17,7 +17,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
-import { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY } from "../../src/navigator-attendance.ts";
 import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -32,7 +31,6 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 
 const TICKET = 505;
-const ROUTEBOOK_FAILURE = "missing playbook";
 
 test("#505 every active seat routes, submits, and settles from the public entry", async () => {
   await withTempRoot("ak-seat-pipeline-", async (home) => {
@@ -83,15 +81,6 @@ test("#505 every active seat routes, submits, and settles from the public entry"
             assert.ok(sessionFile);
             await appendFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE })}\n`, "utf8");
           }
-          if (seat.role === "navigator") {
-            const sessionFile = argvFlagValue(args, "--session");
-            assert.ok(sessionFile);
-            await appendFile(sessionFile, `${JSON.stringify({
-              type: "custom",
-              customType: NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
-              data: { message: ROUTEBOOK_FAILURE },
-            })}\n`, "utf8");
-          }
           return written;
         },
       });
@@ -116,8 +105,8 @@ test("#505 every active seat routes, submits, and settles from the public entry"
         reportRole = body.role;
       }
       const problems: string[] = [];
-      if (!routed.includes(record.role)) {
-        problems.push(`route missed ${record.role}; saw ${routed.join(",") || "(none)"}`);
+      if (record.role === "navigator" ? routed.length > 0 : !routed.includes(record.role)) {
+        problems.push(`route ${record.role}; saw ${routed.join(",") || "(none)"}`);
       }
       if (result.exitCode !== 0) problems.push(`exit ${result.exitCode}`);
       if (outcome?.kind !== "accepted" || outcome.role !== record.role) {
@@ -129,13 +118,6 @@ test("#505 every active seat routes, submits, and settles from the public entry"
         && (record.role === "diarist" || record.role === "countersign")
       ) {
         firstRunDirectory.set(record.role, dirname(report.path));
-      }
-      if (record.role === "navigator") {
-        const navigator = result.terminal?.navigator;
-        if (navigator?.advisoryDiagnostic !== ROUTEBOOK_FAILURE) {
-          problems.push(`routebook diagnostic ${String(navigator?.advisoryDiagnostic)}`);
-        }
-        if (outcome?.kind !== "accepted") problems.push("routebook failure changed the receipt");
       }
       if (problems.length > 0) {
         failures.push(`${record.role}: ${problems.join("; ")} stderr=${stderr.at(-1) ?? ""}`);

@@ -485,8 +485,6 @@ export type PostAdmissionEnv = {
   boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
-  /** #1160 attendance auto byStatus prepare (nested navigator only). */
-  navigatorByStatusPrepare?: boolean;
 };
 
 /**
@@ -1374,9 +1372,6 @@ export async function dispatchPostAdmissionTurn<
     if (env.stationChild !== undefined) {
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
-    if (env.navigatorByStatusPrepare === true) {
-      turnRequest = { ...turnRequest, navigatorByStatusPrepare: true };
-    }
     // Selected host axis rides the shared Host envelope for in-turn tools
     // (detour usage ledger) — never a pre-spawn current.json reread.
     if (typeof env.host === "string" && env.host.trim() !== "") {
@@ -1734,9 +1729,6 @@ export function resumeTurnRequestProjectionOptions(
       prompt,
     },
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
-    ...(env.navigatorByStatusPrepare === true
-      ? { navigatorByStatusPrepare: true as const }
-      : {}),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
   };
@@ -1757,9 +1749,6 @@ export function roleTurnOptions(
       : { correlationId }),
     continuation,
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
-    ...(env.navigatorByStatusPrepare === true
-      ? { navigatorByStatusPrepare: true as const }
-      : {}),
     // #1132: one configured ceiling, already resolved by the caller (#422).
     deliveryRequestLimit: deliveryLimitFromConfig(env.autoResumeLimit),
   };

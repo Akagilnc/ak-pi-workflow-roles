@@ -37,7 +37,6 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 ```bash
 ak-role config set judge <provider/model[:thinking]>
-ak-role config set navigator <provider/model[:thinking]>
 # 官席配置示例
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
@@ -63,7 +62,7 @@ ak-role config set-auto-resume-limit 3
 
 **官席解析：** 见 [机构解析](src/institutional-resolution.ts)；配置用法见 `ak-role help config`，持久文件读取见 [config 实现](src/public-cli/config.ts)。
 
-**回执：** 见 [导出契约](src/package-contracts/)；游奕使出口见 `ak-role help navigator`。组合与停止见 [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md)。
+**回执：** 见 [导出契约](src/package-contracts/)；游奕使不调模型，建议取自 [路线表](src/navigator-route-table.ts)；调用面见 `ak-role help navigator`。组合与停止见 [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md)。
 
 **交卷闸：** 见 [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)、[交卷闸实现](src/submission-gate.ts)、[worker 审核组合](src/worker-role.ts)、[judge 审核组合](src/judge-role.ts)。劳务引擎失败处置见 [ADR 0071](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)，使用量观测见 [usage fact 真源](src/engine-detour-usage.ts)。
 
@@ -110,7 +109,8 @@ ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "R
 ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
 # 游奕使
-ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
+ak-role navigator            # 整张路线表（不调模型）
+ak-role navigator --role coder   # 只看某衙门的几行
 
 # 起居郎请求示例；方法见 resources/diarist-collect.md
 ak-role diarist --model <provider/model[:thinking]> "整理 #582 自上次成录以来的御话。"
@@ -151,7 +151,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | **符宝郎** | notary | 职掌见 [Soul](souls/notary.md)；调用面见 `ak-role help notary`。 |
 | **通进司** | collector | 职掌见 [Soul](souls/collector.md)。 |
 | **校书郎** | merger | 职掌见 [Soul](souls/merger.md)。 |
-| **游奕使** | navigator | 职掌见 [Soul](souls/navigator.md)；调用面见 `ak-role help navigator`。 |
+| **游奕使** | navigator | 非模型查表席位：按衙门结局给一句建议，表见 [路线表](src/navigator-route-table.ts)；调用面见 `ak-role help navigator`。 |
 | **起居郎** | diarist | 职掌见 [Soul](souls/diarist.md)；调用面见 `ak-role help diarist`。 |
 
 其余席位：

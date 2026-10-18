@@ -152,27 +152,6 @@ export function createReceiptDeliveryPolicy(limit?: number) {
       deliveryTurns += 1;
       spend();
     },
-    /**
-     * Stop asking. The issued count stays whatever was actually sent (#1132 —
-     * do not fill the remainder up to the ceiling).
-     */
-    closeBudget() { closed = true; },
-    /**
-     * A nested session settled without an accepted receipt. Close so this layer
-     * does not open another prompt on that session. The issued count stays the
-     * larger of the two seams: a nested zero must not wipe prompts this layer
-     * already sent, and adding the two counts would bill one send twice.
-     */
-    recordNestedNoReceipt(facts: Partial<NoReceiptLifecycleFacts>) {
-      if (typeof facts.terminalToolCalled === "boolean") {
-        terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
-      }
-      if (facts.rejectedReceipts !== undefined) {
-        rejectedReceipts.push(...facts.rejectedReceipts);
-      }
-      if (facts.deliveryTurns !== undefined) deliveryTurns = Math.max(deliveryTurns, facts.deliveryTurns);
-      closed = true;
-    },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {
       if (accepted) return "accepted";
       if (closed) return "no-receipt";

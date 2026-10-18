@@ -26,6 +26,10 @@ export const navigatorAdviceFields = {
       "按主衙门结局 status 预写的散文建议。键为 status 字面量，值为建议正文。"
       + "结算时代码只按实际 status 取对应原文，不解析建议语义。",
   }),
+  byRole: Type.Unknown({
+    description:
+      "整张路线表：键为衙门角色，值为该衙门 status → 建议。直接入口不给角色时使用。",
+  }),
 } as const;
 
 /** Open tool object for prose/byStatus (attendance prepare + public output body). */
@@ -73,13 +77,6 @@ function byStatusFromUnknown(value: unknown): Map<string, string> {
   return out;
 }
 
-/** Plain object for tool.execute / host payloads; Object.fromEntries keeps opaque keys. */
-export function byStatusToPlainObject(
-  byStatus: ReadonlyMap<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(byStatus);
-}
-
 /**
  * Project one Navigator advice receipt as prose (display / single-advice path).
  * Accepts { prose }, a bare string, or any object — objects stringify as the
@@ -112,14 +109,6 @@ export function validateRecordedNavigatorOutput(value: unknown): NavigatorAdvice
     throw new Error("Navigator output is empty");
   }
   return projected;
-}
-
-/** Extract display prose from any navigator payload / attendance body. */
-export function navigatorProseFromUnknown(value: unknown): string | undefined {
-  const projected = projectLawfulNavigatorOutput(value);
-  if (projected === undefined) return undefined;
-  const trimmed = projected.prose.trim();
-  return trimmed === "" ? undefined : projected.prose;
 }
 
 /**

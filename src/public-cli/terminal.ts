@@ -90,17 +90,12 @@ export type TerminalNavigatorFact =
       /** #959: navigator speaks prose; code does not parse or rank the advice. */
       disposition: "advice";
       prose: string;
-      advisoryDiagnostic?: string;
     }
-  | {
-      disposition: "no-advice";
-      advisoryDiagnostic?: string;
-    }
+  | { disposition: "no-advice" }
   | {
       disposition: "unavailable";
       source: string;
       reason: string;
-      advisoryDiagnostic?: string;
     };
 
 /**
@@ -163,15 +158,8 @@ export type TerminalResult = {
  * Build an advice navigator fact (#959). Prose is presented as submitted;
  * code does not parse route/next or judge usability.
  */
-export function adviceNavigatorFact(input: {
-  prose: string;
-  advisoryDiagnostic?: string;
-}): TerminalNavigatorFact {
-  return {
-    disposition: "advice",
-    prose: input.prose,
-    ...(input.advisoryDiagnostic === undefined ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }),
-  };
+export function adviceNavigatorFact(input: { prose: string }): TerminalNavigatorFact {
+  return { disposition: "advice", prose: input.prose };
 }
 
 /**
@@ -221,9 +209,6 @@ export function formatTerminalResult(result: TerminalResult): string {
     }
   }
   lines.push(`navigator\t${result.navigator.disposition}`);
-  if (result.navigator.advisoryDiagnostic !== undefined) {
-    lines.push(`navigator-advisory\t${encodeTerminalField(result.navigator.advisoryDiagnostic)}`);
-  }
   if (result.navigator.disposition === "advice") {
     // #959: present navigator prose as-is — no next/reason/command parsing.
     lines.push(`prose\t${encodeTerminalField(result.navigator.prose)}`);

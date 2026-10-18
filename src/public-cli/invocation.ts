@@ -42,7 +42,6 @@ import {
   packagedBareToken,
   packagedBaseIsRevision,
   packagedEmitsAuthorityRefs,
-  packagedPublicInstructionSubject,
   packagedRoleMetadata,
   packagedStoresSourceRunRaw,
   packagedSubjectChoices,
@@ -96,7 +95,7 @@ import {
   type TakenTypedOption,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
-import type { PublicThinkingLevel } from "./registry.ts";
+import { PUBLIC_CALLABLE_ROLES, type PublicThinkingLevel } from "./registry.ts";
 
 import { errorText, isRecord } from "../unknown-value.ts";
 
@@ -188,6 +187,8 @@ export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "navigator";
+  /** Structured target seat for the lookup (#1192); absent = whole table. */
+  readonly forRole?: PackagedRole;
 };
 
 export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
@@ -901,6 +902,7 @@ function appendBareInstruction(
 export type PublicSeatArgvOwner = Exclude<OptionOwner, "global" | "analyst">;
 
 type SeatArgvFields = {
+  forRole?: PackagedRole;
   attachmentPaths: string[];
   project?: string;
   positional: string[];
@@ -951,6 +953,17 @@ function assignPublicSeatOption(
         );
       }
       fields.subject = subject;
+      return;
+    }
+    case "role": {
+      const raw = typeof value === "string" ? value.trim() : "";
+      const known = PUBLIC_CALLABLE_ROLES.find((role) => role === raw);
+      if (known === undefined) {
+        throw new CliUsageError(
+          `${owner} --role must be one of ${PUBLIC_CALLABLE_ROLES.join("|")}, got ${value ?? "(missing)"}`,
+        );
+      }
+      fields.forRole = known;
       return;
     }
     case "source-run": {
@@ -1107,6 +1120,7 @@ export function parsePublicSeatArgv(
     ...(fields.lens === undefined ? {} : { lens: fields.lens }),
     ...(packagedEmitsAuthorityRefs(owner) ? { authorityRefs: fields.authorityRefs } : {}),
     ...(fields.subject === undefined ? {} : { subject: fields.subject }),
+    ...(fields.forRole === undefined ? {} : { forRole: fields.forRole }),
   };
 }
 
@@ -1347,6 +1361,7 @@ export type PublicSeatParse = {
   readonly lens?: "completeness" | "correctness";
   readonly authorityRefs?: readonly string[];
   readonly subject?: "judge" | "doctor";
+  readonly forRole?: PackagedRole;
 };
 
 /**
@@ -1402,6 +1417,7 @@ export async function admitPublicRole(
           instruction,
           attachmentPaths,
           ...project,
+          ...(parsed.forRole === undefined ? {} : { admittedFields: { forRole: parsed.forRole } }),
         },
       );
     case "court-materials":
@@ -2048,34 +2064,6 @@ export async function materializeCountersignInvocation(
     admitted.role,
     options.model,
   );
-}
-
-/**
- * Load the admitted section written at admission (Navigator work-context seam).
- * Missing / wrong-shape → undefined. Control-plane read faults propagate (#1187 F2).
- */
-export async function loadAdmittedJudgeRequest(
-  runDirectory: string,
-): Promise<{
-  instruction: string;
-  instructionEmpty: boolean;
-  attachments: readonly AdmittedAttachment[];
-} | undefined> {
-  const record = readPageSync(runDirectory, "admitted");
-  if (record === undefined) return undefined;
-  if (!packagedPublicInstructionSubject(record.role)) return undefined;
-  if (typeof record.instruction !== "string") return undefined;
-  if (typeof record.instructionEmpty !== "boolean") return undefined;
-  if (!Array.isArray(record.attachments)) return undefined;
-  const attachments = record.attachments
-    .map((item) => normalizeAdmittedAttachment(item))
-    .filter((item): item is AdmittedAttachment => item !== undefined);
-  return {
-    instruction: record.instruction,
-    instructionEmpty: record.instructionEmpty,
-    attachments,
-  };
-
 }
 
 export type AdmitFixerInvocationOptions = {

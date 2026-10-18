@@ -22,6 +22,7 @@ import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import {
   captureWorktreeHead,
+  landTicketProgress,
   landTicketProgressForSealedSubmission,
 } from "./ticket-progress.ts";
 
@@ -465,23 +466,27 @@ function homeFromHostContext(context: HostContext, home?: string): string | unde
 }
 
 /**
- * #959: seal one accepted submission without a model tool call.
- * Same ledger row shape as the terminating-tool wrap.
- * Used when a prose-exit seat (navigator) harvests the final assistant text.
+ * #1192: seal one accepted submission without a model tool call or host session
+ * (the navigator lookup run). Same sealed ledger event and the same original
+ * receipt / progress landing as the terminating-tool wrap; the progress line
+ * names no session because the run has none.
  */
-export async function sealAcceptedSubmission(options: {
-  readonly context: HostContext;
+export function sealAcceptedSubmission(options: {
+  readonly runDirectory: string;
+  readonly cwd: string;
   readonly role: TerminalRoleName;
   readonly accepted: unknown;
   readonly toolCallId: string;
   readonly home?: string;
-}): Promise<void> {
-  const runId = runIdentity(options.context);
-  const attemptId = attemptIdentity(options.context, runId);
-  const sessionParent = sessionParentFromHostContext(options.context);
-  const home = homeFromHostContext(options.context, options.home);
-  // #1199: same seal-time HEAD + progress landing as the terminating-tool wrap.
-  const sealHead = captureWorktreeHead(options.context.cwd);
+  readonly courtAttemptId?: string;
+  readonly instruction?: string;
+}): void {
+  const runId = runIdFromRunDirectory(options.runDirectory);
+  if (runId === undefined) throw new Error("提交账需要已受理的 run 身份");
+  const attemptId = options.courtAttemptId ?? `${runId}:initial`;
+  const sealHead = captureWorktreeHead(options.cwd);
+  const sessionParent = sessionFileOf(options.runDirectory);
+  const home = options.home ?? tryHomeFromAkRolesPath(sessionParent);
   sitianReport({
     level: "event",
     kind: "sealed",
@@ -494,15 +499,17 @@ export async function sealAcceptedSubmission(options: {
       accepted: options.accepted,
     },
     source: "role-runtime",
-    cwd: options.context.cwd,
+    cwd: options.cwd,
     ...(home !== undefined ? { home } : {}),
-    ...(sessionParent === undefined ? {} : { sessionParent }),
+    sessionParent,
   });
-  landTicketProgressForSealedSubmission({
-    context: options.context,
+  landTicketProgress({
+    runDirectory: options.runDirectory,
     role: options.role,
     accepted: options.accepted,
     sealHead,
+    sessionFile: undefined,
+    instruction: options.instruction ?? "",
   });
 }
 

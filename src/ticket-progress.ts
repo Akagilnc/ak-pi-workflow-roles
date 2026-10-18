@@ -254,6 +254,34 @@ export function landTicketProgressForSealedSubmission(input: {
 }): TicketProgressLine | undefined {
   const runDirectory = runDirectoryFromHostContext(input.context);
   if (runDirectory === undefined) return undefined;
+  return landTicketProgress({
+    runDirectory,
+    role: input.role,
+    accepted: input.accepted,
+    sealHead: input.sealHead,
+    ...(input.lens === undefined ? {} : { lens: input.lens }),
+    sessionFile: progressSessionAbsolute(runDirectory, input.context),
+    instruction: typeof input.context.summonsInstruction === "string"
+      ? input.context.summonsInstruction
+      : "",
+  });
+}
+
+/**
+ * Original receipt plus progress line for one sealed submission.
+ * `sessionFile` is absent for a run that never had a host session (the
+ * navigator lookup, #1192): the line then names no session.
+ */
+export function landTicketProgress(input: {
+  readonly runDirectory: string;
+  readonly role: string;
+  readonly accepted: unknown;
+  readonly sealHead: WorktreeHeadCapture;
+  readonly lens?: string;
+  readonly sessionFile: string | undefined;
+  readonly instruction: string;
+}): TicketProgressLine | undefined {
+  const { runDirectory } = input;
 
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return undefined;
@@ -289,12 +317,11 @@ export function landTicketProgressForSealedSubmission(input: {
   // Unbound: round stays empty until whole-leg bind publishes into ticket current.
   const round = unbound ? "" : nextRoundFromLines(existing, input.role, lens);
 
-  const sessionFile = progressSessionAbsolute(runDirectory, input.context);
-  const sessionRelative = relative(subjectDirectory, sessionFile).split(sep).join("/");
+  const sessionRelative = input.sessionFile === undefined
+    ? ""
+    : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
   const { status, summary } = statusAndSummaryFromPayload(input.role, input.accepted);
-  const instruction = typeof input.context.summonsInstruction === "string"
-    ? input.context.summonsInstruction
-    : "";
+  const instruction = input.instruction;
   const line: TicketProgressLine = {
     at: new Date().toISOString(),
     seat: input.role,

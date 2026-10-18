@@ -594,6 +594,25 @@ const DOCTOR_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
+/** 游奕使: structured target seat for the lookup; instruction prose is never parsed (#1192). */
+const NAVIGATOR_OPTIONS = [
+  ...projectAndAttach("navigator"),
+  {
+    id: "role",
+    owner: "navigator",
+    canonical: "--role",
+    aliases: [],
+    valueMetavar: "role",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional seat whose status → advice rows to show; omitted shows the whole table. The instruction text is not read.",
+      zh: "可选衙门角色：只显示该衙门的 status → 建议；缺省显示整张表。instruction 正文不读。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
 const NOTARY_OPTIONS = [
   bindOwner("notary", SHARED_PROJECT_SEMANTICS),
   {
@@ -799,6 +818,7 @@ const SEAT_OPTION_ROWS: Partial<
   notary: NOTARY_OPTIONS,
   auditor: AUDITOR_OPTIONS,
   inspector: INSPECTOR_OPTIONS,
+  navigator: NAVIGATOR_OPTIONS,
 };
 
 function seatOptionRows(role: PublicCallableRole): readonly PublicOptionDefinition[] {
@@ -1103,7 +1123,7 @@ export type PublicCommandHelpFacts = {
  * the role list like every other role).
  */
 export const PUBLIC_NAVIGATOR_HELP_NOTE =
-  "Navigator also attends automatically on top-level public entry legs; that sidecar is unchanged by direct `ak-role navigator` calls." as const;
+  "Navigator also attends automatically on top-level public entry legs; the sidecar and direct `ak-role navigator` calls read the same status → advice table, with no model call." as const;
 
 const TOP_LEVEL_HELP = {
   command: "top",
@@ -1220,10 +1240,11 @@ const ROLE_COMMAND_HELP = {
   },
   navigator: {
     command: "navigator",
-    summary: "Direct Navigator (游奕使) free-form prose route advice.",
-    usage: ["ak-role navigator [options] [instruction]"],
+    summary: "Direct Navigator (游奕使) status → next-station advice table lookup; no model call.",
+    usage: ["ak-role navigator [--role <role>] [options] [instruction]"],
     examples: [
-      'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
+      "ak-role navigator",
+      "ak-role navigator --role coder",
     ],
   },
   auditor: {

@@ -134,7 +134,11 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector"; readonly sourceRun?: string }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" }
+  | {
+      readonly role: "navigator";
+      /** Structured target seat for the lookup run (#1192); absent = whole table. */
+      readonly forRole?: string;
+    }
   | { readonly role: "auditor" }
   | { readonly role: "diarist" }
   | { readonly role: "secretariat" };
@@ -199,12 +203,6 @@ export type RoleTurnRequest = {
   readonly host?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   readonly stationChild?: boolean;
-  /**
-   * #1160 attendance auto-prepare: host mounts native structured schema so
-   * byStatus returns as structured fields. Direct `ak-role navigator` omits
-   * this and keeps the free-form prose exit (#959).
-   */
-  readonly navigatorByStatusPrepare?: boolean;
   /**
    * #1132: the effective delivery-request ceiling resolved once by the caller
    * from the single configured `autoResumeLimit` value and projected here, so
