@@ -35,6 +35,7 @@ import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-s
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
+  isNavigatorSeat,
   packagedBindsBoardTicket,
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
@@ -431,6 +432,8 @@ async function reaskMissingTicketOnce(
   io: CliIo,
 ): Promise<SoftTicketReaskOutcome> {
   if ((env.ticketReasksSpent ?? 0) >= 1) return { kind: "none" };
+  // #1192: a table lookup has no one to ask, and a second turn would re-seal.
+  if (isNavigatorSeat(admitted.role)) return { kind: "none" };
   if (admitted.ticketNumber !== undefined) return { kind: "none" };
   if (!isUnboundRunDirectory(admitted.runDirectory)) return { kind: "none" };
   if (terminal?.roleOutcome.kind !== "accepted" && terminal?.roleOutcome.kind !== "audit_escalation") {

@@ -196,6 +196,8 @@ test("explicit resume hands the stored host session id to the selected host", as
     const failures: string[] = [];
     let seq = 0;
     for (const record of PUBLIC_ROLE_RECORDS) {
+      // The navigator is a table lookup (#1192): it has no host session to resume.
+      if (record.role === "navigator") continue;
       const nativeId = `native-${record.role}`;
       let seatRunId: string | undefined;
       const seedHost: RoleTurnHost = {

@@ -37,7 +37,6 @@ Seat and Gate-officer configuration:
 
 ```bash
 ak-role config set judge <provider/model[:thinking]>
-ak-role config set navigator <provider/model[:thinking]>
 # Gate-officer configuration examples
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
@@ -63,7 +62,7 @@ ak-role config set-auto-resume-limit 3
 
 **Gate-officer resolution:** [institutional resolution](src/institutional-resolution.ts); configuration usage: `ak-role help config`; persisted-file reading: [config implementation](src/public-cli/config.ts).
 
-**Receipts:** [exported contracts](src/package-contracts/); Navigator's output face: `ak-role help navigator`. Composition and stopping: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
+**Receipts:** [exported contracts](src/package-contracts/); Navigator advice is a table lookup, not a model call: [route table](src/navigator-route-table.ts); invocation: `ak-role help navigator`. Composition and stopping: [ADR 0010](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0010-callers-own-role-composition-and-repetition.md).
 
 **Submission gates:** [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md), [submission gate](src/submission-gate.ts), [role gate composition](src/worker-role.ts) and [judge gates](src/judge-role.ts). Labor-engine failure policy: [ADR 0071](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). Engine usage measurement: [usage fact owner](src/engine-detour-usage.ts).
 
@@ -118,8 +117,9 @@ ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "R
 # gatekeeper
 ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
-# navigator
-ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
+# navigator — status → next-station table lookup (no model); the whole table, or one seat's rows
+ak-role navigator
+ak-role navigator --role coder
 
 # diarist
 ak-role diarist --model <provider/model[:thinking]> "整理 #708 的本案依据。"

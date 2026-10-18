@@ -465,23 +465,24 @@ function homeFromHostContext(context: HostContext, home?: string): string | unde
 }
 
 /**
- * #959: seal one accepted submission without a model tool call.
- * Same ledger row shape as the terminating-tool wrap.
- * Used when a prose-exit seat (navigator) harvests the final assistant text.
+ * #1192: seal one accepted submission without a model tool call or host session
+ * (the navigator lookup run). Same sealed ledger event as the terminating-tool
+ * wrap; no ticket-progress line, because there is no session to point it at.
  */
-export async function sealAcceptedSubmission(options: {
-  readonly context: HostContext;
+export function sealAcceptedSubmission(options: {
+  readonly runDirectory: string;
+  readonly cwd: string;
   readonly role: TerminalRoleName;
   readonly accepted: unknown;
   readonly toolCallId: string;
   readonly home?: string;
-}): Promise<void> {
-  const runId = runIdentity(options.context);
-  const attemptId = attemptIdentity(options.context, runId);
-  const sessionParent = sessionParentFromHostContext(options.context);
-  const home = homeFromHostContext(options.context, options.home);
-  // #1199: same seal-time HEAD + progress landing as the terminating-tool wrap.
-  const sealHead = captureWorktreeHead(options.context.cwd);
+  readonly courtAttemptId?: string;
+}): void {
+  const runId = runIdFromRunDirectory(options.runDirectory);
+  if (runId === undefined) throw new Error("提交账需要已受理的 run 身份");
+  const attemptId = options.courtAttemptId ?? `${runId}:initial`;
+  const sessionParent = sessionFileOf(options.runDirectory);
+  const home = options.home ?? tryHomeFromAkRolesPath(sessionParent);
   sitianReport({
     level: "event",
     kind: "sealed",
@@ -494,15 +495,9 @@ export async function sealAcceptedSubmission(options: {
       accepted: options.accepted,
     },
     source: "role-runtime",
-    cwd: options.context.cwd,
+    cwd: options.cwd,
     ...(home !== undefined ? { home } : {}),
-    ...(sessionParent === undefined ? {} : { sessionParent }),
-  });
-  landTicketProgressForSealedSubmission({
-    context: options.context,
-    role: options.role,
-    accepted: options.accepted,
-    sealHead,
+    sessionParent,
   });
 }
 

@@ -1,6 +1,6 @@
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
- * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
+ * #639 public instruction-seat entry — Gatekeeper via real runAkRole (the navigator is a lookup, #1192).
  *
  * Both stop being automatic-only configurable seats: each accepts an invocation
  * request (opaque instruction + attachments) and delivers a typed terminal from
@@ -20,7 +20,6 @@ import test from "node:test";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -31,7 +30,7 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 type InstructionSeatCase = {
-  readonly role: "gatekeeper" | "navigator";
+  readonly role: "gatekeeper";
   readonly runId: string;
   readonly instruction: string;
   readonly toolName: string;
@@ -85,34 +84,6 @@ const CASES: readonly InstructionSeatCase[] = [
           : undefined,
         "inspector",
       );
-    },
-  },
-  {
-    role: "navigator",
-    runId: "01a0navi00-0000-7000-8000-000000000639",
-    instruction: "刚完成 coder apply 收敛，下一步？",
-    toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-    details: {
-      status: "advice",
-      candidates: [
-        {
-          next: { role: "judge", phase: null },
-          reason: "converged work needs adjudication",
-        },
-      ],
-    },
-    expectedStatus: "advice",
-    assertDecisiveFacts: (facts) => {
-      const candidates =
-        facts !== null && typeof facts === "object" && "candidates" in facts
-          ? (facts as { candidates?: unknown }).candidates
-          : undefined;
-      assert.deepEqual(candidates, [
-        {
-          next: { role: "judge", phase: null },
-          reason: "converged work needs adjudication",
-        },
-      ]);
     },
   },
 ];

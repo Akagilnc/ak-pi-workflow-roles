@@ -975,6 +975,8 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
         }
 
         for (const role of PUBLIC_CALLABLE_ROLES) {
+          // The navigator is a table lookup (#1192): no labor engine ever runs.
+          if (role === "navigator") continue;
           const project = role === "merger" ? mergerProject : baseProject;
           const bookKey = resolveBookKeyFromGit(project);
 

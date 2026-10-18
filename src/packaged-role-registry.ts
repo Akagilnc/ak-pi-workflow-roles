@@ -85,8 +85,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "sealed",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
-    /** Navigator subject is the public admitted instruction when the run is bound. */
-    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     sessionMaterials: [
@@ -115,8 +113,6 @@ export const PUBLIC_ROLE_RECORDS = [
       reportPhase: true,
     },
     boardPlacement: "marshal",
-    /** #1168: dispatch is first message; navigator reads admitted instruction. */
-    navigatorSubject: "public-instruction",
     activationFlags: [
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
     ],
@@ -145,8 +141,6 @@ export const PUBLIC_ROLE_RECORDS = [
     artifactFace: {
       reportPhase: true,
     },
-    /** #1168: dispatch is first message; navigator reads admitted instruction. */
-    navigatorSubject: "public-instruction",
     activationFlags: [
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
     ],
@@ -242,8 +236,6 @@ export const PUBLIC_ROLE_RECORDS = [
     artifactFace: {
       doctorReportFacts: true,
     },
-    /** Navigator subject is the doctor case, not the case-path file bytes. */
-    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -299,8 +291,6 @@ export const PUBLIC_ROLE_RECORDS = [
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */
     gateSummon: "source-run",
-    /** Navigator subject is the source-run locator, not the path file bytes. */
-    navigatorSubject: "source-run",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
@@ -438,12 +428,14 @@ export const PUBLIC_ROLE_RECORDS = [
     role: "navigator",
     inCallAutoResume: false,
     presentSettled: "always",
-    summonResume: true,
+    summonResume: false,
     admission: "instruction",
     sameParent: "none",
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** #1192: structured target seat for the lookup run; no host flag (no host runs it). */
+    activationFlags: [{ field: "forRole" }],
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
@@ -584,10 +576,6 @@ export function packagedRoleActivationFlags(role: string): readonly PackagedActi
   return record.activationFlags;
 }
 
-export function packagedRoleInputFlag(role: string): string | undefined {
-  return packagedRoleActivationFlags(role).find((spec) => spec.binds === "input")?.flag;
-}
-
 export function packagedRolePhaseFlag(role: string): string | undefined {
   return packagedRoleActivationFlags(role).find((spec) => spec.binds === "phase")?.flag;
 }
@@ -669,15 +657,6 @@ export function packagedAuditToolName(role: string): string | undefined {
   return record.auditTool;
 }
 
-/** Admitted-request role whose navigator subject is the public instruction. */
-export function packagedPublicInstructionSubject(role: unknown): boolean {
-  return typeof role === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
-    "navigatorSubject" in record
-    && record.navigatorSubject === "public-instruction"
-    && record.role === role
-  );
-}
-
 /** Resume restores an optional source-run path. */
 export function packagedResumeSourcePath(role: string): boolean {
   const record = packagedRoleMetadata(role);
@@ -690,14 +669,6 @@ export function packagedProjectsTargetBindRejection(role: string): boolean {
   return record !== undefined
     && "projectTargetBindRejection" in record
     && record.projectTargetBindRejection === true;
-}
-
-export function packagedNavigatorSubject(
-  role: string,
-): "file" | "case" | "source-run" | "public-instruction" {
-  const record = packagedRoleMetadata(role);
-  if (record !== undefined && "navigatorSubject" in record) return record.navigatorSubject;
-  return "file";
 }
 
 export type PackagedBoardPlacement = "judge-history" | "coder" | "marshal" | "collector";

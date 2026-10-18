@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readPageSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { admittedSourceRunPath } from "./public-cli/invocation.ts";
 import { readFileSync, writeSync } from "node:fs";
@@ -16,7 +15,7 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { sitianReportSafe } from "./host-session-record.ts";
-import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
+import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
 import {
   registerReportTicketTool,
@@ -35,7 +34,6 @@ import {
   durableSessionPointer,
   resolveBookKeyFromGit,
 } from "./activation-ledger.ts";
-import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   ENGINE_DETOUR_TOOL_NAME,
@@ -108,10 +106,6 @@ import {
   type GatekeeperRuntimeDependencies,
 } from "./gatekeeper-role.ts";
 import {
-  NAVIGATOR_TOOL_SPEC,
-  type NavigatorRuntimeDependencies,
-} from "./navigator-role.ts";
-import {
   AUDITOR_TOOL_SPEC,
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
@@ -120,7 +114,7 @@ import {
   auditedRunIdentityFromDirectory,
   auditedRunIdentityMaterial,
 } from "./audited-run-identity.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement } from "./navigator-attendance.ts";
 
 import { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } from "./auditor-soul.ts";
 import {
@@ -134,8 +128,8 @@ import {
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import {
   PACKAGED_ROLE_REGISTRY,
+  isNavigatorSeat,
   packagedRoleActivationFlags,
-  packagedRoleInputFlag,
   packagedRoleMetadata,
   packagedRoleOutputTool,
   packagedRolePhaseFlag,
@@ -473,8 +467,7 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; contextError?: unknown; invocationId: string; deliveryRequestLimit?: number; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; invocationId: string; onEvent: NavigatorAttendanceOptions["onEvent"] }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
@@ -681,56 +674,6 @@ export function createGatekeeperRoleRuntime(
     },
     dependencies,
   );
-}
-
-/** #639: direct Navigator public seat on the shared filed-officer envelope. */
-export function createNavigatorRoleRuntime(
-  roleHost: RoleHost,
-  dependencies: NavigatorRuntimeDependencies,
-) {
-  const base = createFiledOfficerRuntime(
-    roleHost,
-    {
-      role: "navigator",
-      tool: NAVIGATOR_TOOL_SPEC,
-      soulTag: "navigator",
-    },
-    dependencies,
-  );
-  let playbookBound = false;
-  return {
-    async activate() {
-      await base.activate();
-      if (playbookBound) return;
-      playbookBound = true;
-      // Standing system prompt, not a per-turn user message. Native read failure
-      // is the explanation (ADR 0061); no code-written sentence.
-      const loadRoutePlaybook = dependencies.loadRoutePlaybook
-        ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
-      let playbookRead: Promise<string> | undefined;
-      roleHost.on("before_agent_start", async (event, ctx) => {
-        const basePrompt = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
-        const parts: string[] = [];
-        try {
-          playbookRead ??= loadRoutePlaybook();
-          const content = await playbookRead;
-          dependencies.recordRoutePlaybookReadFailure?.(undefined);
-          if (content.trim() !== "") parts.push(content);
-        } catch (error) {
-          const message = errorText(error);
-          if (message.trim() !== "") {
-            dependencies.recordRoutePlaybookReadFailure?.(message);
-            parts.push(message);
-          }
-        }
-        if (parts.length === 0) return;
-        const text = parts.join("\n\n");
-        return {
-          systemPrompt: basePrompt.trim() === "" ? text : `${basePrompt}\n\n${text}`,
-        };
-      });
-    },
-  };
 }
 
 /** #675: public 审刑院 seat on the shared filed-officer envelope. */
@@ -978,28 +921,6 @@ export function createCountersignRoleRuntime(
   );
 }
 
-/**
- * #959: last assistant text parts as navigator prose exit.
- * Tool-call-only messages yield undefined — those already ride the tool path.
- */
-function lastAssistantProse(
-  messages: readonly { role: string; content?: readonly { type: string; text?: string }[] }[],
-): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-    const texts: string[] = [];
-    for (const part of message.content) {
-      if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-        texts.push(part.text);
-      }
-    }
-    if (texts.length === 0) continue;
-    return texts.join("");
-  }
-  return undefined;
-}
-
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
   /**
@@ -1069,7 +990,7 @@ export function createRoleRuntimeExtension(
     let navigatorActivation = 0;
     let navigatorDeliveryClosed = false;
     let pendingNavigatorSettlement: Promise<void> | undefined;
-    let navigatorWorkContext: NavigatorWorkContext | undefined;
+    let navigatorSubjectKey: string | undefined;
     let navigatorSessionParent: string | undefined;
     let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
@@ -1121,7 +1042,7 @@ export function createRoleRuntimeExtension(
     const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined): Promise<NavigatorEvent | undefined> => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
-      const workContext = navigatorWorkContext;
+      const subjectKey = navigatorSubjectKey;
       const pending = (async () => {
         // ADR 0052 / #959 / #1160: every settlement that waits on parallel prepare
         // (accepted, human_decision, role_infrastructure_failure) shares one grace
@@ -1139,7 +1060,6 @@ export function createRoleRuntimeExtension(
             disposition: "unavailable",
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
-            unavailableCause: "unknown",
           };
           const event: NavigatorEvent = {
             version: 1,
@@ -1147,10 +1067,9 @@ export function createRoleRuntimeExtension(
             invocationId: "post-role-grace-timeout",
             role: settlement.role,
             phase: settlement.phase,
-            subjectKey: workContext?.subjectKey ?? "",
+            subjectKey: subjectKey ?? "",
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
-            unavailableCause: "unknown",
           };
           pendingNavigatorPresentation = { event, report };
         }
@@ -1209,30 +1128,6 @@ export function createRoleRuntimeExtension(
           ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
         }
       }
-      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
-        // Flagged roles already have a concrete packet/task/case/review input.
-        // A bare Judge (and other bare packaged entrypoint) gets its concrete
-        // user task at this seam; do not copy the assembled system prompt.
-        // Replacement is keyed by typed subject provenance, never prose prefixes.
-        // Soft session_start placeholders (no materials yet) recover here; hard
-        // contextError from true loader failures stays poisoned and honest.
-        if (navigatorWorkContext.subjectProvenance === "placeholder") {
-          // Navigator's own input bootstrap (#836): human prompt bytes key the
-          // identity when nothing else has supplied a concrete subject yet.
-          // Auto prepare stays identity-only — no subject/authority material copy.
-          const subject = prompt.trim();
-          if (subject !== "") {
-            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
-            navigatorWorkContext = {
-              subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
-              subjectProvenance,
-            };
-            await navigatorAttendance.setWorkContext(navigatorWorkContext);
-          }
-        }
-      }
-      navigatorAttendance?.prepare();
       // Reviewer parent prompt assembly.
       if (activeReviewerParent !== undefined && selectedRole === role) {
         return {
@@ -1341,55 +1236,6 @@ export function createRoleRuntimeExtension(
         // Abort after an already-recorded receipt must not un-accept or催交.
         if (receiptDelivery.nextAction() !== "accepted") {
           receiptDelivery.stopForInfrastructure();
-        }
-        return;
-      }
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      // #959: navigator prose exit — final assistant text is the receipt.
-      // No typed-tool 催交; no JSON required. Tool path still wins when already accepted.
-      if (
-        typeof role === "string"
-        && packagedRoleOutputTool(role) === NAVIGATOR_TOOL_SPEC.name
-        && receiptDelivery.nextAction() !== "accepted"
-      ) {
-        const prose = lastAssistantProse(event.messages);
-        if (prose !== undefined && prose.trim() !== "") {
-          const accepted = { prose };
-          const toolCallId = `navigator-prose-exit:${randomUUID()}`;
-          await sealAcceptedSubmission({
-            context: ctx,
-            role: "navigator",
-            accepted,
-            toolCallId,
-          });
-          await projectClosedSubmission(
-            { role: "navigator", kind: "accepted", accepted },
-            ctx,
-            toolCallId,
-          );
-          return;
-        }
-        // Attended with neither tool nor prose → honest no_receipt (not typed 催交).
-        // Close the budget without sending prompts; the fact stays the real count.
-        if (!noReceiptRecorded) {
-          const runPointer = runDirectoryFromHostContext(ctx);
-          if (runPointer !== undefined) {
-            noReceiptRecorded = true;
-            receiptDelivery.closeBudget();
-            const facts = receiptDelivery.facts({
-              runPointer,
-              attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
-            });
-            envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            sitianReportSafe({
-              level: "event",
-              kind: "no-receipt-lifecycle",
-              cwd: ctx.cwd,
-              sessionParent: ctx.sessionManager.getSessionFile(),
-              payload: facts,
-              source: "role-runtime",
-            });
-          }
         }
         return;
       }
@@ -1556,14 +1402,6 @@ export function createRoleRuntimeExtension(
     const gatekeeper = createGatekeeperRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("gatekeeper"),
     });
-    const navigator = createNavigatorRoleRuntime(roleHost, {
-      loadSoul: () => requireRoleSoul("navigator"),
-      recordRoutePlaybookReadFailure: (message) => {
-        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, {
-          message: message ?? "",
-        });
-      },
-    });
     const auditor = createAuditorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("auditor"),
     });
@@ -1674,7 +1512,7 @@ export function createRoleRuntimeExtension(
       navigatorDeliveryClosed = false;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      navigatorWorkContext = undefined;
+      navigatorSubjectKey = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
       envelopeHost.startKeepalive(ctx);
@@ -1707,7 +1545,9 @@ export function createRoleRuntimeExtension(
         "gleaner-left": () => gleanerLeft.activate(),
         inspector: () => inspector.activate(),
         gatekeeper: () => gatekeeper.activate(),
-        navigator: () => navigator.activate(),
+        navigator: async () => {
+          throw new Error("navigator is a table lookup (#1192); no host runtime serves it");
+        },
         auditor: () => auditor.activate(),
         diarist: () => diarist.activate(),
         secretariat: () => secretariat.activate(),
@@ -1731,39 +1571,16 @@ export function createRoleRuntimeExtension(
 
         // Station children (court diarist, inner-gate summons) omit navigator sidecar (#840).
         // Top-level public entry legs still attend automatically.
-        // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
-        // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
+        // The navigator seat never attends itself (summonPublicRole navigator ↔ attendance recursion).
         const isStationChild = roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
         if (
           dependencies.createNavigatorAttendance !== undefined
-          && entry.outputTool !== NAVIGATOR_TOOL_SPEC.name
+          && !isNavigatorSeat(entry.role)
           && !isStationChild
         ) {
           navigatorSessionParent = ctx.sessionManager.getSessionFile();
           navigatorCwd = ctx.cwd;
-          let work: NavigatorWorkContext;
-          let contextError: unknown;
-          if (dependencies.loadNavigatorWorkContext === undefined) {
-            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            contextError = new Error("Navigator work context loader is not configured");
-            work = { subjectKey: fallbackSubjectKey, subjectProvenance: "placeholder" };
-          } else {
-            try {
-              work = await dependencies.loadNavigatorWorkContext({
-                context: ctx,
-                role: entry.role,
-                phase: navigatorPhase(roleHost, entry.role),
-                getFlag: (name) => roleHost.getFlag(name),
-              });
-              contextError = work.contextError;
-            } catch (error) {
-              // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
-              contextError = navigatorUnavailableError("context", error);
-              const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-              work = { subjectKey: fallbackSubjectKey, subjectProvenance: "placeholder" };
-            }
-          }
-          navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
+          navigatorSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
           // Shared envelope owns exact invocation principal from admitted session lifecycle.
           // session_start is process activation: resume unfinished principal only when marker
           // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
@@ -1773,7 +1590,7 @@ export function createRoleRuntimeExtension(
           const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
             role: entry.role,
             phase: invocationPhase,
-            subjectKey: work.subjectKey,
+            subjectKey: navigatorSubjectKey,
           });
           const invocationId = lifecyclePrincipal.invocationId;
           if (!lifecyclePrincipal.resume) {
@@ -1781,7 +1598,7 @@ export function createRoleRuntimeExtension(
               invocationId,
               role: entry.role,
               phase: invocationPhase,
-              subjectKey: work.subjectKey,
+              subjectKey: navigatorSubjectKey,
             };
             envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
             sitianReportSafe({
@@ -1798,24 +1615,16 @@ export function createRoleRuntimeExtension(
             context: ctx,
             role: entry.role,
             phase: invocationPhase,
-            subjectKey: work.subjectKey,
+            subjectKey: navigatorSubjectKey,
             invocationId,
-            deliveryRequestLimit: deliveryLimit,
-            ...(contextError === undefined ? {} : { contextError }),
             onEvent: (navigatorEvent, report) => {
               if (activation === navigatorActivation && !navigatorDeliveryClosed) {
                 pendingNavigatorPresentation = { event: navigatorEvent, report };
               }
             },
           });
-          // Concrete work context starts parallel prepare (model runs now; #1160).
-          // Placeholder subjects wait for before_agent_start (user prompt may replace the subject key).
-          if (
-            navigatorWorkContext.contextError === undefined &&
-            navigatorWorkContext.subjectProvenance !== "placeholder"
-          ) {
-            navigatorAttendance.prepare();
-          }
+          // The lookup starts with the parent role (#1160 / #1192).
+          navigatorAttendance.prepare();
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });

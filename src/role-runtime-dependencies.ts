@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { loadDoctorCase } from "./doctor-evidence.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
-import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
+import { createNavigatorAttendance } from "./navigator-attendance.ts";
+import { createNavigatorLookup } from "./navigator-lookup.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
@@ -40,7 +40,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   // packageRoot is the install root (resources/ lives there). Never resolve via
   // import.meta.url — headless/acp production-host bundles live under dist/*/
   // and would otherwise look for dist/resources/ (#962).
-  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
+  const navigatorLookup = createNavigatorLookup();
   return {
     packageRoot,
     loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
@@ -48,20 +48,13 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadDoctorCase,
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
-      context: options.context,
-      role: options.role,
-      ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
-    }),
     createNavigatorAttendance: (options) => createNavigatorAttendance({
       context: options.context,
       role: options.role,
       phase: options.phase,
       subjectKey: options.subjectKey,
       invocationId: options.invocationId,
-      createSession: navigatorSessionFactory,
-      ...(options.deliveryRequestLimit === undefined ? {} : { deliveryRequestLimit: options.deliveryRequestLimit }),
-      ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+      lookup: navigatorLookup,
       onEvent: options.onEvent,
     }),
   };

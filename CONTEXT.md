@@ -39,8 +39,8 @@
 - **卷宗(Dossier)**：见 [卷宗拓扑](docs/dossier-topology.md)。
 - **先立卷后审卷**：见 [ADR 0085](docs/adr/0085-ledger-before-audit.md)。
 - **绑定(Binding)**：见 [ADR 0004](docs/adr/0004-targethead-binding-check.md)、[ADR 0037](docs/adr/0037-keep-live-target-authority-and-evidence-binding.md)。
-- **Navigator(游奕使)**：职掌见 [Soul](souls/navigator.md)。
-- **路书(Route playbook)**：见 [ADR 0061](docs/adr/0061-navigator-routebook-is-free-form-advisory-material.md)、[路书](resources/navigator-route-playbook.md)。_Avoid_：默认工作流、路由表、自动编排规则。
+- **Navigator(游奕使)**：非模型查表席位，建议取自 [路线表](src/navigator-route-table.ts)；职掌见 [Soul](souls/navigator.md)。
+- **路线表(Route table)**：游奕使「(衙门角色, 结局 status) → 一句建议」的唯一真源，见 [路线表](src/navigator-route-table.ts)；路书已于 #1192 退役（[ADR 0061](docs/adr/0061-navigator-routebook-is-free-form-advisory-material.md)）。_Avoid_：自动编排规则。
 - **角色调用(Role invocation)／编排器(Orchestrator)**：见 [ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)。
 - **公开角色 CLI(Public role CLI)／内部角色入口(Internal role entrypoint)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、[ADR 0082](docs/adr/0082-three-layer-runtime-role-host-face.md)。_Avoid_：把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
 - **调用请求(Invocation request)**：见 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md)、`ak-role help <command>`。

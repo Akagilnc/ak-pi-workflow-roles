@@ -4,6 +4,8 @@
  * then host-facing provider projection. Callers own how a missing model is shown.
  */
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
+import { createNavigatorLookupHost, NAVIGATOR_LOOKUP_HOST } from "../navigator-lookup-host.ts";
+import { isNavigatorSeat } from "../packaged-role-registry.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
 import {
   resolvedSeatWithModel,
@@ -44,6 +46,18 @@ export function openRoleSeatRuntime(input: {
   /** Already host-facing. A second projection would rename the provider again. */
   readonly hostFacingModel?: SeatModelConfig;
 }): OpenedRoleSeatRuntime {
+  // #1192: the navigator is a table lookup, not a model seat. Its seat axes
+  // (model / host / engine) are accepted and never consulted, so a mismatched
+  // or absent pair cannot stop it and no host session is started.
+  if (isNavigatorSeat(input.role)) {
+    input.afterHost?.();
+    return {
+      ok: true,
+      roleTurnHost: createNavigatorLookupHost(),
+      hostAdapters: [],
+      host: NAVIGATOR_LOOKUP_HOST,
+    };
+  }
   const hostAdapters = composeRoleTurnHostAdapters(
     input.resolution,
     input.principalAuthority,

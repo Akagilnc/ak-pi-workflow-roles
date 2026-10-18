@@ -10,14 +10,10 @@ const entries = [
   // Static import of navigator-invocation-identity (#603: non-bundle graph closure).
   "uuidv7",
   "navigator-attendance",
-  // Navigator package-graph dependencies used by attendance settlement.
-  // navigator-session-contracts is a static import of the published attendance root
-  // (#590: published non-bundle graph must stay closed under its own relative edges).
-  "navigator-public-session",
-  // Static import of navigator-public-session (sitianReportSafe).
+  // Static import of navigator-attendance: the lookup (summons the navigator run)
+  // and the package-relative modules it reaches (#590 closure).
+  "navigator-lookup",
   "host-session-record",
-  "navigator-session-contracts",
-  // Static import of navigator-attendance and navigator-public-session.
   "atomic-write",
   "public-role-summons",
   "activation-ledger-git",

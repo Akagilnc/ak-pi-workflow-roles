@@ -168,7 +168,6 @@ test("packed artifact ships the release inventory without bundled method Skills"
   );
   for (const path of [
     "resources/collector-bot-handbook.md",
-    "resources/navigator-route-playbook.md",
     "resources/diarist-collect.md",
   ]) {
     assert.ok(extracted.paths.includes(path), `pack must include non-method resource ${path}`);

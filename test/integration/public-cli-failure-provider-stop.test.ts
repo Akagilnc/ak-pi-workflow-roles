@@ -106,13 +106,6 @@ test("every seat presents the host's own report; a transcript record never decid
       diagnostic: knownDiagnostic,
     },
     {
-      label: "navigator: the host report stands",
-      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "navigator", "--project", project, "rank"],
-      known: true,
-      cause: "provider" as const,
-      diagnostic: knownDiagnostic,
-    },
-    {
       label: "collector: the host report stands",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "collector", "--project", project, "--pr", "7", "--repo", "acme/widgets"],
       known: true,

@@ -34,10 +34,6 @@ function withStagedShutdownAttendance(
 ): RoleRuntimeDependencies {
   return {
     ...base,
-    loadNavigatorWorkContext: async () => ({
-      subjectKey: `${runDirectory}/work`,
-      subjectProvenance: "role_input" as const,
-    }),
     createNavigatorAttendance: async (options) => {
       const event = {
         version: 1 as const,
@@ -48,19 +44,15 @@ function withStagedShutdownAttendance(
         subjectKey: options.subjectKey,
         unavailableReason: "staged for session_shutdown drain probe",
         unavailableSource: "unknown" as const,
-        unavailableCause: "unknown" as const,
       };
       const report = {
         disposition: "unavailable" as const,
         unavailableReason: "staged for session_shutdown drain probe",
         unavailableSource: "unknown" as const,
-        unavailableCause: "unknown" as const,
       };
       await options.onEvent(event, report);
       return {
         prepare() {},
-        setWorkContext() {},
-        warmHelp() {},
         isPreparing: () => false,
         settle: async () => {},
         dispose() {},
@@ -115,17 +107,17 @@ async function poisonSessionFileWrite(sessionFile: string): Promise<void> {
 }
 
 test("#959 durable session entry flush failure is infrastructure not accepted", async () => {
-  await withTempEnvelopeHome("navigator", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
+  await withTempEnvelopeHome("gatekeeper", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
     // Temp seat table only — never touch the real public-cli.json (席位表法).
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      `${JSON.stringify({ seats: { gatekeeper: { provider: "provider", model: "model" } } }, null, 2)}\n`,
     );
 
     const prepared = await prepareRoleEnvelope({
       request: {
         principal: fixturePrincipal(sessionDir),
-        activation: { role: "navigator" },
+        activation: { role: "gatekeeper" },
         methods: [],
         continuation: { kind: "initial", prompt: "durable flush probe" },
         cwd: packageRoot,
@@ -141,7 +133,7 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
     });
     try {
       await poisonSessionFileWrite(sessionFile);
-      await prepared.ingestStructuredOutput({ prose: "下一步送 reviewer" });
+      await prepared.ingestStructuredOutput({ status: "pass", findings: [] });
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
       await prepared.dispose?.();
