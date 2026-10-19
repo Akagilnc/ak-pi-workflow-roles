@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
+import { diffItemsField } from "./self-review-fields.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 
@@ -28,8 +29,9 @@ const fixerOutputObject = Type.Object({
   }),
   classResults: Type.Unknown({
     description:
-      "各类 class 结算，原样留存。完成项的 disposition 为 completed，可写 name、searchScope、exceptions（where、reason）、commitSha。拒绝项的 disposition 为 refused，可写 name、remainingScope、blocker。",
+      "各类 class 结算，原样留存。每类写 name、shape（错误形状一句）。按代码形状认的类写 search（实际跑的搜索命令，原样）、hits（命令输出的每个命中一行 { where: path:line, outcome: 已修 | 不同类：理由 }）；按情形认的类写 cases（每种前序经历一行 { case: 对象先经历了什么, entry: 从真实入口怎么走到它, before: 修前结果, after: 修后结果 }）。完成项的 disposition 为 completed，可写 commitSha。拒绝项的 disposition 为 refused，可写 remainingScope、blocker。",
   }),
+  diffItems: diffItemsField,
   testEvidence: Type.Unknown({
     description:
       "测试证据条；diff 含测试改动时提交；机器不核验。可写 contract（测试改动所证明的契约）、minimumNecessaryCost（测试改动的一行最小必要成本）、measuredDuration（聚焦验证实测时长）。",
@@ -57,6 +59,7 @@ export type FixerOutput = {
   readonly reason?: unknown;
   readonly classResults?: unknown;
   readonly testEvidence?: unknown;
+  readonly diffItems?: unknown;
 };
 export type FixerPhase = "plan" | "apply";
 

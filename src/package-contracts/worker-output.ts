@@ -13,6 +13,7 @@ import {
   type FixerOutput,
   type FixerPhase,
 } from "./fixer-output.ts";
+import { diffItemsField } from "./self-review-fields.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export {
@@ -57,10 +58,7 @@ const coderOutputObject = Type.Object({
   reason: Type.Unknown({
     description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
   }),
-  diffItems: Type.Unknown({
-    description:
-      "commit 前自审逐项表：本次新增的每个测试函数、每个生产函数各一行 { item: 名字, existing: 仓里做同一件事的现成件 path:line，找不到为 null, outcome: 已并入 | 保留 }。",
-  }),
+  diffItems: diffItemsField,
 });
 export const coderOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(coderOutputObject),
