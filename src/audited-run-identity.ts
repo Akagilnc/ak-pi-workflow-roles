@@ -1,16 +1,17 @@
 /**
  * Shared audited-run identity for review-officer startup materials (#1166 / ADR 0087).
- * Value form is `<runId>@<席>` only — no directory path.
+ * Value form is `<runId>@<席>` only — no directory path. The field is named
+ * `auditedRun` so the reader sees it names the run under review, not itself.
  */
 import { basename } from "node:path";
 
 import { formatRunLeaf, parseRunLeaf } from "./role-run-placement.ts";
 
-export const AUDITED_RUN_IDENTITY_KIND = "audited-run-identity" as const;
+export const AUDITED_RUN_IDENTITY_KIND = "audited-run" as const;
 
 export type AuditedRunIdentityMaterial = {
   readonly kind: typeof AUDITED_RUN_IDENTITY_KIND;
-  readonly identity: string;
+  readonly auditedRun: string;
 };
 
 /** Identity leaf from a run directory basename; undefined when the leaf is not `runId@role`. */
@@ -21,7 +22,7 @@ export function auditedRunIdentityFromDirectory(runDirectory: string): string | 
 }
 
 export function auditedRunIdentityMaterial(identity: string): AuditedRunIdentityMaterial {
-  return { kind: AUDITED_RUN_IDENTITY_KIND, identity };
+  return { kind: AUDITED_RUN_IDENTITY_KIND, auditedRun: identity };
 }
 
 /** Identity from locator fields already in hand (notary source-run). */
