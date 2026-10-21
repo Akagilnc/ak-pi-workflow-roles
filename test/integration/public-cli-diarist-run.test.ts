@@ -1032,6 +1032,12 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       [fixture.duplicateId, undefined],
     );
     assert.deepEqual(view.filter((entry) => "raw" in entry).map((entry) => entry.raw), [fixture.unparsableRaw]);
+    // Each listed line is the physical row a `line` endpoint names: it carries the listed id or raw bytes.
+    const physical = readFileSync(fixture.path, "utf8").split("\n");
+    for (const entry of view) {
+      if ("raw" in entry) assert.equal(physical[entry.line - 1], entry.raw);
+      else if (entry.id !== undefined) assert.ok(physical[entry.line - 1]!.includes(JSON.stringify(entry.id)), `line ${entry.line} lacks ${entry.id}`);
+    }
 
     // Speakers + no tool output + raw-byte preservation.
     const byId = new Map(
