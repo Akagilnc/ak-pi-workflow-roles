@@ -29,6 +29,8 @@ export {
 export type NotaryRoleDependencies = {
   loadSoul(): Promise<string>;
   loadSourceRunLocator(path: string): Promise<NotarySourceRunLocator>;
+  /** Soul of the audited seat (the verdict under review cites it); undefined when the package has none. */
+  loadAuditedSoul(role: string): Promise<string | undefined>;
 };
 
 export type NotaryRoleHostActions = {
@@ -95,14 +97,18 @@ export function projectNotaryBoundFromFlags(
   };
 }
 
-/** Assemble systemPrompt body from base + soul only (NO embedded bound JSON).
+/** Assemble systemPrompt body from base + soul + the audited seat's Soul (NO embedded bound JSON).
  * Audited-run identity travels separately as `readingMaterial`; adapters fold
  * it into the provider-visible prompt at the send boundary. */
 export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
   readonly soul: string;
+  readonly audited?: { readonly seat: string; readonly soul: string };
 }): string {
-  return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>`;
+  const audited = input.audited === undefined
+    ? ""
+    : `\n\n<audited_seat_soul seat="${input.audited.seat}">\n${input.audited.soul}\n</audited_seat_soul>`;
+  return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>${audited}`;
 }
 
 /** Envelope-admitted ticket binding (flag read owned by shared envelope). */
@@ -119,6 +125,7 @@ export function createNotaryRoleRuntime(
     | {
         soul: string;
         sourceRun: NotarySourceRunLocator;
+        auditedSoul?: string;
         ticketNumber?: number;
       }
     | undefined;
@@ -142,9 +149,11 @@ export function createNotaryRoleRuntime(
       const soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Notary soul is empty");
       const sourceRun = await dependencies.loadSourceRunLocator(path);
+      const auditedSoul = (await dependencies.loadAuditedSoul(sourceRun.role))?.trim();
       activation = {
         soul,
         sourceRun,
+        ...(auditedSoul === undefined || auditedSoul === "" ? {} : { auditedSoul }),
         ...(admitted?.ticketNumber === undefined
           ? {}
           : { ticketNumber: admitted.ticketNumber }),
@@ -165,6 +174,9 @@ export function createNotaryRoleRuntime(
             systemPrompt: assembleNotaryAgentStartPrompt({
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
+              ...(activation.auditedSoul === undefined
+                ? {}
+                : { audited: { seat: activation.sourceRun.role, soul: activation.auditedSoul } }),
             }),
             readingMaterial: projectNotaryAuditedRunIdentity({
               sourceRun: activation.sourceRun,

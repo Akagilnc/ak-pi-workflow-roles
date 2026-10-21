@@ -121,7 +121,7 @@ const SUBMISSION_FACE = {
   },
   diarist: {
     label: "起居郎输出",
-    description: "起居郎交单票 sessions 或多票逐票 ticketSessions 边界；认不出本庭对象则 escalate。",
+    description: "起居郎交单票 sessions 或多票逐票 ticketSessions 边界，或 escalate。",
     promptSnippet: "起居郎交边界",
     parameters: diaristOutputSchema,
   },

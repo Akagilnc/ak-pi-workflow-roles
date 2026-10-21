@@ -31,7 +31,7 @@
 
 ## 工序
 
-从任务材料与 `--pr` / `--request-manifest` 材料判定目标后，用宿主 CLI 读取有评审的 PR，按各 reviewer 已记录的完成形态收集 findings，整理并交卷。未绑定 PR 时用 `gh` 等自行定位；无法确定时不猜，交给调用方明确目标。证据归属与不确定性的报告原则见 [通进司 Soul](../souls/collector.md)，字段见 [交卷契约](../src/package-contracts/collector-output.ts)。
+从任务材料与 `--pr` / `--request-manifest` 材料判定目标后，用宿主 CLI 读取有评审的 PR，按各 reviewer 已记录的完成形态收集 findings，整理并交卷。未绑定 PR 时用 `gh` 等自行定位；无法确定时不猜，交给调用方明确目标。证据归属与不确定性的报告原则见通进司 Soul，字段见交卷工具的声明。
 
 ## 修正规则
 

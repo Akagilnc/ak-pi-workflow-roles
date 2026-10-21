@@ -37,6 +37,7 @@ export const NOTARY_SESSION_MATERIALS = [
   "souls/notary.md",
   "souls/audit-law.md",
   "souls/ticket-law.md",
+  "souls/quality-law.md",
   "souls/gate-output-guide.md",
   "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
 ] as const;
@@ -61,6 +62,7 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/judge-auditor.md",
   "souls/doctor-auditor.md",
+  "souls/judge.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
   "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
@@ -319,7 +321,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
-    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "souls/audit-law.md", "souls/quality-law.md", "resources/countersign-ticket-issue.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
   },
   {
     role: "secretariat",

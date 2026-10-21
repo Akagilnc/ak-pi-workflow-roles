@@ -77,7 +77,7 @@ function auditedIdentityMaterials(
     (material): material is AuditedRunIdentityMaterial =>
       isRecord(material)
       && material.kind === AUDITED_RUN_IDENTITY_KIND
-      && typeof material.identity === "string",
+      && typeof material.auditedRun === "string",
   );
 }
 
@@ -335,15 +335,15 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
         if (gate.expectedIdentity !== undefined) {
           assert.deepEqual(inspected.identities[0], {
             kind: AUDITED_RUN_IDENTITY_KIND,
-            identity: gate.expectedIdentity,
+            auditedRun: gate.expectedIdentity,
           });
         } else {
-          assert.match(inspected.identities[0]!.identity, gate.identitySuffix!);
+          assert.match(inspected.identities[0]!.auditedRun, gate.identitySuffix!);
         }
         assert.equal(inspected.pathMaterials.length, 0);
         seen.push({
           role: request.activation.role,
-          identity: inspected.identities[0]!.identity,
+          identity: inspected.identities[0]!.auditedRun,
           prompt: inspected.prompt,
         });
       }
@@ -558,7 +558,7 @@ test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixe
       assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
-        identity: expectedIdentity,
+        auditedRun: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
       assert.equal(
@@ -621,7 +621,7 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.prompt, NOTARY_FIXED_DISPATCH);
         assert.equal(inspected.identities.length, 1);
-        notaryIdentities.push(inspected.identities[0]!.identity);
+        notaryIdentities.push(inspected.identities[0]!.auditedRun);
         const details = notaryPrompts.length <= 1
           ? {
             status: "continue",

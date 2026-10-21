@@ -1,6 +1,6 @@
 /**
  * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075 `diarist-is-role` / #901.
- * Lawful explicit releases: completed (入录) | escalate (认不出本庭对象上抛).
+ * Lawful explicit releases: completed (入录) | escalate (无法正常署时上呈，见 Soul).
  * Machine facts about the volume come from the mechanical reproject seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
  *
@@ -42,7 +42,7 @@ export type DiaristOutput =
       }[];
     }
   | {
-      /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
+      /** LLM cannot sign this round normally (Soul) — escalate, never wash into 无录. */
       readonly status: "escalate";
       readonly reason: string;
     };
@@ -100,8 +100,11 @@ export function projectDiaristTicketSessions(
  * sessions / ticketSessions 是投影所读的边界：卷路径或端点读不出时走既有 reask，不中止本轮。
  * 声明只留字段名和语义说明，不留类型、嵌套、长度、必填。
  */
+export const DIARIST_BOUND_ENDPOINTS =
+  "起点与终点各写 id 或 line，二选一：id＝会话卷里那一行 JSON 的 uuid 字段值（没有 uuid 取 id；顶层都没有再取 message 或 payload 里的 uuid / id），同一 id 出现多次时取第一次出现的那一行；line＝那一行在文件里从 1 数起的行号。两端都含在区间内。" as const;
+
 const DIARIST_SESSIONS_DESCRIPTION =
-  "对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；起点与终点各写 id（原生 id）或 line（本轮行号），二选一。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。" as const;
+  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
 
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
@@ -116,7 +119,7 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
         }),
       ),
       reason: Type.Unknown({
-        description: "status 为 escalate 时：认不出本庭对象的原因",
+        description: "status 为 escalate 时：上呈的原因",
       }),
       sessions: Type.Optional(Type.Unknown({ description: DIARIST_SESSIONS_DESCRIPTION })),
       ticketSessions: Type.Unknown({

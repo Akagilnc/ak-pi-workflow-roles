@@ -71,7 +71,11 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
+    {
+      loadSoul: async () => "NOTARY LAW",
+      loadSourceRunLocator: async () => LOCATOR,
+      loadAuditedSoul: async (role) => (role === "judge" ? "JUDGE LAW" : undefined),
+    },
     { failInfrastructure(error) { throw error; } },
   );
   // Role module owns source-run only (baseline); ticket lifecycle is envelope-owned.
@@ -81,6 +85,8 @@ test("Notary activate registers source-run flag + tool; ticket flag is envelope-
   h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
   await runtime.activate();
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
-  assert.ok(h.beforeStart());
+  const start = h.beforeStart()!({ systemPrompt: "BASE" }) as { systemPrompt: string };
+  // The audited seat's Soul rides the opening prompt so cited lines can be checked in place.
+  assert.match(start.systemPrompt, /<audited_seat_soul seat="judge">\nJUDGE LAW\n<\/audited_seat_soul>/);
 });
 

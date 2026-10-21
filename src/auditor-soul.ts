@@ -43,7 +43,8 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
 }
 
 /**
- * #470 auditor session materials. Judge carries audit-law + quality-law; doctor does
+ * #470 auditor session materials. Judge carries the audited judge Soul + audit-law +
+ * quality-law (verdicts cite judge.md; audit-law makes the auditor check the cited line); doctor does
  * not (御批四: 参审席 = 大理寺主会话 + 其审计席; 太医线不动).
  * Reviewer auditor roster removed with #495 S6 gate retirement.
  * #675 owner: no generic auditor.md — subject selects this table.
@@ -52,6 +53,7 @@ export const AUDITOR_SESSION_MATERIALS = {
   judge: [
     "CLAUDE.md",
     "souls/judge-auditor.md",
+    "souls/judge.md",
     "souls/audit-law.md",
     "souls/quality-law.md",
     "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
