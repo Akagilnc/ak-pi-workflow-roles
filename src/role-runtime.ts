@@ -1384,6 +1384,9 @@ export function createRoleRuntimeExtension(
         if (!dependencies.loadNotarySourceRun) throw new Error("Notary runtime dependencies are not configured");
         return dependencies.loadNotarySourceRun(path);
       },
+      async loadAuditedSoul(role) {
+        return packagedRoleMetadata(role) === undefined ? undefined : requireRoleSoul(role as PackagedRole);
+      },
     }, hostActions);
     const countersign = createCountersignRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("countersign"),

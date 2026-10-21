@@ -62,6 +62,7 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/judge-auditor.md",
   "souls/doctor-auditor.md",
+  "souls/judge.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
   "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
