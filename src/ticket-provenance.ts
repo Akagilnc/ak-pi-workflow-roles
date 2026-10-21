@@ -83,7 +83,7 @@ function isLedgerRoleSessionFile(absolute: string, home?: string): boolean {
 }
 
 /** Real I/O seam gate: only host session stores or sitian role-run session.jsonl. */
-function assertDialogueSessionSourcePath(path: string, home?: string): void {
+export function assertDialogueSessionSourcePath(path: string, home?: string): void {
   const absolute = resolve(path);
   for (const root of dialogueSessionSourceRoots(home)) {
     if (physicallyContainedIn(root, absolute)) return;
