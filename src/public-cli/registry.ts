@@ -29,6 +29,7 @@ export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "resume",
   "new",
   "setup",
+  "dialogue",
 ] as const;
 
 export type PublicCliSupportCommand = (typeof PUBLIC_CLI_SUPPORT_COMMANDS)[number];

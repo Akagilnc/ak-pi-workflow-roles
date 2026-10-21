@@ -79,6 +79,7 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { TurnDispatchedFailure } from "./auto-resume.ts";
+import { readSessionDialogue, renderSessionDialogue } from "./dialogue-command.ts";
 import {
   continueParentAfterChild,
   presentAuditedOriginalOfUnsettledOfficer,
@@ -1150,6 +1151,12 @@ export async function runAkRole(
         return { exitCode: 0 };
       }
       io.stdout(renderHelp());
+      return { exitCode: 0 };
+    }
+
+    if (parsed.command === "dialogue") {
+      if (parsed.args.length !== 1) throw new CliUsageError("usage: ak-role dialogue <session.jsonl>");
+      io.stdout(renderSessionDialogue(await readSessionDialogue(parsed.args[0]!)));
       return { exitCode: 0 };
     }
 

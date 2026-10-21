@@ -1013,6 +1013,19 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       "prior snapshot dialogue must survive the append",
     );
 
+    // `ak-role dialogue` lists exactly what a full-range projection records,
+    // so the diarist searches the same speaker lines its bounds will project.
+    const dialogueIo = captureIo();
+    const listed = await runAkRole(["dialogue", fixture.path], { home, packageRoot, io: dialogueIo.io });
+    assert.equal(listed.exitCode, 0, dialogueIo.stderr.join(""));
+    const view = dialogueIo.stdout.join("").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(
+      view.map(({ speaker, text, id }) => ({ speaker, text, id })),
+      volume.lines
+        .filter((line) => line.id !== "prior-seed")
+        .map(({ speaker, text, id }) => ({ speaker, text, id })),
+    );
+
     // Speakers + no tool output + raw-byte preservation.
     const byId = new Map(
       volume.lines
@@ -1189,6 +1202,17 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       rawFile.startsWith(priorBytes),
       "prior snapshot bytes must be prefix-stable after append",
     );
+  });
+});
+
+test("ak-role dialogue refuses a missing argument and an unreadable session", async () => {
+  await withTempHome(async (home) => {
+    const bare = captureIo();
+    assert.notEqual((await runAkRole(["dialogue"], { home, packageRoot, io: bare.io })).exitCode, 0);
+    const missing = captureIo();
+    const result = await runAkRole(["dialogue", join(home, "absent.jsonl")], { home, packageRoot, io: missing.io });
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(missing.stdout.join(""), "");
   });
 });
 

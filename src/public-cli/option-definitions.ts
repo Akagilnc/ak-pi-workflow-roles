@@ -1362,6 +1362,15 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role --host grok-build new inspector --attach ./change.patch",
     ],
   },
+  dialogue: {
+    command: "dialogue",
+    summary:
+      "Print the speaker lines of a session volume, one JSON object per line ({line, id, speaker: owner|runner, text}) — the rows a diary range projects; line and id are what a range endpoint names.",
+    usage: ["ak-role dialogue <session.jsonl>"],
+    examples: [
+      "ak-role dialogue ~/.claude/projects/-Users-me-repo/0b1c….jsonl > /tmp/dialogue.jsonl",
+    ],
+  },
 } as const satisfies Record<string, PublicCommandHelpFacts>;
 
 /**
