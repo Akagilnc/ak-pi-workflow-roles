@@ -1365,7 +1365,7 @@ const SUPPORT_COMMAND_HELP = {
   dialogue: {
     command: "dialogue",
     summary:
-      "Print the speaker lines of a session volume, one JSON object per line ({line, id, speaker: owner|runner, text}) — the rows a diary range projects; line and id are what a range endpoint names.",
+      "Print what a diary range projects from a session volume, one JSON object per line: speaker lines {line, id, speaker: owner|runner, text} and unparsable lines {line, raw}. line and id are what a range endpoint names; a repeated id is shown on its first line only, where it resolves. Same authorized session roots as the projection.",
     usage: ["ak-role dialogue <session.jsonl>"],
     examples: [
       "ak-role dialogue ~/.claude/projects/-Users-me-repo/0b1c….jsonl > /tmp/dialogue.jsonl",

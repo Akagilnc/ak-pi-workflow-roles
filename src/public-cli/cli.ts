@@ -1154,15 +1154,15 @@ export async function runAkRole(
       return { exitCode: 0 };
     }
 
-    if (parsed.command === "dialogue") {
-      if (parsed.args.length !== 1) throw new CliUsageError("usage: ak-role dialogue <session.jsonl>");
-      io.stdout(renderSessionDialogue(await readSessionDialogue(parsed.args[0]!)));
-      return { exitCode: 0 };
-    }
-
     // Profile home only after home-free paths return. Failures keep real identity
     // and settle through the outer catch — no $HOME fallback (#604).
     const home = resolveHome(env);
+
+    if (parsed.command === "dialogue") {
+      if (parsed.args.length !== 1) throw new CliUsageError("usage: ak-role dialogue <session.jsonl>");
+      io.stdout(renderSessionDialogue(await readSessionDialogue(parsed.args[0]!, home)));
+      return { exitCode: 0 };
+    }
 
     if (parsed.command === "roles") {
       if (parsed.args.length > 0) {

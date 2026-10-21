@@ -1019,12 +1019,19 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     const listed = await runAkRole(["dialogue", fixture.path], { home, packageRoot, io: dialogueIo.io });
     assert.equal(listed.exitCode, 0, dialogueIo.stderr.join(""));
     const view = dialogueIo.stdout.join("").trim().split("\n").map((line) => JSON.parse(line));
+    const spoken = view.filter((entry) => "speaker" in entry);
     assert.deepEqual(
-      view.map(({ speaker, text, id }) => ({ speaker, text, id })),
+      spoken.map(({ speaker, text }) => ({ speaker, text })),
       volume.lines
         .filter((line) => line.id !== "prior-seed")
-        .map(({ speaker, text, id }) => ({ speaker, text, id })),
+        .map(({ speaker, text }) => ({ speaker, text })),
     );
+    // A repeated id resolves to its first line, so only that line offers it as an endpoint.
+    assert.deepEqual(
+      spoken.filter((entry) => entry.text === "首现正文" || entry.text === "副本正文").map((entry) => entry.id),
+      [fixture.duplicateId, undefined],
+    );
+    assert.deepEqual(view.filter((entry) => "raw" in entry).map((entry) => entry.raw), [fixture.unparsableRaw]);
 
     // Speakers + no tool output + raw-byte preservation.
     const byId = new Map(
@@ -1205,14 +1212,20 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
   });
 });
 
-test("ak-role dialogue refuses a missing argument and an unreadable session", async () => {
+test("ak-role dialogue refuses a missing argument, an unreadable session and one outside the session roots", async () => {
   await withTempHome(async (home) => {
     const bare = captureIo();
     assert.notEqual((await runAkRole(["dialogue"], { home, packageRoot, io: bare.io })).exitCode, 0);
     const missing = captureIo();
-    const result = await runAkRole(["dialogue", join(home, "absent.jsonl")], { home, packageRoot, io: missing.io });
+    const result = await runAkRole(["dialogue", join(home, ".claude", "projects", "probe", "absent.jsonl")], { home, packageRoot, io: missing.io });
     assert.notEqual(result.exitCode, 0);
     assert.equal(missing.stdout.join(""), "");
+    // A readable volume outside the roots the projection accepts is refused, not listed.
+    const outside = join(home, "elsewhere.jsonl");
+    await writeFile(outside, `${JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "hi" } })}\n`, "utf8");
+    const stray = captureIo();
+    assert.notEqual((await runAkRole(["dialogue", outside], { home, packageRoot, io: stray.io })).exitCode, 0);
+    assert.equal(stray.stdout.join(""), "");
   });
 });
 
