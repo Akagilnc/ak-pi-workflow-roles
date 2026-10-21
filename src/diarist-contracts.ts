@@ -100,8 +100,11 @@ export function projectDiaristTicketSessions(
  * sessions / ticketSessions 是投影所读的边界：卷路径或端点读不出时走既有 reask，不中止本轮。
  * 声明只留字段名和语义说明，不留类型、嵌套、长度、必填。
  */
+export const DIARIST_BOUND_ENDPOINTS =
+  "起点与终点各写 id 或 line，二选一：id＝会话卷里那一行 JSON 的 uuid 字段值（没有 uuid 取 id；顶层都没有再取 message 或 payload 里的 uuid / id）；line＝那一行在文件里从 1 数起的行号。两端都含在区间内。" as const;
+
 const DIARIST_SESSIONS_DESCRIPTION =
-  "对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；起点与终点各写 id（原生 id）或 line（本轮行号），二选一。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。" as const;
+  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
 
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
