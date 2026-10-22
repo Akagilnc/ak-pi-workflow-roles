@@ -241,7 +241,7 @@ test("#879 absent HostContext identity never inherits ambient run or court", () 
   }
 });
 
-test("#879 concurrent envelopes keep per-request prompts without writing ambient run or court env", async () => {
+test("#1092 concurrent envelopes keep per-request prompts without writing ambient run or court env", async () => {
   const previousRun = process.env.AK_ROLE_RUN_DIR;
   const previousCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   delete process.env.AK_ROLE_RUN_DIR;
