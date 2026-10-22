@@ -98,6 +98,9 @@ export const ticketComplexityRowSchema = Type.Object(
     hits: Type.Array(Type.String(), {
       description: "本票净增里命中这一句的每一处 path:line，并写删到哪、并到哪；打开看过才算。一处没有为空数组，没有第三种答法",
     }),
+    checked: Type.String({
+      description: "为这一条打开比对过的几处 path:line：hits 为空时写每处为什么不算，不能只写未发现；有命中时写比对了哪些地方、命中在哪找到",
+    }),
   },
   { additionalProperties: true },
 );
@@ -108,6 +111,9 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
     {
       status: reviewStatusField,
       ...reviewNarrativeFields,
+      suspect: Type.String({
+        description: "整票里最可疑、最像能删能并的一处 path:line，以及为什么留着；说不清就该进 hits",
+      }),
       ticketComplexity: Type.Array(ticketComplexityRowSchema, {
         description:
           "整票复杂度：本票起点（本分支与家族分支或目标分支的 git merge-base）到 HEAD 的生产与测试净增，对《质量法》里每一句要求删除、合并、复用或不另写的条文各答一行。前几轮已署过的改动也算在内。",
