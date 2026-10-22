@@ -21,10 +21,14 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
+  createCountersignRoleRuntime,
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
@@ -381,7 +385,7 @@ test("focused Judge controller registers output without narrowing host tools", a
   }
 });
 
-test("named Judge and worker tools preserve opaque receipts", async () => {
+test("filed seats preserve opaque receipts, including an unknown string status", async () => {
   const fixtures = [
     {
       role: "judge" as const,
@@ -440,6 +444,47 @@ test("named Judge and worker tools preserve opaque receipts", async () => {
       },
       output: { status: "planned", report: "plan" },
     },
+    {
+      role: "countersign" as const,
+      name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+      activate: async () => {
+        const harness = extensionHarness("countersign");
+        const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+        await createCountersignRoleRuntime(piHostAdapter.host, {
+          loadSoul: async () => "LAW",
+        }).activate();
+        return harness;
+      },
+      output: { status: "continue", findings: ["x"] },
+    },
+    {
+      role: "merger" as const,
+      name: MERGER_OUTPUT_TOOL_NAME,
+      activate: async () => {
+        const harness = extensionHarness("merger", { "ak-merger-input": "/input.json" });
+        const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+        const material = { bytesBase64: Buffer.from("x").toString("base64"), sha256: "unused" };
+        await createMergerRoleRuntime(piHostAdapter.host, {
+          loadSoul: async () => "LAW",
+          loadInput: async () => ({
+            attemptId: "attempt",
+            targetObjectId: "",
+            sourceObjectId: "",
+            materials: { targetIntent: material, sourceIntent: material },
+            expectedConflictPaths: [],
+            resolutionScope: [],
+            authorizedChecks: [],
+          }),
+        }).activate();
+        return harness;
+      },
+      output: {
+        status: "escalate",
+        attemptId: "attempt",
+        diagnosis: "no in-progress merge",
+        report: "nothing to reconcile",
+      },
+    },
   ];
 
   for (const fixture of fixtures) {
@@ -468,6 +513,16 @@ test("named Judge and worker tools preserve opaque receipts", async () => {
     );
     assert.equal(raw.terminate, true, `${fixture.role} finishes an unreadable-status submission`);
     assert.deepEqual(raw.details, unreadable, `${fixture.role} preserves the raw submission`);
+    const stringStatus = { status: "not-a-status", note: "typo" };
+    const rawString = await tool.execute(
+      "unreadable-string-status",
+      stringStatus,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id: "unreadable-string-status", name: fixture.name }])),
+    );
+    assert.equal(rawString.terminate, true, `${fixture.role} finishes an unknown string status`);
+    assert.deepEqual(rawString.details, stringStatus, `${fixture.role} preserves an unknown string status`);
   }
 });
 

@@ -29,17 +29,11 @@ import {
 } from "./registry.ts";
 import { isEnoent, isRecord } from "../unknown-value.ts";
 
-/** Province officers that may carry a persistent model override (#453). Registry order. */
-type ProvinceConfigRole = Extract<
+/** Province officers that may carry a persistent model override (#453). */
+export type GateOfficerSeat = Extract<
   (typeof PUBLIC_ROLE_RECORDS)[number],
   { readonly provinceConfig: true }
 >["role"];
-
-export const GATE_OFFICER_SEATS: readonly ProvinceConfigRole[] = PUBLIC_ROLE_RECORDS.flatMap(
-  (record) => ("provinceConfig" in record && record.provinceConfig === true ? [record.role] : []),
-);
-
-export type GateOfficerSeat = (typeof GATE_OFFICER_SEATS)[number];
 
 export function isGateOfficerSeat(value: string): value is GateOfficerSeat {
   return packagedProvinceConfig(value);
