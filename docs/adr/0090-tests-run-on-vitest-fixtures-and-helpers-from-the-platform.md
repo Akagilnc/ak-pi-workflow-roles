@@ -5,10 +5,10 @@ Status: proposed（2026-10-22，源卷 d634a8d9，owner uuid `a75453ff-aacd-4e93
 ## 决定
 
 1. 测试运行器换成 **Vitest 5**（`vitest run`），三个 `projects` 对应现有目录：`unit`＋`contract`、`integration`、`package`；CI 跑全部。进程池用默认 `forks`。
-2. 集成测试的公共前置（临时 git 仓、隔离 home、账本目录）由**唯一的夹具模块**按案直接建（`test.extend` test 作用域：mkdtemp＋按需 git init＋账本目录，跑完清）；只有实测贵的前置（物化包、打包）才用 file 作用域共享。不做模板目录与复制（陛下 P1 答「可以」选乙：建仓毫秒级，模板要配防污染机制，只为模板而存在）。席位表与账本从 `os.userInfo().homedir` 找，隔离 HOME 环境变量挡不住它们：进程内测试显式传 home，forks 的 worker 与子进程都加载同一个 userInfo 预载（`AK_TEST_REAL_MACHINE_HOME` 留真 home 给 agent-dir guard）。
-3. 子进程起停与结果用 **execa**；快照逐处选型、不自写：`snapshotAnalystDir` 9 处只是「目录仍为空」的前后对照，改直接断言、helper 删；不预先决定本票不引快照，哪处真是金样对照就用 Vitest 自带快照，不得为满足选项字面强行造快照用例（陛下：「可以选甲，但是不能说死，有需要的时候还是要用」「那就2」）；定时器只用 `vi.useFakeTimers`，生产代码里三处只为测试存在的 `scheduler`／clock 注入接缝与同构默认实现随改动删除，生产行为不变。
+2. 集成测试的公共前置（临时 git 仓、隔离 home、账本目录）由**唯一的夹具模块**按案直接建（`test.extend` test 作用域：mkdtemp＋按需 git init＋账本目录，跑完清）；只有实测贵的前置（物化包、打包）才用 file 作用域共享。不做模板目录与复制（陛下 P1 答「可以」选乙：建仓毫秒级，模板要配防污染机制，只为模板而存在）。席位表与账本从 `os.userInfo().homedir` 找，隔离 HOME 环境变量挡不住它们：进程内测试显式传 home，forks 的 worker 与子进程都加载同一个 userInfo 预载（`AK_TEST_REAL_MACHINE_HOME` 留真 home 给 agent-dir guard）。现有 `isolatedTestProcessEnv` 的全部定义——隔离 home／XDG 与清洗 `AK_ROLE_*` 角色上下文变量——整体迁入 Vitest 的 setupFiles／env，不只搬 HOME 那几行。默认超时按现有脚本的值配置（`testTimeout`），逐案覆盖照留。
+3. 子进程起停与结果用 **execa**；快照逐处选型、不自写：`snapshotAnalystDir` 9 处只是「目录仍为空」的前后对照，改直接断言、helper 删；不预先决定本票不引快照，哪处真是金样对照就用 Vitest 自带快照，不得为满足选项字面强行造快照用例（陛下：「可以选甲，但是不能说死，有需要的时候还是要用」「那就2」）；定时器只用 `vi.useFakeTimers`，生产代码里只为测试存在的 `scheduler`／clock 注入接缝与同构默认实现随改动删除（已查到三处生命周期接缝；`RoleRuntimeDependencies.activationClock` 等同类接缝施工核实后一并处置），生产行为不变。
 4. 自写物随改动退役：`scripts/run-test-all.mjs`、`test/helpers/manual-scheduler.ts`、`snapshotAnalystDir`、`test-subprocess.ts`、`public-cli-subprocess.ts`（其中 userInfo 预载拼装归夹具模块）及只为它们活着的测试；`node:test` 入口脚本删除。环境前置收成一个夹具模块；宿主假件按宿主各留一处，只删重复，不并成一个文件。`test/adjudication/` 与根目录零散测试并入 projects，不让任何测试在 Vitest 下悄悄不跑。
-5. 迁移按层分批（unit＋contract → integration → package），expand–contract：先装 Vitest 与 projects，各批独立提交、CI 绿，最后删旧入口。耗时不设硬闸：同一台机器迁前迁后各测一次全量写进交卷（本机 10 核基线 727 案 45 秒）。
+5. 迁移按层分批（unit＋contract → integration → package），expand–contract：先装 Vitest 与 projects，各批独立提交、CI 绿；收口先把 `test:all` 与 CI 命令改指 Vitest，再删旧脚本与入口。耗时不设硬闸：同一台机器迁前迁后各测一次全量写进交卷（本机 10 核基线 727 案 45 秒）。
 
 ## 为什么
 
@@ -22,7 +22,7 @@ Status: proposed（2026-10-22，源卷 d634a8d9，owner uuid `a75453ff-aacd-4e93
 - 留 `node:test`，自写一层薄夹具：少一个依赖，但夹具仍是自造，正是本仓反复出现的病；弃。
 - Jest：ESM 支持仍 experimental，TS 要转译层；弃。
 - `--experimental-test-isolation=none` 让所有文件同进程共享前置：文件并行降到 1，且是早期特性；弃。
-- 模板目录（worker／file 作用域建一次、每案复制）：Vitest 默认每文件一进程，worker 与 file 作用域等价，模板实为每文件一次；且要配防污染机制；建仓毫秒级省不到时间；弃（陛下 P1）。`globalSetup` 传路径同弃。
+- 模板目录（worker／file 作用域建一次、每案复制）：Vitest 默认每文件一进程，默认隔离下 worker 与 file 作用域等价（关隔离才有跨文件复用，而集成测试改进程级 env／cwd，关不了），模板实为每文件一次；且要配防污染机制；建仓毫秒级省不到时间；弃（陛下 P1）。`globalSetup` 传路径同弃。
 - 一次性全迁：审不动，出错回不去；弃，按层分批。
 
 ## Consequences
