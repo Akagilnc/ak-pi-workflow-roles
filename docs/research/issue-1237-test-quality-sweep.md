@@ -81,7 +81,7 @@
 | `test/integration/analyst-public-bundle-families.test.ts` | B | 留：公开 bundle 装配 metric families，验证打包后的能力不是复制模块文件表。 |
 | `test/integration/analyst-public-cli-sweep.test.ts` | D/C | 改：既有 runAkRole 零写入负向表接入模式混用/缺参/重复 token，替代 option 表镜像；保留成功 sweep 落账。 |
 | `test/integration/analyst-public-cli.test.ts` | M/D | 改：删 PUBLIC_ROLE_ARGV 查表案；第三轮删解析案中「空 argv 为 issue 查询」重复（承接 `:160` 公开 bare call），不安全整数等独有边界留；`:116` 公开 ticket 与其余 scope/usage/ghostLegs 已实际消费 parser。 |
-| `test/integration/audited-run-identity-1166.test.ts` | T/D | 改：保公开 gate/resubmit/direct 的 auditedRun 身份、schema 输入、原卷；补回 notary prompt≠父正文及同父重交正文改变但 prompt 不变，随机自身/audited Soul 穿透。删模板与重复 summons 计数，不删盲审契约。第三轮：`:137` auditor 改用生产 subject Soul 装载器并比对包内 `souls/<subject>-auditor.md` 字节；`:158` 各官席断言生产参考材料装载器所返非空内容原样进入 startup materials。 |
+| `test/integration/audited-run-identity-1166.test.ts` | T/D | 改：保公开 gate/resubmit/direct 的 auditedRun 身份、schema 输入、原卷；补回 notary prompt≠父正文及同父重交正文改变但 prompt 不变，随机自身/audited Soul 穿透。删模板与重复 summons 计数，不删盲审契约。第三轮：`:152` auditor 改用生产 subject Soul 装载器并比对包内 `souls/<subject>-auditor.md` 字节；`:159` 起各官席断言生产参考材料装载器所返非空内容原样进入 startup materials。 |
 | `test/integration/countersign-notary-gate.test.ts` | B | 留：真实 countersign 工具完成先于 gate、escalate 与未知状态原样提交。 |
 | `test/integration/dossier-resolution.test.ts` | B | 留：HostContext/卷指针读取确实隔离不同 run，不是文案样本计数。 |
 | `test/integration/engine-detour-cancel-idle.test.ts` | B | 留：受控本机 child/参数/AbortSignal/静默，边界无真实宿主模型。 |
@@ -146,7 +146,7 @@
 | `test/integration/public-cli-secretariat-run.test.ts` | D/S | 改：三宿主既有表并入 converged/escalate 原回执及零 nested gate 断言，删伪重复宿主案承接的空结论；保公开中书省→diarist/countersign/notary 链、escalation 与 host failure，不按文本判结论。 |
 | `test/integration/report-ticket-adapter-exit-copy.test.ts` | B | 留：公开真实 adapter（假 CLI/ACP 对端）中途 relocation 后 exit-copy 和 resume 仍在 ticket。 |
 | `test/integration/resume-missing-host-session-id.test.ts` | B | 留：executeTurn 无 bound session id 不新建，以及 required disposal failure 保宿主事实。 |
-| `test/integration/role-envelope-engine-axis.test.ts` | M/T | 改：删 judge/auditor 与 Pi root 两组人工材料清单及 packagedMaterials helper。剩真实 envelope 的 tools/list、request/env 隔离；恢复随机 Soul 输入到 systemPrompt.body 的穿透。第三轮 `:127` 在不覆写装载器的既有案断言包内 `souls/judge.md` 字节进入 systemPrompt。具体材料全集承接者 null，不机械裁定应读哪些法。 |
+| `test/integration/role-envelope-engine-axis.test.ts` | M/T | 改：删 judge/auditor 与 Pi root 两组人工材料清单及 packagedMaterials helper。剩真实 envelope 的 tools/list、request/env 隔离；恢复随机 Soul 输入到 systemPrompt.body 的穿透。第三轮 `:128` 在不覆写装载器的既有案断言包内 `souls/judge.md` 字节进入 systemPrompt。具体材料全集承接者 null，不机械裁定应读哪些法。 |
 | `test/integration/run-terminal-artifacts.test.ts` | B | 留：实际持久化 API 写/读 terminal，unknown/损坏文件与 sibling 隔离。 |
 | `test/integration/run-test-all.test.ts` | M | 改：删除 package.json scripts 原串镜像，形式语言不是自比豁免；保真实 runner child argv、选集、HOME 隔离及 exit/SIGTERM。 |
 | `test/integration/test-agent-dir-model-seed.test.ts` | B | 留：fixture models seed 的文件边界、listener cleanup，不写机器 agent tree。 |
@@ -206,7 +206,7 @@
 
 本轮触及面聚焦：命令前缀加 `$(git diff HEAD --name-only --diff-filter=AM -- 'test/**/*.test.ts') test/unit/public-cli-argv-parsers.test.ts`，输出 `tests 354 / pass 354 / fail 0 / duration_ms 19605.121375`（`focused-final.log`）。构建入口退役另验 `test/package/published-dist-import-closure.test.ts test/package/npm-identity-metadata.test.ts`，输出 `tests 4 / pass 4 / fail 0 / duration_ms 3751.560917`（`package.log`）。`pnpm exec tsc --noEmit` exit0；`git diff --check` 无输出。严格 unused 扫描另有基线遗留诊断，不冒称该额外扫描绿。
 
-自审逐项：本轮没有新增生产函数；新增行中的 test 名均为既有案改名/合并或4个 parser 案迁移，未扩增案数。Doctor `harness` 为原地扩充 startup 捕获，不是第二套 harness。逐个对照同入口：空白理由并入 judge-role，groups/MERGED 并入 Collector，多宿主 original receipt 并入 Secretariat，true-home accepted 并入冻结 board；其余无平行案可再合并。完整 diffItems 随第二轮回执逐名呈交。
+自审逐项：本轮没有新增生产函数；新增行中的 test 名均为既有案改名/合并或4个 parser 案迁移，未扩增案数。Doctor `harness` 为原地扩充 startup 捕获，不是第二套 harness。逐个对照同入口：空白理由并入 judge-role，groups/MERGED 并入 Collector，多宿主 original receipt 并入 Secretariat，true-home accepted 并入冻结 board；其余无平行案可再合并。完整 diffItems 随第二轮回执逐名呈交。第三轮没有新增测试函数或生产函数；Pi adapter 首案、unit parser 三案、Merger 解析案只是原案改名，逐名列入第三轮回执。
 
 ### 第三轮（大理寺 receipts/2.json R2-A/B/C）
 
@@ -218,8 +218,8 @@
 | R2-A Worker / Judge 删 `${event.systemPrompt}` 或 Judge 删 `${soul}` | 同上 | 各 1 败 |
 | R2-A Pi fallback `systemPrompt ?? ""` | `test/unit/pi-adapter-agent-start.test.ts` | 3 案 1 败（`:70`） |
 | R2-A 参考材料回调不返回 / 主席或 auditor 参考装载器返 "" | `test/integration/audited-run-identity-1166.test.ts` | 3/3、2/3、3/3 败 |
-| R2-A 生产 Soul 装载器（主席／auditor）返固定串 | `audited-run-identity-1166` 加 `role-envelope-engine-axis` | 主席 1 败（`:127`），auditor 2 败 |
-| R2-C 位置拼接、空白 project、缺值 attach／prerequisites、空 prerequisites、`--repo` | unit+contract+integration 全目录 | 每项仅 `test/unit/public-cli-argv-parsers.test.ts` 对应案 1 败（缺值 prerequisites 另有 1 例公开案） |
+| R2-A 生产 Soul 装载器（主席／auditor）返固定串 | `audited-run-identity-1166` 加 `role-envelope-engine-axis` | 主席 1 败（engine-axis `:128` 所在案），auditor 2 败 |
+| R2-C 位置拼接、空白 project、缺值 attach／prerequisites、空 prerequisites、`--repo` | unit+contract+integration 全目录 | 每项仅 `test/unit/public-cli-argv-parsers.test.ts` 对应案 1 败（缺值 prerequisites 那次另有 `role-envelope-engine-axis` 的 #1092 并发案以 ENOTEMPTY 清理失败报红，与 prerequisites 无关） |
 | R2-C 未知旗、显式 phase、`--pr`、`--source-run`、analyst 空 argv 改 sweep | 同上 | 公开承接者红：拒收表等 4 败、Coder/Fixer 公开 6 败、`#676 J2` 1 败、130 败、analyst bare 等 5 败 |
 
 R2-B 只删写入次数锁，不需变异；改后 `public-cli-failure-settlement`、`public-cli-judge`、`public-cli-failure-real-entry` 23/23 绿。触及的 12 个测试文件聚焦 74/74/0；`pnpm exec tsc --noEmit` exit0。
