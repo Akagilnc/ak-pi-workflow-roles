@@ -324,7 +324,7 @@ process.exit(0);
     const runner = createDefaultPiSpawnRunner({});
     const result = await runner([], {
       cwd: home,
-      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
+      env: { ...isolatedTestProcessEnv({ home }), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
       stdin: "x".repeat(8 * 1024 * 1024),
     });
     assert.equal(result.code, 0);

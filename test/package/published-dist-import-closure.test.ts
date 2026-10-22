@@ -12,12 +12,8 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { test } from "vitest";
 import { withTempRoot, materializePackageTree } from "../helpers/environment-fixtures.ts";
-
-// Expand phase: retain the same case under both native runners (#1245).
-const test: (name: string, fn: () => void | Promise<void>) => void = process.env.VITEST
-  ? (await import("vitest")).test
-  : (await import("node:test")).test;
 
 const execFileAsync = promisify(execFile);
 
