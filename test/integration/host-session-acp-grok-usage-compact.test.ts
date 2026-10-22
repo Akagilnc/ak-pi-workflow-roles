@@ -10,7 +10,7 @@ import { assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";

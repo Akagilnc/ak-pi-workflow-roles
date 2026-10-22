@@ -24,7 +24,7 @@ import {
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -42,7 +42,7 @@ async function withEnvelopeHome<T>(
     request: (engine?: string) => RoleTurnRequest;
   }) => Promise<T>,
 ): Promise<T> {
-  return withTempRoot(outsideWorktreeTempPrefix("ak-818-envelope-engine-"), async (home) => {
+  return withOutsideTempRoot("ak-818-envelope-engine-", async (home) => {
     const runDirectory = ledgerProbeRun(home, "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
@@ -278,7 +278,7 @@ test("concurrent envelopes arm detour per request without process.env writes", a
   const previous = process.env[AK_ROLE_ENGINE_ENV];
   delete process.env[AK_ROLE_ENGINE_ENV];
   try {
-    await withTempRoot(outsideWorktreeTempPrefix("ak-818-envelope-concurrent-"), async (home) => {
+    await withOutsideTempRoot("ak-818-envelope-concurrent-", async (home) => {
       const mkRequest = async (
         label: string,
         engine?: string,
@@ -375,7 +375,7 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
   delete process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_COURT_ATTEMPT;
   try {
-    await withTempRoot(outsideWorktreeTempPrefix("ak-1092-envelope-no-dossier-"), async (home) => {
+    await withOutsideTempRoot("ak-1092-envelope-no-dossier-", async (home) => {
       const mkRun = async (label: string, courtAttemptId: string) => {
         const runDirectory = ledgerProbeRun(home, `${label}@judge`);
         // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).

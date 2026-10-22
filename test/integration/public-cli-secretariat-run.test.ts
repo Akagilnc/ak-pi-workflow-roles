@@ -48,7 +48,7 @@ import {
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withOutsideTempRoot, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   objectPayloads,
@@ -357,7 +357,7 @@ function secretariatHostDrivingRealTools(input: {
         if (request.activation.role !== "secretariat") {
           return nestedTracked.executeTurn(request);
         }
-        return withTempRoot(outsideWorktreeTempPrefix("ak-969-sec-env-"), async (socketDir) => {
+        return withOutsideTempRoot("ak-969-sec-env-", async (socketDir) => {
           const coords = piDurablePrincipalAuthority.decode(request.principal);
           const prepared = await prepareRoleEnvelope({
             request: {
@@ -984,7 +984,7 @@ async function adapterBoundaryCase(input: {
       countersignRequests,
     });
     const nestAdapters = [adapter("pi", nest)];
-    return withTempRoot(outsideWorktreeTempPrefix("ak-969-adp-sock-"), async (socketDir) => {
+    return withOutsideTempRoot("ak-969-adp-sock-", async (socketDir) => {
       const sessionFile = join(runDirectory, "session", "session.jsonl");
       const request: RoleTurnRequest = {
         principal: fixturePrincipal(join(runDirectory, "session")),

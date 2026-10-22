@@ -3,7 +3,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { copyFile, cp, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execa } from "execa";
@@ -47,13 +47,18 @@ export function outsideWorktreeTempPrefix(
   throw new Error(`No outside-worktree temp base available: ${bases.join(", ")}`);
 }
 
-/**
- * Callback consumers share the same allocation seam during runner migration.
- * A label lands in the worktree; an absolute prefix (outsideWorktreeTempPrefix,
- * e.g. for short AF_UNIX socket paths) is used as given.
- */
+/** Callback consumers share the same allocation seam during runner migration. */
 export async function withTempRoot<T>(prefix: string, body: (root: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(isAbsolute(prefix) ? prefix : worktreeTempPrefix(prefix));
+  return withTempDir(worktreeTempPrefix(prefix), body);
+}
+
+/** Outside this checkout: no upward Git discovery, and short enough for Unix socket paths. */
+export async function withOutsideTempRoot<T>(prefix: string, body: (root: string) => Promise<T>): Promise<T> {
+  return withTempDir(outsideWorktreeTempPrefix(prefix), body);
+}
+
+async function withTempDir<T>(prefixPath: string, body: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(prefixPath);
   return withPrimaryAwareCleanup(() => body(root), () => rm(root, { recursive: true, force: true }));
 }
 
@@ -320,6 +325,9 @@ export const environmentFixtures = {
     const path = machineLedgerHome(home);
     await mkdir(path, { recursive: true });
     await use(path);
+  },
+  outsideDir: async ({}, use: (path: string) => Promise<void>) => {
+    await withOutsideTempRoot("ak-test-outside-", use);
   },
   gitRepo: async ({ home }: { home: string }, use: (path: string) => Promise<void>) => {
     const path = join(home, "repo");

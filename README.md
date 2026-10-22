@@ -140,7 +140,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 
 ## Tests
 
-During the [ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md) migration, `pnpm test` runs all unit/contract tests (including root-level tests) with Vitest. `test:vitest` also runs the migrated factory-board timer tests and the integration/package expand examples. `test:all` runs these first, then the remaining Node tests; CI retains both entries until migration closes. `test:integration` uses the same Vitest batch, including the package expand example, followed by the remaining integration tests. For a focused run:
+During the [ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md) migration, `pnpm test` runs all unit/contract tests (including root-level tests) with Vitest. `test:vitest` runs every Vitest project; the integration and package projects list their migrated files in `vitest.config.ts`. `test:all` runs Vitest first, then the remaining integration/package files under Node's runner; CI retains both entries until migration closes. `test:integration` is the same without the remaining package files. For a focused run:
 
 ```bash
 pnpm exec vitest run --project unit-contract
@@ -148,7 +148,7 @@ pnpm exec vitest run --project integration test/integration/public-cli-bin-start
 pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts
 ```
 
-Project globs already cover the full tree, including `test/adjudication/` and root-level tests, but unfiltered runs still include cases awaiting migration. Progress uses the dot reporter; the full structured report is `.vitest/results.json`. The three examples temporarily select the native runner via `VITEST`; remove that selection when migrating their layers (#1247–#1250).
+Progress uses the dot reporter; the full structured report is `.vitest/results.json`.
 
 ## Names
 

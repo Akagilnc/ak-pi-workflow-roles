@@ -49,7 +49,6 @@
     "test:integration": "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
     "test:all": "pnpm run test:vitest && node scripts/run-test-all.mjs",
     "test:vitest": "vitest run",
-    "test:adjudication": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/adjudication/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "migrate:book-topology": "node dist/migrate-book-topology.js"
   },

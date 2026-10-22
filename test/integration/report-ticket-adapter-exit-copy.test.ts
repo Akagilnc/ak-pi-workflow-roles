@@ -31,7 +31,7 @@ import { REPORT_TICKET_TOOL_NAME } from "../../src/report-ticket-tool.ts";
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
-import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -148,7 +148,7 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
   readonly onClose?: () => Promise<void>;
   readonly submit?: Record<string, unknown>;
 }): Promise<{ disposeCalls: number; result: Awaited<ReturnType<typeof runPublicInstructionSeat>> }> {
-  return withTempRoot(outsideWorktreeTempPrefix("ak-1171-acp-"), async (socketDir) => {
+  return withOutsideTempRoot("ak-1171-acp-", async (socketDir) => {
     const socketPath = join(socketDir, "mcp.sock");
     const grokNative = join(
       input.home,
@@ -309,7 +309,7 @@ process.stdout.write(JSON.stringify({
       { encoding: "utf8", mode: 0o755 },
     );
 
-    return withTempRoot(outsideWorktreeTempPrefix("ak-1171-headless-"), async (socketDir) => {
+    return withOutsideTempRoot("ak-1171-headless-", async (socketDir) => {
       const socketPath = join(socketDir, "mcp.sock");
       const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
       const host = createHeadlessRoleTurnHost({
@@ -429,7 +429,7 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
     );
 
     // #1199: post-relocate public resume reuses the same grok original and appends a row.
-    return withTempRoot(outsideWorktreeTempPrefix("ak-1171-acp-resume-"), async (socketDir) => {
+    return withOutsideTempRoot("ak-1171-acp-resume-", async (socketDir) => {
       const socketPath = join(socketDir, "mcp.sock");
       let preparedToken = "";
       const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
@@ -570,7 +570,7 @@ process.stdout.write(events.map((e) => JSON.stringify(e)).join("\\n") + "\\n");
       { encoding: "utf8", mode: 0o755 },
     );
 
-    return withTempRoot(outsideWorktreeTempPrefix("ak-1199-codex-headless-"), async (socketDir) => {
+    return withOutsideTempRoot("ak-1199-codex-headless-", async (socketDir) => {
       const socketPath = join(socketDir, "mcp.sock");
       const description = lookupHeadlessHostDescription("codex");
       assert.ok(description);

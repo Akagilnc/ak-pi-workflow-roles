@@ -15,7 +15,7 @@ import {
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
-import { withPrimaryAwareCleanup, withTempRoot, outsideWorktreeTempPrefix, machineLedgerHome, seedGitRepository } from "../helpers/environment-fixtures.ts";
+import { withPrimaryAwareCleanup, withTempRoot, withOutsideTempRoot, machineLedgerHome, seedGitRepository } from "../helpers/environment-fixtures.ts";
 
 import {
   createWorkerSubmissionGate,
@@ -157,7 +157,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
   await withTempGit(async (root, home) => {
     // bare non-git arm target must sit outside this worktree's upward Git discovery.
     // Creating seam owns create→use→finally cleanup of this self-created root (#1178).
-    await withTempRoot(outsideWorktreeTempPrefix("ak-worker-gate-bare-"), async (bare) => {
+    await withOutsideTempRoot("ak-worker-gate-bare-", async (bare) => {
       const parent = durableParent(home, root);
       const gate = gateWithHome(home);
       gate.arm(root, parent);

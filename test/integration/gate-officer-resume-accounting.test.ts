@@ -9,11 +9,9 @@
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
@@ -42,7 +40,7 @@ import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedRoleRepo as seedGitProject } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { seedGitRepository, withOutsideTempRoot, withTempRoot } from "../helpers/environment-fixtures.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -312,7 +310,7 @@ test("#879/#1208 notary each turn receives fixed dispatch — not history array 
 
 test("#879 court-scoped settlement: this-court outcome; empty scope court yields no outcome; history on submissions", async () => {
   await withTempRoot("ak-court-scope-settlement-", async (root) => {
-    execFileSync("git", ["init", "-q", root]);
+    seedGitRepository(root);
     const runId = "run-ledger";
     const runDir = join(root, ".ak-roles", "books", "test-book", "runs", `${runId}@notary`);
     const sessionDirectory = join(runDir, "session");
@@ -486,8 +484,7 @@ test("#1092/#1208 station-child notary: no case-dossier pointer material; dialog
         && (error as NodeJS.ErrnoException).code === "ENOENT",
     );
 
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-1092-officer-env-"));
-    try {
+    await withOutsideTempRoot("ak-1092-officer-env-", async (socketDir) => {
       const prepared = await prepareRoleEnvelope({
         request: {
           principal: fixturePrincipal(join(officerRun!, "session")),
@@ -516,9 +513,7 @@ test("#1092/#1208 station-child notary: no case-dossier pointer material; dialog
       } finally {
         await prepared.dispose?.();
       }
-    } finally {
-      await rm(socketDir, { recursive: true, force: true });
-    }
+    });
 
     await assert.rejects(
       () => access(join(officerRun!, ".case-dossier-stage")),

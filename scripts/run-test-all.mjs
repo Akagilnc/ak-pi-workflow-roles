@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 // Remaining node:test batches during the Vitest migration (#1247).
-// package.json runs migrated batches with Vitest first. Optional positional
+// package.json runs the files vitest.config.ts includes with Vitest first. Optional positional
 // tiers let test:integration reuse this discovery without the package tier.
 // #685: heavy manifest removed — real-host Pi/install/cold-session cases
 // culled per quality-law (真宿主以真跑为证) and imperial ≤1 real-pi order.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { join, relative } from "node:path";
+import { join, matchesGlob, relative } from "node:path";
 
 import { isolatedTestProcessEnv } from "../test/helpers/environment-fixtures.ts";
-import { importsNodeTest } from "./node-test-batch.ts";
+import vitestConfig from "../vitest.config.ts";
+
+// Files any Vitest project includes are migrated; only the rest run here.
+const vitestIncludes = vitestConfig.test.projects.flatMap((project) => project.test.include);
 
 const TIERS = process.argv.length > 2
   ? process.argv.slice(2)
@@ -40,8 +43,9 @@ function discoverTestFiles(repoRoot) {
     for (const name of dirs) walk(join(dir, name));
     for (const name of files) {
       if (!name.endsWith(".test.ts")) continue;
-      if (!importsNodeTest(join(dir, name))) continue;
-      discovered.push(relative(repoRoot, join(dir, name)).split("\\").join("/"));
+      const file = relative(repoRoot, join(dir, name)).split("\\").join("/");
+      if (vitestIncludes.some((pattern) => matchesGlob(file, pattern))) continue;
+      discovered.push(file);
     }
   };
 

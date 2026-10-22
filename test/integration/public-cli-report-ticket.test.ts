@@ -48,7 +48,7 @@ import {
   readCurrentSection,
   seedCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
-import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -131,7 +131,7 @@ function envelopeHostThatReportsThen(input: {
   return {
     async executeTurn(request: RoleTurnRequest) {
       // Socket root owned here — dispose closes the sock; finally removes the root (#1199 R5).
-      return withTempRoot(outsideWorktreeTempPrefix("ak-1171-sock-"), async (socketDir) => {
+      return withOutsideTempRoot("ak-1171-sock-", async (socketDir) => {
         const socketPath = join(socketDir, "mcp.sock");
         const prepared = await prepareRoleEnvelope({
           request: { ...request, host: input.hostName },
@@ -1001,7 +1001,7 @@ test("#1199 same-envelope 催交原文 is the progress instruction (not first mi
     // second completed accepts. Progress instruction must be the retry bytes.
     const host = withPassingReviewHost({
       async executeTurn(request: RoleTurnRequest) {
-        return withTempRoot(outsideWorktreeTempPrefix("ak-1199-retry-"), async (socketDir) => {
+        return withOutsideTempRoot("ak-1199-retry-", async (socketDir) => {
           const socketPath = join(socketDir, "mcp.sock");
           const prepared = await prepareRoleEnvelope({
             request: { ...request, host: "codex" },

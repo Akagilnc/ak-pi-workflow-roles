@@ -25,7 +25,7 @@ import {
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { outsideWorktreeTempPrefix, withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withOutsideTempRoot, withTempHome } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
 // #1171: ordinary audit-escalation tracers carry ticketNumber so soft reask
@@ -106,7 +106,7 @@ async function runJudge(
     const submitVerdict = async (request: RoleTurnRequest, verdict: unknown) => {
       judgeSubmissions.push(verdict);
       const coords = piDurablePrincipalAuthority.decode(request.principal);
-      return withTempRoot(outsideWorktreeTempPrefix("ak-1057-judge-"), async (socketDir) => {
+      return withOutsideTempRoot("ak-1057-judge-", async (socketDir) => {
         const prepared = await prepareRoleEnvelope({
           request: { ...request, host: "pi" },
           dependencies: {

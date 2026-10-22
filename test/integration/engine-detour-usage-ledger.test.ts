@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,

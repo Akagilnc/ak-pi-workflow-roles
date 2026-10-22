@@ -20,7 +20,7 @@ import { delimiter, join, resolve } from "node:path";
 import { test } from "vitest";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix, testExeca as execa, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { testExeca as execa, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
@@ -111,12 +111,12 @@ ${signalSelf}`;
   await chmod(join(binDir, "node"), 0o755);
 }
 
-async function seedTierTree(root: string, files: string[], vitestFiles: string[] = []): Promise<void> {
-  for (const rel of [...files, ...vitestFiles]) {
+async function seedTierTree(root: string, files: string[]): Promise<void> {
+  for (const rel of files) {
     const full = join(root, rel);
     await mkdir(join(full, ".."), { recursive: true });
-    const runner = vitestFiles.includes(rel) ? 'import { test } from "vitest";' : 'import test from "node:test";';
-    await writeFile(full, `${runner}\n`, "utf8");
+    // Content is not the classifier. scripts/run-test-all.mjs skips paths listed in vitest.config.ts.
+    await writeFile(full, `// fixture ${rel}\n`, "utf8");
   }
 }
 
@@ -205,20 +205,12 @@ test("package.json test entries route migrated batches to Vitest and retain isol
     "pnpm run test:vitest && node scripts/run-test-all.mjs",
     "test:all must run both migration batches",
   );
-  const preload = "--import ./scripts/test-process-env-preload.mjs";
-  // #1206 B: native dual reporters — dot→stdout, spec→fixed repo-root report file.
-  const reporter =
-    "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt";
   assert.equal(pkg.scripts["test"], "vitest run --project unit-contract");
   assert.equal(pkg.scripts["test:fast"], "pnpm test");
   assert.equal(pkg.scripts["test:vitest"], "vitest run");
   assert.equal(
     pkg.scripts["test:integration"],
     "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
-  );
-  assert.equal(
-    pkg.scripts["test:adjudication"],
-    `node --import tsx ${preload} ${reporter} --test test/adjudication/**/*.test.ts`,
   );
 });
 
@@ -232,7 +224,7 @@ test("package.json test entries route migrated batches to Vitest and retain isol
  * owns that root and removes it after the case (#1244).
  */
 test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-549-test-all-home-"), async (workspace) => {
+  await withOutsideTempRoot("ak-549-test-all-home-", async (workspace) => {
     const files = ["test/integration/one.test.ts"];
     await seedTierTree(workspace, files);
 
@@ -288,7 +280,7 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
  * Preload process-owned HOME exit cleanup remains the #612 runner/preload contract.
  */
 test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-549-bare-preload-"), async (workspace) => {
+  await withOutsideTempRoot("ak-549-bare-preload-", async (workspace) => {
     const beforeHash = readHostModelsHash();
     const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
     const hostSentinel = join(HOST_HOME, sentinelName);
@@ -358,14 +350,15 @@ test("bare preload entry: $HOME writes miss host models.json and host sentinel",
 });
 
 test("runner discovers seeded tree into one default-parallel child", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-run-test-all-partition-"), async (workspace) => {
+  await withOutsideTempRoot("ak-run-test-all-partition-", async (workspace) => {
     const files = [
       "test/unit/one.test.ts",
       "test/contract/two.test.ts",
       "test/integration/light.test.ts",
+      "test/integration/factory-board.test.ts",
       "test/package/light.test.ts",
     ];
-    await seedTierTree(workspace, files, ["test/integration/migrated.test.ts"]);
+    await seedTierTree(workspace, files);
 
     const binDir = join(workspace, "bin");
     await writePathNodeShim(binDir);
@@ -420,7 +413,7 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
 });
 
 test("runner discovers the live package tree once under default parallelism, leaving this Vitest contract out", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-run-test-all-live-"), async (workspace) => {
+  await withOutsideTempRoot("ak-run-test-all-live-", async (workspace) => {
     const binDir = join(workspace, "bin");
     await writePathNodeShim(binDir);
     const recordPath = join(workspace, "records.jsonl");
@@ -437,7 +430,7 @@ test("runner discovers the live package tree once under default parallelism, lea
     assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
     assert.equal(new Set(scheduled).size, scheduled.length, "no file runs twice");
 
-    // This contract runs under Vitest (test:vitest), not again under the legacy runner.
+    // This path is in vitest.config.ts include, so the legacy runner must not schedule it.
     assert.equal(
       scheduled.filter((f) => f.replaceAll("\\", "/") === THIS_CONTRACT_REL).length,
       0,
@@ -449,7 +442,7 @@ test("runner discovers the live package tree once under default parallelism, lea
 });
 
 test("runner propagates child non-zero exits honestly", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-run-test-all-exit-"), async (workspace) => {
+  await withOutsideTempRoot("ak-run-test-all-exit-", async (workspace) => {
     const files = ["test/unit/one.test.ts", "test/integration/light.test.ts"];
     await seedTierTree(workspace, files);
     const binDir = join(workspace, "bin");
@@ -469,7 +462,7 @@ test("runner propagates child non-zero exits honestly", async () => {
 });
 
 test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async () => {
-  await withTempRoot(outsideWorktreeTempPrefix("ak-run-test-all-sigterm-"), async (workspace) => {
+  await withOutsideTempRoot("ak-run-test-all-sigterm-", async (workspace) => {
     const files = ["test/integration/one.test.ts"];
     await seedTierTree(workspace, files);
     const binDir = join(workspace, "bin");

@@ -1,13 +1,101 @@
-import { globSync } from "node:fs";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { configDefaults, defineConfig } from "vitest/config";
-import { importsNodeTest } from "./scripts/node-test-batch.ts";
+import { defineConfig } from "vitest/config";
 
-const root = fileURLToPath(new URL(".", import.meta.url));
-const nodeTestFiles = globSync("test/**/*.test.ts", { cwd: root })
-  .filter((file) => importsNodeTest(join(root, file)));
-const exclude = [...configDefaults.exclude, ...nodeTestFiles];
+// Expand phase (ADR 0090): these lists are the migrated set. scripts/run-test-all.mjs
+// runs every other integration/package file under node:test; #1250 restores the globs.
+const integrationMigrated = [
+  "test/integration/acp-unknown-client-request.test.ts",
+  "test/adjudication/activation-bare-seam.test.ts",
+  "test/integration/activation-envelope-contract.test.ts",
+  "test/integration/analyst-399-book-scope.test.ts",
+  "test/integration/analyst-c1-sweep-index.test.ts",
+  "test/integration/analyst-c1-sweep-pages.test.ts",
+  "test/integration/analyst-c2-cohort.test.ts",
+  "test/integration/analyst-c3-model-groups.test.ts",
+  "test/integration/analyst-c4-ticket-scope.test.ts",
+  "test/integration/analyst-compute-if-missing.test.ts",
+  "test/integration/analyst-entry.test.ts",
+  "test/integration/analyst-public-bundle-families.test.ts",
+  "test/integration/analyst-public-cli-sweep.test.ts",
+  "test/integration/analyst-public-cli.test.ts",
+  "test/integration/audited-run-identity-1166.test.ts",
+  "test/integration/countersign-notary-gate.test.ts",
+  "test/integration/dossier-resolution.test.ts",
+  "test/integration/engine-detour-cancel-idle.test.ts",
+  "test/integration/engine-detour-usage-ledger.test.ts",
+  "test/integration/engine-material.test.ts",
+  "test/integration/factory-board-true-home.test.ts",
+  "test/integration/factory-board.test.ts",
+  "test/integration/gate-officer-resume-accounting.test.ts",
+  "test/integration/headless-codex-host.test.ts",
+  "test/integration/host-retry-verdict-relay.test.ts",
+  "test/integration/host-session-acp-grok-usage-compact.test.ts",
+  "test/integration/host-session-acp-write-fail.test.ts",
+  "test/integration/host-session-live-records.test.ts",
+  "test/integration/merger-git-state.test.ts",
+  "test/integration/merger-role.test.ts",
+  "test/integration/package-home-cli-seam.test.ts",
+  "test/integration/pipeline-lifecycle-formalization.test.ts",
+  "test/integration/public-cli-1132-delivery-request.test.ts",
+  "test/integration/public-cli-1169-relocate-resume-no-unbound-paths.test.ts",
+  "test/integration/public-cli-argv-parsers.test.ts",
+  "test/integration/public-cli-attach-path-passthrough.test.ts",
+  "test/integration/public-cli-auto-resume-dispatch-throw.test.ts",
+  "test/integration/public-cli-auto-resume-limit-422.test.ts",
+  "test/integration/public-cli-bin-startup.test.ts",
+  "test/integration/public-cli-cli.test.ts",
+  "test/integration/public-cli-coder.test.ts",
+  "test/integration/public-cli-collector.test.ts",
+  "test/integration/public-cli-config.test.ts",
+  "test/integration/public-cli-countersign-run.test.ts",
+  "test/integration/public-cli-diarist-run.test.ts",
+  "test/integration/public-cli-doctor.test.ts",
+  "test/integration/public-cli-engine-axis.test.ts",
+  "test/integration/public-cli-engine-resume-detour.test.ts",
+  "test/integration/public-cli-engine-startup-material.test.ts",
+  "test/integration/public-cli-escalation-resume.test.ts",
+  "test/integration/public-cli-explicit-internal.test.ts",
+  "test/integration/public-cli-failure-artifacts.test.ts",
+  "test/integration/public-cli-failure-provider-stop.test.ts",
+  "test/integration/public-cli-failure-real-entry.test.ts",
+  "test/integration/public-cli-failure-settlement.test.ts",
+  "test/integration/public-cli-fixer.test.ts",
+  "test/integration/public-cli-gleaner-left-run.test.ts",
+  "test/integration/public-cli-host-axis.test.ts",
+  "test/integration/public-cli-instruction-seat.test.ts",
+  "test/integration/public-cli-judge.test.ts",
+  "test/integration/public-cli-known-ticket-placement.test.ts",
+  "test/integration/public-cli-main-flow-p0.test.ts",
+  "test/integration/public-cli-merger-run.test.ts",
+  "test/integration/public-cli-merger.test.ts",
+  "test/integration/public-cli-navigator-attendance.test.ts",
+  "test/integration/public-cli-navigator-lookup.test.ts",
+  "test/integration/public-cli-notary.test.ts",
+  "test/integration/public-cli-process-cancel.test.ts",
+  "test/integration/public-cli-report-ticket.test.ts",
+  "test/integration/public-cli-resume-416.test.ts",
+  "test/integration/public-cli-resume-callable-seats.test.ts",
+  "test/integration/public-cli-resume.test.ts",
+  "test/integration/public-cli-reviewer.test.ts",
+  "test/integration/public-cli-same-ticket-resume.test.ts",
+  "test/integration/public-cli-seat-pipeline.test.ts",
+  "test/integration/public-cli-seat-self-ticket.test.ts",
+  "test/integration/public-cli-secretariat-run.test.ts",
+  "test/integration/report-ticket-adapter-exit-copy.test.ts",
+  "test/integration/resume-missing-host-session-id.test.ts",
+  "test/integration/role-envelope-engine-axis.test.ts",
+  "test/integration/run-terminal-artifacts.test.ts",
+  "test/integration/run-test-all.test.ts",
+  "test/integration/test-agent-dir-model-seed.test.ts",
+  "test/integration/test-process-env.test.ts",
+  "test/integration/test-user-profile-preload.test.ts",
+  "test/integration/ticket-snapshot-family-edges.test.ts",
+  "test/integration/ticket-trajectory-binding.test.ts",
+  "test/integration/worker-submission-gates.test.ts",
+];
+const packageMigrated = [
+  "test/package/published-dist-import-closure.test.ts",
+];
 
 export default defineConfig({
   test: {
@@ -21,21 +109,18 @@ export default defineConfig({
         test: {
           name: "unit-contract",
           include: ["test/unit/**/*.test.ts", "test/contract/**/*.test.ts", "test/*.test.ts"],
-          exclude,
         },
       },
       {
         test: {
           name: "integration",
-          include: ["test/integration/**/*.test.ts", "test/adjudication/**/*.test.ts"],
-          exclude,
+          include: integrationMigrated,
         },
       },
       {
         test: {
           name: "package",
-          include: ["test/package/**/*.test.ts"],
-          exclude,
+          include: packageMigrated,
         },
       },
     ],
