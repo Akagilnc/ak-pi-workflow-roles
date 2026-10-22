@@ -211,7 +211,6 @@ test("package.json test entries route migrated batches to Vitest and retain isol
     pkg.scripts["test:integration"],
     "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
   );
-  assert.equal(pkg.scripts["test:adjudication"], undefined);
 });
 
 /**

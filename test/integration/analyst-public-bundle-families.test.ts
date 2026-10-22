@@ -55,7 +55,7 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  // Worktree-owned sibling roots: shallow bin path still outside package source tree.
+  // One worktree-owned root: the shallow bin path stays outside the package source tree.
   const binPath = join(root, "main.js");
   const project = join(root, "project");
   const profileHome = join(root, "profile");
