@@ -1,6 +1,6 @@
 # #1237 存量测试质量清理交卷
 
-基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
+基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
 ## 方法与边界
 
@@ -55,7 +55,7 @@
 | `test/contract/gatekeeper-pass-envelope.test.ts` | S | 改：删退役 officer-pointer 零行哨兵；保submission gate 的 pass/escalate/transport_failure/no_receipt 结构化分支及 officer 身份。 |
 | `test/contract/gatekeeper-projection.test.ts` | D/S | 删：孤立投影 helper 的原样返回；承接 `test/integration/public-cli-merger-run.test.ts:423` 各席公开 sealed→Terminal 及 `test/contract/submission-ledger.test.ts:174` 的真实多提交原 params 落账；孤立投影函数已删除。 |
 | `test/contract/gleaner-left-role.test.ts` | M/S | 删并入：真实入口收卷行为在 `test/integration/public-cli-gleaner-left-run.test.ts:90`；不保死 helper 拒 bounce/pass。 |
-| `test/contract/judge-role.test.ts` | M/T/D | 改：删 handler 全集、focused worker 注册/文案重复案及 assertDelivers；从 extension/runtime 到 tool、ledger closure 的空 Soul/未完成提醒/原卷数据等行为仍留。worker phase 承接 `test/integration/public-cli-coder.test.ts:122`、`test/integration/public-cli-fixer.test.ts` 默认 phase 案；空白 unfinished reason 并入本文件 `:583` 的 runtime→tool→收卷案，缺理由/两次提醒/理由重交边界均留。Soul 模板无承接者。第三轮补回 Worker/Judge 输入递送：`:344` Judge、`:553` Coder、`:813` Fixer 既有案断言 `before_agent_start` 返回的 systemPrompt 含 BASE、所载 Soul 与 phase（只查输入到达，不锁标签布局）。 |
+| `test/contract/judge-role.test.ts` | M/T/D | 改：删 handler 全集、focused worker 注册/文案重复案及 assertDelivers；从 extension/runtime 到 tool、ledger closure 的空 Soul/未完成提醒/原卷数据等行为仍留。worker phase 承接 `test/integration/public-cli-coder.test.ts:122`、`test/integration/public-cli-fixer.test.ts` 默认 phase 案；空白 unfinished reason 并入本文件 `:583` 的 runtime→tool→收卷案，缺理由/两次提醒/理由重交边界均留。Soul 模板无承接者。第三轮补回 Worker/Judge 输入递送：`:344` Judge、`:553` Coder、`:813` Fixer 既有案断言 `before_agent_start` 返回的 systemPrompt 含 BASE、所载 Soul 与 phase（只查输入到达，不锁标签布局）。第四轮（R3-B）：`:315` 无角色案删 `handlers.has("tool_call") === false` 注册布局锁及与之相抵的注释，改为调用已注册（若有）的 `tool_call` 钩子、断言返回 undefined（不干预工具）；不加载、不加角色工具的既有断言留。 |
 | `test/contract/navigator-attendance-lifecycle.test.ts` | T | 改：删 grace 报错句式锁；保受控 promise/clock 驱动 attendance grace、取消和 settlement；不是实际宿主并发测试。 |
 | `test/contract/navigator-attendance.test.ts` | B | 留：缺状态、无行、arrival、取消、failure/no-terminal；opaque 上游失败真因传递不是锁系统报错句式。 |
 | `test/contract/notary-role.test.ts` | M/T/D | 删：旗绑定和 payload helper 重复、audited Soul XML 模板；承接 `test/integration/public-cli-notary.test.ts:168`、`:266`、`:332` 及 `test/integration/audited-run-identity-1166.test.ts` 的身份字段、自身与 audited Soul 输入穿透；模板承接者 null，孤立投影/retain helper 已退役。 |
@@ -108,7 +108,7 @@
 | `test/integration/public-cli-bin-startup.test.ts` | B | 留：真实 built bin 可启动、exit 状态，不比 help 文案；与 tarball 安装产物接缝不同。 |
 | `test/integration/public-cli-cli.test.ts` | M/D | 改：删 help/registry 同源自比及重复 resolver；保 CLI config 写盘/不被 local flags 改写、unknown command 零写入、各席 invocation；不再谎称跨进程。 |
 | `test/integration/public-cli-coder.test.ts` | S | 改：删退役 task/dossier 哨兵，宿主中性 /skill: 负向契约保留；保公开 Coder phase、opaque status、audit failure、model/thinking 与 resume；宿主边界提供输入。 |
-| `test/integration/public-cli-collector.test.ts` | D/S | 改：合并 groups/MERGED 重复案，改真实 structured-output→ledger→Terminal，含 lawful ticket；保 CLI/parser 负向输入，不重复两份 wait-ms 拒收。 |
+| `test/integration/public-cli-collector.test.ts` | D/S | 改：合并 groups/MERGED 重复案，改真实 structured-output→ledger→Terminal，含 lawful ticket；保 CLI/parser 负向输入，不重复两份 wait-ms 拒收。原 `stdout.length > 0` 不在本案补回：accepted 交付走同一 `presentTerminal`，由 `test/integration/public-cli-judge.test.ts:299`、`:391` 的整段 stdout 非空接住（第四轮变异见文末）。 |
 | `test/integration/public-cli-config.test.ts` | M/D | 改：删 16 席 roster 镜像；local model/thinking 从 runAkRole 真 dispatch 到 request.model，磁盘不变；保 persistence/inheritance/clear/未知 seat，全部 fixture home。 |
 | `test/integration/public-cli-countersign-run.test.ts` | S | 改：删退役旧旗与 dossier 哨兵；保公开 admission、status、同 session 恢复、ticket assertion 与旧 attempt 残卷隔离。 |
 | `test/integration/public-cli-diarist-run.test.ts` | S | 改：删退役字段/文件哨兵；保公开 dialogue/diarist 的源卷字节、范围选择、迁移/分票/追加/恢复，不锁新生成叙事。 |
@@ -118,21 +118,21 @@
 | `test/integration/public-cli-engine-startup-material.test.ts` | T/M | 改：runAkRole→prepared host，恢复 handbook/dispatchHandbook 等于源文件 UTF-8 的递送契约；保 typed kind/name/model、输入 dispatch，不检查文档措辞。 |
 | `test/integration/public-cli-escalation-resume.test.ts` | B | 留：公开 gate escalation/continue/transport_failure 到同次父卷与恢复路由。 |
 | `test/integration/public-cli-explicit-internal.test.ts` | B | 留：假 CLI 子进程 argv/stdin/env、PATH、SIGTERM/关闭与投递错误，不调用真实模型。 |
-| `test/integration/public-cli-failure-artifacts.test.ts` | T | 改：删 stdout/stderr 分块计数及死变量；保实际 public terminal/artifact 写故障、旧卷隔离及宿主结果不被产物错误顶替。 |
+| `test/integration/public-cli-failure-artifacts.test.ts` | T | 改：删 stdout/stderr 分块计数及死变量；保实际 public terminal/artifact 写故障、旧卷隔离及宿主结果不被产物错误顶替。第四轮（R3-A）：删计数时连交付观察一并删掉是误删；no_receipt 交付在 `:76` 既有 malformed session 案断言整段 stdout 非空，失败交付由共享 `assertPublicFailureSettlement`（`test/helpers/failure-settlement-kit.ts:95`）接住；其余同路径案不逐例补回。 |
 | `test/integration/public-cli-failure-provider-stop.test.ts` | B | 留：真实 public 入口只认宿主 typed report，不从旧 transcript 推造 provider failure。 |
-| `test/integration/public-cli-failure-real-entry.test.ts` | T/M | 改：删输出分块计数；第三轮把 `stderr[0]` 取首块改为整段输出非空，不依赖写入分块；保公开 entry 的 typed failure 与 packageFact/timeout、封卷后非零退出；保存而不洗白。 |
-| `test/integration/public-cli-failure-settlement.test.ts` | D/C/M | 改：既有零 dispatch/零 admission 的结构性错误表接住非 repeatable option 重复；第三轮删两处 `stdout.length === 1` 写入次数锁，保 exitCode、Terminal、payload 结构化断言；拒收表的「零写入／有诊断」不锁分块数，留。其余实际 failure/Terminal 分支保留。 |
+| `test/integration/public-cli-failure-real-entry.test.ts` | T/M | 改：删输出分块计数；第三轮把 `stderr[0]` 取首块改为整段输出非空，不依赖写入分块；第四轮这两处并入共享 `assertPublicFailureSettlement` 的 stdout/stderr 交付观察（`test/helpers/failure-settlement-kit.ts:95`、`:96`），本文件删去重复行；保公开 entry 的 typed failure 与 packageFact/timeout、封卷后非零退出；保存而不洗白。 |
+| `test/integration/public-cli-failure-settlement.test.ts` | D/C/M | 改：既有零 dispatch/零 admission 的结构性错误表接住非 repeatable option 重复；第三轮删两处 `stdout.length === 1` 写入次数锁，保 exitCode、Terminal、payload 结构化断言（两案均 accepted，交付观察由 `test/integration/public-cli-judge.test.ts:299`、`:391` 承接；失败案经共享 kit 观察 stdout/stderr 交付）；拒收表的「零写入／有诊断」不锁分块数，留。其余实际 failure/Terminal 分支保留。 |
 | `test/integration/public-cli-fixer.test.ts` | D/S | 改：低层 admission 重复案合入既有公开 opaque prerequisites 表（含 bad-grammar），删除本地孤儿 helper/旧字段哨兵；保公开 opaque prerequisites、phase、restore、声明 prerequisite_unmet 与各合法交卷状态。 |
 | `test/integration/public-cli-gleaner-left-run.test.ts` | S/D | 改：`:90` 从真实 structured-output 收卷走到 Terminal，比原参数，覆盖 completed/bounce/pass/无 status；第三轮删 `--bogus` 未知旗解析重复（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），必填 `--base` 解析案独有，留；其余 base、非空弹章、resume 失败路径仍留。 |
 | `test/integration/public-cli-host-axis.test.ts` | B | 留：公开 host 优先级、adapter request、session id、live axes 与假宿主 stdin/env，不限实际 host 文本。 |
 | `test/integration/public-cli-instruction-seat.test.ts` | B | 留：公开各 instruction seat admission 到 typed terminal 的 role 差异。 |
-| `test/integration/public-cli-judge.test.ts` | D/M | 改：删两条直接解析案——未知旗与空 `--project`/`--project=` 重复公开拒收表（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），附件/project 正向重复 `test/integration/public-cli-attach-path-passthrough.test.ts:46`；独有的位置参数拼接、空白 `--project`、缺值 `--attach` 移入 `test/unit/public-cli-argv-parsers.test.ts:8`。删两处 `stdout.length === 1` 写入次数锁，改整段 stdout 非空。保公开 Judge decisionGate、结构拒收、audit no_receipt 和空请求不发明任务。 |
+| `test/integration/public-cli-judge.test.ts` | D/M | 改：删两条直接解析案——未知旗与空 `--project`/`--project=` 重复公开拒收表（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），附件/project 正向重复 `test/integration/public-cli-attach-path-passthrough.test.ts:46`；独有的位置参数拼接、空白 `--project`、缺值 `--attach` 移入 `test/unit/public-cli-argv-parsers.test.ts:8`。删两处 `stdout.length === 1` 写入次数锁，改整段 stdout 非空（`:299`、`:391`，即 accepted 交付观察）。保公开 Judge decisionGate、结构拒收、audit no_receipt 和空请求不发明任务。 |
 | `test/integration/public-cli-known-ticket-placement.test.ts` | B | 留：公开已知 ticket 对所有席的落盘位置，不用目录猜 ticket。 |
 | `test/integration/public-cli-main-flow-p0.test.ts` | B | 留：无配置在 dispatch 前失败，以及真实公开 escalate→owner ruling→resume 主链。 |
 | `test/integration/public-cli-merger-run.test.ts` | B | 留：公开共享 entry 每席 sealed→Terminal、同轮多提交和 failure/no_receipt，非静态 roster 断言。 |
 | `test/integration/public-cli-merger.test.ts` | S/D | 改：删退役 dossier/旧 manifest 字段哨兵；第三轮删解析案中未知旗与空 `--project` 重复（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），Merger 专属的公开 packet 字段拒收与附件正向留；保公开 Merger 从真实 Git 派生 materials，再到 host/Terminal、resume 与 malformed 收卷。 |
 | `test/integration/public-cli-navigator-attendance.test.ts` | T/M | 改：真实父入口到 lookup，建议对应同次回执 byStatus[status]，不同 status 有区别、缺行无建议；父失败 diagnostic 等于输入真因，保 disposition/run/receipt/session。 |
-| `test/integration/public-cli-navigator-lookup.test.ts` | T/M | 改：真实整表与 coder/reviewer/judge 筛选互证，能抓错角色与只剩 coder 的整表；保落原卷、零 host session、usage/记录失败，不导入内部建议常量。 |
+| `test/integration/public-cli-navigator-lookup.test.ts` | T/M | 改：真实整表与 coder/reviewer/judge 筛选互证，能抓错角色与只剩 coder 的整表；保落原卷、零 host session、usage/记录失败，不导入内部建议常量。记录失败案删 `/EISDIR/` 正则（锁诊断措辞）；第四轮补最小交付观察 `:150` stderr 整段非空——此案无 Terminal，诊断只在 stderr。 |
 | `test/integration/public-cli-notary.test.ts` | D | 改：删与公开负向案重复的 locator/run-state 底层调用；保公开 source locator 输入边界与三态/no_receipt/transport、绑定继承和 Terminal；不是旧 helper 拒收测试。 |
 | `test/integration/public-cli-process-cancel.test.ts` | B | 留：实际 CLI/process 信号入口产生结构化失败并停止受控 host child。 |
 | `test/integration/public-cli-report-ticket.test.ts` | S | 改：删退役 officer-pointer/旧目录哨兵；保公开中途认票→重定位→记录→恢复，包含真实持久化失败和不同 court 的卷隔离。 |
@@ -227,3 +227,23 @@ R2-B 只删写入次数锁，不需变异；改后 `public-cli-failure-settlemen
 基线就缺、不是本票改弱的：reviewer 父席、Collector、Merger 的 Soul 递送，以及 filed 席、Notary、Doctor 的 BASE 保留——基线与 HEAD 都没有能抓的断言，本轮不另建证明案，列为缺口。生产 Soul 装载器读哪份文件，只用包内文件字节比对 Judge 与 auditor 两处，不抄 role→文件全表。
 
 台院 I3-1（`01a1636a-9df8-790c-95ff-fcaded9826a7@inspector/receipts/1.json`）后：删 `audited-run-identity-1166` 对注入参考装载器的调用次数等值断言。复验：`src/role-runtime.ts` 装载点前多调一次同参装载（送达不变）→ 1166 3/3 绿；`roleReferenceMaterials = ""` → 3/3 败；恢复后 `git diff --exit-code -- src` 为空。同形状扫描（本票测试净增中对 `.length`/calls/count/loads/dispatched 的等值断言）在 `538df48b` 只命中这一处，改后零命中。
+
+### 第四轮（大理寺 receipts/3.json R3-A/B）
+
+R3-A 交付辨别力：本票删的 stdout/stderr 观察逐条见回执 classResults；按交付分支各留一处最小观察（整段输出非空，不锁分块、措辞），不逐例补回。新增 `test/helpers/failure-settlement-kit.ts:95`–`:96`（失败 stdout/stderr，经 kit 覆盖全部失败案）、`test/integration/public-cli-failure-artifacts.test.ts:76`（no_receipt stdout）、`test/integration/public-cli-navigator-lookup.test.ts:150`（无 Terminal 的记录失败 stderr）；`test/integration/public-cli-failure-real-entry.test.ts` 两行同义 stderr 观察并入 kit 后删除。
+
+R3-B 注册布局锁：同形状扫描（测试中对 hook 注册表 has/size/keys 的断言）只命中 `test/contract/judge-role.test.ts` 一处，已改为行为断言。`tools.has` 断言是模型可见工具面（行为），`activation-bare-seam` 的 `assert.ok(found)` 是调用前置，不同类。
+
+变异（备份→改生产调用点→跑→从备份恢复，`git status --short src` 为空）：
+
+| 临时变异 | 聚焦文件 | 结果 |
+| --- | --- | --- |
+| `presentFailureTerminal` 删 `io.stdout` | failure-artifacts/settlement/real-entry/provider-stop、navigator-lookup、public-cli-judge/collector、judge-role、collector-self-collect | 59 案 15 败（14 例 kit 失败交付、1 例 no_receipt） |
+| `presentFailureTerminal` 删失败 stderr | 同上 | 15 败，均 kit stderr 观察 |
+| `presentTerminal` 删 accepted 分支 stdout | 同上 | 2 败（public-cli-judge `:299`、`:391` 所在案） |
+| `presentTerminal` 删 held 回放 | 同上 | 15 败 |
+| 外层 catch 删 stderr 诊断 | 同上 | 1 败（navigator-lookup `:150`） |
+| `tool_call` 钩子改为装载即注册（保原守卫，删惰性注册） | judge-role、collector-self-collect | 15/15 绿（旧布局锁在此会报红） |
+| 装载即注册一个无条件 block 的 `tool_call` | 同上 | 2 败（无角色案、Collector 案） |
+
+恢复后同一组 59/59 绿。

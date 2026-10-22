@@ -91,6 +91,9 @@ export async function assertPublicFailureSettlement(input: {
   const terminal = input.result.terminal;
   assert.ok(terminal, "public seam must return settled Terminal");
   assert.equal(terminal.roleOutcome.kind, "failure");
+  // Delivery, not chunking or wording: the caller was handed output on both streams.
+  assert.ok(input.stdout.join("").length > 0, "failure Terminal delivered on stdout");
+  assert.ok(input.stderr.join("").length > 0, "failure diagnostic delivered on stderr");
   if (terminal.roleOutcome.kind !== "failure") {
     throw new Error("expected failure role outcome");
   }

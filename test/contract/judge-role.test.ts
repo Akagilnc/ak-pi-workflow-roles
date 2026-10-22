@@ -323,8 +323,11 @@ test("stable factory stays inert without a role", async () => {
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
   assert.deepEqual(harness.activeToolSets, []);
-  // Observation handlers are registered but stay inert without --ak-role admission.
-  assert.equal(harness.handlers.has("tool_call"), false, "tool_call");
+  // Whether or not a tool_call hook is registered, it must not intervene without a role.
+  assert.equal(
+    await harness.handlers.get("tool_call")?.({ toolName: "write", toolCallId: "no-role-write" }, {}),
+    undefined,
+  );
 });
 test("unsupported role fails before any loader runs", async () => {
   let loads = 0;

@@ -132,7 +132,7 @@ test("a run that cannot record itself presents the real cause and no invented ad
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io } = captureIo();
+    const { io, stderr } = captureIo();
     const result = await runAkRole(["navigator", "--project", project], {
       home,
       packageRoot,
@@ -147,5 +147,6 @@ test("a run that cannot record itself presents the real cause and no invented ad
     });
     assert.equal(result.exitCode, 1);
     assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(stderr.join("").length > 0, "the failure diagnostic is delivered on stderr");
   });
 });

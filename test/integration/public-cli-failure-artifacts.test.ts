@@ -44,7 +44,7 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-malformed-session-jsonl-001";
-    const { io } = captureIo();
+    const { io, stdout } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "malformed session transcript"],
       {
         packageRoot,
@@ -73,6 +73,7 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts, {});
+    assert.ok(stdout.join("").length > 0, "no_receipt Terminal delivered on stdout");
     const runDirectory = join(
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
