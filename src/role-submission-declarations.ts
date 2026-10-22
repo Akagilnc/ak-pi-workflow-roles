@@ -5,7 +5,7 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { courtReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
@@ -75,13 +75,13 @@ const SUBMISSION_FACE = {
     label: "符宝郎输出",
     description: "提交引文保真与票面对齐的 converged/continue/escalate 决议（含逐条核旨 clauses）。",
     promptSnippet: "提交符宝郎决议",
-    parameters: courtReviewSubmissionSchema,
+    parameters: notaryReviewSubmissionSchema,
   },
   countersign: {
     label: "给事中输出",
-    description: "给事中决议（含逐条核旨 clauses）。",
+    description: "给事中决议。",
     promptSnippet: "给事中决议",
-    parameters: courtReviewSubmissionSchema,
+    parameters: reviewSubmissionSchema,
   },
   secretariat: {
     label: "中书省输出",

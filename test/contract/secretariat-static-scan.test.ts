@@ -69,6 +69,9 @@ test("ticket-law is the sole structural law owner and three seats load it", asyn
       `${role} must load souls/ticket-law.md`,
     );
   }
+  for (const role of ["secretariat", "countersign"] as const) {
+    assert.ok((byRole[role] as readonly string[]).includes("souls/design-law.md"));
+  }
   assert.ok(
     (byRole.secretariat as readonly string[]).includes("souls/countersign.md"),
   );

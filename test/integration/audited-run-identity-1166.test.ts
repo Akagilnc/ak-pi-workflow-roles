@@ -100,6 +100,7 @@ async function inspectLiveRequest(
   readonly identities: AuditedRunIdentityMaterial[];
   readonly pathMaterials: unknown[];
   readonly toolNames?: string[];
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
 }> {
   const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-live-"));
   const socketPath = join(socketDir, "mcp.sock");
@@ -142,6 +143,7 @@ async function inspectLiveRequest(
           prompt: prepared.prompt,
           identities,
           pathMaterials,
+          jsonSchema: prepared.jsonSchema,
           ...(toolNames === undefined ? {} : { toolNames }),
         };
       } finally {
@@ -587,24 +589,12 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     const first = {
       status: "converged" as const,
       ticketNumber: 1195,
-      clauses: [
-        {
-          clause: "blind input seam",
-          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
-          derivation: "Q2(a)",
-        },
-      ],
+      findings: [{ code: "initial-review" }],
     };
     const second = {
       status: "converged" as const,
       ticketNumber: 1195,
-      clauses: [
-        {
-          clause: "resubmit after bounce",
-          ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be",
-          derivation: "Q2(a) still blind",
-        },
-      ],
+      findings: [{ code: "resubmitted-review" }],
     };
     assert.notEqual(readableGateItem(first), readableGateItem(second));
 
@@ -621,18 +611,19 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.prompt, NOTARY_FIXED_DISPATCH);
         assert.equal(inspected.identities.length, 1);
+        assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
         notaryIdentities.push(inspected.identities[0]!.auditedRun);
         const details = notaryPrompts.length <= 1
           ? {
             status: "continue",
             violations: ["rewrite"],
             ticketNumber: 1195,
-            clauses: first.clauses,
+            clauses: [{ clause: "blind input seam", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", derivation: "Q2(a)" }],
           }
           : {
             status: "converged",
             ticketNumber: 1195,
-            clauses: second.clauses,
+            clauses: [{ clause: "resubmit after bounce", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", derivation: "Q2(a) still blind" }],
           };
         return roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -644,6 +635,8 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
           }),
         }).executeTurn(request);
       }
+      const inspected = await inspectLiveRequest(request, packageRoot);
+      assert.equal(Object.hasOwn(inspected.jsonSchema.properties as object, "clauses"), false);
       parentSeals += 1;
       const body = parentSeals === 1 ? first : second;
       const { sessionDirectory, sessionFile } =
