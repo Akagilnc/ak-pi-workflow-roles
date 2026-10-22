@@ -17,6 +17,7 @@ import {
   REVIEW_QUEUE_WORDS,
   REVIEW_SUBMISSION_OUTPUT_TOOL_NAME,
   courtReviewSubmissionSchema,
+  inspectorSubmissionSchema,
   reviewSubmissionSchema,
 } from "../../src/review-submission.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
@@ -69,7 +70,9 @@ test("review officers expose one shared output tool; court seats share clauses s
   // #1195: countersign + notary use court schema with required clauses; other review seats stay on shared review schema.
   assert.equal(countersignVerdictSchema, courtReviewSubmissionSchema);
   assert.equal(notaryOutputSchema, courtReviewSubmissionSchema);
-  assert.ok([judgeVerdictSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
+  assert.ok([judgeVerdictSchema, auditorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
+  assert.equal(inspectorOutputSchema, inspectorSubmissionSchema);
+  assert.equal(roleSubmissionDeclaration("inspector").parameters, inspectorSubmissionSchema);
   assert.equal(roleSubmissionDeclaration("countersign").parameters, courtReviewSubmissionSchema);
   assert.equal(roleSubmissionDeclaration("notary").parameters, courtReviewSubmissionSchema);
   for (const word of REVIEW_QUEUE_WORDS) {
@@ -97,6 +100,22 @@ test("review officers expose one shared output tool; court seats share clauses s
   );
   // Other review seats do not require clauses.
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "converged" }), true);
+  // The inspector's generation declaration requires the whole-ticket complexity rows: clause text plus hits, empty when none.
+  assert.equal(Value.Check(inspectorSubmissionSchema, { status: "converged" }), false);
+  assert.equal(
+    Value.Check(inspectorSubmissionSchema, {
+      status: "converged",
+      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: [] }],
+    }),
+    true,
+  );
+  assert.equal(
+    Value.Check(inspectorSubmissionSchema, {
+      status: "continue",
+      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: null }],
+    }),
+    false,
+  );
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {

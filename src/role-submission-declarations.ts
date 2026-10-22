@@ -5,7 +5,7 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { courtReviewSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { courtReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
@@ -99,7 +99,7 @@ const SUBMISSION_FACE = {
     label: "台院输出",
     description: "台院终局回执，状态为 converged、continue 或 escalate。",
     promptSnippet: "台院终局回执",
-    parameters: reviewSubmissionSchema,
+    parameters: inspectorSubmissionSchema,
   },
   gatekeeper: {
     label: "门下省决议",
