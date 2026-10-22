@@ -33,7 +33,8 @@ import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 
 /** Reopen the volume named by the delivered run id and record pointer. */

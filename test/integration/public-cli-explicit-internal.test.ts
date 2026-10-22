@@ -16,10 +16,12 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
-import { createTempPackageHomeLedger, packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, packageRoot } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository } from "../helpers/environment-fixtures.ts";
 import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
+import { isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {

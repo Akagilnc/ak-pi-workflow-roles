@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -65,7 +65,8 @@ async function acceptThroughTypedRoundClosure(input: {
   return { sealed: { role: sealed.role, accepted: sealed.accepted }, pending };
 }
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import { createTempPackageHomeLedger, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { withActivationHome } from "../helpers/environment-fixtures.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local

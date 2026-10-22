@@ -12,7 +12,7 @@ import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 type HostHarness = {

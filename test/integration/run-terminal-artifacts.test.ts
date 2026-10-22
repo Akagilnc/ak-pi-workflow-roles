@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";

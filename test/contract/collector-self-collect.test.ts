@@ -14,7 +14,7 @@ import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-out
 import { packagedRoleMetadata } from "../../src/packaged-role-registry.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 type Handler = (...args: unknown[]) => unknown;
 

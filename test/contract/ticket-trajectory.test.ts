@@ -12,7 +12,7 @@ import { cp, link, lstat, mkdir, readFile, readdir, realpath, symlink, writeFile
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { treeFingerprint } from "../helpers/factory-board-shared.ts";
 import { manualScheduler } from "../helpers/manual-scheduler.ts";
 import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";

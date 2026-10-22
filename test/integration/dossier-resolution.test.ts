@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { resolveAuditDossier } from "../../src/dossier-resolution.ts";
 import type { HostContext } from "../../src/host-contracts.ts";
-import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
 
 function hostContext(runDirectory: string): HostContext {
   return {

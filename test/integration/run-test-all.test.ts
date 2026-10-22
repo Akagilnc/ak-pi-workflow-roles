@@ -21,8 +21,8 @@ import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { runTestSubprocess } from "../helpers/test-subprocess.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { execa } from "execa";
+import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
@@ -186,10 +186,12 @@ async function runRunner(options: {
   delete env.AK_TEST_ALL_NODE;
 
   // Host the real runner with the real interpreter; only children resolve `node` via PATH.
-  const result = await runTestSubprocess(process.execPath, [RUNNER], {
+  const result = await execa(process.execPath, [RUNNER], {
     cwd: options.cwd,
     env,
-    owner: "runRunner",
+    extendEnv: false,
+    reject: false,
+    forceKillAfterDelay: false,
   });
 
   const raw = await readFile(options.recordPath, "utf8");
@@ -255,7 +257,7 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
     extraEnv: { AK_549_HOME_PROBE_SENTINEL: sentinelName },
   });
 
-  assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
   assert.equal(result.records.length, 1, "single default-parallel child");
   const child = result.records[0]!;
   assert.ok(child.homeProbe, "child must report HOME probe proof on the record channel");
@@ -332,7 +334,7 @@ console.log(JSON.stringify({ ok: true, home, hostHome }));
     "utf8",
   );
 
-  const result = await runTestSubprocess(
+  const result = await execa(
     process.execPath,
     ["--import", PRELOAD, probe],
     {
@@ -344,12 +346,14 @@ console.log(JSON.stringify({ ok: true, home, hostHome }));
         AK_549_SENTINEL_NAME: sentinelName,
         AK_549_BEFORE_HASH: beforeHash ?? "",
       },
-      owner: "bare-preload-home-redirect",
-      timeoutMs: 15_000,
+      extendEnv: false,
+      reject: false,
+      forceKillAfterDelay: false,
+      timeout: 15_000,
     },
   );
   assert.equal(
-    result.code,
+    result.exitCode,
     0,
     `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
   );
@@ -380,7 +384,7 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
     recordPath,
   });
 
-  assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
   assert.equal(result.records.length, 1, "no heavy partition child");
 
   const [child] = result.records;
@@ -424,7 +428,7 @@ test("runner discovers the live package tree once under default parallelism, inc
     recordPath,
   });
 
-  assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
   assert.equal(result.records.length, 1, "single child on live tree");
 
   const scheduled = filesFromArgv(result.records[0]!.argv);
@@ -462,7 +466,7 @@ test("runner propagates child non-zero exits honestly", async () => {
     recordPath,
     childExits: "7",
   });
-  assert.equal(result.code, 7, `child failure must surface; stderr=${result.stderr}`);
+  assert.equal(result.exitCode, 7, `child failure must surface; stderr=${result.stderr}`);
   assert.equal(result.records.length, 1);
   assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
 });
@@ -481,7 +485,7 @@ test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async
     recordPath,
   });
   assert.equal(
-    result.code,
+    result.exitCode,
     143,
     `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
   );

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup } from "./helpers/environment-fixtures.ts";
 
 test("cleanup failure alone fails the test", async () => {
   const cleanup = new Error("cleanup-only");

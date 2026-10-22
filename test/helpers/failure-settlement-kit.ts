@@ -4,7 +4,6 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { terminalBodyAt } from "./run-dossier-fixture.ts";
 
 import {
@@ -16,13 +15,6 @@ import type {
   TerminalArtifactRef,
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-
-export async function withTempHome<T>(
-  scenario: (home: string) => Promise<T>,
-  options: { prefix?: string } = {},
-): Promise<T> {
-  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", scenario);
-}
 
 export function captureIo() {
   const stdout: string[] = [];

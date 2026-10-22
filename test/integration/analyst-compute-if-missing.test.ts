@@ -42,7 +42,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));

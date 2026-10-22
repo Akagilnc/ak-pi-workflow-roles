@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
@@ -19,8 +18,7 @@ import {
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath } from "node:url";
-import { withPrimaryAwareCleanup, withTempRoot } from "./primary-aware-cleanup.ts";
-import { worktreeTempPrefix } from "./worktree-temp.ts";
+import { withTempRoot, worktreeTempPrefix, seedGitRepository } from "./environment-fixtures.ts";
 import { promisify } from "node:util";
 
 import {
@@ -207,74 +205,6 @@ export function resolvePackageEntrypoint(_manifest?: RawPackageManifest): string
   return resolve(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 
-/**
- * Serialize process-global mutations (HOME, cwd) so hermetic scenarios stay
- * per-invocation even when the test runner overlaps async work.
- * Re-entrant via AsyncLocalStorage so withProcessCwd may nest inside withHermeticHome.
- */
-let processGlobalChain: Promise<void> = Promise.resolve();
-const holdingProcessGlobal = new AsyncLocalStorage<boolean>();
-
-async function withProcessGlobalLock<T>(scenario: () => Promise<T>): Promise<T> {
-  if (holdingProcessGlobal.getStore()) {
-    return await scenario();
-  }
-  let release!: () => void;
-  const prior = processGlobalChain;
-  processGlobalChain = new Promise<void>((resolveLock) => {
-    release = resolveLock;
-  });
-  await prior;
-  try {
-    return await holdingProcessGlobal.run(true, scenario);
-  } finally {
-    release();
-  }
-}
-
-export async function withHermeticHome<T>(
-  options: { prefix?: string },
-  scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
-): Promise<T> {
-  return await withProcessGlobalLock(async () => {
-    // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
-    // Own the root at the create seam before mkdir/env setup can throw.
-    return withTempRoot(options.prefix ?? "ak-pi-test-", async (home) => {
-      const agentDir = resolve(home, ".pi-agent");
-      await mkdir(agentDir, { recursive: true });
-      const previousHome = process.env.HOME;
-      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-      const previousOffline = process.env.PI_OFFLINE;
-      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-      process.env.HOME = home;
-      // Pin host-Pi surfaces so in-process children do not inherit machine agent
-      // dir, ambient run bindings, or online catalog refresh (CI strips these via
-      // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
-      process.env.PI_CODING_AGENT_DIR = agentDir;
-      process.env.PI_OFFLINE = "1";
-      delete process.env.AK_ROLE_RUN_DIR;
-      return withPrimaryAwareCleanup(
-        () => scenario({ home, agentDir }),
-        async () => {
-          if (previousHome === undefined) delete process.env.HOME;
-          else process.env.HOME = previousHome;
-          if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-          else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-          if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-          else process.env.PI_OFFLINE = previousOffline;
-          if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-          else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-        },
-      );
-    });
-  });
-}
-
-/** Explicit git substrate for activation fixtures (ADR 0048). Not a generic home default. */
-export function seedGitRepository(cwd: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
-}
-
 /** Common origin for tests of the role repository's ticket binding. */
 export function addRoleRepoOrigin(cwd: string): void {
   execFileSync("git", ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"], { cwd });
@@ -283,22 +213,6 @@ export function addRoleRepoOrigin(cwd: string): void {
 export function seedRoleRepo(cwd: string): void {
   seedGitRepository(cwd);
   addRoleRepoOrigin(cwd);
-}
-
-/**
- * Opt-in activation-owned hermetic home: hermetic HOME plus explicit git substrate (ADR 0048).
- * Only callers that load the production role extension / exercise activation may use this.
- * Role-less and nonactivation tests keep withHermeticHome without git seed.
- * Fixture path prefixes are synthetic test labels, not retained real-role evidence topology.
- */
-export async function withActivationHome<T>(
-  options: { prefix?: string },
-  scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
-): Promise<T> {
-  return withHermeticHome(options, async (fixture) => {
-    seedGitRepository(fixture.home);
-    return scenario(fixture);
-  });
 }
 
 /** Sole machine ledger home under a hermetic process home (ADR 0048). */
@@ -460,28 +374,6 @@ export function activationExtensionContext(input: {
     },
   } as unknown as ExtensionContext;
 }
-
-/**
- * Scope process.chdir to one invocation under the same process-global lock
- * used by withHermeticHome, so shared fixtures stay safe under overlap.
- */
-export async function withProcessCwd<T>(
-  cwd: string,
-  scenario: () => Promise<T>,
-): Promise<T> {
-  return await withProcessGlobalLock(async () => {
-    const previous = process.cwd();
-    process.chdir(cwd);
-    return withPrimaryAwareCleanup(
-      () => scenario(),
-      async () => {
-        process.chdir(previous);
-      },
-    );
-  });
-}
-
-
 
 export interface MockProviderServerObservers {
   /** Observe the model id each child stream request carries (model.id round-trips

@@ -19,7 +19,7 @@ import { seedGitProject } from "./failure-settlement-kit.ts";
 import { installGhFixture } from "./hermes-fixture.ts";
 import { configurePassingReviewSeats } from "./passing-review-host.ts";
 import { addRoleRepoOrigin, packageRoot } from "./pi-test-harness.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "./primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "./environment-fixtures.ts";
 
 const DEFAULT_SEAT_ROLES = [
   "fixer",

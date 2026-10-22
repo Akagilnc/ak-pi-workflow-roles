@@ -7,8 +7,8 @@ import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
+import { worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 import type {
   AnalystAcceptanceSuccessReworkSection,
@@ -30,9 +30,10 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { ANALYST_FIXTURE_BOOK as BOOK, fixtureHome } from "../helpers/analyst-fixture-kit.ts";
-import { machineLedgerHome, seedGitRepository, withProcessCwd } from "../helpers/pi-test-harness.ts";
-import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
-import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { machineLedgerHome } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withProcessCwd } from "../helpers/environment-fixtures.ts";
+import { withTestUserProfileEnv } from "../helpers/environment-fixtures.ts";
+import { isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 

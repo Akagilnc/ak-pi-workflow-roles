@@ -24,8 +24,8 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
-  withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,

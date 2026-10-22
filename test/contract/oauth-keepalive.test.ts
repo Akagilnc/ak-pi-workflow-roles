@@ -22,10 +22,8 @@ import {
   OAUTH_KEEPALIVE_SETTING_FILENAME,
   readOAuthKeepaliveProviders,
 } from "../../src/oauth-keepalive.ts";
-import {
-  flushEventLoopTurns,
-  withActivationHome,
-} from "../helpers/pi-test-harness.ts";
+import { flushEventLoopTurns } from "../helpers/pi-test-harness.ts";
+import { withActivationHome } from "../helpers/environment-fixtures.ts";
 import { manualScheduler } from "../helpers/manual-scheduler.ts";
 
 type OAuthCounters = {

@@ -15,8 +15,8 @@ import {
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 import {
   createWorkerSubmissionGate,

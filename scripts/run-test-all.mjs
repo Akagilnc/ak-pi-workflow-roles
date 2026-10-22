@@ -9,7 +9,7 @@ import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
-import { isolatedTestProcessEnv } from "./test-process-env.mjs";
+import { isolatedTestProcessEnv } from "../test/helpers/environment-fixtures.ts";
 
 const TIERS = Object.freeze([
   "unit",

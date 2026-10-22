@@ -1,7 +1,5 @@
 import { chmod, writeFile } from "node:fs/promises";
 
-export { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
-
 export const TEST_PI_VERSION = "test-pi-1.0.0";
 export const TEST_PI_VERSION_BRANCH = `if (process.argv[2] === "--version") { console.log(${JSON.stringify(TEST_PI_VERSION)}); process.exit(0); }`;
 

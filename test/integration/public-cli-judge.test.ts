@@ -35,7 +35,7 @@ import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
 
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
@@ -50,9 +50,6 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
   })}\n`;
 }
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-judge-", scenario);
-}
 
 test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {

@@ -3,8 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
-import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { withTestUserProfileEnv, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 import { packageMachineHome, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 

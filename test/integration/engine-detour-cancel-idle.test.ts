@@ -15,7 +15,7 @@ import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
   createEngineDetourToolDefinition,
 } from "../../src/engine-detour-tool.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";

@@ -15,7 +15,7 @@ import {
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_A1_RUN as PRD_RUN, ANALYST_LEG_E5_RUN as OVERLAP_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_A1_RUN as PRD_RUN, ANALYST_LEG_E5_RUN as OVERLAP_RUN, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 
 /** PRD five-frame sample (existing a1 coder fixture). */

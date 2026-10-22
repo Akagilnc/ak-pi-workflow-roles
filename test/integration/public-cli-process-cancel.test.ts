@@ -10,9 +10,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository } from "../helpers/environment-fixtures.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 const CATCHABLE = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const driverPath = fileURLToPath(

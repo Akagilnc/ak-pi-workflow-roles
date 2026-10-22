@@ -26,7 +26,8 @@ import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { packageRoot, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedRoleRepo, waitForEventLoopCondition } from "../helpers/pi-test-harness.ts";
+import { withActivationHome } from "../helpers/environment-fixtures.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,

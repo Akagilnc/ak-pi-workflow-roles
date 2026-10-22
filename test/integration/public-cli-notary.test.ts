@@ -44,13 +44,10 @@ import {
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { treeFingerprint } from "../helpers/factory-board-shared.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-notary-", scenario);
-}
 
 /** Project-tree fake projection — must be rejected by public locator. */
 async function seedProjectProjection(project: string): Promise<string> {

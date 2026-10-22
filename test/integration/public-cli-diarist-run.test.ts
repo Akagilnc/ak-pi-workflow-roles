@@ -50,7 +50,7 @@ import {
   seedGitProject,
 } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 
 const TICKET = 708;
@@ -107,11 +107,6 @@ const immutablePrincipalAuthority: DurablePrincipalAuthority = {
   },
 };
 
-async function withTempHome<T>(
-  scenario: (home: string) => Promise<T>,
-): Promise<T> {
-  return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
-}
 
 type RegisteredTool = {
   readonly name: string;

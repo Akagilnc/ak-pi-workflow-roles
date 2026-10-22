@@ -13,11 +13,8 @@ import {
   activationBookKeyFor,
   activationExtensionContext,
   machineLedgerHome,
-  seedGitRepository,
-  withActivationHome,
-  withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedGitRepository, withActivationHome, withHermeticHome, outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });

@@ -20,10 +20,9 @@ import {
   activationBookKeyFor,
   machineLedgerHome,
   persistActivationSessionFile,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withActivationHome, outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 
 const originalExitCode = process.exitCode;

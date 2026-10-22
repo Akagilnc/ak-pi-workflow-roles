@@ -14,7 +14,7 @@ import type {
   AnalystModelGroupRow,
   AnalystModelGroupsPage,
 } from "../../src/analyst-model-groups.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** C3-owned scope — model-bearing + model-absent legs under runId 019ff000-3xxx. */
 const C3_SCOPE = "/analyst-fixture/c3-models";

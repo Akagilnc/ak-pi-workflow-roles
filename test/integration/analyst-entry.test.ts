@@ -41,7 +41,7 @@ import {
   ANALYST_LEG_B2_RUN as LEG_B2_RUN,
   ANALYST_LEG_E5_RUN as LEG_E5_RUN,
   withBusinessRepo,
-  withTempHome,
+  withAnalystHome as withTempHome,
 } from "../helpers/analyst-fixture-kit.ts";
 import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 

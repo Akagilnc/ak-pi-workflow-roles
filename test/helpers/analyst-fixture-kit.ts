@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { withTempRoot } from "./primary-aware-cleanup.ts";
+import { withTempRoot } from "./environment-fixtures.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,10 +50,10 @@ export async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Pro
 }
 
 /**
- * Test isolation helper providing a temporary `.ak-roles` ledger tree.
+ * Analyst domain seed; allocation and teardown belong to environment-fixtures.
  * Callers pass the supplied `home` explicitly to analyst APIs or `env.home`.
  */
-export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+export async function withAnalystHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("analyst-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
