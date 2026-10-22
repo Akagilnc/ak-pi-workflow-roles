@@ -84,7 +84,6 @@ test("flat run without ticketNumber is isolated unbound (not joined, not board-w
     await seedFlatRun(ledgerDir, runFolder);
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
     assert.equal(runs.length, 0);
-    assert.equal(runs.some((run) => run.runId === runFolder), false);
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
     assert.equal(index.unboundRuns.length, 1);
     assert.equal(index.unboundRuns[0]?.runFolder, runFolder);

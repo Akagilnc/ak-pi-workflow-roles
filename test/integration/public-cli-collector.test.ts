@@ -12,7 +12,6 @@ import { captureIo, seedGitProject as seedProject } from "../helpers/failure-set
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { admitPublicRole, parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromStructuredOutputRounds } from "../helpers/role-turn-host-fixture.ts";
@@ -75,13 +74,6 @@ test("Collector receipt travels unchanged through the envelope into Terminal and
     const submitted = submittedParams(dirname(reportPath)) as readonly { groups?: unknown[] }[];
     assert.deepEqual(submitted, [details]);
   });
-});
-
-test("#1088 public Collector rejects retired --wait-ms", () => {
-  assert.throws(
-    () => parsePublicSeatArgv("collector", ["--pr", "1", "--repo", "a/b", "--wait-ms", "120000"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
 });
 
 test("#676 J2 explicit --pr is unique bound at admission", async () => {

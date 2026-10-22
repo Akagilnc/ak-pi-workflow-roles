@@ -26,11 +26,7 @@ const SCOPE_TICKET = 4401;
 
 const RUN_TICKET_MATCH_PRIMARY = "019ff000-4001-7000-8000-0000000004a1";
 const RUN_TICKET_MATCH_ALIEN = "019ff000-4002-7000-8000-0000000004a2";
-const RUN_NO_TICKET_PRIMARY = "019ff000-4003-7000-8000-0000000004a3";
-const RUN_DECOY_TICKET_PRIMARY = "019ff000-4004-7000-8000-0000000004a4";
-const RUN_NO_TICKET_ALIEN = "019ff000-4005-7000-8000-0000000004a5";
 const RUN_FALLBACK_IN = "019ff000-4010-7000-8000-0000000004b0";
-const RUN_FALLBACK_OUT = "019ff000-4011-7000-8000-0000000004b1";
 
 /**
  * Hand oracle — ticketNumber path (bookKey fixture-book-c4, ticket=4401):
@@ -71,10 +67,7 @@ test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback"
     assert.deepEqual(actualRunIds, EXPECTED_TICKET_PATH_RUN_IDS);
 
     // Unbound primary-root run must not enter via path fallback when ticket is set.
-    assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false);
     // Decoy ticket on primary root and alien unbound must stay out.
-    assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false);
-    assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false);
     // Book×ticket scope does not emit projectRoot dual-key conflicts.
     assert.deepEqual(result.page.scopeConflicts, []);
   });
@@ -93,7 +86,6 @@ test("analyst C4 no-ticketNumber path: sweep/legacy projectRoot path-narrow", as
     assert.deepEqual(actualRunIds, EXPECTED_FALLBACK_RUN_IDS);
 
     // Alien-root unbound run must not enter via any other key.
-    assert.equal(actualRunIds.includes(RUN_FALLBACK_OUT), false);
     // No ticketNumber on input → no typed/projectRoot conflict surface.
     assert.deepEqual(result.page.scopeConflicts, []);
     assert.equal(result.page.bookKey, `root:${physicalPathIdentity(ISSUE_FALLBACK)}`);

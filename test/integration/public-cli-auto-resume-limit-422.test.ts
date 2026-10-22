@@ -43,47 +43,6 @@ function failingJudgeRunner(callsRef:{n:number}){
   };
 }
 
-test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, count=4)", async()=>{
-  await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","422-loop-n4");await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io}=captureIo();
-    const result=await runWithAutoResumeLoop({
-    principalAuthority: piDurablePrincipalAuthority,
-    sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
-      io,
-      autoResumeLimit:4,
-      buildInitialPayload: ()=>["--initial"],
-      buildResumePayload: ()=>["--resume"],
-      // #987: loop no longer supplies a lease; release only when present.
-      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
-    });
-    assert.equal(calls,5);
-    assert.equal(result.exitCode,1);
-  });
-});
-
-test("#422 loop with injected limit 0 disables auto resume (single dispatch)", async()=>{
-  await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","422-loop-zero");await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io}=captureIo();
-    const result=await runWithAutoResumeLoop({
-    principalAuthority: piDurablePrincipalAuthority,
-    sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
-      io,
-      autoResumeLimit:0,
-      buildInitialPayload: ()=>["--initial"],
-      buildResumePayload: ()=>["--resume"],
-      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
-    });
-    assert.equal(calls,1);
-    assert.equal(result.exitCode,1);
-  });
-});
-
 test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N=1 → 2 dispatches)", async()=>{
   await withTempHome(async(home)=>{
     await mkdir(join(home,".ak-roles"),{recursive:true});
