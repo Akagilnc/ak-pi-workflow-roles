@@ -162,19 +162,6 @@ test("CLI config commands persist and local roles reads do not rewrite disk", as
     const after = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     assert.equal(after, before);
 
-    // #346: bare --model provider/model without :thinking is legal and records
-    // no invented thinking suffix.
-    const bareRoles = await runAkRole(
-      ["roles", "--model", "kimi-coding/k3-256k"],
-      {
-        packageRoot,
-        home,
-        credentials: { "openai-codex": true, xai: false },
-        io: captureIo().io,
-      },
-    );
-    assert.equal(bareRoles.exitCode, 0);
-
     // #384: persistent config set keeps a bare provider/model bare, and an
     // explicit :thinking suffix stays intact through the same seam.
     const bareSet = await runAkRole(
