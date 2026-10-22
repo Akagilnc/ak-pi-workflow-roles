@@ -1,155 +1,142 @@
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-/**
- * #604: test-process user-profile preload redirects os.userInfo().homedir
- * so cold bins never write the operator's real machine home. Production code
- * unchanged — preload is NODE_OPTIONS --require only.
- */
+/** Production profile/ledger entrypoints, with child preloads owned by the fixture module. */
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
-
+import {
+  testExeca as execa,
+  environmentFixtures,
+  isolatedTestProcessEnv,
+  withTempHome,
+  withTestUserProfileEnv,
+} from "../helpers/environment-fixtures.ts";
 import {
   packageMachineHome,
   resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
 } from "../../src/activation-ledger-topology.ts";
-import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
-import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
-const REAL_PASSWD_HOME = resolve(userInfo().homedir);
-const PRELOAD = fileURLToPath(
-  new URL("../../scripts/test-user-profile-preload.cjs", import.meta.url),
-);
+const PROFILE_HOME = resolve(userInfo().homedir);
+const REAL_MACHINE_HOME = resolve(process.env.AK_TEST_REAL_MACHINE_HOME ?? PROFILE_HOME);
+const PRELOAD = fileURLToPath(new URL("../../scripts/test-user-profile-preload.cjs", import.meta.url));
 
-/**
- * #604 / #631 host-profile class: real passwd/user-profile queries (not unit).
- * Absorbs former unit package-home-seam cases that called packageMachineHome()
- * or default ledger home — same external behavior, one medium seam.
- */
-test("packageMachineHome and default ledger home follow real profile, ignore process.env.HOME", () => {
-  const previousHome = process.env.HOME;
-  try {
-    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
-    assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
-    assert.equal(resolveActivationLedgerHome(), resolve(REAL_PASSWD_HOME, ".ak-roles"));
-    assert.equal(
-      resolveActivationLedgerHomeForPath("/some/random/dir/not/in/ledger"),
-      resolve(REAL_PASSWD_HOME, ".ak-roles"),
-    );
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-  }
-});
-
-test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {
-  // Spaced temp preload path: bare `--require $path` truncates; encoding must keep it one token.
-  await withTempRoot("ak test user profile ", async (spacedRoot) => {
-  const preloadPath = join(spacedRoot, "pre load.cjs");
-  const profileHome = mkdtempSync(join(spacedRoot, "profile "));
-  const callerNodeOptions = "--unhandled-rejections=strict";
-
-    copyFileSync(PRELOAD, preloadPath);
-    const env = withTestUserProfileEnv(
-      { ...process.env, NODE_OPTIONS: callerNodeOptions },
-      profileHome,
-      preloadPath,
-    );
-    assert.equal(env.AK_TEST_USER_PROFILE_HOME, profileHome);
-    assert.ok(
-      (env.NODE_OPTIONS ?? "").includes(preloadPath),
-      `NODE_OPTIONS must require spaced preload, got ${env.NODE_OPTIONS}`,
-    );
-    assert.ok(
-      (env.NODE_OPTIONS ?? "").includes(callerNodeOptions),
-      `caller NODE_OPTIONS must be preserved, got ${env.NODE_OPTIONS}`,
-    );
-
-    const result = await runTestSubprocess(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--input-type=module",
-        "-e",
+const scenarios = [
+  {
+    name: "packageMachineHome and default ledger home follow real profile, ignore process.env.HOME",
+    async run(home: string) {
+      const previousHome = process.env.HOME;
+      try {
+        process.env.HOME = home;
+        assert.equal(packageMachineHome(), PROFILE_HOME);
+        assert.equal(resolveActivationLedgerHome(), resolve(PROFILE_HOME, ".ak-roles"));
+        assert.equal(
+          resolveActivationLedgerHomeForPath("/some/random/dir/not/in/ledger"),
+          resolve(PROFILE_HOME, ".ak-roles"),
+        );
+      } finally {
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+      }
+    },
+  },
+  {
+    name: "withTestUserProfileEnv child: package home = temp; realMachineHome stays operator",
+    async run(home: string) {
+      // A spaced preload path must survive NODE_OPTIONS tokenization.
+      const preloadPath = join(home, "pre load.cjs");
+      const profileHome = join(home, "profile home");
+      await mkdir(profileHome);
+      copyFileSync(PRELOAD, preloadPath);
+      const env = withTestUserProfileEnv(
+        isolatedTestProcessEnv({ env: { ...process.env, NODE_OPTIONS: "--unhandled-rejections=strict" }, home }),
+        profileHome,
+        preloadPath,
+      );
+      assert.equal(env.AK_TEST_USER_PROFILE_HOME, profileHome);
+      const result = await execa(process.execPath, [
+        "--import", "tsx", "--input-type=module", "-e",
         [
-          `import { packageMachineHome } from ${JSON.stringify(
-            new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
-          )};`,
-          `import { realMachineHome } from ${JSON.stringify(
-            new URL("../helpers/test-agent-dir-guard.ts", import.meta.url).href,
-          )};`,
+          `import { packageMachineHome } from ${JSON.stringify(new URL("../../src/activation-ledger-topology.ts", import.meta.url).href)};`,
+          `import { realMachineHome } from ${JSON.stringify(new URL("../helpers/test-agent-dir-guard.ts", import.meta.url).href)};`,
+          'import { createRequire } from "node:module";',
           `console.log(JSON.stringify({
+            preloadLoaded: Object.hasOwn(createRequire(import.meta.url).cache, ${JSON.stringify(preloadPath)}),
             packageHome: packageMachineHome(),
             realHome: realMachineHome(),
             preserved: process.env.AK_TEST_REAL_MACHINE_HOME,
+            strictRejections: process.env.NODE_OPTIONS.includes("--unhandled-rejections=strict"),
           }));`,
-        ].join(""),
-      ],
-      {
-        cwd: process.cwd(),
-        env,
-        timeoutMs: 15_000,
-        owner: "test-user-profile-preload",
-      },
-    );
-    assert.equal(result.code, 0, result.stderr);
-    const body = JSON.parse(result.stdout.trim()) as {
-      packageHome: string;
-      realHome: string;
-      preserved: string;
-    };
-    assert.equal(body.packageHome, profileHome);
-    assert.equal(body.realHome, REAL_PASSWD_HOME);
-    assert.equal(body.preserved, REAL_PASSWD_HOME);
-    });
-});
-
-test("unavailable mode: userInfo / packageMachineHome throw ERR_SYSTEM_ERROR", async () => {
-  const env = withTestUserProfileEnv({ ...process.env }, { mode: "unavailable" });
-  assert.equal(env.AK_TEST_USER_PROFILE_MODE, "unavailable");
-  assert.ok(
-    (env.NODE_OPTIONS ?? "").includes("test-user-profile-preload.cjs"),
-    `NODE_OPTIONS must require shared preload, got ${env.NODE_OPTIONS}`,
-  );
-
-  const result = await runTestSubprocess(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      "--input-type=module",
-      "-e",
-      [
-        "import { userInfo } from \"node:os\";",
-        `import { packageMachineHome } from ${JSON.stringify(
-          new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
-        )};`,
-        "function codeOf(fn) {",
-        "  try { fn(); return null; }",
-        "  catch (e) { return e && typeof e === \"object\" && \"code\" in e ? e.code : null; }",
-        "}",
-        "console.log(JSON.stringify({",
-        "  userInfoCode: codeOf(() => userInfo()),",
-        "  packageHomeCode: codeOf(() => packageMachineHome()),",
-        "}));",
-      ].join("\n"),
-    ],
-    {
-      cwd: process.cwd(),
-      env,
-      timeoutMs: 15_000,
-      owner: "test-user-profile-preload-unavailable",
+        ].join("\n"),
+      ], {
+        cwd: process.cwd(), env, timeout: 15_000,
+      });
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(result.signal, undefined);
+      assert.equal(result.timedOut, false);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.preloadLoaded, true);
+      assert.equal(body.packageHome, profileHome);
+      assert.equal(body.realHome, REAL_MACHINE_HOME);
+      assert.equal(body.preserved, REAL_MACHINE_HOME);
+      assert.equal(body.strictRejections, true);
     },
-  );
-  assert.equal(result.code, 0, result.stderr);
-  const body = JSON.parse(result.stdout.trim()) as {
-    userInfoCode: string | null;
-    packageHomeCode: string | null;
-  };
-  assert.equal(body.userInfoCode, "ERR_SYSTEM_ERROR");
-  assert.equal(body.packageHomeCode, "ERR_SYSTEM_ERROR");
-});
+  },
+  {
+    name: "unavailable mode: userInfo / packageMachineHome throw ERR_SYSTEM_ERROR",
+    async run(home: string) {
+      const env = withTestUserProfileEnv(isolatedTestProcessEnv({ home }), { mode: "unavailable" });
+      assert.equal(env.AK_TEST_USER_PROFILE_MODE, "unavailable");
+      const result = await execa(process.execPath, [
+        "--import", "tsx", "--input-type=module", "-e",
+        [
+          'import { userInfo } from "node:os";',
+          `import { packageMachineHome } from ${JSON.stringify(new URL("../../src/activation-ledger-topology.ts", import.meta.url).href)};`,
+          "function codeOf(fn) {",
+          "  try { fn(); return null; }",
+          '  catch (e) { return e && typeof e === "object" && "code" in e ? e.code : null; }',
+          "}",
+          "console.log(JSON.stringify({",
+          "  userInfoCode: codeOf(() => userInfo()),",
+          "  packageHomeCode: codeOf(() => packageMachineHome()),",
+          "}));",
+        ].join("\n"),
+      ], {
+        cwd: process.cwd(), env, timeout: 15_000,
+      });
+      assert.equal(result.exitCode, 0, result.stderr);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.userInfoCode, "ERR_SYSTEM_ERROR");
+      assert.equal(body.packageHomeCode, "ERR_SYSTEM_ERROR");
+    },
+  },
+];
+
+const homes: string[] = [];
+function verifyCleanup() {
+  assert.equal(new Set(homes).size, homes.length);
+  for (const home of homes) assert.equal(existsSync(home), false);
+}
+
+// Expand phase: the same scenarios run on both native runners; no runner adapter.
+if (process.env.VITEST) {
+  const { test: base, afterAll } = await import("vitest");
+  const test = base.extend(environmentFixtures);
+  for (const scenario of scenarios) {
+    test(scenario.name, async ({ home }) => {
+      homes.push(home);
+      await scenario.run(home);
+    });
+  }
+  afterAll(verifyCleanup);
+} else {
+  const { test, after } = await import("node:test");
+  for (const scenario of scenarios) {
+    test(scenario.name, () => withTempHome(async (home) => {
+      homes.push(home);
+      await scenario.run(home);
+    }));
+  }
+  after(verifyCleanup);
+}

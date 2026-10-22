@@ -1,5 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { worktreeTempPrefix, withTempRoot, withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
 /**
  * #412 — analyst library-index legacy bookKey + cohort book scope.
  *

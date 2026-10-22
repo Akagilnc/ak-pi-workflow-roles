@@ -4,13 +4,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test, { after } from "node:test";
 import { promisify } from "node:util";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix, packIsolatedPackage } from "../helpers/environment-fixtures.ts";
 
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
-  packIsolatedPackage,
 } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);

@@ -43,8 +43,8 @@ import {
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,

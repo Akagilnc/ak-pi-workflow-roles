@@ -21,7 +21,7 @@ import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import {

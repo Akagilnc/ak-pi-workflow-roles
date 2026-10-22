@@ -40,7 +40,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
@@ -75,9 +75,6 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   );
 }
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", scenario);
-}
 
 const credentials = { "openai-codex": true, xai: true } as const;
 

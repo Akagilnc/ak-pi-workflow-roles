@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { worktreeTempPrefix } from "./worktree-temp.ts";
-
 /**
  * Run a test body, then cleanups, without letting teardown erase the primary failure.
  *
@@ -50,21 +47,4 @@ export async function withPrimaryAwareCleanup<T>(
 
   if (!succeeded) throw primaryFailure;
   return value;
-}
-
-/**
- * Create a temp root, run body, delete the root. Cleanup failure does not
- * erase a primary body failure (via withPrimaryAwareCleanup).
- */
-export async function withTempRoot<T>(
-  prefix: string,
-  body: (root: string) => Promise<T>,
-): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix(prefix));
-  return withPrimaryAwareCleanup(
-    () => body(root),
-    async () => {
-      await rm(root, { recursive: true, force: true });
-    },
-  );
 }

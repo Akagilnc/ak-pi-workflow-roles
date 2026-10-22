@@ -4,7 +4,7 @@
  * Seams: createAcpRoleTurnHost / createHeadlessRoleTurnHost executeTurn(resume).
  */
 import assert from "node:assert/strict";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { join } from "node:path";
 import test from "node:test";
 

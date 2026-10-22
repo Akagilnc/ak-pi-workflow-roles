@@ -11,7 +11,7 @@ import { test } from "vitest";
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 /** Opaque payload — not a production free-text template under test. */

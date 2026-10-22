@@ -13,7 +13,7 @@ import test from "node:test";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // 太史 C1 sweep——页与索引写路径家族（#420 整改拆分第二片）。

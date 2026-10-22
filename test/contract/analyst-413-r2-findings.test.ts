@@ -1,4 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 /**
  * #413 r2 finding contracts (U1 + U3 counter-evidence).
  *
@@ -32,7 +32,6 @@ import {
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----

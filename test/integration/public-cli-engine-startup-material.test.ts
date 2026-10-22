@@ -22,7 +22,8 @@ import {
   seedPublicSeat,
   withPassingReviewHost,
 } from "../helpers/passing-review-host.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 import {
   capturePreparedEnvelope,
   createMinimalHost,

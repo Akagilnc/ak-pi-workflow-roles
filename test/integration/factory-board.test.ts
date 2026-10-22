@@ -12,9 +12,7 @@ import { join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-import { runTestSubprocess } from "../helpers/test-subprocess.ts";
+import { withTempRoot, testExeca as execa } from "../helpers/environment-fixtures.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -558,10 +556,10 @@ test("page write lands outside every ledger and stays read-only on books", async
 });
 
 async function runFactoryBoardCli(args: string[]) {
-  return runTestSubprocess(
+  return execa(
     process.execPath,
     ["--import", "tsx", join(packageRoot, "scripts/render-factory-board.ts"), ...args],
-    { cwd: packageRoot, owner: "runFactoryBoardCli" },
+    { cwd: packageRoot, env: process.env },
   );
 }
 
@@ -587,7 +585,7 @@ test("CLI binding failures write the binding error page and exit nonzero", async
     await withTempRoot("factory-board-cli-binding-", async (workspace) => {
       const outputPath = join(workspace, "board.html");
       const result = await runFactoryBoardCli(row.args(outputPath));
-      assert.notEqual(result.code, 0, `${row.label}: must exit nonzero`);
+      assert.notEqual(result.exitCode, 0, `${row.label}: must exit nonzero`);
       const html = await readFile(outputPath, "utf8");
       assert.equal(
         elementsWith(html, "data-board-error")[0]?.["data-board-error"],
@@ -617,7 +615,7 @@ test("duplicate bookKey bindings fail closed before API and never cross-wire lan
       "--out",
       outputPath,
     ]);
-    assert.notEqual(cli.code, 0, "duplicate bookKey must exit nonzero");
+    assert.notEqual(cli.exitCode, 0, "duplicate bookKey must exit nonzero");
     const cliHtml = await readFile(outputPath, "utf8");
     assert.equal(elementsWith(cliHtml, "data-board-error")[0]?.["data-board-error"], "binding");
     assert.equal(elementsWith(cliHtml, "data-lane").length, 0);

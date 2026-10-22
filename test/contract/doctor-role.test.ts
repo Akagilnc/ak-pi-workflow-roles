@@ -3,7 +3,7 @@ import { afterAll, test } from "vitest";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 
 // #604 F1: session/cwd must sit under temp `.ak-roles` so sitian path-derive never
 // falls through to the real machine home (bare `/case` wrote books/case).

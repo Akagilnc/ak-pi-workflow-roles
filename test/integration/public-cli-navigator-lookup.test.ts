@@ -15,7 +15,8 @@ import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { captureIo, seedGitProject, withTempHome } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 
 const RUN_ID = "01a0navi00-0000-7000-8000-000000001192";

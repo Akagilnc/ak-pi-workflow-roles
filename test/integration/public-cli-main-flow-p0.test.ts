@@ -17,11 +17,8 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import {
-  captureIo,
-  seedGitProject,
-  withTempHome,
-} from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,

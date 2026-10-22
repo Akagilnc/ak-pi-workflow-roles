@@ -29,8 +29,8 @@ import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
-  withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,

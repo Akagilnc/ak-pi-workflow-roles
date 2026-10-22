@@ -1,4 +1,4 @@
-import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 /**
  * #412 r4 + #413 r2 — failure honesty at the single projectRoot→bookKey true source.
  * A *confirmed* no-repository verdict keeps the r4-adjudicated synthetic `root:`
@@ -16,7 +16,6 @@ import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { resolveAnalystBookKey } from "../../src/analyst-book-key.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("resolveAnalystBookKey: absent projectRoot keeps the established synthetic root: identity", async () => {
   const absent = worktreeTempPrefix(`analyst-book-key-absent-${process.pid}-${Date.now()}`);

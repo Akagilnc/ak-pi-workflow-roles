@@ -34,7 +34,8 @@ import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/p
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 

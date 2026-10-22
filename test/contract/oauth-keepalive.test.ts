@@ -23,7 +23,7 @@ import {
   OAUTH_KEEPALIVE_SETTING_FILENAME,
   readOAuthKeepaliveProviders,
 } from "../../src/oauth-keepalive.ts";
-import { withActivationHome } from "../helpers/pi-test-harness.ts";
+import { withActivationHome } from "../helpers/environment-fixtures.ts";
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] }); });
 afterEach(() => { vi.useRealTimers(); });

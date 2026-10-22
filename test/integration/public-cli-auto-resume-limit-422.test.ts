@@ -26,12 +26,9 @@ import {
 import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  return withTempRoot("ak-422-", fn);
-}
 
 function failingJudgeRunner(callsRef:{n:number}){
   return async(args:readonly string[])=>{

@@ -8,7 +8,7 @@ import { test } from "vitest";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   projectGatekeeperRun,

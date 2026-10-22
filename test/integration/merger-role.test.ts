@@ -12,7 +12,8 @@ import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { createPiRoleRuntimeExtension, createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { activationExtensionContext, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { activationExtensionContext } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });

@@ -43,15 +43,12 @@ import {
   sampleCompletedDoctorOutput,
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-doctor-", scenario);
-}
 
 function isUsage(error: unknown): boolean {
   return error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";

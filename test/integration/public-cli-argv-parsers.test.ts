@@ -18,14 +18,11 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
 } from "../../src/public-cli/config.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-parsers-", scenario);
-}
 
 test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {
   const isUsage = (error: unknown): boolean =>

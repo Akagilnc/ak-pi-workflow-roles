@@ -11,7 +11,7 @@ import {
 import {
   seedGitRepository,
   withHermeticHome,
-} from "../helpers/pi-test-harness.ts";
+} from "../helpers/environment-fixtures.ts";
 
 
 test("ADR 0086: Sitian volume write failures still throw SitianInfrastructureError (durable failure honesty)", async () => {

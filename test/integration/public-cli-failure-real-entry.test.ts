@@ -27,8 +27,8 @@ import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
-  withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,

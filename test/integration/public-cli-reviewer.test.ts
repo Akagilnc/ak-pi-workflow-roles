@@ -38,16 +38,10 @@ import {
   markRunAdmitted,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import {
-  packageRoot,
-  withProcessCwd,
-} from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withProcessCwd, withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-reviewer-", scenario);
-}
 
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
 function lawfulReviewerReceipt(

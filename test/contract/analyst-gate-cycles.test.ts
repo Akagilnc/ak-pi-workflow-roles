@@ -20,7 +20,7 @@ import { reportRunRecord } from "../../src/sitian-facade.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
-import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_B2_RUN as GATE_JUDGE_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_FIXTURE_BOOK as BOOK, ANALYST_ISSUE_DEMO as ISSUE_PROJECT_ROOT, ANALYST_LEG_B2_RUN as GATE_JUDGE_RUN, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Existing judge leg — gate volumes are booked here inside temp HOME. */
 const GATE_JUDGE_DIR = `${GATE_JUDGE_RUN}@judge`;

@@ -25,7 +25,8 @@ import {
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { captureIo, seedGitProject, withTempHome } from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
 // #1171: ordinary audit-escalation tracers carry ticketNumber so soft reask
