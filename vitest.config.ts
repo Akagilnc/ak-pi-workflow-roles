@@ -16,6 +16,8 @@ const integrationMigrated = [
   "test/integration/analyst-compute-if-missing.test.ts",
   "test/integration/analyst-entry.test.ts",
   "test/integration/analyst-public-bundle-families.test.ts",
+  "test/integration/analyst-public-cli-sweep.test.ts",
+  "test/integration/analyst-public-cli.test.ts",
   "test/integration/audited-run-identity-1166.test.ts",
   "test/integration/countersign-notary-gate.test.ts",
   "test/integration/dossier-resolution.test.ts",
