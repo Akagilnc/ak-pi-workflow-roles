@@ -51,11 +51,11 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
 );
 
 /**
- * #1195 ticket-court clause row: original ticket text, owner uuid (or null),
+ * #1195 notary clause row: original ticket text, owner uuid (or null),
  * and one-line derivation. Dual readings of runner context live in derivation.
- * Generation-required on countersign/notary only; package still records as-is.
+ * Generation-required on notary only; package still records as-is.
  */
-export const courtClauseItemSchema = Type.Object(
+export const notaryClauseItemSchema = Type.Object(
   {
     clause: Type.String({
       description: "票面条款原文（改变实际行为的条款；不合并、不改写）",
@@ -71,21 +71,21 @@ export const courtClauseItemSchema = Type.Object(
   { additionalProperties: true },
 );
 
-export const courtClausesField = Type.Array(courtClauseItemSchema, {
+export const notaryClausesField = Type.Array(notaryClauseItemSchema, {
   description:
     "票面逐条核旨表：每条改变实际行为的条款的原文、陛下原话 uuid、推导。无原话则 ownerUuid 为 null。",
 });
 
 /**
- * Countersign + Notary generation schema (#1195): shared review face plus
+ * Notary generation schema (#1195): shared review face plus
  * required top-level clauses. Package execute does not reject a missing table.
  */
-export const courtReviewSubmissionSchema = withTerminatingOutputDeclarations(
+export const notaryReviewSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
       status: reviewStatusField,
       ...reviewNarrativeFields,
-      clauses: courtClausesField,
+      clauses: notaryClausesField,
     },
     { additionalProperties: true },
   ),

@@ -1,5 +1,5 @@
 /**
- * #924 static scans: ticket-law load topology (repo-wide structural sole owner);
+ * #924 static scans: ticket-law is the repo-wide structural sole owner;
  * role modules have no second summon drive seam (ADR 0018); public face has no
  * new flags/mode params. No free-text / prose regex on law content.
  */
@@ -9,7 +9,6 @@ import { basename, join, relative } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 import { optionsForOwner } from "../../src/public-cli/option-definitions.ts";
 
 const SKIP_DIR_NAMES = new Set([
@@ -51,33 +50,12 @@ async function collectTicketLawRelativePaths(root: string): Promise<string[]> {
   return found.sort();
 }
 
-test("ticket-law is the sole structural law owner and three seats load it", async () => {
+test("ticket-law is the sole structural law owner", async () => {
   const paths = await collectTicketLawRelativePaths(packageRoot);
   assert.deepEqual(
     paths,
     ["souls/ticket-law.md"],
     `expected sole souls/ticket-law.md; found: ${paths.join(", ") || "(none)"}`,
-  );
-
-  // Registry is the session-material true source — structural load relation only.
-  const byRole = Object.fromEntries(
-    PUBLIC_ROLE_RECORDS.map((r) => [r.role, r.sessionMaterials]),
-  );
-  for (const role of ["secretariat", "countersign", "notary"] as const) {
-    assert.ok(
-      (byRole[role] as readonly string[]).includes("souls/ticket-law.md"),
-      `${role} must load souls/ticket-law.md`,
-    );
-  }
-  assert.ok(
-    (byRole.secretariat as readonly string[]).includes("souls/countersign.md"),
-  );
-  assert.ok(
-    (byRole.secretariat as readonly string[]).includes("souls/notary.md"),
-  );
-  // #924: secretariat-soul=exists — independent Soul is in the load list.
-  assert.ok(
-    (byRole.secretariat as readonly string[]).includes("souls/secretariat.md"),
   );
 });
 

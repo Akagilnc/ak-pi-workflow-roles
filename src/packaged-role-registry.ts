@@ -321,7 +321,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
-    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "souls/audit-law.md", "souls/quality-law.md", "resources/countersign-ticket-issue.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "souls/design-law.md", "souls/audit-law.md", "souls/quality-law.md", "resources/countersign-ticket-issue.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
   },
   {
     role: "secretariat",
