@@ -80,7 +80,7 @@
 | `test/integration/analyst-entry.test.ts` | S | 改：删已退役 a2SeamProbe/version 字段哨兵；保唯一 runAnalyst 入口的独立 fixture 统计与原子写页、损坏/活跃卷处理。 |
 | `test/integration/analyst-public-bundle-families.test.ts` | B | 留：公开 bundle 装配 metric families，验证打包后的能力不是复制模块文件表。 |
 | `test/integration/analyst-public-cli-sweep.test.ts` | D/C | 改：既有 runAkRole 零写入负向表接入模式混用/缺参/重复 token，替代 option 表镜像；保留成功 sweep 落账。 |
-| `test/integration/analyst-public-cli.test.ts` | M | 改：删 PUBLIC_ROLE_ARGV 查表案；`:116` 公开 ticket 与其余 scope/usage/ghostLegs 已实际消费 parser。 |
+| `test/integration/analyst-public-cli.test.ts` | M/D | 改：删 PUBLIC_ROLE_ARGV 查表案；第三轮删解析案中「空 argv 为 issue 查询」重复（承接 `:160` 公开 bare call），不安全整数等独有边界留；`:116` 公开 ticket 与其余 scope/usage/ghostLegs 已实际消费 parser。 |
 | `test/integration/audited-run-identity-1166.test.ts` | T/D | 改：保公开 gate/resubmit/direct 的 auditedRun 身份、schema 输入、原卷；补回 notary prompt≠父正文及同父重交正文改变但 prompt 不变，随机自身/audited Soul 穿透。删模板与重复 summons 计数，不删盲审契约。第三轮：`:137` auditor 改用生产 subject Soul 装载器并比对包内 `souls/<subject>-auditor.md` 字节；`:158` 各官席断言生产参考材料装载器所返非空内容原样进入 startup materials。 |
 | `test/integration/countersign-notary-gate.test.ts` | B | 留：真实 countersign 工具完成先于 gate、escalate 与未知状态原样提交。 |
 | `test/integration/dossier-resolution.test.ts` | B | 留：HostContext/卷指针读取确实隔离不同 run，不是文案样本计数。 |
@@ -220,7 +220,7 @@
 | R2-A 参考材料回调不返回 / 主席或 auditor 参考装载器返 "" | `test/integration/audited-run-identity-1166.test.ts` | 3/3、2/3、3/3 败 |
 | R2-A 生产 Soul 装载器（主席／auditor）返固定串 | `audited-run-identity-1166` 加 `role-envelope-engine-axis` | 主席 1 败（`:127`），auditor 2 败 |
 | R2-C 位置拼接、空白 project、缺值 attach／prerequisites、空 prerequisites、`--repo` | unit+contract+integration 全目录 | 每项仅 `test/unit/public-cli-argv-parsers.test.ts` 对应案 1 败（缺值 prerequisites 另有 1 例公开案） |
-| R2-C 未知旗、显式 phase、`--pr`、`--source-run` | 同上 | 公开承接者红：拒收表等 4 败、Coder/Fixer 公开 6 败、`#676 J2` 1 败、130 败 |
+| R2-C 未知旗、显式 phase、`--pr`、`--source-run`、analyst 空 argv 改 sweep | 同上 | 公开承接者红：拒收表等 4 败、Coder/Fixer 公开 6 败、`#676 J2` 1 败、130 败、analyst bare 等 5 败 |
 
 R2-B 只删写入次数锁，不需变异；改后 `public-cli-failure-settlement`、`public-cli-judge`、`public-cli-failure-real-entry` 23/23 绿。触及的 12 个测试文件聚焦 74/74/0；`pnpm exec tsc --noEmit` exit0。
 

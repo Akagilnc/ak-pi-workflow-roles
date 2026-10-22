@@ -294,8 +294,6 @@ test("analyst ticket parse rejects unsafe integers and infinity-length digit str
   if (ok.query === "issue") {
     assert.equal(ok.ticket, Number.MAX_SAFE_INTEGER);
   }
-  // Bare issue argv is lawful (#399).
-  assert.equal(parseAnalystArgv([]).query, "issue");
 });
 
 test("analyst cohort list rejects invalid group tokens", () => {
