@@ -5,13 +5,13 @@ import { mkdir } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, test as base } from "vitest";
 import {
   testExeca as execa,
   environmentFixtures,
   isolatedTestProcessEnv,
   withTestUserProfileEnv,
 } from "../helpers/environment-fixtures.ts";
+import { afterAll, test as base } from "vitest";
 import {
   packageMachineHome,
   resolveActivationLedgerHome,

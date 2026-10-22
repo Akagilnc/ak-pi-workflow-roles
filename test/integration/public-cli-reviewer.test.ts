@@ -19,7 +19,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";

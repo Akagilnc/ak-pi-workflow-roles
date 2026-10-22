@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";

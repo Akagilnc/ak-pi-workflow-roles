@@ -14,9 +14,9 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { afterAll, test } from "vitest";
 
-test.after(() => { process.exitCode = undefined; });
+afterAll(() => { process.exitCode = undefined; });
 
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";

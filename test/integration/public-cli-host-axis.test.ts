@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   activationBookDirectory,

@@ -7,10 +7,9 @@
  */
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -49,6 +48,7 @@ import {
   readCurrentSection,
   seedCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
+import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -131,30 +131,47 @@ function envelopeHostThatReportsThen(input: {
   return {
     async executeTurn(request: RoleTurnRequest) {
       // Socket root owned here — dispose closes the sock; finally removes the root (#1199 R5).
-      const socketDir = await mkdtemp(join(tmpdir(), "ak-1171-sock-"));
-      const socketPath = join(socketDir, "mcp.sock");
-      const prepared = await prepareRoleEnvelope({
-        request: { ...request, host: input.hostName },
-        dependencies: createRoleRuntimeDependencies(packageRoot),
-        socketPath,
-        listTerminatingToolOnMcp: input.hostName === "grok-build",
-        sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-        principalAuthority: piDurablePrincipalAuthority,
-      });
-      try {
-        const token = mcpTokenFromPrepared(prepared);
-        process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-        await input.beforeReport?.(request);
-        for (const ticketNumber of tickets) {
-          await callMcpTool({
-            socketPath,
-            token,
-            name: REPORT_TICKET_TOOL_NAME,
-            args: { ticketNumber },
-          });
-        }
-        input.onAfterReport?.();
-        if (input.afterReportOnly === true) {
+      return withOutsideTempRoot("ak-1171-sock-", async (socketDir) => {
+        const socketPath = join(socketDir, "mcp.sock");
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: input.hostName },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath,
+          listTerminatingToolOnMcp: input.hostName === "grok-build",
+          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
+        });
+        try {
+          const token = mcpTokenFromPrepared(prepared);
+          process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+          await input.beforeReport?.(request);
+          for (const ticketNumber of tickets) {
+            await callMcpTool({
+              socketPath,
+              token,
+              name: REPORT_TICKET_TOOL_NAME,
+              args: { ticketNumber },
+            });
+          }
+          input.onAfterReport?.();
+          if (input.afterReportOnly === true) {
+            return await driveExternalRoleTurnRounds(prepared, request, {
+              roundLimitName: "ReportTicketRoundLimit",
+              currentSessionId: () => undefined,
+              async runRound() {
+                return { status: "delivered" };
+              },
+            });
+          }
+          if (input.submit !== undefined) {
+            if (input.hostName === "grok-build") {
+              await callMcpTool({
+                socketPath, token, name: FIXER_OUTPUT_TOOL_NAME, args: input.submit,
+              });
+            } else {
+              await prepared.ingestStructuredOutput(input.submit);
+            }
+          }
           return await driveExternalRoleTurnRounds(prepared, request, {
             roundLimitName: "ReportTicketRoundLimit",
             currentSessionId: () => undefined,
@@ -162,28 +179,11 @@ function envelopeHostThatReportsThen(input: {
               return { status: "delivered" };
             },
           });
+        } finally {
+          delete process.env.AK_ROLE_RUN_DIR;
+          await prepared.dispose?.();
         }
-        if (input.submit !== undefined) {
-          if (input.hostName === "grok-build") {
-            await callMcpTool({
-              socketPath, token, name: FIXER_OUTPUT_TOOL_NAME, args: input.submit,
-            });
-          } else {
-            await prepared.ingestStructuredOutput(input.submit);
-          }
-        }
-        return await driveExternalRoleTurnRounds(prepared, request, {
-          roundLimitName: "ReportTicketRoundLimit",
-          currentSessionId: () => undefined,
-          async runRound() {
-            return { status: "delivered" };
-          },
-        });
-      } finally {
-        delete process.env.AK_ROLE_RUN_DIR;
-        await prepared.dispose?.();
-        await rm(socketDir, { recursive: true, force: true });
-      }
+      });
     },
   };
 }
@@ -1001,44 +1001,44 @@ test("#1199 same-envelope 催交原文 is the progress instruction (not first mi
     // second completed accepts. Progress instruction must be the retry bytes.
     const host = withPassingReviewHost({
       async executeTurn(request: RoleTurnRequest) {
-        const socketDir = await mkdtemp(join(tmpdir(), "ak-1199-retry-"));
-        const socketPath = join(socketDir, "mcp.sock");
-        const prepared = await prepareRoleEnvelope({
-          request: { ...request, host: "codex" },
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-          principalAuthority: piDurablePrincipalAuthority,
-        });
-        try {
-          process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-          let sealed = false;
-          return await driveExternalRoleTurnRounds(prepared, request, {
-            roundLimitName: "ReportTicketRoundLimit",
-            currentSessionId: () => undefined,
-            async runRound({ prompt }) {
-              seenPrompts.push(prompt);
-              await callMcpTool({
-                socketPath,
-                token: mcpTokenFromPrepared(prepared),
-                name: REPORT_TICKET_TOOL_NAME,
-                args: { ticketNumber: TICKET },
-              });
-              await prepared.ingestStructuredOutput({
-                status: "completed",
-                report: sealed ? "sealed after commit reminder" : "first completed without commit",
-                summary: "summary after envelope retry text ok",
-                classResults: FIXER_DONE.classResults,
-              });
-              sealed = true;
-              return { status: "delivered" as const };
-            },
+        return withOutsideTempRoot("ak-1199-retry-", async (socketDir) => {
+          const socketPath = join(socketDir, "mcp.sock");
+          const prepared = await prepareRoleEnvelope({
+            request: { ...request, host: "codex" },
+            dependencies: createRoleRuntimeDependencies(packageRoot),
+            socketPath,
+            sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
           });
-        } finally {
-          delete process.env.AK_ROLE_RUN_DIR;
-          await prepared.dispose?.();
-          await rm(socketDir, { recursive: true, force: true });
-        }
+          try {
+            process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+            let sealed = false;
+            return await driveExternalRoleTurnRounds(prepared, request, {
+              roundLimitName: "ReportTicketRoundLimit",
+              currentSessionId: () => undefined,
+              async runRound({ prompt }) {
+                seenPrompts.push(prompt);
+                await callMcpTool({
+                  socketPath,
+                  token: mcpTokenFromPrepared(prepared),
+                  name: REPORT_TICKET_TOOL_NAME,
+                  args: { ticketNumber: TICKET },
+                });
+                await prepared.ingestStructuredOutput({
+                  status: "completed",
+                  report: sealed ? "sealed after commit reminder" : "first completed without commit",
+                  summary: "summary after envelope retry text ok",
+                  classResults: FIXER_DONE.classResults,
+                });
+                sealed = true;
+                return { status: "delivered" as const };
+              },
+            });
+          } finally {
+            delete process.env.AK_ROLE_RUN_DIR;
+            await prepared.dispose?.();
+          }
+        });
       },
     });
     const first = await runPublicInstructionSeat(

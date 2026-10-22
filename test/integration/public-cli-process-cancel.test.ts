@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";

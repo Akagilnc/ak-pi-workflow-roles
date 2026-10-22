@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { test } from "vitest";
 import { withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 

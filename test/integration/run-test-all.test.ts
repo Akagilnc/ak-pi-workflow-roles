@@ -12,21 +12,21 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   writeFile,
 } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix, testExeca as execa } from "../helpers/environment-fixtures.ts";
+import { testExeca as execa, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
 const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
-const HOST_HOME = userInfo().homedir;
+// The Vitest worker preload rebinds userInfo(); the fixture keeps the real home here.
+const HOST_HOME = resolve(process.env.AK_TEST_REAL_MACHINE_HOME ?? userInfo().homedir);
 
 function sha256(bytes: Buffer | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -115,6 +115,7 @@ async function seedTierTree(root: string, files: string[]): Promise<void> {
   for (const rel of files) {
     const full = join(root, rel);
     await mkdir(join(full, ".."), { recursive: true });
+    // Content is not the classifier. scripts/run-test-all.mjs skips paths listed in vitest.config.ts.
     await writeFile(full, `// fixture ${rel}\n`, "utf8");
   }
 }
@@ -219,56 +220,57 @@ test("package.json test entries route migrated batches to Vitest and retain isol
  * Write proof rides the child record channel. #612: run-test-all process-owned
  * default HOME is gone after exit — observed only; this test never rm's paths.
  * Fixture workspace stays outside this worktree (system tmpdir): the PATH node shim
- * must not load as ESM under this package's "type":"module". r12 forbids deleting
- * outside the worktree — create-and-abandon.
+ * must not load as ESM under this package's "type":"module". The fixture module
+ * owns that root and removes it after the case (#1244).
  */
 test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-549-test-all-home-"));
-  const files = ["test/integration/one.test.ts"];
-  await seedTierTree(workspace, files);
+  await withOutsideTempRoot("ak-549-test-all-home-", async (workspace) => {
+    const files = ["test/integration/one.test.ts"];
+    await seedTierTree(workspace, files);
 
-  const binDir = join(workspace, "bin");
-  await writePathNodeShim(binDir);
-  const recordPath = join(workspace, "records.jsonl");
-  const sentinelName = `.ak-549-test-all-sentinel-${process.pid}-${Date.now()}`;
-  const beforeHash = readHostModelsHash();
-  const hostSentinel = join(HOST_HOME, sentinelName);
+    const binDir = join(workspace, "bin");
+    await writePathNodeShim(binDir);
+    const recordPath = join(workspace, "records.jsonl");
+    const sentinelName = `.ak-549-test-all-sentinel-${process.pid}-${Date.now()}`;
+    const beforeHash = readHostModelsHash();
+    const hostSentinel = join(HOST_HOME, sentinelName);
 
-  const result = await runRunner({
-    cwd: workspace,
-    binDir,
-    recordPath,
-    extraEnv: { AK_549_HOME_PROBE_SENTINEL: sentinelName },
+    const result = await runRunner({
+      cwd: workspace,
+      binDir,
+      recordPath,
+      extraEnv: { AK_549_HOME_PROBE_SENTINEL: sentinelName },
+    });
+
+    assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+    assert.equal(result.records.length, 1, "single default-parallel child");
+    const child = result.records[0]!;
+    assert.ok(child.homeProbe, "child must report HOME probe proof on the record channel");
+    assert.equal(child.homeProbe.sentinel, "fixture-poison-sentinel");
+    assert.equal(child.homeProbe.modelsWritten, true);
+    assert.ok(
+      typeof child.home === "string" && child.home.length > 0,
+      "child HOME must be set by runner isolation",
+    );
+    const childHome = child.home!;
+    assert.notEqual(childHome, HOST_HOME, "child HOME must not be the host home");
+    assert.equal(
+      readHostModelsHash(),
+      beforeHash,
+      "host models.json hash must be unchanged after test:all",
+    );
+    assert.equal(
+      existsSync(hostSentinel),
+      false,
+      "host sentinel absolute path must not exist",
+    );
+    // #612: runner default HOME is worktree-internal and process-owned — gone after exit.
+    assert.equal(
+      existsSync(childHome),
+      false,
+      "run-test-all default test home must be deleted on exit",
+    );
   });
-
-  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-  assert.equal(result.records.length, 1, "single default-parallel child");
-  const child = result.records[0]!;
-  assert.ok(child.homeProbe, "child must report HOME probe proof on the record channel");
-  assert.equal(child.homeProbe.sentinel, "fixture-poison-sentinel");
-  assert.equal(child.homeProbe.modelsWritten, true);
-  assert.ok(
-    typeof child.home === "string" && child.home.length > 0,
-    "child HOME must be set by runner isolation",
-  );
-  const childHome = child.home!;
-  assert.notEqual(childHome, HOST_HOME, "child HOME must not be the host home");
-  assert.equal(
-    readHostModelsHash(),
-    beforeHash,
-    "host models.json hash must be unchanged after test:all",
-  );
-  assert.equal(
-    existsSync(hostSentinel),
-    false,
-    "host sentinel absolute path must not exist",
-  );
-  // #612: runner default HOME is worktree-internal and process-owned — gone after exit.
-  assert.equal(
-    existsSync(childHome),
-    false,
-    "run-test-all default test home must be deleted on exit",
-  );
 });
 
 /**
@@ -278,201 +280,206 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
  * Preload process-owned HOME exit cleanup remains the #612 runner/preload contract.
  */
 test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-549-bare-preload-"));
-  const beforeHash = readHostModelsHash();
-  const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
-  const hostSentinel = join(HOST_HOME, sentinelName);
-  const probe = join(workspace, "home-redirect-probe.mjs");
-  await writeFile(
-    probe,
-    `import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { userInfo } from "node:os";
-import { dirname, join } from "node:path";
+  await withOutsideTempRoot("ak-549-bare-preload-", async (workspace) => {
+    const beforeHash = readHostModelsHash();
+    const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
+    const hostSentinel = join(HOST_HOME, sentinelName);
+    const probe = join(workspace, "home-redirect-probe.mjs");
+    await writeFile(
+      probe,
+      `import assert from "node:assert/strict";
+  import { createHash } from "node:crypto";
+  import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+  import { userInfo } from "node:os";
+  import { dirname, join } from "node:path";
 
-const hostHome = userInfo().homedir;
-const home = process.env.HOME;
-assert.ok(home && home !== hostHome, "HOME must be redirected by preload");
-assert.equal(process.env.XDG_CONFIG_HOME, join(home, ".config"));
-assert.equal(process.env.PI_CODING_AGENT_DIR, undefined);
+  const hostHome = userInfo().homedir;
+  const home = process.env.HOME;
+  assert.ok(home && home !== hostHome, "HOME must be redirected by preload");
+  assert.equal(process.env.XDG_CONFIG_HOME, join(home, ".config"));
+  assert.equal(process.env.PI_CODING_AGENT_DIR, undefined);
 
-const sentinelName = process.env.AK_549_SENTINEL_NAME;
-const hostSentinel = join(hostHome, sentinelName);
-const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK_549_BEFORE_HASH;
-const hostModels = join(hostHome, ".pi", "agent", "models.json");
+  const sentinelName = process.env.AK_549_SENTINEL_NAME;
+  const hostSentinel = join(hostHome, sentinelName);
+  const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK_549_BEFORE_HASH;
+  const hostModels = join(hostHome, ".pi", "agent", "models.json");
 
-const modelsPath = join(home, ".pi", "agent", "models.json");
-mkdirSync(dirname(modelsPath), { recursive: true });
-writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
-writeFileSync(join(home, sentinelName), "bare-fixture-poison");
+  const modelsPath = join(home, ".pi", "agent", "models.json");
+  mkdirSync(dirname(modelsPath), { recursive: true });
+  writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
+  writeFileSync(join(home, sentinelName), "bare-fixture-poison");
 
-assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
-const afterHash = existsSync(hostModels)
-  ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
-  : null;
-assert.equal(afterHash, beforeHash);
-assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
-console.log(JSON.stringify({ ok: true, home, hostHome }));
-`,
-    "utf8",
-  );
+  assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
+  const afterHash = existsSync(hostModels)
+    ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
+    : null;
+  assert.equal(afterHash, beforeHash);
+  assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
+  console.log(JSON.stringify({ ok: true, home, hostHome }));
+  `,
+      "utf8",
+    );
 
-  const result = await execa(
-    process.execPath,
-    ["--import", PRELOAD, probe],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        // Start from host HOME so the preload must do the redirect.
-        HOME: HOST_HOME,
-        AK_549_SENTINEL_NAME: sentinelName,
-        AK_549_BEFORE_HASH: beforeHash ?? "",
+    const result = await execa(
+      process.execPath,
+      ["--import", PRELOAD, probe],
+      {
+        cwd: packageRoot,
+        env: {
+          ...process.env,
+          // Start from host HOME so the preload must do the redirect.
+          HOME: HOST_HOME,
+          AK_549_SENTINEL_NAME: sentinelName,
+          AK_549_BEFORE_HASH: beforeHash ?? "",
+        },
+        timeout: 15_000,
       },
-      timeout: 15_000,
-    },
-  );
-  assert.equal(
-    result.exitCode,
-    0,
-    `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
-  );
-  assert.equal(
-    existsSync(hostSentinel),
-    false,
-    "host sentinel absolute path must not exist",
-  );
-  assert.equal(readHostModelsHash(), beforeHash);
+    );
+    assert.equal(
+      result.exitCode,
+      0,
+      `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
+    );
+    assert.equal(
+      existsSync(hostSentinel),
+      false,
+      "host sentinel absolute path must not exist",
+    );
+    assert.equal(readHostModelsHash(), beforeHash);
+  });
 });
 
 test("runner discovers seeded tree into one default-parallel child", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-run-test-all-partition-"));
-  const files = [
-    "test/unit/one.test.ts",
-    "test/contract/two.test.ts",
-    "test/integration/light.test.ts",
-    "test/integration/factory-board.test.ts",
-    "test/package/light.test.ts",
-  ];
-  await seedTierTree(workspace, files);
+  await withOutsideTempRoot("ak-run-test-all-partition-", async (workspace) => {
+    const files = [
+      "test/unit/one.test.ts",
+      "test/contract/two.test.ts",
+      "test/integration/light.test.ts",
+      "test/integration/factory-board.test.ts",
+      "test/package/light.test.ts",
+    ];
+    await seedTierTree(workspace, files);
 
-  const binDir = join(workspace, "bin");
-  await writePathNodeShim(binDir);
-  const recordPath = join(workspace, "records.jsonl");
-  const result = await runRunner({
-    cwd: workspace,
-    binDir,
-    recordPath,
+    const binDir = join(workspace, "bin");
+    await writePathNodeShim(binDir);
+    const recordPath = join(workspace, "records.jsonl");
+    const result = await runRunner({
+      cwd: workspace,
+      binDir,
+      recordPath,
+    });
+
+    assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+    assert.equal(result.records.length, 1, "no heavy partition child");
+
+    const [child] = result.records;
+    assert.ok(child);
+    assert.ok(child.argv.includes("--test"), "child is a node --test invocation");
+    // #252: canonical run-test-all child must carry fixed per-test --test-timeout=300000.
+    assert.ok(
+      child.argv.includes("--test-timeout=300000"),
+      `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
+    );
+    // #1206 B: native dual reporters on the sole test:all child seam —
+    // ordered reporter↔destination pairs as one input contract.
+    assert.deepEqual(
+      child.argv.filter((arg) => arg.startsWith("--test-reporter")),
+      [
+        "--test-reporter=dot",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=spec",
+        "--test-reporter-destination=node-test-report.txt",
+      ],
+      `child argv reporter contract; got ${JSON.stringify(child.argv)}`,
+    );
+    assert.equal(
+      hasConcurrencyTwo(child.argv),
+      false,
+      "child must retain default parallelism (no --test-concurrency=2)",
+    );
+
+    const scheduled = filesFromArgv(child.argv).sort();
+    assert.deepEqual(scheduled, ["test/integration/light.test.ts", "test/package/light.test.ts"]);
+
+    const integrationOnly = await runRunner({
+      cwd: workspace,
+      binDir,
+      recordPath,
+      tiers: ["integration"],
+    });
+    assert.equal(integrationOnly.exitCode, 0);
+    assert.deepEqual(filesFromArgv(integrationOnly.records[0]!.argv), ["test/integration/light.test.ts"]);
   });
-
-  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-  assert.equal(result.records.length, 1, "no heavy partition child");
-
-  const [child] = result.records;
-  assert.ok(child);
-  assert.ok(child.argv.includes("--test"), "child is a node --test invocation");
-  // #252: canonical run-test-all child must carry fixed per-test --test-timeout=300000.
-  assert.ok(
-    child.argv.includes("--test-timeout=300000"),
-    `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
-  );
-  // #1206 B: native dual reporters on the sole test:all child seam —
-  // ordered reporter↔destination pairs as one input contract.
-  assert.deepEqual(
-    child.argv.filter((arg) => arg.startsWith("--test-reporter")),
-    [
-      "--test-reporter=dot",
-      "--test-reporter-destination=stdout",
-      "--test-reporter=spec",
-      "--test-reporter-destination=node-test-report.txt",
-    ],
-    `child argv reporter contract; got ${JSON.stringify(child.argv)}`,
-  );
-  assert.equal(
-    hasConcurrencyTwo(child.argv),
-    false,
-    "child must retain default parallelism (no --test-concurrency=2)",
-  );
-
-  const scheduled = filesFromArgv(child.argv).sort();
-  assert.deepEqual(scheduled, ["test/integration/light.test.ts", "test/package/light.test.ts"]);
-
-  const integrationOnly = await runRunner({
-    cwd: workspace,
-    binDir,
-    recordPath,
-    tiers: ["integration"],
-  });
-  assert.equal(integrationOnly.exitCode, 0);
-  assert.deepEqual(filesFromArgv(integrationOnly.records[0]!.argv), ["test/integration/light.test.ts"]);
 });
 
-test("runner discovers the live package tree once under default parallelism, including this contract", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-run-test-all-live-"));
-  const binDir = join(workspace, "bin");
-  await writePathNodeShim(binDir);
-  const recordPath = join(workspace, "records.jsonl");
-  const result = await runRunner({
-    cwd: packageRoot,
-    binDir,
-    recordPath,
+test("runner discovers the live package tree once under default parallelism, leaving this Vitest contract out", async () => {
+  await withOutsideTempRoot("ak-run-test-all-live-", async (workspace) => {
+    const binDir = join(workspace, "bin");
+    await writePathNodeShim(binDir);
+    const recordPath = join(workspace, "records.jsonl");
+    const result = await runRunner({
+      cwd: packageRoot,
+      binDir,
+      recordPath,
+    });
+
+    assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+    assert.equal(result.records.length, 1, "single child on live tree");
+
+    const scheduled = filesFromArgv(result.records[0]!.argv);
+    assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
+    assert.equal(new Set(scheduled).size, scheduled.length, "no file runs twice");
+
+    // This path is in vitest.config.ts include, so the legacy runner must not schedule it.
+    assert.equal(
+      scheduled.filter((f) => f.replaceAll("\\", "/") === THIS_CONTRACT_REL).length,
+      0,
+      "Vitest contract must not be discovered by the legacy runner",
+    );
+
+    assert.ok(scheduled.length > 0, "discovery must be non-empty on the live tree");
   });
-
-  assert.equal(result.exitCode, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-  assert.equal(result.records.length, 1, "single child on live tree");
-
-  const scheduled = filesFromArgv(result.records[0]!.argv);
-  assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
-  assert.equal(new Set(scheduled).size, scheduled.length, "no file runs twice");
-
-  // Owning contract lives in discovery and executes exactly once via test:all.
-  assert.equal(
-    scheduled.filter((f) => f.replaceAll("\\", "/") === THIS_CONTRACT_REL).length,
-    1,
-    "owning contract must be discovered once",
-  );
-
-  assert.ok(scheduled.length > 0, "discovery must be non-empty on the live tree");
 });
 
 test("runner propagates child non-zero exits honestly", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-run-test-all-exit-"));
-  const files = ["test/unit/one.test.ts", "test/integration/light.test.ts"];
-  await seedTierTree(workspace, files);
-  const binDir = join(workspace, "bin");
-  await writePathNodeShim(binDir);
+  await withOutsideTempRoot("ak-run-test-all-exit-", async (workspace) => {
+    const files = ["test/unit/one.test.ts", "test/integration/light.test.ts"];
+    await seedTierTree(workspace, files);
+    const binDir = join(workspace, "bin");
+    await writePathNodeShim(binDir);
 
-  const recordPath = join(workspace, "ord-fail.jsonl");
-  const result = await runRunner({
-    cwd: workspace,
-    binDir,
-    recordPath,
-    childExits: "7",
+    const recordPath = join(workspace, "ord-fail.jsonl");
+    const result = await runRunner({
+      cwd: workspace,
+      binDir,
+      recordPath,
+      childExits: "7",
+    });
+    assert.equal(result.exitCode, 7, `child failure must surface; stderr=${result.stderr}`);
+    assert.equal(result.records.length, 1);
+    assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
   });
-  assert.equal(result.exitCode, 7, `child failure must surface; stderr=${result.stderr}`);
-  assert.equal(result.records.length, 1);
-  assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
 });
 
 test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async () => {
-  const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-run-test-all-sigterm-"));
-  const files = ["test/integration/one.test.ts"];
-  await seedTierTree(workspace, files);
-  const binDir = join(workspace, "bin");
-  // Child self-terminates with SIGTERM; runner must surface 128+15=143.
-  await writePathNodeShim(binDir, { signalSelf: "SIGTERM" });
-  const recordPath = join(workspace, "sigterm.jsonl");
-  const result = await runRunner({
-    cwd: workspace,
-    binDir,
-    recordPath,
+  await withOutsideTempRoot("ak-run-test-all-sigterm-", async (workspace) => {
+    const files = ["test/integration/one.test.ts"];
+    await seedTierTree(workspace, files);
+    const binDir = join(workspace, "bin");
+    // Child self-terminates with SIGTERM; runner must surface 128+15=143.
+    await writePathNodeShim(binDir, { signalSelf: "SIGTERM" });
+    const recordPath = join(workspace, "sigterm.jsonl");
+    const result = await runRunner({
+      cwd: workspace,
+      binDir,
+      recordPath,
+    });
+    assert.equal(
+      result.exitCode,
+      143,
+      `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
+    );
+    assert.equal(result.records.length, 1);
+    assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
   });
-  assert.equal(
-    result.exitCode,
-    143,
-    `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
-  );
-  assert.equal(result.records.length, 1);
-  assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
 });
