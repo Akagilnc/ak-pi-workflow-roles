@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test, vi } from "vitest";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -107,8 +107,10 @@ test("detour empty or invalid argv returns parameter error without aborting the 
   });
 });
 
-test("silent detour child is not cut by a package-owned tool idle backstop", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+test("silent detour child is not cut by a package-owned tool idle backstop", async ({ onTestFinished }) => {
+  // Fake clearTimeout with it so cancel paths see the same clock.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  onTestFinished(() => { vi.useRealTimers(); });
   await withHangCwd(async (cwd, argv) => {
     const tool = createEngineDetourToolDefinition({
         engineName: "opus",
@@ -133,7 +135,7 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
 
       await Promise.resolve();
       // Former package-owned tool idle budget (183s). Mechanism removed — must stay alive.
-      t.mock.timers.tick(183_000);
+      vi.advanceTimersByTime(183_000);
       for (let i = 0; i < 20; i++) await Promise.resolve();
 
       assert.equal(

@@ -1,4 +1,3 @@
-import { outsideWorktreeTempPrefix, worktreeTempPrefix, withPrimaryAwareCleanup, withProcessCwd } from "../helpers/environment-fixtures.ts";
 /**
  * #399 analyst book-scope — three defects on the analysis seat (owner-ratified).
  *
@@ -14,9 +13,9 @@ import { outsideWorktreeTempPrefix, worktreeTempPrefix, withPrimaryAwareCleanup,
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test as base } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -27,8 +26,10 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
+import { environmentFixtures, seedGitRepository, withPrimaryAwareCleanup, withProcessCwd, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
+const test = base.extend(environmentFixtures);
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /** Exclusive #399 ticket faces — outside C1–C4 / public-cli 5xxx ranges. */
@@ -169,94 +170,73 @@ async function withBookScopeWorld<T>(
     readonly bookKey: string;
   }) => Promise<T>,
 ): Promise<T> {
-  // Each temp root is owned by a registered cleanup before the next fallible step.
-  const home = await mkdtemp(worktreeTempPrefix("analyst-399-home-"));
-  let mainRoot = "";
-  let worktreeParent1 = "";
-  let worktreeParent2 = "";
-  return withPrimaryAwareCleanup(
-    async () => {
-      mainRoot = await mkdtemp(worktreeTempPrefix("analyst-399-main-"));
-      execFileSync("git", ["init"], { cwd: mainRoot });
-      execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
-      await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
-      execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        { cwd: mainRoot },
-      );
+  return withTempRoot("analyst-399-", async (root) => {
+    const home = join(root, "home");
+    const mainRoot = join(root, "main");
+    await mkdir(mainRoot);
+    seedGitRepository(mainRoot);
+    await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
+    execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+      { cwd: mainRoot },
+    );
 
-      // Own each parent immediately after allocation (not after both succeed).
-      worktreeParent1 = await mkdtemp(worktreeTempPrefix("analyst-399-wt1-"));
-      worktreeParent2 = await mkdtemp(worktreeTempPrefix("analyst-399-wt2-"));
-      const worktreeRoot = join(worktreeParent1, "wt");
-      const worktree2Root = join(worktreeParent2, "wt");
-      execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
-      execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
+    const worktreeRoot = join(root, "wt1", "wt");
+    const worktree2Root = join(root, "wt2", "wt");
+    execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
+    execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
 
-      const bookKey = basename(mainRoot);
-      const bookDir = join(home, ".ak-roles", "books", bookKey);
-      await mkdir(join(bookDir, "runs"), { recursive: true });
+    const bookKey = basename(mainRoot);
+    const bookDir = join(home, ".ak-roles", "books", bookKey);
+    await mkdir(join(bookDir, "runs"), { recursive: true });
 
-      await writeReadableRun({
-        bookDir,
-        runId: RUN_MAIN_NO_TICKET,
-        role: "coder",
-        projectRoot: mainRoot,
-      });
-      await writeReadableRun({
-        bookDir,
-        runId: RUN_WORKTREE_TICKET_A,
-        role: "judge",
-        projectRoot: worktreeRoot,
-        ticketNumber: TICKET_A,
-      });
-      // One TICKET_A leg under subject-tree so D1 proves analyst walks non-flat runs.
-      await writeReadableRun({
-        bookDir,
-        runId: RUN_MAIN_TICKET_A,
-        role: "fixer",
-        projectRoot: mainRoot,
-        ticketNumber: TICKET_A,
-        subject: String(TICKET_A),
-      });
-      await writeReadableRun({
-        bookDir,
-        runId: RUN_MAIN_TICKET_B,
-        role: "reviewer",
-        projectRoot: mainRoot,
-        ticketNumber: TICKET_B,
-      });
-      await writeReadableRun({
-        bookDir,
-        runId: RUN_WT2_NO_TICKET,
-        role: "coder",
-        projectRoot: worktree2Root,
-      });
-      await writeDamagedRun({
-        bookDir,
-        runId: RUN_DAMAGED,
-        role: "doctor",
-        projectRoot: mainRoot,
-        ticketNumber: TICKET_A,
-      });
+    await writeReadableRun({
+      bookDir,
+      runId: RUN_MAIN_NO_TICKET,
+      role: "coder",
+      projectRoot: mainRoot,
+    });
+    await writeReadableRun({
+      bookDir,
+      runId: RUN_WORKTREE_TICKET_A,
+      role: "judge",
+      projectRoot: worktreeRoot,
+      ticketNumber: TICKET_A,
+    });
+    // One TICKET_A leg under subject-tree so D1 proves analyst walks non-flat runs.
+    await writeReadableRun({
+      bookDir,
+      runId: RUN_MAIN_TICKET_A,
+      role: "fixer",
+      projectRoot: mainRoot,
+      ticketNumber: TICKET_A,
+      subject: String(TICKET_A),
+    });
+    await writeReadableRun({
+      bookDir,
+      runId: RUN_MAIN_TICKET_B,
+      role: "reviewer",
+      projectRoot: mainRoot,
+      ticketNumber: TICKET_B,
+    });
+    await writeReadableRun({
+      bookDir,
+      runId: RUN_WT2_NO_TICKET,
+      role: "coder",
+      projectRoot: worktree2Root,
+    });
+    await writeDamagedRun({
+      bookDir,
+      runId: RUN_DAMAGED,
+      role: "doctor",
+      projectRoot: mainRoot,
+      ticketNumber: TICKET_A,
+    });
 
-      return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
-    },
-    async () => {
-      await rm(home, { recursive: true, force: true });
-    },
-    async () => {
-      if (mainRoot !== "") await rm(mainRoot, { recursive: true, force: true });
-    },
-    async () => {
-      if (worktreeParent1 !== "") await rm(worktreeParent1, { recursive: true, force: true });
-    },
-    async () => {
-      if (worktreeParent2 !== "") await rm(worktreeParent2, { recursive: true, force: true });
-    },
-  );
+    return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
+  });
 }
 
 // D1
@@ -353,14 +333,10 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 });
 
 // D4
-test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
-  const home = await mkdtemp(worktreeTempPrefix("analyst-399-nongit-home-"));
+test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async ({ home, outsideDir: nonGit }) => {
   const previousCwd = process.cwd();
-  // nonGit must sit outside this git worktree; outside isolation root is not deleted.
-  let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
@@ -373,24 +349,21 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
     async () => {
       process.chdir(previousCwd);
     },
-    async () => {
-      await rm(home, { recursive: true, force: true });
-    },
   );
 });
 
 // D5
-test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async () => {
-  const home = await mkdtemp(worktreeTempPrefix("analyst-399-d5-home-"));
+test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async ({ home: root }) => {
   const previousCwd = process.cwd();
-  let repoA = "";
-  let repoB = "";
+  const home = join(root, "home");
+  // Distinct basenames are the distinct book keys.
+  const repoA = join(root, "analyst-399-d5-a");
+  const repoB = join(root, "analyst-399-d5-b");
   await withPrimaryAwareCleanup(
     async () => {
-      repoA = await mkdtemp(worktreeTempPrefix("analyst-399-d5-a-"));
-      repoB = await mkdtemp(worktreeTempPrefix("analyst-399-d5-b-"));
       for (const repo of [repoA, repoB]) {
-        execFileSync("git", ["init"], { cwd: repo });
+        await mkdir(repo);
+        seedGitRepository(repo);
         await writeFile(join(repo, "README.md"), "x\n", "utf8");
         execFileSync("git", ["add", "README.md"], { cwd: repo });
         execFileSync(
@@ -451,15 +424,6 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
     },
     async () => {
       process.chdir(previousCwd);
-    },
-    async () => {
-      await rm(home, { recursive: true, force: true });
-    },
-    async () => {
-      if (repoA !== "") await rm(repoA, { recursive: true, force: true });
-    },
-    async () => {
-      if (repoB !== "") await rm(repoB, { recursive: true, force: true });
     },
   );
 });

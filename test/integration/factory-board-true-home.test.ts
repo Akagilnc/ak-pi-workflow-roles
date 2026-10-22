@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { cp, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 import {
@@ -24,7 +24,7 @@ import {
 import type { FactoryBoardBook, FactoryBoardView } from "../../src/factory-board.ts";
 import { UNACCEPTED_FLYING_MS, writeFactoryBoardPage } from "../../src/factory-board.ts";
 
-test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async (t) => {
+test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async ({ skip }) => {
   const homeLedger =
     process.env.AK_FACTORY_BOARD_HOME_LEDGER?.trim() ||
     join(homedir(), ".ak-roles", "books", "ak-pi-workflow-roles");
@@ -33,7 +33,7 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
   if (!(await pathExists(home130))) {
     // Explicit skip (not silent return): CI/agents without owner true-home ledger.
     // Default owner coverage remains when ~/.ak-roles/.../issues/130 exists — not opt-in-only.
-    t.skip(`true-home ledger missing at ${home130}; owner machine keeps default coverage`);
+    skip(`true-home ledger missing at ${home130}; owner machine keeps default coverage`);
     return;
   }
 
