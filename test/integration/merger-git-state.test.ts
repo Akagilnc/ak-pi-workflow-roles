@@ -6,6 +6,7 @@ import { test } from "vitest";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
 import { seedGitRepository, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -14,36 +15,10 @@ const git = (cwd: string, ...args: string[]) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 
-/** Base, source, and target commits, built directly in each case's own repo. */
-async function seedMergeRepo(root: string): Promise<{ source: string; target: string }> {
-  seedGitRepository(root);
-  git(root, "config", "user.name", "Merger Test");
-  git(root, "config", "user.email", "merger@test.local");
-  await writeFile(resolve(root, "conflict.txt"), "base\n");
-  await writeFile(resolve(root, "unrelated.txt"), "unchanged\n");
-  git(root, "add", ".");
-  git(root, "commit", "-m", "base");
-  git(root, "checkout", "-b", "source");
-  await writeFile(resolve(root, "conflict.txt"), "source\n");
-  await writeFile(resolve(root, "source-only.txt"), "source only\n");
-  git(root, "add", ".");
-  git(root, "commit", "-m", "source");
-  const source = git(root, "rev-parse", "HEAD");
-  git(root, "checkout", "main");
-  await writeFile(resolve(root, "conflict.txt"), "target\n");
-  git(root, "commit", "-am", "target");
-  const target = git(root, "rev-parse", "HEAD");
-  return { source, target };
-}
-
 async function withConflictedRepo<T>(
-  run: (fixture: { cwd: string; target: string; source: string }) => Promise<T>,
+  run: (fixture: { cwd: string; target: string; source: string; conflictPath: string }) => Promise<T>,
 ): Promise<T> {
-  return await withTempRoot("ak-merger-git-", async (cwd) => {
-    const { source, target } = await seedMergeRepo(cwd);
-    assert.throws(() => git(cwd, "merge", "--no-edit", "source"));
-    return await run({ cwd, target, source });
-  });
+  return await withTempRoot("ak-merger-git-", async (cwd) => run({ cwd, ...await materializeConflictedRepo(cwd) }));
 }
 
 test("production Merger Git seam reads conflicted merge materials without gating", async () => {
@@ -53,7 +28,7 @@ test("production Merger Git seam reads conflicted merge materials without gating
     assert.deepEqual(active, {
       targetObjectId: fixture.target,
       sourceObjectId: fixture.source,
-      unmergedPaths: ["conflict.txt"],
+      unmergedPaths: [fixture.conflictPath],
     });
   });
 });
@@ -124,7 +99,7 @@ test("production Merger Git seam returns empty materials for unborn repo", async
 
 test("production Merger Git seam reports no conflict set after a non-conflicting merge start", async () => {
   await withTempRoot("ak-merger-clean-", async (cwd) => {
-    await seedMergeRepo(cwd);
+    seedGitProject(cwd);
     git(cwd, "checkout", "-b", "clean-source");
     await writeFile(resolve(cwd, "clean-only.txt"), "clean\n");
     git(cwd, "add", ".");
