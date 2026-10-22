@@ -26,7 +26,7 @@
 - **未完终态(Unfinished)**：见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)、[worker 输出契约](src/package-contracts/worker-output.ts)。
 - **Reviewer(御史台)**：职掌见 [Soul](souls/reviewer.md)，调用见 `ak-role help reviewer`。
 - **门下省(Gate province)**：职掌见 [Soul](souls/gatekeeper.md)，制度沿革见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)；改任覆验见 [ADR 0090](docs/adr/0090-menxia-province-trial-use-before-merge.md)。_Avoid_：把「门下省」当作通进司的公开角色名。
-- **覆验(Trial use)**：门下省站在本仓真实用户的位置，到真实入口把交付亲手用一遍，交所做所见的实录。见 [ADR 0090](docs/adr/0090-menxia-province-trial-use-before-merge.md)。_Avoid_：冒烟测试、探活、验收测试、试用、覆奏。
+- **覆验(Re-inspection)**：门下省站在本仓真实用户的位置，到真实入口把交付亲手用一遍，交所做所见的实录。见 [ADR 0090](docs/adr/0090-menxia-province-trial-use-before-merge.md)。_Avoid_：冒烟测试、探活、验收测试、试用、覆奏。
 - **中书省(Secretariat)**：本厂的架构师。职掌见 [Soul](souls/secretariat.md)，票面法见 [ticket-law](souls/ticket-law.md)。
 - **给事中(Countersign)**：职掌见 [Soul](souls/countersign.md)。
 - **左拾遗(Gleaner-left)**：职掌见 [Soul](souls/gleaner-left.md)。
