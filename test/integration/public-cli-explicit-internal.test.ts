@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import { test, vi } from "vitest";
 
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -227,7 +227,8 @@ process.on("SIGTERM", () => {
 });
 
 test("explicit short budget sends only SIGTERM after readiness and preserves prior session output", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  t.onTestFinished(() => { vi.useRealTimers(); });
   await withTempHome(async (home) => {
     const signalFile = join(home, "signal");
     const ready = join(home, "ready");
@@ -294,7 +295,7 @@ setInterval(() => {}, 1000);
       timeoutMs: 750,
     });
     await waitForFile(ready, resultPromise);
-    t.mock.timers.tick(750);
+    vi.advanceTimersByTime(750);
     const result = await resultPromise;
 
     assert.equal(result.timedOut, true);
@@ -556,7 +557,8 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
     }
     // SIGTERM timeout
     {
-      t.mock.timers.enable({ apis: ["setTimeout"] });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      t.onTestFinished(() => { vi.useRealTimers(); });
       const ready = join(home, "to-ready");
       const signal = join(home, "to-signal");
       const stub = join(home, "timeout.mjs");
@@ -576,11 +578,10 @@ setInterval(() => {}, 1000);
         timeoutMs: 500,
       });
       await waitForFile(ready, resultPromise);
-      t.mock.timers.tick(500);
+      vi.advanceTimersByTime(500);
       const result = await resultPromise;
       assert.equal(result.timedOut, true);
       assert.equal(await readFile(signal, "utf8"), "SIGTERM");
-      t.mock.timers.reset();
     }
   });
 });

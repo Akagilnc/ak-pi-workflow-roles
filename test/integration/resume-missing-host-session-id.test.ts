@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
@@ -35,7 +35,7 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
 
 test("#1091 ACP resume without bound session id reports missing; never session/new", async (t) => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-acp-missing-", runName: "run@acp" });
-  t.after(() => ledger.dispose());
+  t.onTestFinished(() => ledger.dispose());
   const runDirectory = ledger.runDirectory;
   const methods: string[] = [];
   const connection: AcpConnection = {
@@ -94,7 +94,7 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
 
 test("ACP successful turn preserves host facts and carries required disposal failure", async (t) => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-acp-cleanup-", runName: "run@acp" });
-  t.after(() => ledger.dispose());
+  t.onTestFinished(() => ledger.dispose());
   const runDirectory = ledger.runDirectory;
   const host = createAcpRoleTurnHost({
     hostName: "hermes",
@@ -143,7 +143,7 @@ test("#1091 headless resume without bound session id reports missing; never bind
   const description = lookupHeadlessHostDescription("claude");
   assert.ok(description);
   const ledger = createTempPackageHomeLedger({ prefix: "ak-1032-headless-missing-", runName: "run@claude" });
-  t.after(() => ledger.dispose());
+  t.onTestFinished(() => ledger.dispose());
   const runDirectory = ledger.runDirectory;
   let bindCalls = 0;
   const host = createHeadlessRoleTurnHost({

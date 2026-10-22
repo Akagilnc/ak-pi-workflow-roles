@@ -3,10 +3,9 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -26,7 +25,7 @@ import {
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { withTempHome } from "../helpers/environment-fixtures.ts";
+import { outsideWorktreeTempPrefix, withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
 // #1171: ordinary audit-escalation tracers carry ticketNumber so soft reask
@@ -63,54 +62,51 @@ async function runJudge(
   onParentResume: (prompt: string) => { code: number; stderr: string; verdict?: unknown },
   assertIn: (observed: Observation) => Promise<void>,
 ): Promise<void> {
-  const temps: string[] = [];
-  try {
-    await withTempHome(async (home) => {
-      const project = join(home, "project");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
-      let config = { seats: {} };
-      for (const role of ["gatekeeper", "notary", "auditor", "diarist", "judge"] as const) {
-        config = setPersistentSeatConfig(config, role, seat);
-      }
-      await savePublicCliConfig(config, home);
-      const judgeSubmissions: unknown[] = [];
-      const officerSessions: {
-        role: string;
-        sessionFile: string;
-        continuation: string;
-        prompt: string;
-        activation: RoleTurnRequest["activation"];
-      }[] = [];
-      const parentMessages: string[] = [];
-      let judgeSubmissionFinished = false;
-      const officerHost = roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: officerRunner,
-      });
-      const recordingOfficer: RoleTurnHost = {
-        async executeTurn(request) {
-          if (request.activation.role === "notary" || request.activation.role === "auditor") {
-            assert.equal(judgeSubmissionFinished, true, "audit began before the Judge submission tool finished");
-            const coordinates = piDurablePrincipalAuthority.decode(request.principal);
-            officerSessions.push({
-              role: request.activation.role,
-              sessionFile: coordinates.sessionFile,
-              continuation: request.continuation.kind,
-              prompt: request.continuation.prompt,
-              activation: request.activation,
-            });
-          }
-          return officerHost.executeTurn(request);
-        },
-      };
-      const submitVerdict = async (request: RoleTurnRequest, verdict: unknown) => {
-        judgeSubmissions.push(verdict);
-        const coords = piDurablePrincipalAuthority.decode(request.principal);
-        const socketDir = await mkdtemp(join(tmpdir(), "ak-1057-judge-"));
-        temps.push(socketDir);
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["gatekeeper", "notary", "auditor", "diarist", "judge"] as const) {
+      config = setPersistentSeatConfig(config, role, seat);
+    }
+    await savePublicCliConfig(config, home);
+    const judgeSubmissions: unknown[] = [];
+    const officerSessions: {
+      role: string;
+      sessionFile: string;
+      continuation: string;
+      prompt: string;
+      activation: RoleTurnRequest["activation"];
+    }[] = [];
+    const parentMessages: string[] = [];
+    let judgeSubmissionFinished = false;
+    const officerHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: officerRunner,
+    });
+    const recordingOfficer: RoleTurnHost = {
+      async executeTurn(request) {
+        if (request.activation.role === "notary" || request.activation.role === "auditor") {
+          assert.equal(judgeSubmissionFinished, true, "audit began before the Judge submission tool finished");
+          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+          officerSessions.push({
+            role: request.activation.role,
+            sessionFile: coordinates.sessionFile,
+            continuation: request.continuation.kind,
+            prompt: request.continuation.prompt,
+            activation: request.activation,
+          });
+        }
+        return officerHost.executeTurn(request);
+      },
+    };
+    const submitVerdict = async (request: RoleTurnRequest, verdict: unknown) => {
+      judgeSubmissions.push(verdict);
+      const coords = piDurablePrincipalAuthority.decode(request.principal);
+      return withTempRoot(outsideWorktreeTempPrefix("ak-1057-judge-"), async (socketDir) => {
         const prepared = await prepareRoleEnvelope({
           request: { ...request, host: "pi" },
           dependencies: {
@@ -139,79 +135,77 @@ async function runJudge(
         } finally {
           await prepared.dispose?.();
         }
-      };
-      const judgeHost: RoleTurnHost = {
-        async executeTurn(request) {
-          if (request.continuation.kind === "resume") {
-            parentMessages.push(request.continuation.prompt);
-            const resumed = onParentResume(request.continuation.prompt);
-            if (resumed.verdict !== undefined) {
-              return submitVerdict(request, resumed.verdict);
-            }
-            return { code: resumed.code, stderr: resumed.stderr, timedOut: false };
+      });
+    };
+    const judgeHost: RoleTurnHost = {
+      async executeTurn(request) {
+        if (request.continuation.kind === "resume") {
+          parentMessages.push(request.continuation.prompt);
+          const resumed = onParentResume(request.continuation.prompt);
+          if (resumed.verdict !== undefined) {
+            return submitVerdict(request, resumed.verdict);
           }
-          return submitVerdict(request, VERDICT);
-        },
-      };
-      const routed: RoleTurnHost = {
-        async executeTurn(request) {
-          return request.activation.role === "judge"
-            ? judgeHost.executeTurn(request)
-            : recordingOfficer.executeTurn(request);
-        },
-      };
-      const capture = captureIo();
-      const first = await runAkRole(
-        ["judge", "--model", "test/caller-seat:high", "--project", project, "review"],
-        {
+          return { code: resumed.code, stderr: resumed.stderr, timedOut: false };
+        }
+        return submitVerdict(request, VERDICT);
+      },
+    };
+    const routed: RoleTurnHost = {
+      async executeTurn(request) {
+        return request.activation.role === "judge"
+          ? judgeHost.executeTurn(request)
+          : recordingOfficer.executeTurn(request);
+      },
+    };
+    const capture = captureIo();
+    const first = await runAkRole(
+      ["judge", "--model", "test/caller-seat:high", "--project", project, "review"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        io: capture.io,
+        principalAuthority: piDurablePrincipalAuthority,
+        roleTurnHost: judgeHost,
+        hostAdapters: [adapter("pi", routed)],
+      },
+    );
+    assert.equal(first.exitCode, 0, capture.stderr.join("") || capture.stdout.join(""));
+    const books = await readdir(join(home, ".ak-roles", "books"));
+    const runs = (await Promise.all(books.map((book) => listBookRunDirectories(join(home, ".ak-roles", "books", book))))).flat();
+    const identities = (await Promise.all(runs.map((runDirectory) => readRoleRunIdentity(runDirectory))))
+      .filter((identity) => identity !== undefined);
+    const parent = identities.find((identity) => identity.role === "judge");
+    assert.ok(parent);
+    await assertIn({
+      first,
+      firstStdout: capture.stdout,
+      project,
+      home,
+      parentRunId: parent.runId,
+      parentRunDirectory: parent.runDirectory,
+      parentMessages,
+      judgeSubmissions,
+      officerSessions,
+      async resumeRun(runId: string, message?: string) {
+        const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
+        const resumeCapture = captureIo();
+        return runAkRole(args, {
           packageRoot,
           home,
           cwd: project,
-          io: capture.io,
+          io: resumeCapture.io,
           principalAuthority: piDurablePrincipalAuthority,
-          roleTurnHost: judgeHost,
           hostAdapters: [adapter("pi", routed)],
-        },
-      );
-      assert.equal(first.exitCode, 0, capture.stderr.join("") || capture.stdout.join(""));
-      const books = await readdir(join(home, ".ak-roles", "books"));
-      const runs = (await Promise.all(books.map((book) => listBookRunDirectories(join(home, ".ak-roles", "books", book))))).flat();
-      const identities = (await Promise.all(runs.map((runDirectory) => readRoleRunIdentity(runDirectory))))
-        .filter((identity) => identity !== undefined);
-      const parent = identities.find((identity) => identity.role === "judge");
-      assert.ok(parent);
-      await assertIn({
-        first,
-        firstStdout: capture.stdout,
-        project,
-        home,
-        parentRunId: parent.runId,
-        parentRunDirectory: parent.runDirectory,
-        parentMessages,
-        judgeSubmissions,
-        officerSessions,
-        async resumeRun(runId: string, message?: string) {
-          const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
-          const resumeCapture = captureIo();
-          return runAkRole(args, {
-            packageRoot,
-            home,
-            cwd: project,
-            io: resumeCapture.io,
-            principalAuthority: piDurablePrincipalAuthority,
-            hostAdapters: [adapter("pi", routed)],
-          });
-        },
-        async resume(message?: string) {
-          const officerRunId = first.terminal?.runId;
-          assert.equal(typeof officerRunId, "string");
-          return this.resumeRun(officerRunId!, message);
-        },
-      });
-    }, { prefix: "ak-1057-resume-" });
-  } finally {
-    await Promise.all(temps.map((dir) => rm(dir, { recursive: true, force: true })));
-  }
+        });
+      },
+      async resume(message?: string) {
+        const officerRunId = first.terminal?.runId;
+        assert.equal(typeof officerRunId, "string");
+        return this.resumeRun(officerRunId!, message);
+      },
+    });
+  }, { prefix: "ak-1057-resume-" });
 }
 
 function officer(role: "notary" | "auditor", details: unknown): LegacyFauxPiRunner {

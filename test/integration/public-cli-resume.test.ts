@@ -15,7 +15,7 @@ import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:
 import { chmod, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
-import test from "node:test";
+import { test } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";

@@ -3,7 +3,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { copyFile, cp, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execa } from "execa";
@@ -47,9 +47,13 @@ export function outsideWorktreeTempPrefix(
   throw new Error(`No outside-worktree temp base available: ${bases.join(", ")}`);
 }
 
-/** Callback consumers share the same allocation seam during runner migration. */
+/**
+ * Callback consumers share the same allocation seam during runner migration.
+ * A label lands in the worktree; an absolute prefix (outsideWorktreeTempPrefix,
+ * e.g. for short AF_UNIX socket paths) is used as given.
+ */
 export async function withTempRoot<T>(prefix: string, body: (root: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix(prefix));
+  const root = await mkdtemp(isAbsolute(prefix) ? prefix : worktreeTempPrefix(prefix));
   return withPrimaryAwareCleanup(() => body(root), () => rm(root, { recursive: true, force: true }));
 }
 

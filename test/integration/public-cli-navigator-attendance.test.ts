@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { randomUUID } from "node:crypto";
 
 import { createNavigatorLookup } from "../../src/navigator-lookup.ts";

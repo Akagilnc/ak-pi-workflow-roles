@@ -7,11 +7,10 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -32,6 +31,7 @@ import { REPORT_TICKET_TOOL_NAME } from "../../src/report-ticket-tool.ts";
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
+import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -148,69 +148,68 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
   readonly onClose?: () => Promise<void>;
   readonly submit?: Record<string, unknown>;
 }): Promise<{ disposeCalls: number; result: Awaited<ReturnType<typeof runPublicInstructionSeat>> }> {
-  const socketDir = await mkdtemp(join(tmpdir(), "ak-1171-acp-"));
-  const socketPath = join(socketDir, "mcp.sock");
-  const grokNative = join(
-    input.home,
-    ".grok",
-    "sessions",
-    encodeURIComponent(input.project),
-    SESSION_ID,
-  );
-  await mkdir(grokNative, { recursive: true });
-  await writeFile(join(grokNative, "chat_history.jsonl"), `${JSON.stringify({ t: 1 })}\n`, "utf8");
-  await writeFile(join(grokNative, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
+  return withTempRoot(outsideWorktreeTempPrefix("ak-1171-acp-"), async (socketDir) => {
+    const socketPath = join(socketDir, "mcp.sock");
+    const grokNative = join(
+      input.home,
+      ".grok",
+      "sessions",
+      encodeURIComponent(input.project),
+      SESSION_ID,
+    );
+    await mkdir(grokNative, { recursive: true });
+    await writeFile(join(grokNative, "chat_history.jsonl"), `${JSON.stringify({ t: 1 })}\n`, "utf8");
+    await writeFile(join(grokNative, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
 
-  let preparedToken = "";
-  let disposeCalls = 0;
-  let activeSessionId = SESSION_ID;
-  const sessionRestore = createGrokAcpSessionRestore({
-    home: input.home,
-    project: input.project,
-    setActiveSessionId: (id) => { activeSessionId = id; },
-  });
-  const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
-  const connection: AcpConnection = {
-    async request(method, params) {
-      const restored = sessionRestore.handle(method, params);
-      if (restored !== undefined) return restored;
-      if (method === "session/prompt") {
-        const native = sessionRestore.nativeDirFor(activeSessionId);
-        await mkdir(native, { recursive: true });
-        // Native originals for exit-copy: chat_history + usage (ADR 0086 grok pair).
-        await writeFile(
-          join(native, "chat_history.jsonl"),
-          `${JSON.stringify({ t: 1, sessionId: activeSessionId })}\n`,
-          { flag: "a" },
-        );
-        await writeFile(join(native, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
-        await callMcpTool({
-          socketPath,
-          token: preparedToken,
-          name: REPORT_TICKET_TOOL_NAME,
-          args: { ticketNumber: TICKET },
-        });
-        if (input.submit !== undefined) {
-          advanceSeatHead(input.project);
+    let preparedToken = "";
+    let disposeCalls = 0;
+    let activeSessionId = SESSION_ID;
+    const sessionRestore = createGrokAcpSessionRestore({
+      home: input.home,
+      project: input.project,
+      setActiveSessionId: (id) => { activeSessionId = id; },
+    });
+    const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
+    const connection: AcpConnection = {
+      async request(method, params) {
+        const restored = sessionRestore.handle(method, params);
+        if (restored !== undefined) return restored;
+        if (method === "session/prompt") {
+          const native = sessionRestore.nativeDirFor(activeSessionId);
+          await mkdir(native, { recursive: true });
+          // Native originals for exit-copy: chat_history + usage (ADR 0086 grok pair).
+          await writeFile(
+            join(native, "chat_history.jsonl"),
+            `${JSON.stringify({ t: 1, sessionId: activeSessionId })}\n`,
+            { flag: "a" },
+          );
+          await writeFile(join(native, "usage.json"), `${JSON.stringify({ tokens: 1 })}\n`, "utf8");
           await callMcpTool({
             socketPath,
             token: preparedToken,
-            name: FIXER_OUTPUT_TOOL_NAME,
-            args: input.submit,
+            name: REPORT_TICKET_TOOL_NAME,
+            args: { ticketNumber: TICKET },
           });
+          if (input.submit !== undefined) {
+            advanceSeatHead(input.project);
+            await callMcpTool({
+              socketPath,
+              token: preparedToken,
+              name: FIXER_OUTPUT_TOOL_NAME,
+              args: input.submit,
+            });
+          }
+          return { stopReason: "end_turn" };
         }
-        return { stopReason: "end_turn" };
-      }
-      if (method === "session/close") return {};
-      return {};
-    },
-    notify() {},
-    async close() {
-      await input.onClose?.();
-    },
-  };
+        if (method === "session/close") return {};
+        return {};
+      },
+      notify() {},
+      async close() {
+        await input.onClose?.();
+      },
+    };
 
-  try {
     const host = createAcpRoleTurnHost({
       hostName: "grok-build",
       modelPassing: "argv",
@@ -246,9 +245,7 @@ async function runAcpMidTurnReportViaPublicEntry(input: {
       (args) => parsePublicSeatArgv("fixer", args),
     );
     return { disposeCalls, result };
-  } finally {
-    await rm(socketDir, { recursive: true, force: true });
-  }
+  });
 }
 
 test("#1171 headless true adapter via public entry: mid-turn report → exit-copy under ticket", async () => {
@@ -312,10 +309,9 @@ process.stdout.write(JSON.stringify({
       { encoding: "utf8", mode: 0o755 },
     );
 
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-1171-headless-"));
-    const socketPath = join(socketDir, "mcp.sock");
-    const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
-    try {
+    return withTempRoot(outsideWorktreeTempPrefix("ak-1171-headless-"), async (socketDir) => {
+      const socketPath = join(socketDir, "mcp.sock");
+      const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
       const host = createHeadlessRoleTurnHost({
         description: claudeDescription,
         hostName: "claude",
@@ -387,9 +383,7 @@ process.stdout.write(JSON.stringify({
         afterBytes.length > beforeBytes.length,
         "resume must grow the same host original, not mint a peer copy",
       );
-    } finally {
-      await rm(socketDir, { recursive: true, force: true });
-    }
+    });
   });
 });
 
@@ -435,50 +429,49 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
     );
 
     // #1199: post-relocate public resume reuses the same grok original and appends a row.
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-1171-acp-resume-"));
-    const socketPath = join(socketDir, "mcp.sock");
-    let preparedToken = "";
-    const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
-    const resumeInstruction = "continue on bound grok session after relocate";
-    let activeSessionId = SESSION_ID;
-    const sessionRestore = createGrokAcpSessionRestore({
-      home,
-      project,
-      setActiveSessionId: (id) => { activeSessionId = id; },
-    });
-    const connection: AcpConnection = {
-      async request(method, params) {
-        const restored = sessionRestore.handle(method, params);
-        if (restored !== undefined) return restored;
-        if (method === "session/prompt") {
-          const native = sessionRestore.nativeDirFor(activeSessionId);
-          await mkdir(native, { recursive: true });
-          await writeFile(
-            join(native, "chat_history.jsonl"),
-            `${JSON.stringify({ t: 2, resume: true })}\n`,
-            { flag: "a" },
-          );
-          await writeFile(join(native, "usage.json"), `${JSON.stringify({ tokens: 2 })}\n`, "utf8");
-          advanceSeatHead(project);
-          await callMcpTool({
-            socketPath,
-            token: preparedToken,
-            name: FIXER_OUTPUT_TOOL_NAME,
-            args: {
-              ...FIXER_DONE,
-              report: "grok-resume-ok",
-              summary: "grok resume progress summary text",
-            },
-          });
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      async close() {},
-    };
-    try {
+    return withTempRoot(outsideWorktreeTempPrefix("ak-1171-acp-resume-"), async (socketDir) => {
+      const socketPath = join(socketDir, "mcp.sock");
+      let preparedToken = "";
+      const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build");
+      const resumeInstruction = "continue on bound grok session after relocate";
+      let activeSessionId = SESSION_ID;
+      const sessionRestore = createGrokAcpSessionRestore({
+        home,
+        project,
+        setActiveSessionId: (id) => { activeSessionId = id; },
+      });
+      const connection: AcpConnection = {
+        async request(method, params) {
+          const restored = sessionRestore.handle(method, params);
+          if (restored !== undefined) return restored;
+          if (method === "session/prompt") {
+            const native = sessionRestore.nativeDirFor(activeSessionId);
+            await mkdir(native, { recursive: true });
+            await writeFile(
+              join(native, "chat_history.jsonl"),
+              `${JSON.stringify({ t: 2, resume: true })}\n`,
+              { flag: "a" },
+            );
+            await writeFile(join(native, "usage.json"), `${JSON.stringify({ tokens: 2 })}\n`, "utf8");
+            advanceSeatHead(project);
+            await callMcpTool({
+              socketPath,
+              token: preparedToken,
+              name: FIXER_OUTPUT_TOOL_NAME,
+              args: {
+                ...FIXER_DONE,
+                report: "grok-resume-ok",
+                summary: "grok resume progress summary text",
+              },
+            });
+            return { stopReason: "end_turn" };
+          }
+          if (method === "session/close") return {};
+          return {};
+        },
+        notify() {},
+        async close() {},
+      };
       const host = createAcpRoleTurnHost({
         hostName: "grok-build",
         modelPassing: "argv",
@@ -517,9 +510,7 @@ test("#1171 ACP true adapter via public entry: mid-turn report → exit-copy und
         afterChat.length > beforeChat.length,
         "grok resume must grow the same host original, not mint a peer copy",
       );
-    } finally {
-      await rm(socketDir, { recursive: true, force: true });
-    }
+    });
   });
 });
 
@@ -579,12 +570,11 @@ process.stdout.write(events.map((e) => JSON.stringify(e)).join("\\n") + "\\n");
       { encoding: "utf8", mode: 0o755 },
     );
 
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-1199-codex-headless-"));
-    const socketPath = join(socketDir, "mcp.sock");
-    const description = lookupHeadlessHostDescription("codex");
-    assert.ok(description);
-    const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "codex");
-    try {
+    return withTempRoot(outsideWorktreeTempPrefix("ak-1199-codex-headless-"), async (socketDir) => {
+      const socketPath = join(socketDir, "mcp.sock");
+      const description = lookupHeadlessHostDescription("codex");
+      assert.ok(description);
+      const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "codex");
       const host = createHeadlessRoleTurnHost({
         description,
         hostName: "codex",
@@ -657,9 +647,7 @@ process.stdout.write(events.map((e) => JSON.stringify(e)).join("\\n") + "\\n");
         afterBytes.length > beforeBytes.length,
         "codex resume must grow the same host original, not mint a peer copy",
       );
-    } finally {
-      await rm(socketDir, { recursive: true, force: true });
-    }
+    });
   });
 });
 

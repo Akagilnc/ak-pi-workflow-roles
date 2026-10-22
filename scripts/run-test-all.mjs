@@ -10,6 +10,7 @@ import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
 import { isolatedTestProcessEnv } from "../test/helpers/environment-fixtures.ts";
+import { importsNodeTest } from "./node-test-batch.ts";
 
 const TIERS = process.argv.length > 2
   ? process.argv.slice(2)
@@ -39,10 +40,8 @@ function discoverTestFiles(repoRoot) {
     for (const name of dirs) walk(join(dir, name));
     for (const name of files) {
       if (!name.endsWith(".test.ts")) continue;
-      const file = relative(repoRoot, join(dir, name)).split("\\").join("/");
-      // Migrated early with the production timer seam it exercises (#1247).
-      if (file === "test/integration/factory-board.test.ts") continue;
-      discovered.push(file);
+      if (!importsNodeTest(join(dir, name))) continue;
+      discovered.push(relative(repoRoot, join(dir, name)).split("\\").join("/"));
     }
   };
 

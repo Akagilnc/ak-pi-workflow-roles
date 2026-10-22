@@ -5,10 +5,9 @@
  * External face: tools/list tool-name presence; process.env must stay untouched.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createPiRoleRuntimeDependencies } from "../../extensions/role-runtime.ts";
@@ -25,6 +24,7 @@ import {
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -42,8 +42,7 @@ async function withEnvelopeHome<T>(
     request: (engine?: string) => RoleTurnRequest;
   }) => Promise<T>,
 ): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-818-envelope-engine-"));
-  try {
+  return withTempRoot(outsideWorktreeTempPrefix("ak-818-envelope-engine-"), async (home) => {
     const runDirectory = ledgerProbeRun(home, "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
@@ -63,9 +62,7 @@ async function withEnvelopeHome<T>(
       ...(engine === undefined ? {} : { engine }),
     });
     return await run({ home, runDirectory, socketPath, request });
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 async function packagedMaterials(paths: readonly string[]): Promise<string> {
@@ -280,76 +277,76 @@ test("shared envelope ignores ambient AK_ROLE_ENGINE when request has no engine"
 test("concurrent envelopes arm detour per request without process.env writes", async () => {
   const previous = process.env[AK_ROLE_ENGINE_ENV];
   delete process.env[AK_ROLE_ENGINE_ENV];
-  const home = await mkdtemp(join(tmpdir(), "ak-818-envelope-concurrent-"));
   try {
-    const mkRequest = async (
-      label: string,
-      engine?: string,
-    ): Promise<{ socketPath: string; request: RoleTurnRequest }> => {
-      const runDirectory = ledgerProbeRun(home, `${label}@judge`);
-      await mkdir(join(runDirectory, "session"), { recursive: true });
-      return {
-        socketPath: join(home, `${label}.sock`),
-        request: {
-          principal: fixturePrincipal(join(runDirectory, "session")),
-          activation: { role: "judge" },
-          methods: [],
-          continuation: { kind: "initial", prompt: `concurrent ${label}` },
-          cwd: packageRoot,
-          home,
-          agentDir: join(home, label, "agent"),
-          runDirectory,
-          stationChild: true,
-          ...(engine === undefined ? {} : { engine }),
-        },
+    await withTempRoot(outsideWorktreeTempPrefix("ak-818-envelope-concurrent-"), async (home) => {
+      const mkRequest = async (
+        label: string,
+        engine?: string,
+      ): Promise<{ socketPath: string; request: RoleTurnRequest }> => {
+        const runDirectory = ledgerProbeRun(home, `${label}@judge`);
+        await mkdir(join(runDirectory, "session"), { recursive: true });
+        return {
+          socketPath: join(home, `${label}.sock`),
+          request: {
+            principal: fixturePrincipal(join(runDirectory, "session")),
+            activation: { role: "judge" },
+            methods: [],
+            continuation: { kind: "initial", prompt: `concurrent ${label}` },
+            cwd: packageRoot,
+            home,
+            agentDir: join(home, label, "agent"),
+            runDirectory,
+            stationChild: true,
+            ...(engine === undefined ? {} : { engine }),
+          },
+        };
       };
-    };
-    const a = await mkRequest("a", "agy");
-    const b = await mkRequest("b", "cursor");
-    const free = await mkRequest("free");
-    const deps = createRoleRuntimeDependencies(packageRoot);
-    const [preparedA, preparedB, preparedFree] = await Promise.all([
-      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
- principalAuthority: piDurablePrincipalAuthority,
-      }),
-      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
- principalAuthority: piDurablePrincipalAuthority,
-      }),
-      prepareRoleEnvelope({ request: free.request, dependencies: deps, socketPath: free.socketPath,
- principalAuthority: piDurablePrincipalAuthority,
-      }),
-    ]);
-    try {
-      assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
-      const [namesA, namesB, namesFree] = await Promise.all([
-        listMcpToolNames(a.socketPath, mcpRelayToken(preparedA)),
-        listMcpToolNames(b.socketPath, mcpRelayToken(preparedB)),
-        listMcpToolNames(free.socketPath, mcpRelayToken(preparedFree)),
+      const a = await mkRequest("a", "agy");
+      const b = await mkRequest("b", "cursor");
+      const free = await mkRequest("free");
+      const deps = createRoleRuntimeDependencies(packageRoot);
+      const [preparedA, preparedB, preparedFree] = await Promise.all([
+        prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
+   principalAuthority: piDurablePrincipalAuthority,
+        }),
+        prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
+   principalAuthority: piDurablePrincipalAuthority,
+        }),
+        prepareRoleEnvelope({ request: free.request, dependencies: deps, socketPath: free.socketPath,
+   principalAuthority: piDurablePrincipalAuthority,
+        }),
       ]);
-      assert.equal(
-        namesA.includes(ENGINE_DETOUR_TOOL_NAME),
-        true,
-        `host A expected detour; tools=${JSON.stringify(namesA)}`,
-      );
-      assert.equal(
-        namesB.includes(ENGINE_DETOUR_TOOL_NAME),
-        true,
-        `host B expected detour; tools=${JSON.stringify(namesB)}`,
-      );
-      assert.equal(
-        namesFree.includes(ENGINE_DETOUR_TOOL_NAME),
-        false,
-        `engine-free host must not arm detour; tools=${JSON.stringify(namesFree)}`,
-      );
-    } finally {
-      await Promise.all([
-        preparedA.dispose?.(),
-        preparedB.dispose?.(),
-        preparedFree.dispose?.(),
-      ]);
-    }
+      try {
+        assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
+        const [namesA, namesB, namesFree] = await Promise.all([
+          listMcpToolNames(a.socketPath, mcpRelayToken(preparedA)),
+          listMcpToolNames(b.socketPath, mcpRelayToken(preparedB)),
+          listMcpToolNames(free.socketPath, mcpRelayToken(preparedFree)),
+        ]);
+        assert.equal(
+          namesA.includes(ENGINE_DETOUR_TOOL_NAME),
+          true,
+          `host A expected detour; tools=${JSON.stringify(namesA)}`,
+        );
+        assert.equal(
+          namesB.includes(ENGINE_DETOUR_TOOL_NAME),
+          true,
+          `host B expected detour; tools=${JSON.stringify(namesB)}`,
+        );
+        assert.equal(
+          namesFree.includes(ENGINE_DETOUR_TOOL_NAME),
+          false,
+          `engine-free host must not arm detour; tools=${JSON.stringify(namesFree)}`,
+        );
+      } finally {
+        await Promise.all([
+          preparedA.dispose?.(),
+          preparedB.dispose?.(),
+          preparedFree.dispose?.(),
+        ]);
+      }
+    });
   } finally {
-    await rm(home, { recursive: true, force: true });
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
     else process.env[AK_ROLE_ENGINE_ENV] = previous;
   }
@@ -377,62 +374,62 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
   const previousCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   delete process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_COURT_ATTEMPT;
-  const home = await mkdtemp(join(tmpdir(), "ak-1092-envelope-no-dossier-"));
   try {
-    const mkRun = async (label: string, courtAttemptId: string) => {
-      const runDirectory = ledgerProbeRun(home, `${label}@judge`);
-      // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).
-      const freezeDir = join(runDirectory, "attachments", "case-dossier");
-      await mkdir(freezeDir, { recursive: true });
-      await mkdir(join(runDirectory, "session"), { recursive: true });
-      await writeFile(join(freezeDir, "00-case-dossier-pointer.md"), `stale-${label}\n`, "utf8");
-      return {
-        socketPath: join(home, `${label}.sock`),
-        request: {
-          principal: fixturePrincipal(join(runDirectory, "session")),
-          activation: { role: "judge" as const },
-          methods: [],
-          continuation: { kind: "initial" as const, prompt: `peer-${label}` },
-          cwd: packageRoot,
-          home,
-          agentDir: join(home, label, "agent"),
-          runDirectory,
-          courtAttemptId,
-        },
+    await withTempRoot(outsideWorktreeTempPrefix("ak-1092-envelope-no-dossier-"), async (home) => {
+      const mkRun = async (label: string, courtAttemptId: string) => {
+        const runDirectory = ledgerProbeRun(home, `${label}@judge`);
+        // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).
+        const freezeDir = join(runDirectory, "attachments", "case-dossier");
+        await mkdir(freezeDir, { recursive: true });
+        await mkdir(join(runDirectory, "session"), { recursive: true });
+        await writeFile(join(freezeDir, "00-case-dossier-pointer.md"), `stale-${label}\n`, "utf8");
+        return {
+          socketPath: join(home, `${label}.sock`),
+          request: {
+            principal: fixturePrincipal(join(runDirectory, "session")),
+            activation: { role: "judge" as const },
+            methods: [],
+            continuation: { kind: "initial" as const, prompt: `peer-${label}` },
+            cwd: packageRoot,
+            home,
+            agentDir: join(home, label, "agent"),
+            runDirectory,
+            courtAttemptId,
+          },
+        };
       };
-    };
-    const a = await mkRun("a", "court-a");
-    const b = await mkRun("b", "court-b");
-    const deps = createRoleRuntimeDependencies(packageRoot);
-    const [preparedA, preparedB] = await Promise.all([
-      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
- principalAuthority: piDurablePrincipalAuthority,
-      }),
-      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
- principalAuthority: piDurablePrincipalAuthority,
-      }),
-    ]);
-    try {
+      const a = await mkRun("a", "court-a");
+      const b = await mkRun("b", "court-b");
+      const deps = createRoleRuntimeDependencies(packageRoot);
+      const [preparedA, preparedB] = await Promise.all([
+        prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath,
+   principalAuthority: piDurablePrincipalAuthority,
+        }),
+        prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath,
+   principalAuthority: piDurablePrincipalAuthority,
+        }),
+      ]);
+      try {
+        assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
+        assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
+        const dossierCount = (prepared: typeof preparedA) =>
+          prepared.systemPrompt.materials.filter(
+            (material) =>
+              typeof material === "object"
+              && material !== null
+              && (material as { kind?: unknown }).kind === "case-dossier-pointer",
+          ).length;
+        assert.equal(dossierCount(preparedA), 0);
+        assert.equal(dossierCount(preparedB), 0);
+        assert.equal(preparedA.prompt, "peer-a");
+        assert.equal(preparedB.prompt, "peer-b");
+      } finally {
+        await Promise.all([preparedA.dispose?.(), preparedB.dispose?.()]);
+      }
       assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
       assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
-      const dossierCount = (prepared: typeof preparedA) =>
-        prepared.systemPrompt.materials.filter(
-          (material) =>
-            typeof material === "object"
-            && material !== null
-            && (material as { kind?: unknown }).kind === "case-dossier-pointer",
-        ).length;
-      assert.equal(dossierCount(preparedA), 0);
-      assert.equal(dossierCount(preparedB), 0);
-      assert.equal(preparedA.prompt, "peer-a");
-      assert.equal(preparedB.prompt, "peer-b");
-    } finally {
-      await Promise.all([preparedA.dispose?.(), preparedB.dispose?.()]);
-    }
-    assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
-    assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
+    });
   } finally {
-    await rm(home, { recursive: true, force: true });
     if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRun;
     if (previousCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
