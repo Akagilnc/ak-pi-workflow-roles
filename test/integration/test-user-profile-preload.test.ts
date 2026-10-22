@@ -5,11 +5,11 @@ import { mkdir } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { afterAll, test as base } from "vitest";
 import {
   testExeca as execa,
   environmentFixtures,
   isolatedTestProcessEnv,
-  withTempHome,
   withTestUserProfileEnv,
 } from "../helpers/environment-fixtures.ts";
 import {
@@ -119,24 +119,11 @@ function verifyCleanup() {
   for (const home of homes) assert.equal(existsSync(home), false);
 }
 
-// Expand phase: the same scenarios run on both native runners; no runner adapter.
-if (process.env.VITEST) {
-  const { test: base, afterAll } = await import("vitest");
-  const test = base.extend(environmentFixtures);
-  for (const scenario of scenarios) {
-    test(scenario.name, async ({ home }) => {
-      homes.push(home);
-      await scenario.run(home);
-    });
-  }
-  afterAll(verifyCleanup);
-} else {
-  const { test, after } = await import("node:test");
-  for (const scenario of scenarios) {
-    test(scenario.name, () => withTempHome(async (home) => {
-      homes.push(home);
-      await scenario.run(home);
-    }));
-  }
-  after(verifyCleanup);
+const test = base.extend(environmentFixtures);
+for (const scenario of scenarios) {
+  test(scenario.name, async ({ home }) => {
+    homes.push(home);
+    await scenario.run(home);
+  });
 }
+afterAll(verifyCleanup);
