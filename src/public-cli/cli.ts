@@ -70,7 +70,6 @@ import {
   createTypedOptionConsumer,
   optionsForOwner,
   projectCommandHelp,
-  projectOwnerOptions,
   PUBLIC_NAVIGATOR_HELP_NOTE,
   PUBLIC_ROLE_OPTION_OWNERS,
   renderHumanOwnerOptionLines,
@@ -604,32 +603,9 @@ function loadAndValidateConfig(
 /** Typed facts used by help presentation — not layout. */
 export function helpDocument() {
   return {
-    executable: "ak-role",
     capabilities: listHelpCapabilities(),
     internalEntrypoint: INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
-    /** #342 structured global options from the sole option table. */
-    globalOptions: projectOwnerOptions("global"),
   };
-}
-
-/** Structured help facts for one public command/role (#342). */
-export function helpDocumentForCommand(command: string) {
-  if (command === "global") {
-    return {
-      command: "global" as const,
-      kind: "global" as const,
-      options: projectOwnerOptions("global"),
-    };
-  }
-  if (command in PUBLIC_ROLE_ARGV) {
-    const owner = command as keyof typeof PUBLIC_ROLE_ARGV;
-    return {
-      command: owner,
-      kind: owner === "analyst" ? ("deterministic" as const) : ("role" as const),
-      options: projectOwnerOptions(owner),
-    };
-  }
-  return undefined;
 }
 
 /** Append USAGE + EXAMPLES blocks from the sole public help-copy owner. */

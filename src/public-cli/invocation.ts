@@ -2055,23 +2055,6 @@ export async function materializeCountersignInvocation(
   );
 }
 
-export type AdmitFixerInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  phase: FixerPhase;
-  instruction: string;
-  attachmentPaths: readonly string[];
-  /** Optional caller --prerequisites path as-is (#1168). */
-  prerequisitesPath?: string;
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
-  model?: InvocationEffectiveModel;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
-
 function parsePositivePrOption(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
   try { return parseCollectorPrNumber(raw); } catch (error) { throw new CliUsageError(errorText(error), { cause: error }); }

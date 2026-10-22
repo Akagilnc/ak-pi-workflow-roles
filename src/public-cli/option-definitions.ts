@@ -1042,7 +1042,7 @@ export function createTypedOptionConsumer(
   };
 }
 
-/** Structured option projection used by help and acceptance tests. */
+/** Structured option projection used by help. */
 export type StructuredOptionProjection = {
   readonly id: string;
   readonly owner: OptionOwner;
@@ -1089,15 +1089,6 @@ export function projectOwnerOptions(
     ...(def.selectsMode === undefined ? {} : { selectsMode: def.selectsMode }),
     description: def.description,
   }));
-}
-
-/** All rejected spelling tokens flattened (for leakage scans). */
-export function allRejectedSpellingTokens(): readonly string[] {
-  const out: string[] = [];
-  for (const entry of REJECTED_PUBLIC_SPELLINGS) {
-    out.push(...entry.spellings);
-  }
-  return out;
 }
 
 /**

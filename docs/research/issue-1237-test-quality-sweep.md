@@ -1,6 +1,6 @@
 # #1237 存量测试质量清理交卷
 
-基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
+基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
 ## 方法与边界
 
@@ -178,7 +178,7 @@
 
 - 入口：左拾遗改由真实 envelope 执行提交，替换直接 sealed fixture；option 失败输入并回已有 runAkRole 表；tarball 指向的 bin 被真正执行。
 - 断言：移除材料清单、生成文案、同 renderer 重算和覆盖率计数；补回选择、盲审不变性、原字节与随机 Soul 输入穿透。J1 用公开查询结果互证，不用内部常量 oracle；提示词/建议具体语义没有换成快照或模板。
-- 退役：左拾遗、Countersign validator、Notary project/retain、Gatekeeper project、anti-forge、listEngineMaterialNames、parsePositiveTicketNumber、canonical JSON 及其调用残留已移除；同时删除 true-home、query builder、retired dossier、本地 Fixer admission 等孤儿测试 helper。基线已无调用且本票未作废的 validateRecorded* 不扩大删除。未修改 Soul、质量法、真配置或安装。
+- 退役：左拾遗、Countersign validator、Notary project/retain、Gatekeeper project、anti-forge、listEngineMaterialNames、parsePositiveTicketNumber、canonical JSON 及其调用残留已移除；第六轮再退役测试删除后只剩定义的 help 投影、拒收拼写汇总、建议字数常量、五个 schema 别名与 Fixer admission 选项类型（见「第六轮」）；同时删除 true-home、query builder、retired dossier、本地 Fixer admission 等孤儿测试 helper。基线已无调用且本票未作废的 validateRecorded* 不扩大删除。未修改 Soul、质量法、真配置或安装。
 - TDD/引入回归证据：已有左拾遗真入口案绿；临时把旧 validator 接回实际 `ingestStructuredOutput`，同一案在 bounce 输入红（exitCode 实得 1、期望 0；tests 1/pass 0/fail 1）；恢复后绿。第一次误把变异接在同样未被该链调用的 `validateAcceptedDetails`，案仍绿，已撤回，**不作为证明**。没有为变异另建永久证明测试。
 - B2 另做变异：临时跳过 `clipToolsToFrame`，同一 `runAnalyst` 源 session 案报红（toolBucket 30s ≠ 10s）；恢复后绿。没有把源数据绕过 reader 拼给 kernel，也没有另加测试函数。
 - 左拾遗变异是旧拒收逻辑的可达性实验，不声称回退了完整历史版本，也不声称执行过真实 LLM。
@@ -273,3 +273,20 @@ R4-B 模型配置重复结论：逐案对照（输入、生产调用链、断言
 恢复后 24/24 绿，`git status --short src` 为空；`tsc --noEmit` exit0。
 
 台院 I5-1 删 `bareRoles` 块后：config/cli/coder/startup-material 26/26 绿；`fallbackThinking ?? "low"` 与「parseModelSpec 拒裸模型」两种变异的失败集都还是 CLI config、Coder bare、Coder 未知 model 3 案，没有缩小。
+
+### 第六轮（大理寺 receipts/5.json R5-A）
+
+R5-A 测试删除后专用生产旧物未退役。判据：符号的基线消费者在本票删除或改写的测试里，且该消费者删除后当前全仓（src/test/scripts/extensions）只剩定义。基线就没有消费者的（如 `engineMaterialRelativeDirectory`、`projectLawfulAuditorOutput`、`CountersignVerdictParameters` 等 36 个）不属本类，不删。
+
+| 退役项 | 基线消费者（已删） |
+| --- | --- |
+| `helpDocumentForCommand`（`src/public-cli/cli.ts`） | `test/unit/public-cli-option-definitions.test.ts` |
+| `helpDocument()` 的 `executable`、`globalOptions` 字段及 cli.ts 的 `projectOwnerOptions` 导入 | `test/integration/public-cli-cli.test.ts` help 案、`test/unit/public-cli-option-definitions.test.ts:83` |
+| `allRejectedSpellingTokens`（`src/public-cli/option-definitions.ts`） | `test/unit/public-cli-option-definitions.test.ts` |
+| `NAVIGATOR_ADVICE_MAX_CHARS`（`src/navigator-route-table.ts`） | `test/unit/navigator-route-table.test.ts` |
+| `countersignVerdictSchema`、`judgeVerdictSchema`、`notaryOutputSchema`、`auditorOutputSchema`、`inspectorOutputSchema` 五个 schema 别名及随之失效的导入 | `test/contract/countersign-role.test.ts` schema identity 案 |
+| `AdmitFixerInvocationOptions`（`src/public-cli/invocation.ts`） | `test/integration/public-cli-fixer.test.ts` 本地 admission helper（第二版已删） |
+
+保留边界：`helpDocument()` 的 `capabilities`（`renderHelp` 在读）和 `internalEntrypoint`（基线即无读者，不属本类）；`projectOwnerOptions`/`StructuredOptionProjection` 仍由 `renderHumanOwnerOptionLines` 消费；`InspectorOutputParameters` 基线即无消费者，不属本类，改为直接取 `inspectorSubmissionSchema` 的类型，不再经别名；`NAVIGATOR_ROUTE_TABLE`、`GATE_OFFICER_SEATS` 等只在本文件内还有生产读者的导出不删。真实 schema 声明仍由 `src/role-submission-declarations.ts` 直接取共享 schema。
+
+复扫：同一扫描对当前树再跑，基线有测试消费者而当前只剩定义的导出为 0；`tsc --noEmit --noUnusedLocals --noUnusedParameters` 与基线相比没有新增未用项。`tsc --noEmit` exit0；import 了上述模块的 56 个测试文件加 engine-startup-material、navigator-lookup、notary、failure-artifacts、pi-adapter-agent-start、config、coder 共 392/392 绿。`ak-role --help`、`coder --help`、`analyst --help` 输出与 HEAD 逐字节相同。本轮没有新增测试或生产函数。

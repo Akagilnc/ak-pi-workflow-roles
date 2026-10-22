@@ -1,4 +1,3 @@
-import { reviewSubmissionSchema } from "./review-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { CountersignVerdict } from "./countersign-contracts.ts";
 
@@ -9,8 +8,6 @@ export type { CountersignVerdict };
 // no code branches on their length or nested presence. `status` alone is the
 // machine discriminator the queue reads.
 // #1055: the three-state field is an enum+required host generation constraint.
-/** 给事中票庭审读五问的交卷形状（ADR 0074）；形状指引，非 schema 闸。 */
-export const countersignVerdictSchema = reviewSubmissionSchema;
 export type CountersignVerdictParameters = import("./review-submission.ts").ReviewSubmission;
 
 export type CountersignRuntimeDependencies = {
