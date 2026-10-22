@@ -105,14 +105,16 @@ test("review officers expose one shared output tool; court seats share clauses s
   assert.equal(
     Value.Check(inspectorSubmissionSchema, {
       status: "converged",
-      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: [] }],
+      suspect: "ming/a.py:1 两处读法不同，留着",
+      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: [], checked: "比对了 ming/a.py:1 与 ming/b.py:2，谓词不同" }],
     }),
     true,
   );
   assert.equal(
     Value.Check(inspectorSubmissionSchema, {
       status: "continue",
-      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: null }],
+      suspect: "ming/a.py:1",
+      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: null, checked: "" }],
     }),
     false,
   );
