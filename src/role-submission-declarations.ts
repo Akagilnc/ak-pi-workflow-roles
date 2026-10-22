@@ -5,12 +5,11 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { notaryReviewSubmissionSchema, inspectorSubmissionSchema, gatekeeperSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
 import { fixerOutputSchema } from "./package-contracts/fixer-output.ts";
-import { gatekeeperOutputSchema } from "./package-contracts/gatekeeper-output.ts";
 import { gleanerLeftOutputSchema } from "./gleaner-left-contracts.ts";
 import { mergerOutputSchema } from "./merger-contracts.ts";
 import { navigatorOutputSchema } from "./package-contracts/navigator-output.ts";
@@ -102,10 +101,10 @@ const SUBMISSION_FACE = {
     parameters: inspectorSubmissionSchema,
   },
   gatekeeper: {
-    label: "门下省决议",
-    description: "门下省终局决议。status 为 dispatch 或 pass。",
-    promptSnippet: "门下省决议",
-    parameters: gatekeeperOutputSchema,
+    label: "门下省覆验",
+    description: "提交门下省覆验实录与 converged/continue/escalate 判词；只劾不判。",
+    promptSnippet: "提交门下省覆验实录与判词",
+    parameters: gatekeeperSubmissionSchema,
   },
   navigator: {
     label: "游奕使建议",

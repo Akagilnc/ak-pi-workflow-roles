@@ -105,8 +105,8 @@ ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path
 # 台院
 ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
 
-# 门下省
-ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
+# 门下省 — 覆验：只给票号与交付工作树（或 PR）指针；默认真跑，派单可另定环境
+ak-role gatekeeper --model <provider/model[:thinking]> --project /path/to/worktree "覆验 #1243，交付工作树 /path/to/worktree"
 
 # 游奕使
 ak-role navigator            # 整张路线表（不调模型）
@@ -143,7 +143,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | **御史台** | reviewer | 职掌见 [Soul](souls/reviewer.md)；调用面见 `ak-role help reviewer`。 |
 | **大理寺** | judge | 职掌见 [Soul](souls/judge.md)。 |
 | **审刑院** | auditor（调用面见 `ak-role help auditor`） | 依受审对象读取 [大理寺审计 Soul](souls/judge-auditor.md)／[太医署审计 Soul](souls/doctor-auditor.md)。 |
-| **门下省** | gatekeeper | 职掌见 [Soul](souls/gatekeeper.md)；独立调用见 `ak-role help gatekeeper`，交卷闸关系见 [ADR 0079](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
+| **门下省** | gatekeeper | 覆验交付：替用户到真实入口用一遍，交实录与三态判词，只劾不判。职掌见 [Soul](souls/gatekeeper.md)，独立调用见 `ak-role help gatekeeper`。 |
 | **中书省** | secretariat | 职掌见 [Soul](souls/secretariat.md)；调用面见 `ak-role help secretariat`。 |
 | **给事中** | countersign | 职掌见 [Soul](souls/countersign.md)；调用面见 `ak-role help countersign`。 |
 | **左拾遗** | gleaner-left | 职掌见 [Soul](souls/gleaner-left.md)；调用面见 `ak-role help gleaner-left`。 |

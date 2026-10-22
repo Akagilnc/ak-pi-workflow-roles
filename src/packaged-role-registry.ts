@@ -23,6 +23,7 @@ export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
   ["ak_countersign_output", "countersign"],
   ["ak_inspector_output", "inspector"],
   ["ak_auditor_output", "auditor"],
+  ["ak_gatekeeper_output", "gatekeeper"],
 ]);
 
 /** Success-terminal facts that still differ by seat. */
@@ -38,7 +39,6 @@ export const NOTARY_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/ticket-law.md",
   "souls/quality-law.md",
-  "souls/gate-output-guide.md",
   "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
 ] as const;
 
@@ -48,7 +48,6 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/inspector.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
-  "souls/gate-output-guide.md",
   "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
 ] as const;
 
@@ -407,9 +406,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,
   },
-  // #639: gatekeeper and navigator are roles like any other — public ak-role
-  // entries; automatic attendance (province dispatch, navigator sidecar) is
-  // unchanged and orthogonal to callability.
+  // Gatekeeper trial-use is independently callable; the caller owns orchestration.
   {
     role: "gatekeeper",
     inCallAutoResume: false,
@@ -424,7 +421,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
-    sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
+    sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md"],
   },
   {
     role: "navigator",

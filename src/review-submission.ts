@@ -123,4 +123,18 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
   ),
 );
 
+/** Gatekeeper generation guidance; row shape remains open pending frozen replay (#1243). */
+export const gatekeeperSubmissionSchema = withTerminatingOutputDeclarations(
+  Type.Object(
+    {
+      status: reviewStatusField,
+      ...reviewNarrativeFields,
+      trialRecord: Type.Unknown({
+        description: "覆验实录表：放行、封驳均交；如实记录真跑经过、观察、证据与花费，未跑成的写明原因。",
+      }),
+    },
+    { additionalProperties: true },
+  ),
+);
+
 export type ReviewSubmission = { readonly status?: unknown; readonly [key: string]: unknown };

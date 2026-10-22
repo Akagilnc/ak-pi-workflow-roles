@@ -85,7 +85,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
       boundTicketNumber: 1171,
     }),
     originalInstruction: "original admitted gatekeeper instruction",
-    sealedDetails: () => ({ status: "pass", findings: [] }),
+    sealedDetails: () => ({ status: "converged", findings: [] }),
   },
   {
     role: "collector",

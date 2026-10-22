@@ -19,7 +19,6 @@ import {
 import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
@@ -54,7 +53,6 @@ export {
   validateRecordedCountersignOutput,
   validateRecordedGleanerLeftOutput,
   validateRecordedInspectorOutput,
-  validateRecordedGatekeeperOutput,
   validateRecordedNavigatorOutput,
   validateRecordedAuditorOutput,
   validateRecordedDiaristOutput,
@@ -71,7 +69,6 @@ export type {
   CountersignVerdict,
   GleanerLeftOutput,
   InspectorOutput,
-  GatekeeperDirectOutput,
   NavigatorAdvice,
   AuditorOutput,
   DiaristOutput,
@@ -96,7 +93,6 @@ export type AcceptedDetails =
   | CountersignVerdict
   | GleanerLeftOutput
   | InspectorOutput
-  | GatekeeperDirectOutput
   | NavigatorAdvice
   | AuditorOutput
   | DiaristOutput

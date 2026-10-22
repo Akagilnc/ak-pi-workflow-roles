@@ -439,7 +439,7 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
         systemPrompt: { body: "system", materials: [] },
         prompt: "probe",
         jsonSchema: { type: "object" },
-        terminatingToolName: "ak_gatekeeper_output",
+        terminatingToolName: "ak_submission_output",
         async ingestStructuredOutput() {},
         async closeRound() { return { accepted: true as const }; },
       }),

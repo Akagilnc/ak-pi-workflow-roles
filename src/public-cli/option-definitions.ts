@@ -1232,10 +1232,11 @@ const ROLE_COMMAND_HELP = {
   },
   gatekeeper: {
     command: "gatekeeper",
-    summary: "Direct Gatekeeper (门下省) review: dispatch an officer or pass.",
+    summary: "Gatekeeper (门下省) 覆验: try the delivery through real user entrypoints; return a trial record and converged/continue/escalate. Supply only a ticket and worktree or PR pointer; live execution is the default, and the instruction may override the environment.",
     usage: ["ak-role gatekeeper [options] [instruction]"],
     examples: [
-      'ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"',
+      'ak-role gatekeeper --project /path/to/worktree "覆验 #1243，交付工作树 /path/to/worktree"',
+      'ak-role gatekeeper --project /path/to/worktree "覆验 #1243，PR https://github.com/owner/repo/pull/42；本次在调用者提供的隔离环境中跑"',
     ],
   },
   navigator: {

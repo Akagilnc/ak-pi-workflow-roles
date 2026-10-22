@@ -9,6 +9,7 @@ import {
 import { countersignVerdictSchema } from "../../src/countersign-role.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { inspectorOutputSchema } from "../../src/inspector-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/gatekeeper-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { judgeVerdictSchema } from "../../src/judge-role.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME, auditorOutputSchema } from "../../src/package-contracts/auditor-output.ts";
@@ -18,6 +19,7 @@ import {
   REVIEW_SUBMISSION_OUTPUT_TOOL_NAME,
   notaryReviewSubmissionSchema,
   inspectorSubmissionSchema,
+  gatekeeperSubmissionSchema,
   reviewSubmissionSchema,
 } from "../../src/review-submission.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
@@ -64,8 +66,8 @@ test("validateRecordedCountersignOutput recognizes 署/封驳/上呈 read-only �
 
 test("review officers share the output tool; only notary requires clauses", () => {
   assert.deepEqual(
-    [COUNTERSIGN_OUTPUT_TOOL_NAME, JUDGE_OUTPUT_TOOL_NAME, NOTARY_OUTPUT_TOOL_NAME, AUDITOR_OUTPUT_TOOL_NAME, INSPECTOR_OUTPUT_TOOL_NAME],
-    [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
+    [COUNTERSIGN_OUTPUT_TOOL_NAME, JUDGE_OUTPUT_TOOL_NAME, NOTARY_OUTPUT_TOOL_NAME, AUDITOR_OUTPUT_TOOL_NAME, INSPECTOR_OUTPUT_TOOL_NAME, GATEKEEPER_OUTPUT_TOOL_NAME],
+    Array(6).fill(REVIEW_SUBMISSION_OUTPUT_TOOL_NAME),
   );
   assert.equal(countersignVerdictSchema, reviewSubmissionSchema);
   assert.equal(notaryOutputSchema, notaryReviewSubmissionSchema);
@@ -75,8 +77,10 @@ test("review officers share the output tool; only notary requires clauses", () =
   assert.equal(roleSubmissionDeclaration("countersign").parameters, reviewSubmissionSchema);
   assert.equal(Object.hasOwn(countersignVerdictSchema.properties, "clauses"), false);
   assert.equal(roleSubmissionDeclaration("notary").parameters, notaryReviewSubmissionSchema);
+  assert.equal(roleSubmissionDeclaration("gatekeeper").parameters, gatekeeperSubmissionSchema);
   for (const word of REVIEW_QUEUE_WORDS) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
+    assert.equal(Value.Check(gatekeeperSubmissionSchema, { status: word, trialRecord: [] }), true, word);
     assert.equal(
       Value.Check(notaryReviewSubmissionSchema, {
         status: word,
@@ -86,6 +90,8 @@ test("review officers share the output tool; only notary requires clauses", () =
       word,
     );
   }
+  assert.equal(Value.Check(gatekeeperSubmissionSchema, { status: "dispatch", trialRecord: [] }), false);
+  assert.equal(Value.Check(gatekeeperSubmissionSchema, { status: "converged" }), false);
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
   assert.equal(Value.Check(reviewSubmissionSchema, {}), false);
   // Only the notary generation declaration requires clauses.

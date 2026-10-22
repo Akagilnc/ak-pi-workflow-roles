@@ -87,8 +87,13 @@ test("no argument: whole table, recorded as a lookup with no host session", asyn
 });
 
 test("--role: only that seat's status rows", async () => {
-  const { result } = await callNavigator(["--role", "coder"]);
-  assert.deepEqual(onlyPayload(result), { byStatus: NAVIGATOR_ROUTE_TABLE.coder });
+  for (const [role, statuses] of [
+    ["coder", ["completed", "partially_completed", "refused", "unfinished"]],
+    ["gatekeeper", ["converged", "continue", "escalate"]],
+  ] as const) {
+    const { result } = await callNavigator(["--role", role]);
+    assert.deepEqual(Object.keys(onlyPayload(result).byStatus as object), statuses);
+  }
 });
 
 test("--role of a seat with no rows: empty rows, not an invented line", async () => {

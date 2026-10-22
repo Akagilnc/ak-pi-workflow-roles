@@ -153,6 +153,9 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   inspector: {
     statuses: REVIEW_QUEUE_STATUSES,
   },
+  gatekeeper: {
+    statuses: REVIEW_QUEUE_STATUSES,
+  },
   coder: {
     statuses: WORKER_ROUTING_STATUSES,
     reask: WORKER_STATUS_REASK,

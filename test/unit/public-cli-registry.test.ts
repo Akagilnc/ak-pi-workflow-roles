@@ -282,7 +282,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     provinceConfig: true,
     phases: [null],
-    outputTool: "ak_gatekeeper_output",
+    outputTool: "ak_submission_output",
     settlement: "accepted",
     activationStage: "load-and-install",
   },

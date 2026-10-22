@@ -7,7 +7,6 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";

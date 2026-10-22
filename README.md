@@ -114,8 +114,9 @@ ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path
 # inspector
 ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
 
-# gatekeeper
-ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
+# gatekeeper — trial-use (覆验) at real user entrypoints; ticket + delivery pointer only
+# Live execution by default; override the environment in the instruction if needed.
+ak-role gatekeeper --model <provider/model[:thinking]> --project /path/to/worktree "覆验 #1243，交付工作树 /path/to/worktree"
 
 # navigator — status → next-station table lookup (no model); the whole table, or one seat's rows
 ak-role navigator

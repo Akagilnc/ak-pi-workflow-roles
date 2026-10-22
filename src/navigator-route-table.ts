@@ -12,7 +12,6 @@
 import type { DiaristOutput } from "./diarist-contracts.ts";
 import type { MergerOutput } from "./merger-contracts.ts";
 import type { PackagedRole } from "./packaged-role-registry.ts";
-import type { GatekeeperDirectOutput } from "./package-contracts/gatekeeper-output.ts";
 import type { ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 import type { CoderOutput } from "./package-contracts/worker-output.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
@@ -46,7 +45,7 @@ type RoleRows = {
   readonly merger: Rows<MergerOutput["status"]>;
   readonly secretariat: NavigatorRouteRows;
   readonly reviewer: Rows<ReviewerIntent["status"]>;
-  readonly gatekeeper: Rows<GatekeeperDirectOutput["status"]>;
+  readonly gatekeeper: Rows<ReviewQueueWord>;
 };
 
 export type NavigatorRouteTable = Readonly<Partial<Record<PackagedRole, NavigatorRouteRows>>>;
@@ -74,7 +73,7 @@ const ROUTE_ROWS = {
     continue: DISPOSE_BY_VERDICT,
     escalate: ESCALATE_TO_OWNER,
   },
-  gatekeeper: { dispatch: "召所点名的官员", pass: "放行，进下一站" },
+  gatekeeper: { converged: "按流程进下一站", continue: SETTLED_TO_JUDGE, escalate: ESCALATE_TO_OWNER },
   merger: { completed: "调用者收尾、关票", escalate: ESCALATE_TO_OWNER },
   diarist: { completed: "继续后续衙门", escalate: ESCALATE_TO_OWNER },
 } as const satisfies RoleRows;

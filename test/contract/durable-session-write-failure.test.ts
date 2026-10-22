@@ -133,7 +133,7 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
     });
     try {
       await poisonSessionFileWrite(sessionFile);
-      await prepared.ingestStructuredOutput({ status: "pass", findings: [] });
+      await prepared.ingestStructuredOutput({ status: "converged", findings: [] });
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
       await prepared.dispose?.();

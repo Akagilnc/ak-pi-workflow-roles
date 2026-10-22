@@ -1,26 +1,13 @@
-import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
-/**
- * #639 public instruction-seat entry — Gatekeeper via real runAkRole (the navigator is a lookup, #1192).
- *
- * Both stop being automatic-only configurable seats: each accepts an invocation
- * request (opaque instruction + attachments) and delivers a typed terminal from
- * its own terminating receipt, same law as other roles. Automatic attendance is
- * untouched and not asserted here.
- *
- * One shared harness, table-driven per role; role-specific typed receipt oracles
- * stay on each row. Oracles: typed TerminalResult / roleOutcome fields only;
- * activation role on the dispatch seam. No help prose or TSV layout assertions
- * (锚定宪法).
- */
+/** #1243: public Gatekeeper receipts use the shared review queue and reask seam. */
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../../src/review-submission.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -29,63 +16,18 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-type InstructionSeatCase = {
-  readonly role: "gatekeeper";
-  readonly runId: string;
-  readonly instruction: string;
-  readonly toolName: string;
-  readonly details: unknown;
-  readonly expectedStatus: string;
-  readonly assertDecisiveFacts: (facts: unknown) => void;
-};
-
-const CASES: readonly InstructionSeatCase[] = [
-  {
-    role: "gatekeeper",
-    runId: "01a0gate00-0000-7000-8000-000000000639",
-    instruction: "审：这批材料该谁审？",
-    toolName: GATEKEEPER_OUTPUT_TOOL,
-    details: {
-      status: "pass",
-      findings: ["only province-level concern"],
-    },
-    expectedStatus: "pass",
-    assertDecisiveFacts: (facts) => {
-      assert.equal(
-        facts !== null && typeof facts === "object" && "status" in facts
-          ? (facts as { status: unknown }).status
-          : undefined,
-        "pass",
-      );
-    },
-  },
-  {
-    role: "gatekeeper",
-    runId: "01a0gate00-0000-7000-8000-00000000063a",
-    instruction: "审：将作监完成侧交卷该派谁？",
-    toolName: GATEKEEPER_OUTPUT_TOOL,
-    details: {
-      status: "dispatch",
-      officer: "inspector",
-      reason: "worker completion → inspector",
-      findings: [],
-    },
-    expectedStatus: "dispatch",
-    assertDecisiveFacts: (facts) => {
-      assert.equal(
-        facts !== null && typeof facts === "object" && "status" in facts
-          ? (facts as { status: unknown }).status
-          : undefined,
-        "dispatch",
-      );
-      assert.equal(
-        facts !== null && typeof facts === "object" && "officer" in facts
-          ? (facts as { officer: unknown }).officer
-          : undefined,
-        "inspector",
-      );
-    },
-  },
+const trialRecord = [{ exitCode: 0, cost: { usd: 0 }, observed: { usable: true } }];
+const corrected = { status: "continue", trialRecord, ticketNumber: 1243 };
+const unreadable = { status: "dispatch", trialRecord, ticketNumber: 1243 };
+const CASES = [
+  ...["converged", "continue", "escalate"].map((status) => ({
+    name: status,
+    submissions: [{ status, trialRecord, ticketNumber: 1243 }],
+    unsettled: false,
+  })),
+  { name: "missing record", submissions: [{ status: "converged", ticketNumber: 1243 }], unsettled: false },
+  { name: "unreadable then corrected", submissions: [unreadable, corrected], unsettled: false },
+  { name: "unreadable exhausted", submissions: [unreadable, unreadable], unsettled: true },
 ];
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -93,70 +35,53 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 }
 
 for (const scenario of CASES) {
-  test(`ak-role ${scenario.role} admits instruction and delivers typed terminal`, async () => {
+  test(`ak-role gatekeeper accepts original receipts: ${scenario.name}`, async () => {
     await withTempHome(async (home) => {
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-
       const { io } = captureIo();
-      let dispatchArgs: string[] | undefined;
+      await runAkRole(["config", "set-auto-resume-limit", "1"], { home, packageRoot, io });
+      const turns: { role: string; kind: string; runDirectory: string }[] = [];
+      let calls = 0;
+      const host = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          const details = scenario.submissions[Math.min(calls++, scenario.submissions.length - 1)];
+          return scriptedTerminatingToolSession({
+            role: "gatekeeper",
+            toolName: REVIEW_SUBMISSION_OUTPUT_TOOL_NAME,
+            toolCallId: `trial-${calls}`,
+            details,
+          })(args, options);
+        },
+      });
       const result = await runAkRole(
-        [scenario.role, "--model", "test/caller-seat:high", "--project", project, scenario.instruction],
+        ["gatekeeper", "--model", "test/caller-seat:high", "--project", project, `覆验 #1243，工作树 ${project}`],
         {
-          home,
-          packageRoot,
-          cwd: project,
-          io,
-          createRunId: () => scenario.runId,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
-              dispatchArgs = [...args];
-              return scriptedTerminatingToolSession({
-                role: scenario.role,
-                toolName: scenario.toolName,
-                details: scenario.details,
-              })(args, options);
+          home, packageRoot, cwd: project, io,
+          roleTurnHost: {
+            async executeTurn(request) {
+              turns.push({ role: request.activation.role, kind: request.continuation.kind, runDirectory: request.runDirectory });
+              return host.executeTurn(request);
             },
-          }),
+          },
         },
       );
-
-      assert.equal(
-        result.exitCode,
-        0,
-        result.terminal === undefined ? "no terminal" : "",
-      );
-      assert.equal(Array.isArray(dispatchArgs), true);
-      assert.equal(
-        dispatchArgs![dispatchArgs!.indexOf("--ak-role") + 1],
-        scenario.role,
-      );
-      const coords = issuePiDurablePrincipalCoordinates({
-        cwd: project,
-        runId: scenario.runId,
-        role: scenario.role,
-        home,
-      });
-      assert.equal(
-        dispatchArgs![dispatchArgs!.indexOf("--session-dir") + 1],
-        coords.sessionDirectory,
-      );
-      assert.equal(result.terminal?.roleOutcome.role, scenario.role);
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.role, "gatekeeper");
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.deepEqual(
-        result.terminal?.roleOutcome.kind === "accepted"
-          ? payloadStatusSequence(result.terminal.roleOutcome)
-          : [],
-        [scenario.expectedStatus],
-      );
-      scenario.assertDecisiveFacts(
-        result.terminal?.roleOutcome.kind === "accepted"
-          ? (objectPayloads(result.terminal.roleOutcome)[0] ?? {})
-          : undefined,
-      );
+      assert.deepEqual(result.terminal?.roleOutcome.payloads?.at(-1), scenario.submissions.at(-1));
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts?.directionUnsettled === true, scenario.unsettled);
+      assert.deepEqual(turns.map(({ role, kind }) => ({ role, kind })), scenario.submissions.map((_, i) => ({
+        role: "gatekeeper", kind: i === 0 ? "initial" : "resume",
+      })));
+      const runDirectory = turns.at(-1)!.runDirectory;
+      // Ticket binding relocates unbound → 1243; the same run resumes.
+      assert.ok(turns.every((turn) => basename(turn.runDirectory) === basename(runDirectory)));
+      const rows = await readRecordedSubmissionRows(project, result.terminal!.runId!, { home });
+      assert.deepEqual(rows.map(({ accepted }) => accepted), scenario.submissions);
     });
   });
 }
