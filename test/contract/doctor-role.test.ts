@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
@@ -14,7 +15,25 @@ const doctorLedger = createTempPackageHomeLedger({
 test.after(() => doctorLedger.dispose());
 
 const zero = { count: 0, sources: [] }; const patient: DoctorCase = { version: 1, identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" }, evidence: [{ id: "review/session/live.jsonl", kind: "session", byteLength: 6, contentLength: 2, sha256: "abc", content: "中文" }], cost: { invocations: zero, legs: zero, modelApiTurns: zero, outputTokens: zero, toolCalls: zero, retries: { ...zero, evidence: "literal run-dir naming" }, statuses: [], commits: [], sessions: [], outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" } } };
-function harness() { const flags = new Map<string, boolean | string>([["ak-doctor-case", patient.identity.runsPath]]); const tools = new Map<string, HostToolDefinition>(); let active: string[] = []; const host: RoleHost = { registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); }, getFlag: (name) => flags.get(name), registerTool(tool) { tools.set(tool.name, tool); }, getAllTools: () => ["read", "bash", ...tools.keys()].map((name) => ({ name })), setActiveTools(names) { active = names; }, getActiveTools: () => active, on() {}, getCommands: () => [] }; return { host, tools, active: () => active }; }
+function harness() {
+  const flags = new Map<string, boolean | string>([["ak-doctor-case", patient.identity.runsPath]]);
+  const tools = new Map<string, HostToolDefinition>();
+  let active: string[] = [];
+  let startup: unknown;
+  const host: RoleHost = {
+    registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
+    getFlag: (name) => flags.get(name),
+    registerTool(tool) { tools.set(tool.name, tool); },
+    getAllTools: () => ["read", "bash", ...tools.keys()].map((name) => ({ name })),
+    setActiveTools(names) { active = names; },
+    getActiveTools: () => active,
+    on(name, handler) {
+      if (name === "before_agent_start") startup = handler({ prompt: "", systemPrompt: "BASE", systemPromptOptions: {}, text: "", toolName: "", toolCallId: "", input: {}, isError: false, content: [], details: undefined, reason: "", messages: [], partialResult: undefined, turnIndex: 0, calls: [] }, context("doctor"));
+    },
+    getCommands: () => [],
+  };
+  return { host, tools, active: () => active, startup: () => startup };
+}
 function context(id: string, abort = () => {}, candidates: unknown[] = []): HostContext {
   const entries = [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: DOCTOR_OUTPUT_TOOL_NAME, arguments: {} }] } }];
   return {
@@ -36,7 +55,15 @@ function context(id: string, abort = () => {}, candidates: unknown[] = []): Host
 }
 const refusal = { status: "refused" as const, reason: "Session bytes are incomplete.", missingEvidence: [{ need: "session header", targetKeys: ["case"] }] };
 
-test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => "doctor", loadCase: async () => patient }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); });
+test("Doctor activation delivers its Soul and exposes only evidence and output tools", async () => {
+  const h = harness();
+  const soul = randomUUID();
+  const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient }, { failInfrastructure(error) { throw error; } });
+  await runtime.activate();
+  assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]);
+  const startup = await h.startup() as { systemPrompt: string };
+  assert.ok(startup.systemPrompt.includes(soul));
+});
 
 test("Doctor output records testimony and runtime cost before post-submission audit", async () => {
   let aborts = 0;

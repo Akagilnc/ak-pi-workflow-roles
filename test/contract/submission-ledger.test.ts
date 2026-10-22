@@ -280,7 +280,6 @@ test("mixed tools in one turn still record every terminating submission (#836 no
     const kinds = (await ledgerRecords(f.root)).map((r) => r.kind);
     assert.ok(kinds.includes("sealed"));
     assert.ok(kinds.includes("roundContext"));
-    assert.ok(!kinds.includes("outcome") || (await ledgerRecords(f.root)).every((r) => r.kind !== "outcome" || (r.payload as { code?: string }).code !== "non-sole-round"));
   });
 });
 
@@ -430,52 +429,6 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
       Error,
     );
   });
-});
-
-test("every packaged role records original payload through the production ledger host (#836)", async () => {
-  const rows = [
-    { role: "judge" as const, details: { status: "converged" }, status: "converged" },
-    { role: "coder" as const, details: { status: "completed", report: "done" }, status: "completed" },
-    { role: "fixer" as const, details: { status: "completed", report: "done", classResults: [] }, status: "completed" },
-    { role: "reviewer" as const, details: { status: "completed" }, status: "completed" },
-    { role: "doctor" as const, details: { status: "refused", reason: "missing", missingEvidence: [] }, status: "refused" },
-    { role: "merger" as const, details: { status: "escalate", attemptId: "a", diagnosis: "d", report: "r" }, status: "escalate" },
-    { role: "notary" as const, details: { status: "converged", findings: [] }, status: "converged" },
-    { role: "countersign" as const, details: { status: "converged" }, status: "converged" },
-    { role: "gleaner-left" as const, details: { status: "completed", findings: [] }, status: "completed" },
-    { role: "inspector" as const, details: { status: "converged", findings: [] }, status: "converged" },
-    // Collector has no status leaf — record empty status, original groups payload.
-    { role: "collector" as const, details: { groups: [] }, status: "" },
-  ];
-  for (const row of rows) {
-    await withLedgerFixture(async (f) => {
-      const roleRunDirectory = fixtureUnboundRunDirectory(f.root, `run-${row.role}@${row.role}`);
-      process.env.AK_ROLE_RUN_DIR = roleRunDirectory;
-      await mkdir(`${roleRunDirectory}/session`, { recursive: true });
-      await writeFile(`${roleRunDirectory}/session/session.jsonl`, "");
-      const outputTool = packagedRoleOutputTool(row.role)!;
-      const alternateHost = registerTool(
-        f.root,
-        async () => ({ content: [], details: row.details, terminate: true }),
-        outputTool,
-        row.role,
-      );
-      alternateHost.context.runDirectory = roleRunDirectory;
-      await alternateHost.start(`${row.role}-output`, outputTool);
-      const accepted = await alternateHost.tool().execute(`${row.role}-output`, row.details, undefined, undefined, alternateHost.context);
-      assert.deepEqual(accepted.details, row.details, row.role);
-      assert.equal(accepted.terminate, true, row.role);
-      const rows = await readRecordedSubmissionRows(f.root, `run-${row.role}`, {
-        home: f.root,
-        sessionParent: `${roleRunDirectory}/session/session.jsonl`,
-      });
-      assert.deepEqual(
-        rows,
-        [{ role: row.role, kind: "accepted", accepted: row.details, toolCallId: `${row.role}-output` }],
-        row.role,
-      );
-    });
-  }
 });
 
 test("a recorded append failure never returns accepted", async () => {

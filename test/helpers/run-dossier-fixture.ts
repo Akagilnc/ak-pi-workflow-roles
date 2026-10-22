@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 
@@ -177,31 +176,6 @@ export function terminalBodyAt(
 }
 
 /**
- * #1161: a run at rest carries none of the retired dossier files — no
- * artifacts/, stderr.log, start-up input files, per-page json, `.run-starts`
- * — and its session/ holds no numbered host copies, staging leftovers,
- * failed-copy markers, session-binding files or sitian volume for host-session.
- */
-export function assertNoRetiredDossierFiles(runDirectory: string): void {
-  for (const name of [
-    "artifacts", "stderr.log", "headless-system-prompt.txt", "headless-output-schema.json",
-    "headless-mcp-config.json", "run-state.json", "invocation.json", "admitted-request.json", ".run-starts",
-  ]) {
-    assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`);
-  }
-  // #1199: session originals stay under `<run>/session`.
-  const sessionDirectory = sessionDirectoryOf(runDirectory);
-  if (!existsSync(sessionDirectory)) return;
-  for (const entry of readdirSync(sessionDirectory)) {
-    assert.equal(
-      /-\d+(\.jsonl|\.failed)?$|\.copying(\.|$)|\.previous(\.|$)|-(headless|acp)-session\.json$|^host-session$|^submission-ledger$|^attempt-history$|^auditor-roles$/.test(entry),
-      false,
-      `retired session entry present: ${entry}`,
-    );
-  }
-}
-
-/**
  * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
  * (dossier + leg-local `receipts/` / `session/`). Sole list of the six;
  * allowlist below spreads this and adds unbound / seat-only leaves.
@@ -231,7 +205,6 @@ export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
   for (const entry of readdirSync(runDirectory)) {
     assert.equal(allowed.has(entry), true, `unexpected run directory entry: ${entry}`);
   }
-  assertNoRetiredDossierFiles(runDirectory);
 }
 
 /**

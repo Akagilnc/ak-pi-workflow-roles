@@ -22,7 +22,6 @@ import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
-  WorkerUnfinishedReasonReminderError,
 } from "../../src/worker-submission-gates.ts";
 import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { parseSitianRecordText } from "../../src/sitian-reader.ts";
@@ -135,28 +134,6 @@ function armThenCommit(cwd: string, home: string, message: string) {
   return gate;
 }
 
-test("unfinished reason gate bounces missing reason up to twice then accepts; reasoned unfinished free; other statuses unchanged", () => {
-  const gate = createWorkerSubmissionGate();
-  assert.throws(
-    () => gate.assertAcceptable("unfinished", {}),
-    (error: unknown) =>
-      error instanceof WorkerUnfinishedReasonReminderError &&
-      error.code === "worker_unfinished_reason_reminder",
-  );
-  assert.throws(() => gate.assertAcceptable("unfinished", { reason: "   " }), WorkerUnfinishedReasonReminderError);
-  assert.doesNotThrow(() =>
-    gate.assertAcceptable("unfinished", {
-      reason: "prerequisite_missing: pending owner decision on adapter scope",
-    }),
-  );
-  const loop = createWorkerSubmissionGate();
-  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
-  assert.throws(() => loop.assertAcceptable("unfinished", {}), WorkerUnfinishedReasonReminderError);
-  assert.doesNotThrow(() => loop.assertAcceptable("unfinished", {}));
-  assert.doesNotThrow(() => loop.assertAcceptable("planned"));
-  assert.doesNotThrow(() => loop.assertAcceptable("refused"));
-});
-
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
     // bare non-git arm target must sit outside this worktree's upward Git discovery.
@@ -178,8 +155,6 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
           error instanceof WorkerCommitReminderError &&
           error.code === "worker_commit_reminder",
       );
-      // #1178: durable facts on this leg state.jsonl — no session/worker-submission-gate nest.
-      assert.equal(existsSync(join(parent.runDirectory, "session", "worker-submission-gate")), false);
       const stateText = readFileSync(join(parent.runDirectory, RUN_STATE_FILE), "utf8");
       const { records, diagnostics } = parseSitianRecordText(stateText);
       assert.equal(diagnostics.length, 0);

@@ -24,7 +24,7 @@ import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type Navig
 import { AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
-import { COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
+import type { CountersignVerdict } from "../countersign-contracts.ts";
 import type { GleanerLeftOutput } from "../gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
@@ -51,7 +51,6 @@ export {
   validateRecordedDoctorOutput,
   validateMergerOutput,
   validateRecordedNotaryOutput,
-  validateRecordedCountersignOutput,
   validateRecordedInspectorOutput,
   validateRecordedGatekeeperOutput,
   validateRecordedNavigatorOutput,

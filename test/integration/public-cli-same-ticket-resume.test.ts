@@ -16,7 +16,6 @@
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import {
   historyPayloads,
   statePayloads,
@@ -1203,10 +1202,6 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
       (await readdir(join(coderRunDirectory, "receipts"))).sort(),
       ["1.json", "2.json"],
     );
-    // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
-    // this parent are lawful zero. Gate still summoned inspector (asserted above).
-    const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
-    assert.deepEqual(rounds, []);
     // The terminal as the analyst reads it carries the submitted payloads, taken from history.
     const read = readRunTerminal(coderRunDirectory);
     assert.equal(read.status, "present");

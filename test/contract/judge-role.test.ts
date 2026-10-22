@@ -648,7 +648,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     deliveryPrompts.push(message);
   };
   const bounce = async (id: string) => {
-    const bounced = await tool2.execute(id, bare, undefined, undefined, bounceContext(id));
+    const bounced = await tool2.execute(id, id === "u2" ? { ...bare, reason: "   " } : bare, undefined, undefined, bounceContext(id));
     assert.equal(bounced.isError, true);
     assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
     const ctx = bounceContext(id);

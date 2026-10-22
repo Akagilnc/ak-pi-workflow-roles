@@ -34,7 +34,6 @@ import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
 import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
-import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
@@ -999,9 +998,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       true,
       "unique diary file must exist",
     );
-    // Human view cancelled (#900 / single-volume).
-    assert.equal(existsSync(join(paths.volumeDir, "起居录.md")), false);
-
     assert.ok(volume.header, "legacy snapshot header must remain");
     assert.equal(volume.header.ticket, TICKET);
     assert.equal(volume.appends.length, 1, "one pure-append commit");
@@ -1444,16 +1440,6 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       "stock relocate must remove the unbound leaf",
     );
     assert.equal(existsSync(boundTarget), true);
-    assert.deepEqual(
-      await findPlacedMigratingRun(
-        booksDirectory,
-        "demo-book",
-        boundLeaf,
-        `unbound/runs/${boundLeaf}`,
-      ),
-      { runDirectory: boundTarget, disposition: "placed" },
-      "downstream migrators must reuse T9's board-ticket placement",
-    );
     assert.equal(
       existsSync(freeSource),
       true,
@@ -1853,7 +1839,6 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
       false,
       `true-unbound must not mint ticket dir ${sample.volumeDir}`,
     );
-    assert.equal(existsSync(join(sample.volumeDir, "起居录.md")), false);
   });
 });
 

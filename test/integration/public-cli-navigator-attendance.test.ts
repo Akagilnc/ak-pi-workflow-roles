@@ -235,6 +235,7 @@ for (const scenario of CASES) {
       if (scenario.parentFails === true) {
         assert.equal(result.exitCode, 1);
         assert.equal(result.terminal?.roleOutcome.kind, "failure");
+        assert.equal(result.terminal?.roleOutcome.kind === "failure" ? result.terminal.roleOutcome.diagnostic : undefined, "PARENT HOST BOOM");
         assert.notEqual(result.terminal?.navigator.disposition, "advice");
         return;
       }
@@ -262,6 +263,18 @@ for (const scenario of CASES) {
         assert.equal(existsSync(join(runDirectory, "session", "session.jsonl")), false);
         assert.equal(existsSync(join(runDirectory, "receipts", "1.json")), true);
         assert.equal(readPageSync(runDirectory, "invocation")?.host, "lookup");
+        const lookup = JSON.parse(readFileSync(join(runDirectory, "receipts", "1.json"), "utf8")) as { byStatus: Record<string, string> };
+        const status = scenario.output.status as string;
+        if (fact?.disposition === "advice") {
+          assert.equal(fact.prose, lookup.byStatus[status]);
+          if (scenario.role === "judge") {
+            for (const otherStatus of ["converged", "continue", "escalate"].filter((other) => other !== status)) {
+              assert.notEqual(fact.prose, lookup.byStatus[otherStatus]);
+            }
+          }
+        } else {
+          assert.equal(lookup.byStatus[status], undefined);
+        }
       }
     });
   });

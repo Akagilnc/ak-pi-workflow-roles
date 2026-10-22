@@ -4,19 +4,18 @@
  */
 import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { admitPublicRole, parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromStructuredOutputRounds } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 
 function receipt(overrides: Record<string, unknown> = {}) {
@@ -44,12 +43,13 @@ function receipt(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("typed groups travel from real output settlement into the report artifact", async () => {
+test("Collector receipt travels unchanged through the envelope into Terminal and ledger", async () => {
   return await withTempRoot("collector-groups-", async (home) => {
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
-    const { stdout, io } = captureIo();
+    const { io } = captureIo();
+    const details = receipt({ prState: "MERGED", ticketNumber: 1237 });
     const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
       packageRoot,
       home,
@@ -57,19 +57,14 @@ test("typed groups travel from real output settlement into the report artifact",
       credentials: { "openai-codex": true, xai: false },
       createRunId: () => "collector-groups-run",
       io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+      roleTurnHost: roleTurnHostFromStructuredOutputRounds({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          const details = receipt();
-          await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
-          return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
-        },
+        submissions: [details],
       }),
     });
-    assert.equal(result.exitCode, 0);
-    assert.deepEqual(result.terminal && (objectPayloads(result.terminal.roleOutcome)[0] ?? {}).groups, receipt().groups);
+    assert.equal(result.exitCode, 0, JSON.stringify(result));
+    assert.deepEqual(result.terminal && objectPayloads(result.terminal.roleOutcome), [details]);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
     const artifact = terminalBodyAt(reportPath, "report") as {
@@ -78,8 +73,7 @@ test("typed groups travel from real output settlement into the report artifact",
     // The submitted groups live in history.jsonl; the terminal carries only the verdict.
     assert.equal(artifact.outcome !== undefined && "payloads" in artifact.outcome, false);
     const submitted = submittedParams(dirname(reportPath)) as readonly { groups?: unknown[] }[];
-    assert.deepEqual(submitted[0]?.groups, receipt().groups);
-    assert.equal(stdout.length > 0, true);
+    assert.deepEqual(submitted, [details]);
   });
 });
 
@@ -88,37 +82,6 @@ test("#1088 public Collector rejects retired --wait-ms", () => {
     () => parsePublicSeatArgv("collector", ["--pr", "1", "--repo", "a/b", "--wait-ms", "120000"]),
     (error: unknown) => error instanceof CliUsageError,
   );
-});
-
-test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", async () => {
-  return await withTempRoot("collector-merged-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project);
-    seedProject(project);
-    const details = receipt({ prState: "MERGED" });
-    const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: false },
-      createRunId: () => "collector-merged-run",
-      io: { stdout: () => undefined, stderr: () => undefined },
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
-          return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
-        },
-      }),
-    });
-    assert.equal(result.exitCode, 0);
-    assert.equal(
-      result.terminal && (objectPayloads(result.terminal.roleOutcome)[0] ?? {}).prState,
-      "MERGED",
-    );
-  });
 });
 
 test("#676 J2 explicit --pr is unique bound at admission", async () => {

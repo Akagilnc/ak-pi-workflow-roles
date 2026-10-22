@@ -5,7 +5,7 @@
  * Only path-safety syntax is checked at real I/O seams.
  * Delivery is startup readingMaterial (handbook bodies), never the transport prompt.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ENGINE_MATERIAL_RELATIVE_ROOT = "resources/engines" as const;
@@ -63,21 +63,6 @@ export function resolveEngineMaterialDirectory(packageRoot: string): string {
 
 export function resolveEngineDispatchMaterialPath(packageRoot: string): string {
   return join(packageRoot, ENGINE_DISPATCH_RELATIVE_PATH);
-}
-
-/**
- * Enumerate packaged engine notes stems (discovery only — not a legal-name gate).
- * Only `*.md` stems that pass name syntax are listed.
- */
-export function listEngineMaterialNames(packageRoot: string): readonly string[] {
-  const dir = resolveEngineMaterialDirectory(packageRoot);
-  if (!existsSync(dir)) return Object.freeze([]);
-  const names = readdirSync(dir)
-    .filter((entry) => entry.endsWith(".md"))
-    .map((entry) => entry.slice(0, -".md".length))
-    .filter((stem) => isEngineNameSyntax(stem))
-    .sort();
-  return Object.freeze([...names]);
 }
 
 /**

@@ -5,6 +5,7 @@
  * External face: tools/list tool-name presence; process.env must stay untouched.
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,13 +71,15 @@ test("shared envelope registers engine detour when request.engine is set", async
     const previous = process.env[AK_ROLE_ENGINE_ENV];
     delete process.env[AK_ROLE_ENGINE_ENV];
     try {
+      const soul = randomUUID();
       const prepared = await prepareRoleEnvelope({
         request: request("agy"),
-        dependencies: createRoleRuntimeDependencies(packageRoot),
+        dependencies: { ...createRoleRuntimeDependencies(packageRoot), loadRoleSoul: async () => soul },
         socketPath,
         principalAuthority: piDurablePrincipalAuthority,
     });
       try {
+        assert.ok(prepared.systemPrompt.body.includes(soul));
         assert.equal(
           process.env[AK_ROLE_ENGINE_ENV],
           undefined,

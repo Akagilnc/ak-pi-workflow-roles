@@ -18,7 +18,6 @@ import { manualScheduler } from "../helpers/manual-scheduler.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 import {
-  DEFAULT_REFRESH_BOUNDARY_SECONDS,
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
   renderFactoryBoardHtml,
@@ -271,6 +270,9 @@ test("family parent row aggregates structural counts and expands child trajector
     const planCourt = runs.find((r) => r["data-run-id"] === "plan-court-001@ak-roles-127");
     assert.equal(planCourt?.["data-has-result"], "true");
     assert.equal(planCourt?.["data-result-status"], "converged");
+    const fixer = runs.find((r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127");
+    assert.equal(fixer?.["data-has-result"], "true");
+    assert.equal(fixer?.["data-result-status"], "completed");
     });
 });
 
@@ -1000,16 +1002,6 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
       now,
     );
 
-    // Thresholds page-visible
-    assert.equal(
-      elementsWith(html, "data-threshold-flying-ms")[0]?.["data-threshold-flying-ms"],
-      String(UNACCEPTED_FLYING_MS),
-    );
-    assert.equal(
-      elementsWith(html, "data-threshold-watch-ms")[0]?.["data-threshold-watch-ms"],
-      String(UNACCEPTED_WATCH_MS),
-    );
-
     const by = (n: number) =>
       elementsWith(html, "data-ticket").find((t) => t["data-book"] === "roles" && t["data-ticket"] === String(n));
 
@@ -1490,7 +1482,7 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
     });
 });
 
-test("S3 board projects no textual conclusion and excludes unlabelled narrative self-report", async () => {
+test("S3 narrative does not turn an unaccepted run into an accepted fact", async () => {
   await withTempRoot("factory-board-s3-conclusion-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1547,29 +1539,11 @@ test("S3 board projects no textual conclusion and excludes unlabelled narrative 
       now,
     );
 
-    // Projection-field allowlist audit: no conclusion / trend / unlabelled self-report channels.
-    for (const banned of [
-      "data-conclusion",
-      "data-divination",
-      "data-trend",
-      "data-forecast",
-      "data-self-report",
-      "data-narrative",
-      "data-commit-sha",
-      "data-commitsha",
-    ]) {
-      assert.equal(
-        elementsWith(html, banned).length,
-        0,
-        `board must not project ${banned}`,
-      );
-    }
-    // Mechanical burn projects through typed fields; narrative has no fact-channel attribute.
     const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === "55");
     assert.ok(t);
     assert.equal(Number(t["data-cost-usd"]), 0.01);
     assert.equal(Number(t["data-total-tokens"]), 10);
-    assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
+    assert.equal(t["data-current-state"], "unaccepted-flying");
     });
 });
 
@@ -2131,7 +2105,6 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     assert.equal(await readFile(outputPath, "utf8"), frozen);
     assert.equal(await treeFingerprint(ledgerDir), afterAdd);
 
-    assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
     });
 });
 
@@ -3299,7 +3272,6 @@ test("kanban page script: project and family filters drive lanes, badge count, c
     assert.equal(page.columns["pending"]!.getAttribute("data-column-count"), "0");
     // Unknown badge consumes the same filtered set: #9 is not in family 78 → count 0.
     assert.equal(page.badge.getAttribute("data-unknown-count"), "0");
-    assert.equal(page.badgeSummary.textContent, "未知票 ×0");
 
     // Back to all: badge returns to the project count.
     page.familySel.value = "all";

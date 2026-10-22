@@ -18,7 +18,6 @@ import { manualScheduler } from "../helpers/manual-scheduler.ts";
 import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
-  DEFAULT_REFRESH_BOUNDARY_SECONDS,
   readLedgerSessionJsonl,
   renderTicketTrajectoryHtml,
   startTicketTrajectoryPage,
@@ -388,8 +387,6 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     assert.equal(await treeFingerprint(ledgerCopy), afterAdd);
     assert.notEqual(afterAdd, before);
 
-    // Default boundary constant remains the production default (no second lifecycle tracer).
-    assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
     });
 });
 

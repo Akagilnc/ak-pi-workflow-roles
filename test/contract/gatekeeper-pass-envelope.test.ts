@@ -9,7 +9,6 @@ import test from "node:test";
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
@@ -153,9 +152,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
         },
       }),
     });
-    // #1195: parent no longer books officer-pointer copies; resume uses officer runId.
-    const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
-    assert.equal(booked.length, 0, "parent history must not book officer-pointer rows");
     assert.equal(outcome?.status, "escalate");
     assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "countersign");
     assert.deepEqual(outcome && "receipt" in outcome ? outcome.receipt : undefined, receipt);

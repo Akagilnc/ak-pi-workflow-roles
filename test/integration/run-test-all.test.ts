@@ -196,37 +196,6 @@ async function runRunner(options: {
   return { ...result, records: parseRecords(raw) };
 }
 
-test("package.json test entries wire HOME redirect preload or run-test-all owner", async () => {
-  const pkg = JSON.parse(
-    await readFile(resolve(packageRoot, "package.json"), "utf8"),
-  ) as { scripts: Record<string, string> };
-  assert.equal(
-    pkg.scripts["test:all"],
-    "node scripts/run-test-all.mjs",
-    "test:all must delegate only to the scheduling owner",
-  );
-  const preload = "--import ./scripts/test-process-env-preload.mjs";
-  // #252: test:fast is a canonical entry — fixed per-test --test-timeout=300000, no config.
-  const testTimeout = "--test-timeout=300000";
-  // #1206 B: native dual reporters — dot→stdout, spec→fixed repo-root report file.
-  const reporter =
-    "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt";
-  const bareUnitContract =
-    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
-  const fastUnitContract =
-    `node --import tsx ${preload} ${testTimeout} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
-  assert.equal(pkg.scripts["test"], bareUnitContract);
-  assert.equal(pkg.scripts["test:fast"], fastUnitContract);
-  assert.equal(
-    pkg.scripts["test:integration"],
-    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
-  );
-  assert.equal(
-    pkg.scripts["test:adjudication"],
-    `node --import tsx ${preload} ${reporter} --test test/adjudication/**/*.test.ts`,
-  );
-});
-
 /**
  * AC3 (#549): real test:all child seam — fixture writes only via $HOME;
  * host models.json hash unchanged; host sentinel absolute path must not exist.

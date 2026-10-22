@@ -113,6 +113,8 @@ test("Pi adapter strips typed readingMaterial before provider delivery", async (
     assert.equal("readingMaterial" in delivered, false);
     assert.equal(typeof delivered.systemPrompt, "string");
   }
+  assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
+  assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {

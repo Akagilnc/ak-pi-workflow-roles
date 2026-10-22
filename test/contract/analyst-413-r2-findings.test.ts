@@ -3,9 +3,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * #413 r2 finding contracts (U1 + U3 counter-evidence).
  *
  * U1: the sole library-index read boundary must reject syntactically valid but
- *   malformed shapes (null / non-object / rows not an array) loudly with the
- *   file path — pre-fix the cast let them pass through and consumers crashed
- *   with untyped identity-free TypeErrors downstream.
+ *   malformed shapes (null / non-object / rows not an array) instead of
+ *   passing them through to downstream consumers.
  * U3: synthetic book keys are exactly `root:` + an ABSOLUTE path identity; a
  *   real Git book whose basename is literally `root:foo` is not synthetic.
  *   Bidirectional preservation: the real book keeps its book scope through a
@@ -34,7 +33,7 @@ import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
-test("U1: library-index read boundary rejects null/non-object/rows-not-array with the file path", async () => {
+test("U1: library-index read boundary rejects malformed pages and accepts empty rows", async () => {
   await withTempRoot("analyst-413r2-home-", async (home) => {
     mkdirSync(join(home, ".ak-roles", "analyst"), { recursive: true });
     const indexPath = analystLibraryIndexPath(join(home, ".ak-roles"));
@@ -51,8 +50,6 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
       await assert.rejects(
         () => readAnalystLibraryIndexPage(join(home, ".ak-roles")),
         (error: unknown) => {
-          // The rejection's visible identity is this index file. A downstream
-          // crash on the passed-through value does not name it. Subclass is fine.
           assert.ok(error instanceof Error);
           return true;
         },

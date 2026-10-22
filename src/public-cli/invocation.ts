@@ -846,17 +846,6 @@ function rejectUnlessTicketNumber(raw: string, message: string): number {
   return parsed;
 }
 
-/** Positive ticket number for analyst query-scope face (and shared integer parse). */
-export function parsePositiveTicketNumber(
-  raw: string,
-  flag: string,
-): number {
-  return rejectUnlessTicketNumber(
-    raw,
-    `${flag} must be a positive integer, got ${raw}`,
-  );
-}
-
 /**
  * One token scan for public argv.
  * Callers assign values; `--` still ends flag parsing.

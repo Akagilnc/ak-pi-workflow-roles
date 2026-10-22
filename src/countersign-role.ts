@@ -1,10 +1,6 @@
 import { reviewSubmissionSchema } from "./review-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
-import {
-  COUNTERSIGN_OUTPUT_TOOL_NAME,
-  validateRecordedCountersignOutput,
-  type CountersignVerdict,
-} from "./countersign-contracts.ts";
+import type { CountersignVerdict } from "./countersign-contracts.ts";
 
 export { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 export type { CountersignVerdict };

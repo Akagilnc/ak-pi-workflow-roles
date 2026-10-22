@@ -42,7 +42,6 @@ import {
   loadResumablePublicRole,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -88,16 +87,15 @@ test("block1: terminal without accepted is now resumable", async()=>{
     assert.equal(first.exitCode,1);
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
-    let dispatched=false;let seenEnvelope=false;let seenSessionFile="";
+    let dispatched=false;let seenSessionFile="";
     const {io:io2}=captureIo();
     const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{dispatched=true; seenSessionFile=args[args.indexOf("--session")+1]!; seenEnvelope=args.includes("[ak-role:resume-continue]"); const acc=acceptedJudge(); await acc.write(seenSessionFile);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
+        piRunner: async(args)=>{dispatched=true; seenSessionFile=args[args.indexOf("--session")+1]!; const acc=acceptedJudge(); await acc.write(seenSessionFile);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(dispatched,true);
-    assert.equal(seenEnvelope,false);
     assert.ok(seenSessionFile.endsWith("/session.jsonl"), seenSessionFile);
     assert.equal(resumed.exitCode,0);
     assert.equal(resumed.terminal?.autoResumeCount,0);
@@ -275,7 +273,6 @@ test("block2: second attempt success needs only 1 auto", async()=>{
 });
 
 test("F1: audit_escalation lawful does not trigger auto", async()=>{
-  assert.equal(isLawfulTypedTerminalOutcome({kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}}),true);
   await withTempHome(async(home)=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(sessionDirectoryOf(runDir),{recursive:true});
@@ -286,7 +283,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
-      autoResumeLimit:0,
+      autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
@@ -296,7 +293,6 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
 });
 
 test("F1: no_receipt lawful does not trigger auto", async()=>{
-  assert.equal(isLawfulTypedTerminalOutcome({kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:{acceptedReceipt:false}} as unknown as Parameters<typeof isLawfulTypedTerminalOutcome>[0]),true);
   await withTempHome(async(home)=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(sessionDirectoryOf(runDir),{recursive:true});
@@ -308,7 +304,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
-      autoResumeLimit:0,
+      autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
@@ -346,17 +342,15 @@ test("block2: count is call-local, manual resume exact once", async()=>{
         const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"user",content:[{type:"text",text:"go"}]}})+"\n","utf8");return{code:1,stderr:"fail\n",timedOut:false,args:[...args]};},
       })});
     assert.equal(calls,3);assert.equal(first.terminal?.autoResumeCount,2);
-    let manualCalls=0;let resumeArgs:string[]|undefined;
-    const {io:io2,stdout:manualStdout}=captureIo();
+    let manualCalls=0;
+    const {io:io2}=captureIo();
     const manual=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{manualCalls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
+        piRunner: async(args)=>{manualCalls+=1;const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(manualCalls,1);
-    assert.equal(resumeArgs!.includes("[ak-role:resume-continue]"), false);
-    assert.equal(manualStdout.length,1);
     assert.equal(manual.exitCode,0);
     assert.equal(manual.terminal?.autoResumeCount,0);
   });

@@ -13,7 +13,6 @@ import {
  * Zero assertions on free-prose delivery wording / layout.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,11 +27,6 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
   loadPublicCliConfig,
-  savePublicCliConfig,
-  setPersistentSeatConfig,
-  setPersistentSeatEngine,
-  validatePublicCliConfigAxes,
-  type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
@@ -83,150 +77,6 @@ const credentials = { "openai-codex": true, xai: true } as const;
 
 // --- config parse + priority -------------------------------------------------
 
-test("persistent judge engine round-trips; syntax-illegal engine rejected at parse/validate", async () => {
-  await withTempHome(async (home) => {
-    let config: PublicCliConfig = { seats: {} };
-    config = setPersistentSeatConfig(config, "judge", {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
-    config = setPersistentSeatEngine(config, "judge", "opus");
-    await savePublicCliConfig(config, home);
-
-    const reloaded = await loadPublicCliConfig(home);
-    assert.equal(reloaded.seats.judge?.engine, "opus");
-    assert.deepEqual(
-      {
-        provider: reloaded.seats.judge?.provider,
-        model: reloaded.seats.judge?.model,
-        thinking: reloaded.seats.judge?.thinking,
-      },
-      { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    );
-    // Validate accepts any path-safe name (no closed material catalog).
-    validatePublicCliConfigAxes(reloaded, packageRoot);
-
-    // Legacy config without engine still loads.
-    await savePublicCliConfig(
-      {
-        seats: {
-          coder: {
-            provider: "xai",
-            model: "grok-4.5",
-            thinking: "medium",
-          },
-        },
-      },
-      home,
-    );
-    const legacy = await loadPublicCliConfig(home);
-    assert.equal(legacy.seats.coder?.engine, undefined);
-    assert.equal("engine" in (legacy.seats.coder ?? {}), false);
-
-    // Reviewer engine field is accepted at validate seam (#378).
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          reviewer: {
-            provider: "xai",
-            model: "grok-4.5",
-            thinking: "medium",
-            engine: "cursor",
-          },
-        },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    const reviewerCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigAxes(reviewerCfg, packageRoot);
-    assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
-
-    // Non-judge seat engine field is accepted at validate seam (#391 all roles).
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          coder: {
-            provider: "xai",
-            model: "grok-4.5",
-            thinking: "medium",
-            engine: "opus",
-          },
-        },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    const coderCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigAxes(coderCfg, packageRoot);
-    assert.equal(coderCfg.seats.coder?.engine, "opus");
-
-    // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          judge: {
-            provider: "openai-codex",
-            model: "gpt-5.6-sol",
-            thinking: "high",
-            engine: "has/slash",
-          },
-        },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    const bad = await loadPublicCliConfig(home);
-    assert.throws(
-      () => validatePublicCliConfigAxes(bad, packageRoot),
-      Error,
-    );
-
-    // Well-formed name without packaged notes is accepted at validate seam.
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          judge: {
-            provider: "openai-codex",
-            model: "gpt-5.6-sol",
-            thinking: "high",
-            engine: "ghost-engine",
-          },
-        },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    const freeName = await loadPublicCliConfig(home);
-    validatePublicCliConfigAxes(freeName, packageRoot);
-    assert.equal(freeName.seats.judge?.engine, "ghost-engine");
-
-    // unset-engine clears a persistent judge engine through the public CLI
-    // (absorbed from the former dedicated unset-engine test; golden byte
-    // reassertion deleted with the frozen-baseline oracle).
-    {
-      await withTempRoot("ak-engine-unset-", async (cliHome) => {
-        await runAkRole(
-          ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
-          { packageRoot, home: cliHome, io: captureIo().io },
-        );
-        await runAkRole(
-          ["config", "set-engine", "judge", "cursor"],
-          { packageRoot, home: cliHome, io: captureIo().io },
-        );
-        assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, "cursor");
-
-        const unset = await runAkRole(
-          ["config", "unset-engine", "judge"],
-          { packageRoot, home: cliHome, io: captureIo().io },
-        );
-        assert.equal(unset.exitCode, 0);
-        assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, undefined);
-            });
-    }
-  });
-});
 // --- public CLI tracer -------------------------------------------------------
 
 test("public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects", async () => {
@@ -933,7 +783,6 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 16);
     await withTempHome(async (home) => {
       const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
@@ -1182,9 +1031,6 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
           }, null, 2)}\n`,
           "utf8",
         );
-        const loaded = await loadPublicCliConfig(home);
-        validatePublicCliConfigAxes(loaded, packageRoot);
-        assert.equal(loaded.seats.navigator?.engine, "opus");
         // CLI load path accepts it.
         const { io, stderr } = captureIo();
         const result = await runAkRole(["config", "get"], {
@@ -1216,19 +1062,24 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         assert.equal(result.exitCode, 2);
       }
 
-      // Illegal engine name on set-engine.
-      {
-        await runAkRole(
-          ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
-          { packageRoot, home, io: captureIo().io },
-        );
-        const { io } = captureIo();
-        const result = await runAkRole(
-          ["config", "set-engine", "judge", "bad/name"],
-          { packageRoot, home, io },
-        );
+      // Corrupt persisted input must also fail at the real public entry.
+      await withTempHome(async (badHome) => {
+        const project = join(badHome, "project");
+        await mkdir(project);
+        seedGitProject(project);
+        await mkdir(join(badHome, ".ak-roles"), { recursive: true });
+        await writeFile(join(badHome, ".ak-roles", "public-cli.json"), JSON.stringify({
+          seats: { judge: { provider: "openai-codex", model: "gpt-5.6-sol", engine: "has/slash" } },
+        }));
+        let dispatched = false;
+        const result = await runAkRole(["judge", "--project", project, "task"], {
+          packageRoot, home: badHome, cwd: project, credentials, io: captureIo().io,
+          roleTurnHost: { async executeTurn() { dispatched = true; throw new Error("must not dispatch"); } },
+        });
         assert.equal(result.exitCode, 2);
-      }
+        assert.equal(result.terminal, undefined);
+        assert.equal(dispatched, false);
+      });
 
       // set-engine before persistent model.
       {

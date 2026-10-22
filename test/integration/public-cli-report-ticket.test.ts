@@ -730,7 +730,6 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(result.admitted?.ticketNumber, TICKET);
     // #1199: progress + whole receipt JSON + head; no model/host/thinking columns.
     // Progress instruction is the bytes actually sent (file-flag wrap included).
-    assert.ok(transportPrompt.includes("--attach"), "transport carries file flags");
     assert.notEqual(transportPrompt, instruction);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
@@ -1887,14 +1886,6 @@ async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
       parentInspectorReports,
       ["original-volume"],
       `${reask}: parent inspector structured report is original, not foreign`,
-    );
-    // #1195: parent no longer books officer-pointer copies; gate uses live summons.
-    const inspectorPointers = historyPayloads<{ officer?: string }>(live!, "officer-pointer")
-      .filter((row) => row.officer === "inspector");
-    assert.equal(
-      inspectorPointers.length,
-      0,
-      `${reask}: parent must not book officer-pointer rows`,
     );
   }
   // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.

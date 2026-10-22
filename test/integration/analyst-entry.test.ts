@@ -772,20 +772,9 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
     assert.equal(first.page.kind, "analyst-issue-metrics");
     assert.equal(first.page.mode, "issue");
     assert.equal(first.page.projectRoot, physicalPathIdentity(ISSUE_PROJECT_ROOT));
-    assert.equal(
-      "version" in (first.page as unknown as Record<string, unknown>),
-      false,
-      "page admits no readerless version field",
-    );
 
     // Hand-computed leg list (other-issue run excluded; damaged excluded from legs).
     assert.deepEqual(first.page.legs, [...EXPECTED_LEGS]);
-    // a2-seam-probe retired: B1 leg-wall-clock absorbs/replaces the A2 probe section.
-    assert.equal(
-      "a2SeamProbe" in (first.page as unknown as Record<string, unknown>),
-      false,
-      "retired a2-seam-probe must not appear on the issue page",
-    );
 
     // Production discovery product on the typed page (no internal loader bullet):
     // all live family sections must land; success page never omits the family set.

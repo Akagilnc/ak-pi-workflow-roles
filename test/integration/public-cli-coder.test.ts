@@ -475,7 +475,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
   });
 });
 
-test("ak-role resume continues relocated coder plan phase without a gate nest", async () => {
+test("ak-role resume continues relocated coder plan phase and exact session", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -560,9 +560,6 @@ test("ak-role resume continues relocated coder plan phase without a gate nest", 
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, 1003);
-    assert.equal("taskPath" in admitted, false);
-    // #1178: ticket relocate must not materialize a worker-submission-gate nest.
-    assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;

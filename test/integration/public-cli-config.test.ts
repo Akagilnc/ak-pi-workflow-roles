@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import test from "node:test";
 
 import {
+  runAkRole,
   projectConfigDisplaySeats,
   projectConfigSeatDisplay,
 } from "../../src/public-cli/cli.ts";
@@ -23,12 +24,14 @@ import {
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-config-", scenario);
 }
 
-test("bulk persistent configuration survives a new process boundary", async () => {
+test("persistent seat configuration round-trips its disk document", async () => {
   await withTempHome(async (home) => {
     let config: PublicCliConfig = { seats: {} };
     config = setPersistentSeatConfig(config, "judge", {
@@ -43,7 +46,7 @@ test("bulk persistent configuration survives a new process boundary", async () =
     });
     await savePublicCliConfig(config, home);
 
-    // New process boundary: reload from the same home path with a fresh read.
+    // Reload the stored document without relying on the writer's in-memory object.
     const reloaded = await loadPublicCliConfig(home);
     assert.deepEqual(reloaded.seats.judge, {
       provider: "openai-codex",
@@ -73,17 +76,22 @@ test("command-local model/thinking overrides do not rewrite persistent configura
 
     const credentials: CredentialProviders = { "openai-codex": true, xai: true };
     const before = await readFile(publicCliConfigPath(home), "utf8");
-    const effective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "coder",
-      credentials,
-      {
-        model: "xai/grok-4.5",
-        thinking: "medium",
+    seedGitProject(home);
+    let selected: unknown;
+    const result = await runAkRole([
+      "coder", "plan", "--project", home,
+      "--model", "xai/grok-4.5", "--thinking", "medium", "Plan the repair.",
+    ], {
+      packageRoot, home, cwd: home, credentials, io: captureIo().io,
+      roleTurnHost: {
+        async executeTurn(request) {
+          selected = request.model;
+          return { code: 0, stderr: "", timedOut: false };
+        },
       },
-    );
-    assert.equal(effective.source, "invocation");
-    assert.deepEqual(effective.selection, {
+    });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(selected, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "medium",
@@ -97,33 +105,6 @@ test("command-local model/thinking overrides do not rewrite persistent configura
       thinking: "high",
     });
   });
-});
-
-// Roster order only — package startup fill-in deleted with #178; no source/selection oracle here.
-test("effective seat configurations enumerate the public configurable roster", () => {
-  const seats = effectiveSeatConfigurations(
-    { seats: {} },
-    { "openai-codex": false, xai: false },
-  ).map((s) => s.seat);
-  assert.deepEqual(seats, [
-    "judge",
-    "fixer",
-    "coder",
-    "reviewer",
-    "collector",
-    "doctor",
-    "merger",
-    "notary",
-    "countersign",
-    "secretariat",
-    "gleaner-left",
-    "inspector",
-    "gatekeeper",
-    "navigator",
-    "auditor",
-    "diarist",
-  ]);
-  // #744: evidence-child is not a public seat (deepEqual roster above).
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };

@@ -5,8 +5,7 @@
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
 
-import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
-import { isRecord } from "./unknown-value.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 export const COUNTERSIGN_OUTPUT_TOOL_NAME = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -24,22 +23,3 @@ export type CountersignVerdict =
     note?: string;
     evidence?: unknown;
   };
-
-export function validateRecordedCountersignOutput(verdict: unknown): CountersignVerdict {
-  if (!isRecord(verdict)) {
-    throw new Error("Countersign verdict has no execution discriminator");
-  }
-  let status: unknown;
-  try {
-    status = (verdict as Record<string, unknown>).status;
-  } catch {
-    throw new Error("Countersign verdict has no execution discriminator");
-  }
-  if (typeof status !== "string") {
-    throw new Error("Countersign verdict has no execution discriminator");
-  }
-  if (REVIEW_QUEUE_STATUSES.has(status)) {
-    return verdict as CountersignVerdict;
-  }
-  throw new Error("Countersign verdict has no execution discriminator");
-}

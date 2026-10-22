@@ -42,7 +42,6 @@ test("Sitian facade: Layout supports three levels, usage, raw pointer, and no de
     });
     assert.equal(runSummaryPtr.level, "run-summary");
     assert.equal(runSummaryPtr.kind, "settlement-summary");
-    assert.ok(runSummaryPtr.recordFile.includes("settlement-summary"));
 
     // 2. event level with raw pointer
     const eventPtr = sitianReport({

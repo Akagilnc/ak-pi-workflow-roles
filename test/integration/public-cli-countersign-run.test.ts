@@ -16,7 +16,6 @@ import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -197,9 +196,6 @@ test("countersign admission ignores attachment frontmatter", async () => {
       undefined,
     );
 
-    // #632: private countersign ticket transport flag is gone (was write-only).
-    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
-    assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 
 });

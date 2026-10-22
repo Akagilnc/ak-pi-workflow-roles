@@ -8,6 +8,7 @@
  * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -25,7 +26,7 @@ import type {
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
@@ -123,14 +124,23 @@ async function inspectLiveRequest(
           process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
         }
       }
+      const soul = randomUUID();
+      const auditedSoul = randomUUID();
       const prepared = await prepareRoleEnvelope({
         request,
-        dependencies: createRoleRuntimeDependencies(packageRootPath),
+        dependencies: {
+          ...createRoleRuntimeDependencies(packageRootPath),
+          loadRoleSoul: async (role) => role === request.activation.role ? soul : auditedSoul,
+        },
         socketPath,
         sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
         principalAuthority: piDurablePrincipalAuthority,
       });
       try {
+        assert.ok(prepared.systemPrompt.body.includes(soul));
+        if (request.activation.role === "notary") {
+          assert.ok(prepared.systemPrompt.body.includes(auditedSoul));
+        }
         const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
         const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
         let toolNames: string[] | undefined;
@@ -324,7 +334,9 @@ test("#1166 public gate: four seats share identity; peer reviewers receive ledge
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        if (request.activation.role !== "notary") {
+        if (request.activation.role === "notary") {
+          assert.notEqual(inspected.prompt, readableGateItem(gate.details));
+        } else {
           assert.deepEqual(JSON.parse(inspected.prompt), gate.details);
         }
         assert.equal(inspected.identities.length, 1);
@@ -434,14 +446,16 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 0, JSON.stringify(result));
       assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
         auditedRun: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
-      if (seat.role === "auditor") {
+      if (seat.role === "notary") {
+        assert.notEqual(inspected.prompt, readableGateItem(current));
+      } else {
         assert.deepEqual(JSON.parse(inspected.prompt), current);
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
@@ -476,6 +490,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
         notaryPrompts.push(request.continuation.prompt);
+        assert.notEqual(request.continuation.prompt, readableGateItem(parentSeals === 1 ? first : second));
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
@@ -559,6 +574,8 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
+    assert.notDeepEqual(first, second);
+    assert.equal(notaryPrompts[0], notaryPrompts.at(-1));
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.

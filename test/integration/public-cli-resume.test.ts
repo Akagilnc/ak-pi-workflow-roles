@@ -175,7 +175,7 @@ function writeSessionProviderStop(
     "utf8",
   );
 }
-test("quota-like prose without typed 429 is not resumable", async () => {
+test("quota-like prose does not replace the host's unclassified failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -214,7 +214,11 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     );
 
     assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal.roleOutcome.cause, undefined);
+      assert.equal(result.terminal.roleOutcome.diagnostic, "HTTP 429 rate limited\n");
+    }
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`),
@@ -638,7 +642,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           assert.equal(args.includes("--continue"), false);
           // Must not resubmit original instruction as a new prompt payload.
           assert.equal(args.includes(instruction), false);
-          assert.equal(args.includes("[ak-role:resume-continue]"), false);
           // Exact model override for this resume only.
           assert.equal(args[args.indexOf("--provider") + 1], "xai");
           assert.equal(args[args.indexOf("--model") + 1], "grok-4.5");

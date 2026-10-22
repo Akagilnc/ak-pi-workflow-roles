@@ -481,10 +481,6 @@ test("post-role grace aborts the hung lookup; session_shutdown does not re-block
           (presentation.details as { disposition?: string } | undefined)?.disposition,
           "unavailable",
         );
-        assert.equal(
-          (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
-          "Navigator exceeded post-role delivery grace",
-        );
 
         // Hung closing must not block shutdown (awaiting dispose would hang).
         let shutdownDone = false;

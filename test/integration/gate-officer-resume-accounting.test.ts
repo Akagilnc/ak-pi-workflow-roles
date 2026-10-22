@@ -9,6 +9,7 @@
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -296,6 +297,8 @@ test("#879 repeated notary summons retain their own terminal payloads", async ()
       }),
     });
       assert.equal(projected.result.status, "continue");
+      assert.notEqual(prompts[i + 1], readableGateItem(body));
+      assert.equal(prompts[i + 1], prompts[0]);
       const terminal = projected.summoned?.terminal;
       assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
       assert.equal(terminal!.roleOutcome.kind, "accepted");
@@ -471,6 +474,7 @@ test("#1092 station-child notary has no case-dossier pointer material", async ()
     });
     assert.equal(projected.result.status, "converged");
     assert.ok(prompts.length >= 1);
+    assert.notEqual(prompts.at(-1), readableGateItem(body));
 
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");

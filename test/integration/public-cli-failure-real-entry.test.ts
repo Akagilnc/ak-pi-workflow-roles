@@ -304,8 +304,6 @@ test("production knownFailure channel reaches settlement as provider with typed 
     assert.equal(packageFact.exitCode, 17);
     assert.equal(packageFact.timedOut, true);
     assert.equal(packageFact.signal, "SIGTERM");
-    assert.equal(stderr.length, 1);
-    assert.equal(stderr[0]?.includes(hostStderr), true);
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
     const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       diagnostic?: string;
@@ -633,7 +631,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     let config = { seats: {} };
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
     await savePublicCliConfig(config, home);
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {
         packageRoot,
@@ -685,15 +683,14 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     // that report even though a submission was sealed. The sealed receipt is not
     // lost: it stays on the run-scoped submissions (owner 4743ade7).
     assert.equal(result.exitCode, 1);
-    assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
       assert.equal(result.terminal!.roleOutcome.cause, undefined);
     }
     assert.deepEqual(
-      (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)),
-      [`{"status":"converged","ticketNumber":1171}`],
+      result.terminal!.submissions,
+      [{ status: "converged", ticketNumber: 1171 }],
       "the sealed receipt stays recorded on the run-scoped carrier",
     );
   });

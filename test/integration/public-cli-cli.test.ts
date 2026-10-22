@@ -14,11 +14,9 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import {
   buildExplicitInternalActivationArgs,
-  helpDocument,
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
-import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
   loadPublicCliConfig,
   resolveEffectiveSeat,
@@ -105,22 +103,8 @@ test("Inspector public runner preserves typed converged/continue/escalate, and n
   });
 });
 
-test("help document capabilities match typed registry without depending on layout", () => {
-  const doc = helpDocument();
-  assert.equal(doc.executable, "ak-role");
-  const names = doc.capabilities.map((c) => c.name);
-  assert.equal(names.includes("roles"), true);
-  assert.equal(names.includes("config"), true);
-  assert.equal(names.includes("help"), true);
-  for (const role of PUBLIC_CALLABLE_ROLES) {
-    assert.equal(names.includes(role), true);
-  }
-});
-
-// Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案
-// 并一——TSV 行型正则把列序/措辞变承重结构违 ADR 0052，改咬 loadPublicCliConfig /
-// resolveEffectiveSeat / public-cli.json 字节 / 退出码；进程级可见性契约保留)。
-test("config persistence round-trips across processes on the typed seat face", async () => {
+// CLI config writes are observed through the stored document, not TSV presentation.
+test("CLI config commands persist and local roles reads do not rewrite disk", async () => {
   await withTempHome(async (home) => {
     // Fresh home: roles exits zero. Bulk config set is visible via config bytes.
     const fresh = await runAkRole(["roles"], {
@@ -131,7 +115,7 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(fresh.exitCode, 0);
 
-    // Bulk config set is visible to a subsequent process via the config bytes.
+    // Later CLI calls reload the stored config bytes.
     const setResult = await runAkRole(
       [
         "config",
@@ -164,7 +148,7 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(rolesResult.exitCode, 0);
 
-    // Local invocation override wins for the process but never persists.
+    // A roles read with invocation-local flags never persists them.
     const before = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     const overrideResult = await runAkRole(
       ["roles", "--model", "openai-codex/gpt-5.6-sol", "--thinking", "high"],
@@ -176,18 +160,6 @@ test("config persistence round-trips across processes on the typed seat face", a
       },
     );
     assert.equal(overrideResult.exitCode, 0);
-    const invocationEffective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "judge",
-      { "openai-codex": true, xai: true },
-      { model: "openai-codex/gpt-5.6-sol", thinking: "high" },
-    );
-    assert.equal(invocationEffective.source, "invocation");
-    assert.deepEqual(invocationEffective.selection, {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
     const after = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     assert.equal(after, before);
 
@@ -203,17 +175,6 @@ test("config persistence round-trips across processes on the typed seat face", a
       },
     );
     assert.equal(bareRoles.exitCode, 0);
-    const bareEffective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "coder",
-      { "openai-codex": true, xai: false },
-      { model: "kimi-coding/k3-256k" },
-    );
-    assert.equal(bareEffective.source, "invocation");
-    assert.deepEqual(bareEffective.selection, {
-      provider: "kimi-coding",
-      model: "k3-256k",
-    });
 
     // #384: persistent config set keeps a bare provider/model bare, and an
     // explicit :thinking suffix stays intact through the same seam.

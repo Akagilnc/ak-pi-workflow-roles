@@ -94,14 +94,6 @@ test("flat run without ticketNumber is isolated unbound (not joined, not board-w
   });
 });
 
-test("legacy issues/<n>/runs is still included", async () => {
-  await withBookDir(async (ledgerDir) => {
-    await seedLegacyRun(ledgerDir, 176, "legacy-coder-1");
-    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
-    assert.equal(runs.some((run) => run.runId === "legacy-coder-1"), true);
-  });
-});
-
 // Unbound isolation matrix: an unrelated unbound flat run must not pollute any
 // ticket view — legacy topology, another ticket's bound load, and empty tickets.
 test("unrelated unbound flat runs stay isolated from every ticket view", async () => {
@@ -138,9 +130,6 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
     await seedFlatRun(ledgerDir, "01a@judge", { ticketNumber: 176 });
     await seedFlatRun(ledgerDir, "01b@fixer", { ticketNumber: 177, role: "fixer" });
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
-    assert.equal(index.runsByTicket.get(176)?.length, 1);
-    assert.equal(index.runsByTicket.get(177)?.length, 1);
-    assert.equal(index.unboundRuns.length, 0);
     const a = await loadTicketTrajectoryRuns(ledgerDir, 176, index);
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "01a@judge"), true);

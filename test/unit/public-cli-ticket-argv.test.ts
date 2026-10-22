@@ -6,19 +6,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  parsePositiveTicketNumber,
   parseAnalystArgv,
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-
-test("parsePositiveTicketNumber rejects non-positive and leading junk", () => {
-  assert.equal(parsePositiveTicketNumber("582", "--ticket"), 582);
-  assert.throws(() => parsePositiveTicketNumber("0", "--ticket"), CliUsageError);
-  assert.throws(() => parsePositiveTicketNumber("08", "--ticket"), CliUsageError);
-  assert.throws(() => parsePositiveTicketNumber("x", "--ticket"), CliUsageError);
-});
-
 test("parseCountersignArgv preserves attachment and instruction", () => {
   const parsed = parsePublicSeatArgv("countersign", [
     "--attach",

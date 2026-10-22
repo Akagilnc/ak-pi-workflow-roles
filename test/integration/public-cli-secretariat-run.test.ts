@@ -4,7 +4,7 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readCurrentSection, seedCurrentSection, assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -484,8 +484,6 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
       join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
       "the first typed ticket remains the run identity after reviewer resubmission");
-    // The public-entry leg at rest carries none of the retired dossier files (#1161).
-    assertNoRetiredDossierFiles(join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`));
     // #1195: 中书省 public final holds this leg only; court tables stay on their own runs.
     const factsOut = result.terminal.roleOutcome.decisiveFacts;
     assert.equal(factsOut?.countersignTerminal, undefined, "parent final must not project countersignTerminal");
@@ -942,7 +940,7 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
 async function adapterBoundaryCase(input: {
   hostName: "codex" | "claude" | "grok-build";
   receipt: Record<string, unknown>;
-}): Promise<{ gateEntered: boolean; submitted: boolean }> {
+}): Promise<{ gateEntered: boolean; submitted: readonly unknown[] }> {
   return withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1000,7 +998,7 @@ async function adapterBoundaryCase(input: {
     };
     const submitted = async () => (await readRecordedSubmissionRows(
       project, "01a0adp969-0000-7000-8000-000000000001", home,
-    )).some((row) => row.role === "secretariat" && row.kind === "accepted");
+    )).map((row) => row.accepted);
 
     const prepare = () =>
       prepareRoleEnvelope({
@@ -1126,31 +1124,14 @@ process.stdout.write(JSON.stringify({
 }
 
 for (const hostName of ["codex", "claude", "grok-build"] as const) {
-  test(`#1057 adapter boundary ${hostName}: converged tool finishes before gate`, async () => {
-    const { gateEntered, submitted } = await adapterBoundaryCase({
-      hostName,
-      receipt: { secretariatStatus: "converged", ticketNumber: 924 },
-    });
-    assert.equal(
-      gateEntered,
-      false,
-      `${hostName} tool execution must not summon 给事中 before returning`,
-    );
-    assert.equal(submitted, true, `${hostName} must seal the submitted receipt`);
-  });
-
-  test(`#969 adapter boundary ${hostName}: escalate skips gate`, async () => {
-    const { gateEntered } = await adapterBoundaryCase({
-      hostName,
-      receipt: {
-        secretariatStatus: "escalate",
-        decisionGate: { question: "q", options: ["a"] },
-      },
-    });
-    assert.equal(
-      gateEntered,
-      false,
-      `${hostName} escalate must not summon 给事中`,
-    );
+  test(`adapter boundary ${hostName}: original receipt files without a nested gate`, async () => {
+    for (const receipt of [
+      { secretariatStatus: "converged", ticketNumber: 924 },
+      { secretariatStatus: "escalate", decisionGate: { question: "q", options: ["a"] } },
+    ]) {
+      const { gateEntered, submitted } = await adapterBoundaryCase({ hostName, receipt });
+      assert.equal(gateEntered, false);
+      assert.deepEqual(submitted, [receipt]);
+    }
   });
 }

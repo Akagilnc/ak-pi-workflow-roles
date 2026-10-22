@@ -1,5 +1,4 @@
 import { Type } from "typebox";
-import { canonicalJson } from "./canonical-json.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 

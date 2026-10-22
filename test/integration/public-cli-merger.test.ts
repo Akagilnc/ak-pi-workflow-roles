@@ -393,10 +393,6 @@ test("ak-role resume continues merger with exact session", async () => {
           admitted.mergerInputPath,
         );
         assert.equal(args.includes(instruction), false);
-        assert.equal(
-          args.some((a) => a.includes("[ak-role:resume-continue]")),
-          false,
-        );
         assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "");
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const receipt = {
