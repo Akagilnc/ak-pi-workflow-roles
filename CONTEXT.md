@@ -62,6 +62,5 @@
 - **落地周期(Issue-to-merge lead time)**：见 [#136](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/136)。
 - **过程成本报告(Process-cost report)**：见 [ADR 0017](docs/adr/0017-doctor-reads-retained-pi-sessions.md)。
 
-- **测试夹具（fixture）**：测试开始前为它准备好的环境（临时仓、隔离 HOME、账本目录）及用完的清理；按作用域分每案、每文件、每 worker 建一次。
-- **模板目录**：worker 作用域夹具建一次的前置成品，各案复制一份使用、互不污染。
+- **测试夹具（fixture）**：测试开始前为它准备好的环境（临时仓、隔离 home、账本目录）及用完的清理；默认每案现建，只有贵的前置才按文件共享。
 - **测试三层**：unit＋contract（函数与契约面）、integration（真实入口）、package（装包产物）；按进入系统的方式分，不按快慢分。
