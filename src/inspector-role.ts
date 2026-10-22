@@ -1,5 +1,5 @@
 import type { Static } from "typebox";
-import { reviewSubmissionSchema } from "./review-submission.ts";
+import { inspectorSubmissionSchema } from "./review-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
   INSPECTOR_OUTPUT_TOOL_NAME,
@@ -15,7 +15,7 @@ export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
 /** 台院事后察举交卷形状。 */
-export const inspectorOutputSchema = reviewSubmissionSchema;
+export const inspectorOutputSchema = inspectorSubmissionSchema;
 
 export type InspectorOutputParameters = Static<typeof inspectorOutputSchema>;
 

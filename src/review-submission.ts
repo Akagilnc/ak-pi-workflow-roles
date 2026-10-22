@@ -91,4 +91,30 @@ export const courtReviewSubmissionSchema = withTerminatingOutputDeclarations(
   ),
 );
 
+/** Inspector whole-ticket complexity row: one quality-law deletion clause, answered for the whole ticket. */
+export const ticketComplexityRowSchema = Type.Object(
+  {
+    class: Type.String({ description: "照抄《质量法》里那一句要求删除、合并、复用或不另写的条文" }),
+    hits: Type.Array(Type.String(), {
+      description: "本票净增里命中这一句的每一处 path:line，并写删到哪、并到哪；打开看过才算。一处没有为空数组，没有第三种答法",
+    }),
+  },
+  { additionalProperties: true },
+);
+
+/** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
+export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
+  Type.Object(
+    {
+      status: reviewStatusField,
+      ...reviewNarrativeFields,
+      ticketComplexity: Type.Array(ticketComplexityRowSchema, {
+        description:
+          "整票复杂度：本票起点（本分支与家族分支或目标分支的 git merge-base）到 HEAD 的生产与测试净增，对《质量法》里每一句要求删除、合并、复用或不另写的条文各答一行。前几轮已署过的改动也算在内。",
+      }),
+    },
+    { additionalProperties: true },
+  ),
+);
+
 export type ReviewSubmission = { readonly status?: unknown; readonly [key: string]: unknown };
