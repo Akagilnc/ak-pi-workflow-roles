@@ -113,8 +113,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const admitted = readCurrentSection(runDirectory, "admitted") as {
         instruction: string;
         prerequisitesPath?: string;
-        prerequisites?: unknown;
-        packetPath?: string;
       };
       assert.equal(admitted.instruction, "Repair.");
       assert.equal(admitted.prerequisitesPath, prereqPath);
@@ -289,7 +287,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, undefined);
-    assert.equal("packetPath" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;

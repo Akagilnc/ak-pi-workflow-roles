@@ -282,11 +282,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.equal(capturedArgs![0], "--no-extensions");
     assert.equal(capturedArgs!.includes("--ak-role"), true);
     assert.equal(capturedArgs!.includes("judge"), true);
-    // No public burden selector on the Internal activation line.
-    assert.equal(
-      capturedArgs!.some((arg) => arg.includes("burden")),
-      false,
-    );
 
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&

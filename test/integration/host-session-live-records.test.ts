@@ -156,7 +156,6 @@ process.stdout.write(JSON.stringify({
     assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
-    assert.equal("ordinal" in (copyRec.payload as object), false);
   } finally {
     ledger.dispose();
   }

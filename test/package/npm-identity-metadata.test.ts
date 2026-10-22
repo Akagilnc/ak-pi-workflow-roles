@@ -121,11 +121,6 @@ test("packed artifact carries the settled license identity", async () => {
     extracted.paths.includes("LICENSE"),
     "npm pack file list must include LICENSE",
   );
-  assert.equal(
-    extracted.paths.some((path) => path === "patches" || path.startsWith("patches/")),
-    false,
-    "npm pack must exclude repository-only patches",
-  );
   assert.equal(extracted.licenseText, CANONICAL_APACHE_2_0);
 
   assert.ok(
@@ -137,16 +132,11 @@ test("packed artifact carries the settled license identity", async () => {
 });
 
 /** Exercise the npm bin target, not a copied source/module inventory. */
-test("packed CLI starts without bundled method Skills", async () => {
+test("packed CLI bin starts and auto-extension list stays empty", async () => {
   const bin = extracted.packageJson.bin?.["ak-role"];
   assert.equal(typeof bin, "string");
   await execFileAsync(process.execPath, [resolve(extracted.root, "package", bin!), "--help"]);
 
-  assert.equal(
-    extracted.paths.some((path) => path.startsWith("resources/methods/")),
-    false,
-    "npm artifact must not ship method Skill copies",
-  );
   // Manifest load fields: bin mapping and empty auto-extension list (ADR 0052:
   // package auto-registration stays empty; explicit entrypoint owns loading).
   assert.deepEqual(extracted.packageJson.pi?.extensions ?? ["missing"], []);

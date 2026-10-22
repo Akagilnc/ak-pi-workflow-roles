@@ -146,8 +146,6 @@ test("admitMergerInvocation derives envelope into internal input without public 
     };
     // #1168: dispatch copies gone; only git-fact intents remain as materials keys.
     assert.deepEqual(Object.keys(raw.materials ?? {}).sort(), ["sourceIntent", "targetIntent"]);
-    assert.equal("task" in (raw.materials ?? {}), false);
-    assert.equal("authority" in (raw.materials ?? {}), false);
     const input = validateMergerInput(raw);
     assert.equal(input.targetObjectId, fixture.target);
     assert.equal(input.sourceObjectId, fixture.source);

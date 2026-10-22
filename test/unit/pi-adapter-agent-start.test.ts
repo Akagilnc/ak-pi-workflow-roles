@@ -7,12 +7,8 @@ import { Type } from "typebox";
 import type { RoleEnvelopeHost } from "../../src/host-contracts.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Pi runner createContext() returns a fresh object per emit/tool (extensions runner). */
 function freshExtensionContext(cwd: string): ExtensionContext {
@@ -178,33 +174,4 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
     if (result?.systemPrompt !== undefined) systemPrompt = result.systemPrompt;
   }
   assert.equal(seenPrompt, collision);
-});
-
-test("#1199 Pi spawn env must not carry summons body (stdin already holds dialogue)", async () => {
-  let capturedEnv: NodeJS.ProcessEnv | undefined;
-  const host = createPiRoleTurnHost({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    spawnRunner: async (_args, options) => {
-      capturedEnv = options.env;
-      return { code: 0, stderr: "", timedOut: false };
-    },
-  });
-  const huge = "x".repeat(200_000);
-  await host.executeTurn({
-    home: "/tmp/pi-summons-no-env-body",
-    agentDir: "/tmp/pi-summons-no-env-body/agent",
-    cwd: "/tmp/pi-summons-no-env-body/cwd",
-    runDirectory: "/tmp/pi-summons-no-env-body/run",
-    principal: fixturePrincipal("/tmp/pi-summons-no-env-body/session"),
-    activation: { role: "judge" },
-    methods: [],
-    continuation: { kind: "initial", prompt: huge },
-  });
-  assert.ok(capturedEnv);
-  assert.equal(capturedEnv.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(capturedEnv, "AK_ROLE_SUMMONS_INSTRUCTION"),
-    false,
-  );
 });

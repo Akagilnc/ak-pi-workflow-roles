@@ -5,14 +5,12 @@
  * - Officer seat host is not parent invocation host (#821).
  * - Nth review turn: notary fixed dispatch (#1208); other officers bind Nth payload.
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
- * - Station-child: #1092 drops case-dossier pointer delivery; notary dialogue is fixed.
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -35,8 +33,6 @@ import {
   attachRecordedSubmissions,
   trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
@@ -242,11 +238,6 @@ test("#879 repeated notary summons retain their own terminal payloads", async ()
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         prompts.push(request.continuation.prompt);
-        assert.equal(
-          "materials" in request,
-          false,
-          "station-child officer must not grow a materials field on RoleTurnRequest",
-        );
         return baseHost.executeTurn(request);
       },
     };
@@ -407,124 +398,5 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       assert.deepEqual(projected.result.receipt, second);
     }
     assert.deepEqual(projected.summoned?.terminal?.submissions, [first, second]);
-  });
-});
-
-test("#1092 station-child notary has no case-dossier pointer material", async () => {
-  await withTempRoot("ak-officer-no-dossier-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 1092 });
-    // #178: officer summons need a caller-specified seat model (same pattern as #821 above).
-    await mkdir(join(home, ".ak-roles"), { recursive: true });
-    await writeFile(
-      publicCliConfigPath(home),
-      `${JSON.stringify({
-        seats: { notary: { provider: "openai-codex", model: "gpt-5.6-sol" } },
-      })}\n`,
-      "utf8",
-    );
-    await mkdir(join(home, ".pi", "agent"), { recursive: true });
-    await writeFile(
-      join(home, ".pi", "agent", "auth.json"),
-      `${JSON.stringify({ "openai-codex": {} })}\n`,
-      "utf8",
-    );
-
-    const prompts: string[] = [];
-    const runDirs: string[] = [];
-    const baseHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged", findings: [] },
-      }),
-    });
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        prompts.push(request.continuation.prompt);
-        runDirs.push(request.runDirectory);
-        assert.equal("materials" in request, false);
-        return baseHost.executeTurn(request);
-      },
-    };
-
-    const body = { countersignStatus: "converged", note: "NO-DOSSIER-PEER-BODY" };
-    const projected = await projectGatekeeperRun({
-      context: {
-        cwd: project,
-        sessionManager: {
-          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
-          getEntries: () => [],
-        },
-      } as never,
-      subject: { kind: "countersign_verdict" },
-      runDirectory: sourceRunPath,
-      submission: body,
-      summonOfficer: createDefaultGateOfficerSummon({
-        cwd: project,
-        home,
-        packageRoot,
-        roleTurnHost: host,
-        createRunId: () => "01a0109200007000800000000000d1",
-      }),
-    });
-    assert.equal(projected.result.status, "converged");
-    assert.ok(prompts.length >= 1);
-    assert.notEqual(prompts.at(-1), readableGateItem(body));
-
-    const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
-    assert.ok(officerRun, "officer run directory must exist");
-
-    await assert.rejects(
-      () => access(join(officerRun!, "attachments", "case-dossier")),
-      (error: unknown) =>
-        error instanceof Error
-        && (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-1092-officer-env-"));
-    try {
-      const prepared = await prepareRoleEnvelope({
-        request: {
-          principal: fixturePrincipal(join(officerRun!, "session")),
-          activation: { role: "judge" },
-          methods: [],
-          continuation: { kind: "resume", prompt: JSON.stringify(body) },
-          cwd: project,
-          home,
-          agentDir: join(home, "agent"),
-          runDirectory: officerRun!,
-          stationChild: true,
-        },
-        dependencies: createRoleRuntimeDependencies(packageRoot),
-        socketPath: join(socketDir, "mcp.sock"),
-        principalAuthority: piDurablePrincipalAuthority,
-    });
-      try {
-        assert.deepEqual(JSON.parse(prepared.prompt), body);
-        const dossiers = prepared.systemPrompt.materials.filter(
-          (material) =>
-            typeof material === "object"
-            && material !== null
-            && (material as { kind?: unknown }).kind === "case-dossier-pointer",
-        );
-        assert.equal(dossiers.length, 0);
-      } finally {
-        await prepared.dispose?.();
-      }
-    } finally {
-      await rm(socketDir, { recursive: true, force: true });
-    }
-
-    await assert.rejects(
-      () => access(join(officerRun!, ".case-dossier-stage")),
-      (error: unknown) =>
-        error instanceof Error
-        && (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
   });
 });

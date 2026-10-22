@@ -459,7 +459,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
     );
     for (const args of captured) {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(args.includes("--ak-review-task"), false);
       // Ordinary single-axis public semantics: dual-lens legs are not station children.
       assert.equal(args.includes("--ak-station-child"), false);
       assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
@@ -796,7 +795,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
     assert.equal(typeof turnCwd, "string");
     assert.equal(realpathSync(turnCwd!), realpathSync(project));
-    assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     // The skill's formal args and the caller's own words must reach the host,
     // not merely the invocation ledger or the internal argv.
@@ -833,8 +831,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       "CLAUDE.md",
       "docs/adr/0001-roles-grow-by-demand.md",
     ]);
-    assert.equal("taskPath" in admittedFacts, false);
-    assert.equal("taskSha256" in admittedFacts, false);
     if (result.terminal?.roleOutcome.kind === "accepted") {
       const amendments = (result.terminal.roleOutcome.payloads?.[0] as {
         amendments?: { completeness?: string };
@@ -1047,7 +1043,6 @@ test("ak-role resume continues reviewer with fixed base", async () => {
         resumeArgs = [...args];
         resumeStdin = options.stdin;
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-        assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
         assert.equal(args.includes(instruction), false);

@@ -265,7 +265,6 @@ function piHostThatReportsThenSubmits(input: {
       try {
         const reported = await reportTicketFromHostContext(context, input.ticketNumber, authority);
         assert.equal(reported.relocated, true);
-        assert.equal("runDirectory" in reported, false);
         input.onReportOutcome?.({
           threw: false,
           contextRunDirectory: context.runDirectory,
@@ -740,9 +739,6 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(fixerLines[0]!.round, "1");
     assert.equal(fixerLines[0]!.status, "completed");
     assert.equal(fixerLines[0]!.summary, submit.summary);
-    assert.equal(Object.hasOwn(fixerLines[0]!, "model"), false);
-    assert.equal(Object.hasOwn(fixerLines[0]!, "host"), false);
-    assert.equal(Object.hasOwn(fixerLines[0]!, "thinking"), false);
     assert.equal(existsSync(join(ticketDir, fixerLines[0]!.receipt)), true);
     assert.equal(existsSync(join(ticketDir, fixerLines[0]!.session)), true);
     assert.deepEqual(

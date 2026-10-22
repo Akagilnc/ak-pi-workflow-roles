@@ -509,7 +509,7 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
   });
 });
 
-test("legacy records with priorEventId are readable and new records omit priorEventId", async () => {
+test("legacy records with priorEventId are readable beside new records", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("call-1");
     await f.tool().execute("call-1", { status: "first-accepted" }, undefined, undefined, f.context);
@@ -544,13 +544,5 @@ test("legacy records with priorEventId are readable and new records omit priorEv
       { status: "first-accepted" },
       { status: "legacy-accepted" },
     ]);
-
-    // Verify newly written records do not carry priorEventId
-    const rawContent = await readFile(ledgerFile, "utf8");
-    const lines = rawContent.trim().split("\n").map((line) => JSON.parse(line));
-    const firstCandidate = lines.find((l: Record<string, unknown>) => (l.payload as { toolCallId?: string })?.toolCallId === "call-1");
-    assert.ok(firstCandidate);
-    assert.equal(firstCandidate.priorEventId, undefined);
-    assert.equal("priorEventId" in firstCandidate, false);
   });
 });

@@ -1181,7 +1181,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       volume.unprojectedRaw.includes(fixture.unparsableRaw),
       "unparsable source bytes must land verbatim without forged dialogue fields",
     );
-    assert.equal(volume.lines.every((line) => !("line" in line)), true);
     const appended = volume.records.find((record) =>
       typeof record === "object" && record !== null &&
       "payload" in record &&

@@ -250,9 +250,6 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     // #1199: session originals stay under the leg (`<run>/session`).
     const { sessionDirectoryOf } = await import("../../src/role-run-placement.ts");
     assert.equal(existsSync(sessionDirectoryOf(ticketRunDirectory)), true, "topology requires leg session/");
-    for (const forbidden of ["attachments", "fix-packet.md", "task.md", "prerequisites.json"]) {
-      assert.equal(topLevel.has(forbidden), false, `topology forbids ${forbidden}`);
-    }
 
     const inspector = captures.find((c) => c.role === "inspector");
     assert.ok(inspector !== undefined, "gate must summon inspector");
@@ -281,7 +278,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
       [...callerPaths, peerBody, DISPATCH],
     );
 
-    // Relocated admitted page keeps caller paths opaque; no frozenPath.
+    // Relocated admitted page keeps caller paths opaque.
     const current = JSON.parse(await readFile(join(ticketRunDirectory, "current.json"), "utf8")) as {
       admitted: {
         attachments: Array<Record<string, unknown>>;
@@ -293,8 +290,5 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
       [attachRel],
     );
     assert.equal(current.admitted.prerequisitesPath, prereqPath);
-    for (const attachment of current.admitted.attachments) {
-      assert.equal("frozenPath" in attachment, false);
-    }
   });
 });

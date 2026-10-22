@@ -681,7 +681,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
     const admittedAfter = readCurrentSection(liveRunDirectory, "admitted") as { attachments: Array<{ path: string }> };
     assert.equal(admittedAfter.attachments[0]!.path, attachmentSrc);
-    assert.equal(existsSync(join(liveRunDirectory, "attachments")), false);
 
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");

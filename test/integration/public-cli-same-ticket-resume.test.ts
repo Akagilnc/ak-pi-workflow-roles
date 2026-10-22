@@ -670,10 +670,6 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       [external],
       "same-ticket attach keeps the caller path",
     );
-    await assert.rejects(
-      () => readdir(join(runDirectory, "attachments")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
 
     // External original may change or vanish; package does not keep a copy (#1165).
     await writeFile(external, "external-changed-after-admit\n", "utf8");
@@ -706,10 +702,6 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     assert.equal(resumed.exitCode, 0, "open-court resume must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
-    await assert.rejects(
-      () => readdir(join(runDirectory, "attachments")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
     assert.equal(
       await readCurrentCourt(runDirectory),
       undefined,

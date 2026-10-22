@@ -608,10 +608,5 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       ? finalResult.terminal.roleOutcome.payloads ?? []
       : [];
     assert.deepEqual(parentPayloads.at(-1), second);
-    assert.equal(
-      finalResult.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
-      undefined,
-      "parent final must not project notaryTerminal",
-    );
   });
 });

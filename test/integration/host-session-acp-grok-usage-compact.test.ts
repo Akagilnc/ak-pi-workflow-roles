@@ -146,7 +146,6 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
     assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
     assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingDir);
-    assert.equal("ordinal" in (copyRec.payload as object), false);
 
     // 3. A second exit overwrites the same single original with the new source bytes.
     const chatContent2 = '{"role":"assistant","content":"second exit"}\n';

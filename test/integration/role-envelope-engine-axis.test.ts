@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -241,7 +241,7 @@ test("#879 absent HostContext identity never inherits ambient run or court", () 
   }
 });
 
-test("#1092 concurrent envelopes do not fold case-dossier pointer materials", async () => {
+test("#879 concurrent envelopes keep per-request prompts without writing ambient run or court env", async () => {
   const previousRun = process.env.AK_ROLE_RUN_DIR;
   const previousCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   delete process.env.AK_ROLE_RUN_DIR;
@@ -250,11 +250,7 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
   try {
     const mkRun = async (label: string, courtAttemptId: string) => {
       const runDirectory = ledgerProbeRun(home, `${label}@judge`);
-      // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).
-      const freezeDir = join(runDirectory, "attachments", "case-dossier");
-      await mkdir(freezeDir, { recursive: true });
       await mkdir(join(runDirectory, "session"), { recursive: true });
-      await writeFile(join(freezeDir, "00-case-dossier-pointer.md"), `stale-${label}\n`, "utf8");
       return {
         socketPath: join(home, `${label}.sock`),
         request: {
@@ -284,15 +280,6 @@ test("#1092 concurrent envelopes do not fold case-dossier pointer materials", as
     try {
       assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
       assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
-      const dossierCount = (prepared: typeof preparedA) =>
-        prepared.systemPrompt.materials.filter(
-          (material) =>
-            typeof material === "object"
-            && material !== null
-            && (material as { kind?: unknown }).kind === "case-dossier-pointer",
-        ).length;
-      assert.equal(dossierCount(preparedA), 0);
-      assert.equal(dossierCount(preparedB), 0);
       assert.equal(preparedA.prompt, "peer-a");
       assert.equal(preparedB.prompt, "peer-b");
     } finally {

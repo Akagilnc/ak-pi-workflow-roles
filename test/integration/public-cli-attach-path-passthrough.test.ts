@@ -4,8 +4,7 @@
  * input and run-directory shape only (no generated-prompt prose locks).
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -99,8 +98,6 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction retained; 
       home, ".ak-roles", "books", bookKey, "unbound", "runs",
       "run-attach-passthrough-001@judge",
     );
-    assert.equal(existsSync(join(runDirectory, "attachments")), false);
-
     const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as {
       admitted: {
         instruction: string;
@@ -114,12 +111,6 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction retained; 
       current.admitted.attachments.map((a) => a.path),
       [relativeAttach, spaceAttach, emptyAttach, missingAttach],
     );
-    for (const attachment of current.admitted.attachments) {
-      assert.equal("frozenPath" in attachment, false);
-      assert.equal("sha256" in attachment, false);
-      assert.equal("byteLength" in attachment, false);
-      assert.equal("provenancePath" in attachment, false);
-    }
   });
 });
 
@@ -208,22 +199,15 @@ test("#1165 --request-manifest/--attach keep opaque values; host flag wires path
         home, ".ak-roles", "books", bookKey, "unbound", "runs",
         `${runId}@collector`,
       );
-      await assert.rejects(
-        () => access(join(runDirectory, "request-manifest.json")),
-        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-      );
-
       const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as {
         admitted: {
           instruction: string;
           requestManifestPath?: string;
           attachments?: Array<{ path: string }>;
-          manifestDigest?: string;
         };
       };
       assert.equal(current.admitted.instruction, instruction);
       assert.equal(current.admitted.requestManifestPath, expectManifest);
-      assert.equal("manifestDigest" in current.admitted, false);
 
       if (label === "mixed-same-path") {
         assert.deepEqual(

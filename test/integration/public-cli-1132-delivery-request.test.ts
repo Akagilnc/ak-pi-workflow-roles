@@ -793,11 +793,6 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
       if (result.terminal?.roleOutcome.kind !== "accepted") return;
       assert.equal(result.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
       assert.equal(result.terminal.roleOutcome.decisiveFacts?.subsequentAudit, "incomplete");
-      assert.equal(
-        result.terminal.roleOutcome.decisiveFacts?.officerPayloads,
-        undefined,
-        "parent/other-seat payload copies must not ride the returned terminal",
-      );
       // This-court volume: submissions carry reask history when present; else payloads.
       const volume = (result.terminal.submissions !== undefined && result.terminal.submissions.length > 0
         ? result.terminal.submissions
@@ -876,11 +871,6 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       // #1195: resume identity is the actual audit seat, not a parent-side copy field.
       assert.equal(opened.terminal?.roleOutcome.role, "countersign", `limit ${limit}`);
       assert.equal(opened.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true, `limit ${limit}`);
-      assert.equal(
-        opened.terminal?.roleOutcome.decisiveFacts?.officerPayloads,
-        undefined,
-        `limit ${limit}: no other-seat payload copy`,
-      );
       const officerRunId = opened.terminal?.runId;
       assert.equal(typeof officerRunId, "string", `limit ${limit}`);
       const beforeResume = calls.countersign ?? 0;

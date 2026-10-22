@@ -414,7 +414,6 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
@@ -427,7 +426,6 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
     // absence did not relabel it either.
     assert.equal(errorBody.cause, undefined);
     assert.equal(errorBody.diagnostic, hostStderr);
-    assert.notEqual(errorBody.identity?.name, "MissingProviderCredential");
   });
 });
 

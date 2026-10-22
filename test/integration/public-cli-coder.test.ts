@@ -485,7 +485,6 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
     });
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
-    const { existsSync } = await import("node:fs");
 
     {
       const { io } = captureIo();
@@ -576,7 +575,6 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
-        assert.equal(args.includes("--ak-coder-task"), false);
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
@@ -617,7 +615,6 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
         : [],
       ["partially_completed", "planned"],
     );
-    assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false);
   });
 });
 

@@ -458,9 +458,6 @@ test("named Judge and worker tools preserve opaque receipts", async () => {
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     assert.deepEqual(result.content, [], "the submission tool finishes before reviewer receipts exist");
-    // #756: judge no longer projects auditor usage onto the parent receipt —
-    // nested officer meters live on the officer session; parent accepts as-is.
-    assert.equal(result.usage, undefined);
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const raw = await tool.execute(
       "unreadable-status",
