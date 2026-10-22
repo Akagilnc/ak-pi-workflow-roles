@@ -140,7 +140,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 
 ## Tests
 
-During the [ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md) migration, `pnpm test` runs all unit/contract tests (including root-level tests) with Vitest. `test:vitest` runs every Vitest project; the integration and package projects list their migrated files in `vitest.config.ts`. `test:all` runs Vitest first, then the remaining integration/package files under Node's runner; CI retains both entries until migration closes. `test:integration` is the same without the remaining package files. For a focused run:
+Tests run on Vitest ([ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md)). `pnpm test` runs the unit and contract projects, including root-level tests. `pnpm test:all` runs all three projects. `pnpm test:integration` runs the integration project. For a focused run:
 
 ```bash
 pnpm exec vitest run --project unit-contract

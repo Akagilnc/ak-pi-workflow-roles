@@ -1,6 +1,6 @@
 /**
- * Owning seam for environment-fixtures.ts pure option contract (#549 AC5).
- * Host-miss / preload / package.json wiring live on the real-entry integration seam.
+ * Owning seam for environment-fixtures.ts option contract (#549 AC5).
+ * Worker and dist-CLI home isolation is asserted by the public CLI startup test.
  * #685/#612: default process test home is worktree-internal create-and-delete.
  */
 import assert from "node:assert/strict";
