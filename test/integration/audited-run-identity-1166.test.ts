@@ -156,11 +156,13 @@ async function inspectLiveRequest(
           assert.ok(prepared.systemPrompt.body.includes(auditedSoul));
         }
         // The packaged reference materials loaded for the seat reach startup materials unchanged.
-        assert.equal(loadedReferences.length, 1);
-        assert.notEqual(loadedReferences[0], "");
-        assert.ok(prepared.systemPrompt.materials.some(
-          (material) => (material as { content?: unknown }).content === loadedReferences[0],
-        ));
+        assert.ok(loadedReferences.length > 0);
+        for (const loaded of loadedReferences) {
+          assert.notEqual(loaded, "");
+          assert.ok(prepared.systemPrompt.materials.some(
+            (material) => (material as { content?: unknown }).content === loaded,
+          ));
+        }
         const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
         const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
         let toolNames: string[] | undefined;
