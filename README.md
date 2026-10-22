@@ -140,10 +140,10 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 
 ## Tests
 
-During the [ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md) expand phase, `pnpm run test:vitest` runs the migrated examples from all three projects; CI runs it alongside the unchanged `test:all`. For a focused run:
+During the [ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md) migration, `pnpm test` runs all unit/contract tests (including root-level tests) with Vitest. `test:vitest` also runs the migrated factory-board timer tests and the integration/package expand examples. `test:all` runs these first, then the remaining Node tests; CI retains both entries until migration closes. `test:integration` uses the same Vitest batch, including the package expand example, followed by the remaining integration tests. For a focused run:
 
 ```bash
-pnpm exec vitest run --project unit test/unit/package-home-seam.test.ts
+pnpm exec vitest run --project unit-contract
 pnpm exec vitest run --project integration test/integration/public-cli-bin-startup.test.ts
 pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts
 ```

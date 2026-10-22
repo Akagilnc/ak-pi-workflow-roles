@@ -1,6 +1,6 @@
 // #1192: attendance is a table lookup — lifecycle, settle-by-status, grace and cancel.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test, vi } from "vitest";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
@@ -418,11 +418,11 @@ async function withNavigatorInfraGraceEnvelope(
   });
 }
 
-test("post-role grace aborts the hung lookup; session_shutdown does not re-block", async (t) => {
+test("post-role grace aborts the hung lookup; session_shutdown does not re-block", async () => {
   // Real shared entry: session_start → infrastructure settlement → attendance settle →
   // lookup summon (listens to HostContext.signal) → grace dispose aborts nest →
   // session_shutdown must return without awaiting nested teardown (#959 reopen).
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     await withNavigatorInfraGraceEnvelope(
@@ -466,7 +466,7 @@ test("post-role grace aborts the hung lookup; session_shutdown does not re-block
         assert.equal(settled, false, "hung prepare must still be inside grace");
         assert.equal(seenSignal()?.aborted, false, "nest stays live until grace dispose");
 
-        t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+        vi.advanceTimersByTime(NAVIGATOR_POST_ROLE_GRACE_MS);
         await waitForEventLoopCondition(() => settled && nestStopped(), {
           label: "post-role grace must release parent and abort nested summon",
           timeoutMs: 1_000,
@@ -499,7 +499,7 @@ test("post-role grace aborts the hung lookup; session_shutdown does not re-block
       },
     );
   } finally {
-    t.mock.timers.reset();
+    vi.useRealTimers();
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
   }

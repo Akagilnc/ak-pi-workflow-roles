@@ -12,7 +12,7 @@ import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktr
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { resolveAnalystBookKey } from "../../src/analyst-book-key.ts";

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { sha256Hex } from "../../src/sha256.ts";
 import { MergerInputContractError, validateMergerInput } from "../../src/merger-contracts.ts";
 

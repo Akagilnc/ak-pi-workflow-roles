@@ -15,7 +15,7 @@
  * superseded by real parser tracers.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   helpDocument,

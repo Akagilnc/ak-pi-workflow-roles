@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { optionsForOwner } from "../../src/public-cli/option-definitions.ts";

@@ -66,13 +66,6 @@ export type TicketSnapshot = {
 
 export type StationSource = "tool" | "invocation" | "name" | "unknown";
 
-/** Injected clock + scheduler so tests drive the production lifecycle without wall sleep. */
-export type TrajectoryClock = () => Date;
-export type TrajectoryScheduler = {
-  /** Schedule `tick` every `ms` milliseconds; return a cancel function. */
-  every: (ms: number, tick: () => void) => () => void;
-};
-
 export type TicketTrajectoryPageHandle = {
   readonly outputPath: string;
   /** Settles when the first page write finishes (or rejects on first failure). */
@@ -937,15 +930,6 @@ export async function writeTicketTrajectoryPage(input: {
   return { outputPath, html };
 }
 
-const defaultScheduler: TrajectoryScheduler = {
-  every(ms, tick) {
-    const timer = setInterval(tick, ms);
-    // Allow the process to exit naturally if the caller forgets stop in scripts.
-    timer.unref?.();
-    return () => clearInterval(timer);
-  },
-};
-
 /**
  * Production page lifecycle: write immediately, then regenerate on the declared
  * refresh boundary so the same viewing surface observes new runs / generated-at.
@@ -957,15 +941,11 @@ export function startTicketTrajectoryPage(input: {
   ticketSnapshot: TicketSnapshot;
   outputPath: string;
   refreshBoundarySeconds?: number;
-  clock?: TrajectoryClock;
-  scheduler?: TrajectoryScheduler;
 }): TicketTrajectoryPageHandle {
   const refreshBoundarySeconds = input.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
   if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
     throw new Error("refreshBoundarySeconds must be a positive finite number");
   }
-  const clock = input.clock ?? (() => new Date());
-  const scheduler = input.scheduler ?? defaultScheduler;
 
   let stopped = false;
   let cancel: (() => void) | undefined;
@@ -1007,7 +987,7 @@ export function startTicketTrajectoryPage(input: {
     return writeTicketTrajectoryPage({
       ledgerDir: input.ledgerDir,
       ticketSnapshot: input.ticketSnapshot,
-      now: clock(),
+      now: new Date(),
       outputPath: input.outputPath,
       refreshBoundarySeconds,
     });
@@ -1029,9 +1009,9 @@ export function startTicketTrajectoryPage(input: {
     .then((first) => {
       if (stopped || lastRejection !== undefined) return first;
       const intervalMs = Math.max(1, Math.round(refreshBoundarySeconds * 1000));
-      cancel = scheduler.every(intervalMs, () => {
-        queueWrite();
-      });
+      const timer = setInterval(queueWrite, intervalMs);
+      timer.unref?.();
+      cancel = () => clearInterval(timer);
       return first;
     })
     .catch((error) => {
