@@ -841,9 +841,9 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    // Leading colon leaves empty provider/model — still a format reject.
-    {
-      const badSpec = ":provider/model";
+    // Empty spec, missing slash, empty provider, and a leading colon (empty
+    // provider/model) are all format rejects.
+    for (const [index, badSpec] of ["", "no-slash-model", "/missing-provider", ":provider/model"].entries()) {
       const { io } = captureIo();
       let dispatched = false;
       const result = await runAkRole(
@@ -861,7 +861,7 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
           home,
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
-          createRunId: () => "run-cli-coder-bad-thinking-leading",
+          createRunId: () => `run-cli-coder-malformed-model-${index}`,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -878,8 +878,8 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
           }),
         },
       );
-      assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
-      assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
+      assert.equal(dispatched, false, `${JSON.stringify(badSpec)} must not reach pi dispatch`);
+      assert.notEqual(result.exitCode, 0, `${JSON.stringify(badSpec)} must be rejected`);
     }
 
     // Opaque suffix (including former whitelist rejects) reaches dispatch as-is.

@@ -19,7 +19,6 @@ import {
 } from "../../src/public-cli/cli.ts";
 import {
   loadPublicCliConfig,
-  resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -190,6 +189,33 @@ test("CLI config commands persist and local roles reads do not rewrite disk", as
     });
     assert.equal(barePersisted?.thinking, undefined);
 
+    // The stored bare row is the effective model a later seat call dispatches.
+    const project = join(home, "work");
+    await mkdir(project);
+    seedGitProject(project);
+    let bareDispatched: unknown;
+    await runAkRole(["coder", "plan", "--project", project, "Plan with the stored bare model."], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => "cli-config-bare-dispatch",
+      io: captureIo().io,
+      roleTurnHost: createMinimalHost((request) => {
+        bareDispatched = request.model;
+        return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+      }),
+    });
+    assert.deepEqual(bareDispatched, { provider: "kimi-coding", model: "k3-256k" });
+
+    // #683: an empty suffix is opaque thinking, stored as-is rather than dropped.
+    const emptySuffix = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k:"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(emptySuffix.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.coder?.thinking, "");
+
     const thinkingSet = await runAkRole(
       ["config", "set", "coder", "kimi-coding/k3-256k:high"],
       { packageRoot, home, io: captureIo().io },
@@ -233,13 +259,6 @@ test("CLI config commands persist and local roles reads do not rewrite disk", as
       io: captureIo().io,
     });
     assert.equal(rolesAfter.exitCode, 0);
-    assert.equal(
-      resolveEffectiveSeat(gatePersisted, "gatekeeper", {
-        "openai-codex": true,
-        xai: true,
-      }).source,
-      "persistent",
-    );
 
     const unsetInspector = await runAkRole(["config", "unset", "inspector"], {
       packageRoot,

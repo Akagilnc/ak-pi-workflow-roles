@@ -106,10 +106,10 @@
 | `test/integration/public-cli-auto-resume-dispatch-throw.test.ts` | B | 留：公开 retry loop 保每次 cause、sink 故障、后续成功与原始异常身份。 |
 | `test/integration/public-cli-auto-resume-limit-422.test.ts` | B | 留：真实 config/入口决定 dispatch 次数，零/非法/大整数边界与无写入。 |
 | `test/integration/public-cli-bin-startup.test.ts` | B | 留：真实 built bin 可启动、exit 状态，不比 help 文案；与 tarball 安装产物接缝不同。 |
-| `test/integration/public-cli-cli.test.ts` | M/D | 改：删 help/registry 同源自比及重复 resolver；保 CLI config 写盘/不被 local flags 改写、unknown command 零写入、各席 invocation；不再谎称跨进程。 |
-| `test/integration/public-cli-coder.test.ts` | S | 改：删退役 task/dossier 哨兵，宿主中性 /skill: 负向契约保留；保公开 Coder phase、opaque status、audit failure、model/thinking 与 resume；宿主边界提供输入。 |
+| `test/integration/public-cli-cli.test.ts` | M/D | 改：删 help/registry 同源自比及重复 resolver；保 CLI config 写盘/不被 local flags 改写、unknown command 零写入、各席 invocation；不再谎称跨进程。第五轮（R4-B）：CLI config 公开案在 bare `config set` 后接一次 Coder 派发，断言 `request.model` 为无 thinking 的持久选择（承接原 config 直接案的持久化 effective selection）；`:` 空后缀经 `config set` 落盘为 `thinking: ""`（opaque 边界）；删对 gatekeeper `resolveEffectiveSeat(...).source` 的 helper 复核（同结论在 `public-cli-config` #620 优先级案）。 |
+| `test/integration/public-cli-coder.test.ts` | S | 改：删退役 task/dossier 哨兵，宿主中性 /skill: 负向契约保留；保公开 Coder phase、opaque status、audit failure、model/thinking 与 resume；宿主边界提供输入。第五轮（R4-B）：既有「structurally malformed --model is rejected」案由单个 `:provider/model` 扩为同一循环中的空串、无斜杠、空 provider、前导冒号四种坏输入，断言不派发且非零退出（承接原 config 直接拒收案；前导斜杠在 invocation 路径只有这里抓得到）。 |
 | `test/integration/public-cli-collector.test.ts` | D/S | 改：合并 groups/MERGED 重复案，改真实 structured-output→ledger→Terminal，含 lawful ticket；保 CLI/parser 负向输入，不重复两份 wait-ms 拒收。原 `stdout.length > 0` 不在本案补回：accepted 交付走同一 `presentTerminal`，由 `test/integration/public-cli-judge.test.ts:299`、`:391` 的整段 stdout 非空接住（第四轮变异见文末）。 |
-| `test/integration/public-cli-config.test.ts` | M/D | 改：删 16 席 roster 镜像；local model/thinking 从 runAkRole 真 dispatch 到 request.model，磁盘不变；保 persistence/inheritance/clear/未知 seat，全部 fixture home。 |
+| `test/integration/public-cli-config.test.ts` | M/D | 改：删 16 席 roster 镜像；local model/thinking 从 runAkRole 真 dispatch 到 request.model，磁盘不变；保 persistence/inheritance/clear/未知 seat，全部 fixture home。第五轮（R4-B）：删六个与公开入口同规则同结论的直接案——disk round-trip（同 `public-cli-cli` config set judge/navigator 落盘）、persistent effective source（同本文件未知 seat 读取案的 persistent 断言）、bare invocation 与带后缀 invocation 的解析/effective（承接 `public-cli-coder` bare 与后缀两段的 argv、invocation 记录，`--model`+`--thinking` 合并由本文件 command-local 案承接）、malformed/opaque（拒收并入 Coder 公开拒收循环，bogus/xhigh 与未知 provider 已由 Coder 公开案承接，空后缀并入 CLI config 案）、persistent bare（落盘同 CLI config 案，argv 同 Coder bare，持久 effective selection 并入 CLI config 案派发观察）。`formatModelSpec` 只供 roles/config 的 TSV 呈现，不另锁。继承、清除、engine residual、持久化拒收、未知 seat 读写各案独有，保留。 |
 | `test/integration/public-cli-countersign-run.test.ts` | S | 改：删退役旧旗与 dossier 哨兵；保公开 admission、status、同 session 恢复、ticket assertion 与旧 attempt 残卷隔离。 |
 | `test/integration/public-cli-diarist-run.test.ts` | S | 改：删退役字段/文件哨兵；保公开 dialogue/diarist 的源卷字节、范围选择、迁移/分票/追加/恢复，不锁新生成叙事。 |
 | `test/integration/public-cli-doctor.test.ts` | B | 留：公开 case admission、完成/拒绝、mandatory audit、officer escalation；待设计不豁免也不自动删。 |
@@ -259,4 +259,16 @@ R4-A 预期值借被测选路：同形状扫描（测试里以生产路径／选
 | `resolveEngineDispatchMaterialPath` 指向 `codex.md` | 同上 | 0 过 2 败（改前 2/2 绿） |
 
 恢复后 2/2 绿，`git status --short src` 为空。
+
+R4-B 模型配置重复结论：逐案对照（输入、生产调用链、断言）后的删并见逐文件表 `public-cli-config`／`public-cli-cli`／`public-cli-coder` 三行。变异（同上恢复）：
+
+| 临时变异 | 聚焦文件 | 结果 |
+| --- | --- | --- |
+| `parseModelSpec` 的 `fallbackThinking ?? "low"` | `public-cli-config`、`public-cli-cli`、`public-cli-coder` | 24 案 3 败（CLI config、Coder bare、Coder 未知 model） |
+| `seatModelOnly` 对 bare 行补 `thinking: "low"` | 同上 | 1 败（CLI config 案的持久 bare 派发） |
+| 斜杠检查放宽为 `slash < 0`（接受空 provider） | 同上 | 1 败（Coder 公开拒收循环）；`config set` 另有落盘校验拒空 provider，invocation 路径会带空 provider 派发 |
+| 空后缀折为 undefined | 同上 | 1 败（CLI config 案空后缀落盘） |
+| 删空串守卫 | 同上 | 24/24 绿：空串随后被斜杠检查拒收，公开行为不变，生产冗余而非测试缺口 |
+
+恢复后 24/24 绿，`git status --short src` 为空；`tsc --noEmit` exit0。
 
