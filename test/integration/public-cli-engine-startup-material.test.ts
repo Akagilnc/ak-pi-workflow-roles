@@ -8,7 +8,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolveEngineMaterialPath, resolveEngineDispatchMaterialPath } from "../../src/package-resources/engine-material.ts";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -102,8 +101,8 @@ test("#1167 public fixer: prompt dispatch-only; startup materials by engine shap
       assert.equal(engines.length, 1);
       assert.equal(engines[0]?.name, ENGINE);
       assert.equal(engines[0]?.model, ENGINE_MODEL);
-      assert.equal(engines[0]?.handbook, await readFile(resolveEngineMaterialPath(packageRoot, ENGINE), "utf8"));
-      assert.equal(engines[0]?.dispatchHandbook, await readFile(resolveEngineDispatchMaterialPath(packageRoot), "utf8"));
+      assert.equal(engines[0]?.handbook, await readFile(join(packageRoot, "resources/engines/cursor.md"), "utf8"));
+      assert.equal(engines[0]?.dispatchHandbook, await readFile(join(packageRoot, "resources/engine-dispatch.md"), "utf8"));
     }
 
     // Per-call --engine overrides persistent seat engine.
@@ -235,7 +234,7 @@ test("#1167 gate-summoned review seat: same startup delivery as worker seats", a
     assert.equal(engines.length, 1);
     assert.equal(engines[0]?.name, ENGINE);
     assert.equal(engines[0]?.model, ENGINE_MODEL);
-    assert.equal(engines[0]?.handbook, await readFile(resolveEngineMaterialPath(packageRoot, ENGINE), "utf8"));
-    assert.equal(engines[0]?.dispatchHandbook, await readFile(resolveEngineDispatchMaterialPath(packageRoot), "utf8"));
+    assert.equal(engines[0]?.handbook, await readFile(join(packageRoot, "resources/engines/cursor.md"), "utf8"));
+    assert.equal(engines[0]?.dispatchHandbook, await readFile(join(packageRoot, "resources/engine-dispatch.md"), "utf8"));
   });
 });

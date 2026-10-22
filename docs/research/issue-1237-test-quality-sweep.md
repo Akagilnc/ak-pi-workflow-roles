@@ -1,6 +1,6 @@
 # #1237 存量测试质量清理交卷
 
-基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
+基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
 ## 方法与边界
 
@@ -115,7 +115,7 @@
 | `test/integration/public-cli-doctor.test.ts` | B | 留：公开 case admission、完成/拒绝、mandatory audit、officer escalation；待设计不豁免也不自动删。 |
 | `test/integration/public-cli-engine-axis.test.ts` | M/D | 改：删名册 length===16、重复 resolver/roundtrip/unset 案；保逐席实际 dispatch 与轴优先级，新增输入并入既有负向表：损坏磁盘 engine 经 CLI exit2 且零 dispatch。 |
 | `test/integration/public-cli-engine-resume-detour.test.ts` | B | 留：初始/自动/显式恢复上的 engine 及 live seat table axes，输出 typed 请求。 |
-| `test/integration/public-cli-engine-startup-material.test.ts` | T/M | 改：runAkRole→prepared host，恢复 handbook/dispatchHandbook 等于源文件 UTF-8 的递送契约；保 typed kind/name/model、输入 dispatch，不检查文档措辞。 |
+| `test/integration/public-cli-engine-startup-material.test.ts` | T/M | 改：runAkRole→prepared host，handbook/dispatchHandbook 等于源文件 UTF-8 的递送契约；保 typed kind/name/model、输入 dispatch，不检查文档措辞。第五轮（R4-A）：此前预期值经生产选路 `resolveEngineMaterialPath`／`resolveEngineDispatchMaterialPath` 计算，与被测读取共用同一选择，错配时双方同错；改为独立读取 `resources/engines/cursor.md` 与 `resources/engine-dispatch.md`，两案同改，删该 import。 |
 | `test/integration/public-cli-escalation-resume.test.ts` | B | 留：公开 gate escalation/continue/transport_failure 到同次父卷与恢复路由。 |
 | `test/integration/public-cli-explicit-internal.test.ts` | B | 留：假 CLI 子进程 argv/stdin/env、PATH、SIGTERM/关闭与投递错误，不调用真实模型。 |
 | `test/integration/public-cli-failure-artifacts.test.ts` | T | 改：删 stdout/stderr 分块计数及死变量；保实际 public terminal/artifact 写故障、旧卷隔离及宿主结果不被产物错误顶替。第四轮（R3-A）：删计数时连交付观察一并删掉是误删；no_receipt 交付在 `:76` 既有 malformed session 案断言整段 stdout 非空；current.json 写入被拒、Terminal 无产物引用时仍须交付，在 `:143` 既有写故障案断言；普通失败交付由共享 `assertPublicFailureSettlement`（`test/helpers/failure-settlement-kit.ts:95`）接住；其余同路径案不逐例补回。 |
@@ -248,3 +248,15 @@ R3-B 注册布局锁：同形状扫描（测试中对 hook 注册表 has/size/ke
 | `presentTerminal` 遇无产物引用的 Terminal 即不交付 | 第一组 | 2 败（failure-artifacts `:76` no_receipt 案、`:143` 写故障案）；`post-admission` 失败收尾处同样门控 59/59 绿，该案不走那个调用点 |
 
 恢复后同一组 59/59 绿。另核 Collector accepted 交付：临时在其案补整段 stdout 观察，删 accepted 分支 stdout 即红、删 held 回放仍绿，确认走 accepted 分支，由 public-cli-judge 两案承接；探针已撤。
+
+### 第五轮（大理寺 receipts/4.json R4-A/B）
+
+R4-A 预期值借被测选路：同形状扫描（测试里以生产路径／选路函数算出预期，再与送达值比较）只命中 `public-cli-engine-startup-material` 四行，改为独立读取包内源文件。`public-cli-engine-axis` 的 `resolveEngineMaterialPath` 只作 `access()` 存在性前置，不充当预期；`readableGateItem` 几处是 `notEqual` 否定断言，真预期是独立的 `JSON.parse(prompt)` 等值；`resolveHostDossierLandingPath`／`resolveSitianRecordPath` 用于找输出落点，非输入递送预期——均不同类。
+
+| 临时变异 | 聚焦文件 | 结果 |
+| --- | --- | --- |
+| `resolveEngineMaterialPath` 把 cursor 指向 `codex.md` | `public-cli-engine-startup-material` | 0 过 2 败（改前 2/2 绿） |
+| `resolveEngineDispatchMaterialPath` 指向 `codex.md` | 同上 | 0 过 2 败（改前 2/2 绿） |
+
+恢复后 2/2 绿，`git status --short src` 为空。
+
