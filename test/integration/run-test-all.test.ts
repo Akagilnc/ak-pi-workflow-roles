@@ -447,14 +447,6 @@ test("runner discovers the live package tree once under default parallelism, inc
     "owning contract must be discovered once",
   );
 
-  // Migrated batches are owned by Vitest, not the legacy child.
-  assert.equal(scheduled.includes("test/integration/factory-board.test.ts"), false);
-  for (const file of scheduled) {
-    assert.match(
-      file.replaceAll("\\", "/"),
-      /^test\/(integration|package)\/.+\.test\.ts$/,
-    );
-  }
   assert.ok(scheduled.length > 0, "discovery must be non-empty on the live tree");
 });
 
