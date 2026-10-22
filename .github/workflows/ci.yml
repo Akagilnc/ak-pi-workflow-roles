@@ -43,3 +43,23 @@ jobs:
         env:
           AK_LEGACY_CASE_A_LIVE_SOURCE: "0"
           GH_TOKEN: ${{ github.token }}
+  # Keep the required `test` check unchanged while Vitest runs in parallel.
+  vitest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:vitest
+        env:
+          AK_LEGACY_CASE_A_LIVE_SOURCE: "0"
+          GH_TOKEN: ${{ github.token }}
