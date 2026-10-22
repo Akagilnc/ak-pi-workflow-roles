@@ -276,7 +276,7 @@ R4-B 模型配置重复结论：逐案对照（输入、生产调用链、断言
 
 ### 第六轮（大理寺 receipts/5.json R5-A）
 
-R5-A 测试删除后专用生产旧物未退役。判据：符号的基线消费者在本票删除或改写的测试里，且该消费者删除后当前全仓（src/test/scripts/extensions）只剩定义。基线就没有消费者的（如 `engineMaterialRelativeDirectory`、`projectLawfulAuditorOutput`、`CountersignVerdictParameters` 等 36 个）不属本类，不删。
+R5-A 测试删除后专用生产旧物未退役。判据：符号的基线消费者在本票删除或改写的测试里，且该消费者删除后当前全仓（src/test/scripts/extensions）只剩定义。基线就没有消费者的（如 `engineMaterialRelativeDirectory`、`projectLawfulAuditorOutput`、`CountersignVerdictParameters` 等 35 个）不属本类，不删。
 
 | 退役项 | 基线消费者（已删） |
 | --- | --- |
