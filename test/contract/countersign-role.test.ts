@@ -106,7 +106,10 @@ test("review officers expose one shared output tool; court seats share clauses s
     Value.Check(inspectorSubmissionSchema, {
       status: "converged",
       suspect: "ming/a.py:1 两处读法不同，留着",
-      ticketComplexity: [{ class: "同一业务规则只保留一个权威实现", hits: [], checked: "比对了 ming/a.py:1 与 ming/b.py:2，谓词不同" }],
+      ticketComplexity: [
+        { class: "同一业务规则只保留一个权威实现", hits: [], checked: "比对了 ming/a.py:1 与 ming/b.py:2，谓词不同" },
+        { class: "被替代的代码、测试和兼容路径随改动删除", hits: ["ming/c.py:9 旧路径未删 → 删"], checked: "比对了 ming/c.py 与替代它的 ming/d.py:3" },
+      ],
     }),
     true,
   );

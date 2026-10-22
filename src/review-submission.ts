@@ -99,7 +99,7 @@ export const ticketComplexityRowSchema = Type.Object(
       description: "本票净增里命中这一句的每一处 path:line，并写删到哪、并到哪；打开看过才算。一处没有为空数组，没有第三种答法",
     }),
     checked: Type.String({
-      description: "hits 为空时：为这一条打开比对过的几处 path:line，以及每处为什么不算；不能只写未发现",
+      description: "为这一条打开比对过的几处 path:line：hits 为空时写每处为什么不算，不能只写未发现；有命中时写比对了哪些地方、命中在哪找到",
     }),
   },
   { additionalProperties: true },
