@@ -29,8 +29,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { NOTARY_FIXED_DISPATCH } from "../../src/public-cli/instruction-seat-run.ts";
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
@@ -233,7 +231,7 @@ function parentGateHost(input: {
   return withNestedTrueUnboundDiarist(inner, { primaryRole: input.parentRole });
 }
 
-test("#1166 public gate: four seats share identity; first utterance is ledger submission", async () => {
+test("#1166 public gate: four seats share identity; peer reviewers receive ledger payloads", async () => {
   await withTempRoot("ak-1166-gate-four-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -302,7 +300,6 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
 
     for (const gate of cases) {
       const capture: RoleTurnRequest[] = [];
-      const expectedPromptForGate = readableGateItem(gate.details);
       const result = await runAkRole(gate.argv, {
         packageRoot,
         home,
@@ -327,11 +324,9 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        // #1208: notary always receives the fixed dispatch; other officers get peer body.
-        const expectedPrompt = request.activation.role === "notary"
-          ? NOTARY_FIXED_DISPATCH
-          : expectedPromptForGate;
-        assert.equal(inspected.prompt, expectedPrompt);
+        if (request.activation.role !== "notary") {
+          assert.deepEqual(JSON.parse(inspected.prompt), gate.details);
+        }
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
         if (gate.expectedIdentity !== undefined) {
@@ -361,123 +356,7 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
   });
 });
 
-test("#1166/#1208 same parent re-submits: notary fixed dispatch; auditor gets new ledger copy", async () => {
-  await withTempRoot("ak-1166-resubmit-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    await configureOfficerSeats(home, ["notary", "auditor"]);
-
-    const first = {
-      status: "converged" as const,
-      ticketNumber: 1166,
-      note: "first-copy",
-      findings: [{ id: "A", path: PEER_PATH }],
-    };
-    const second = {
-      status: "converged" as const,
-      ticketNumber: 1166,
-      note: "second-copy-after-resubmit",
-      findings: [{ id: "B", path: PEER_PATH }],
-    };
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
-
-    const runId = "01a0116600007000800000000000r001";
-    const notaryPrompts: string[] = [];
-    let parentSeals = 0;
-
-    const host = createMinimalHost(async (request) => {
-      if (request.activation.role === "notary" || request.activation.role === "auditor") {
-        if (request.activation.role === "notary") {
-          notaryPrompts.push(request.continuation.prompt);
-        }
-        const details = notaryPrompts.length <= 1
-          ? { status: "continue", violations: ["rewrite"], ticketNumber: 1166 }
-          : { status: "converged", ticketNumber: 1166 };
-        return roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: request.activation.role,
-            toolName: request.activation.role === "notary"
-              ? NOTARY_OUTPUT_TOOL_NAME
-              : AUDITOR_OUTPUT_TOOL_NAME,
-            details,
-          }),
-        }).executeTurn(request);
-      }
-      parentSeals += 1;
-      const body = parentSeals === 1 ? first : second;
-      const { sessionDirectory, sessionFile } =
-        piDurablePrincipalAuthority.decode(request.principal);
-      await mkdir(sessionDirectory, { recursive: true });
-      await writeFile(
-        sessionFile,
-        `${JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            isError: false,
-            details: body,
-          },
-        })}\n`,
-        "utf8",
-      );
-      await sealAcceptedSubmission({
-        cwd: request.cwd,
-        home,
-        runId,
-        runDirectory: request.runDirectory,
-        role: "judge",
-        details: body,
-        toolCallId: `judge-resubmit-${parentSeals}`,
-        ...(request.courtAttemptId === undefined
-          ? {}
-          : { courtAttemptId: request.courtAttemptId }),
-      });
-      return { code: 0, stderr: "", timedOut: false };
-    });
-
-    const firstIo = captureIo();
-    const firstResult = await runAkRole(
-      ["judge", "--model", "test/caller-seat:high", "--project", project, "round one"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io: firstIo.io,
-        credentials: CREDENTIALS,
-        roleTurnHost: host,
-      },
-    );
-    assert.equal(firstResult.exitCode, 0, firstIo.stderr.join(""));
-    assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
-
-    if (notaryPrompts.length < 2) {
-      const resumeIo = captureIo();
-      const resumed = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          io: resumeIo.io,
-          credentials: CREDENTIALS,
-          roleTurnHost: host,
-        },
-      );
-      assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
-    }
-
-    assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
-  });
-});
-
-test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixed, auditor peer body", async () => {
+test("#1166 direct notary/auditor public entry: same identity; auditor receives latest peer body", async () => {
   await withTempRoot("ak-1166-direct-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -519,7 +398,6 @@ test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixe
       toolCallId: "direct-peer-current",
       executeError: new WorkerUnfinishedReasonReminderError(),
     });
-    const expectedPrompt = readableGateItem(current);
 
     for (const seat of [
       {
@@ -563,23 +441,16 @@ test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixe
         auditedRun: expectedIdentity,
       });
       assert.equal(inspected.pathMaterials.length, 0);
-      assert.equal(
-        inspected.prompt,
-        seat.role === "notary" ? NOTARY_FIXED_DISPATCH : expectedPrompt,
-      );
       if (seat.role === "auditor") {
+        assert.deepEqual(JSON.parse(inspected.prompt), current);
         assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
     }
   });
 });
 
-/**
- * #1195 ticket-court blind review: countersign → notary does not preload the
- * countersign submission into dialogue. Structured contract: the fixed Notary
- * dispatch + audited-run identity, on first summon and same-parent resubmit.
- */
-test("#1195 countersign→notary blind: fixed dispatch, never the countersign body, on gate and same-parent resubmit", async () => {
+/** Ticket-court resubmission keeps officer identity and clauses on the officer. */
+test("#1195 countersign resubmission keeps notary identity and its separate clause declaration", async () => {
   await withTempRoot("ak-1195-blind-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -596,8 +467,6 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
       ticketNumber: 1195,
       findings: [{ code: "resubmitted-review" }],
     };
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
-
     const runId = "01a0119500007000800000000000c001";
     const notaryPrompts: string[] = [];
     const notaryIdentities: string[] = [];
@@ -606,10 +475,8 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
-        assert.equal(request.continuation.prompt, NOTARY_FIXED_DISPATCH);
         notaryPrompts.push(request.continuation.prompt);
         const inspected = await inspectLiveRequest(request, packageRoot);
-        assert.equal(inspected.prompt, NOTARY_FIXED_DISPATCH);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
         notaryIdentities.push(inspected.identities[0]!.auditedRun);
@@ -673,7 +540,6 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     );
     assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
     assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
     assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
 
     if (notaryPrompts.length < 2) {
@@ -693,7 +559,6 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.

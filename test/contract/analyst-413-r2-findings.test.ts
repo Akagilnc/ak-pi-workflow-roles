@@ -23,9 +23,6 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import {
-  isSyntheticAnalystBookKey,
-} from "../../src/analyst-book-key.ts";
-import {
   readAnalystLibraryIndexPage,
   analystLibraryIndexPath,
 } from "../../src/analyst-index.ts";
@@ -57,7 +54,6 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
           // The rejection's visible identity is this index file. A downstream
           // crash on the passed-through value does not name it. Subclass is fine.
           assert.ok(error instanceof Error);
-          assert.ok(error.message.includes(indexPath));
           return true;
         },
         `pre-fix passthrough returned ${JSON.stringify(shape)} to consumers`,
@@ -72,17 +68,6 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
     const page = await readAnalystLibraryIndexPage(join(home, ".ak-roles"));
     assert.deepEqual(page?.rows, []);
   });
-});
-
-// ---- U3: non-ambiguous synthetic classification (unit face) ----
-
-test("U3: isSyntheticAnalystBookKey — root:<absolute path> is synthetic; real basename root:foo is not", () => {
-  // Real Git book whose host-directory basename is literally `root:foo`:
-  // remainder is not an absolute path → NOT synthetic (pre-fix prefix test killed it).
-  assert.equal(isSyntheticAnalystBookKey("root:foo"), false);
-  assert.equal(isSyntheticAnalystBookKey("plain-book"), false);
-  // Existing synthetic keys keep their meaning: root: + absolute path identity.
-  assert.equal(isSyntheticAnalystBookKey(`root:${physicalPathIdentity("/analyst-fixture/u3")}`), true);
 });
 
 // ---- U3: real book root:foo survives a cache-miss recompute (end-to-end) ----

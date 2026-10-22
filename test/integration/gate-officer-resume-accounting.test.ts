@@ -28,7 +28,6 @@ import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
-  NOTARY_FIXED_DISPATCH,
   runPublicInstructionSeat,
 } from "../../src/public-cli/instruction-seat-run.ts";
 import {
@@ -206,7 +205,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
   });
 });
 
-test("#879/#1208 notary each turn receives fixed dispatch — not history array or parent body", async () => {
+test("#879 repeated notary summons retain their own terminal payloads", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -297,8 +296,6 @@ test("#879/#1208 notary each turn receives fixed dispatch — not history array 
       }),
     });
       assert.equal(projected.result.status, "continue");
-      // #1208: notary dialogue is the fixed dispatch every round; body stays in the ledger.
-      assert.equal(prompts[i + 1], NOTARY_FIXED_DISPATCH);
       const terminal = projected.summoned?.terminal;
       assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
       assert.equal(terminal!.roleOutcome.kind, "accepted");
@@ -410,7 +407,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#1092/#1208 station-child notary: no case-dossier pointer material; dialogue = fixed dispatch", async () => {
+test("#1092 station-child notary has no case-dossier pointer material", async () => {
   await withTempRoot("ak-officer-no-dossier-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -474,7 +471,6 @@ test("#1092/#1208 station-child notary: no case-dossier pointer material; dialog
     });
     assert.equal(projected.result.status, "converged");
     assert.ok(prompts.length >= 1);
-    assert.equal(prompts[prompts.length - 1], NOTARY_FIXED_DISPATCH);
 
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");

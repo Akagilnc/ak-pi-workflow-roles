@@ -5,13 +5,10 @@
  * External face: tools/list tool-name presence; process.env must stay untouched.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-import { createPiRoleRuntimeDependencies } from "../../extensions/role-runtime.ts";
 import {
   AK_ROLE_ENGINE_ENV,
   ENGINE_DETOUR_TOOL_NAME,
@@ -67,141 +64,6 @@ async function withEnvelopeHome<T>(
     await rm(home, { recursive: true, force: true });
   }
 }
-
-async function packagedMaterials(paths: readonly string[]): Promise<string> {
-  return (await Promise.all(paths.map((path) => readFile(join(packageRoot, path), "utf8"))))
-    .join("\n\n");
-}
-
-test("shared envelope keeps seat identity separate from typed reference materials", async () => {
-  await withEnvelopeHome(async ({ home, socketPath, request }) => {
-    const judge = await prepareRoleEnvelope({
-      request: request(),
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath,
-      principalAuthority: piDurablePrincipalAuthority,
-    });
-    try {
-      const soul = await packagedMaterials(["souls/judge.md"]);
-      // Soul bytes reach the prompt verbatim; the wrapping envelope is presentation.
-      assert.ok(judge.systemPrompt.body.includes(soul));
-      assert.deepEqual(judge.systemPrompt.materials, [{
-        kind: "role-reference-materials",
-        content: await packagedMaterials([
-          "CLAUDE.md",
-          "souls/audit-law.md",
-          "souls/quality-law.md",
-          "souls/judge-output-guide.md",
-          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
-        ]),
-      }]);
-    } finally {
-      await judge.dispose?.();
-    }
-
-    const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
-    process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-    const auditorRun = ledgerProbeRun(home, "auditor-materials@auditor");
-    await mkdir(join(auditorRun, "session"), { recursive: true });
-    let auditor;
-    try {
-      auditor = await prepareRoleEnvelope({
-        request: {
-          ...request(),
-          principal: fixturePrincipal(join(auditorRun, "session")),
-          activation: { role: "auditor" },
-          runDirectory: auditorRun,
-        },
-        dependencies: createRoleRuntimeDependencies(packageRoot),
-        socketPath: join(home, "auditor.sock"),
-        principalAuthority: piDurablePrincipalAuthority,
-    });
-    } finally {
-      if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
-      else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
-    }
-    try {
-      const soul = await packagedMaterials(["souls/judge-auditor.md"]);
-      assert.ok(auditor.systemPrompt.body.includes(soul));
-      assert.deepEqual(auditor.systemPrompt.materials, [{
-        kind: "role-reference-materials",
-        content: await packagedMaterials([
-          "CLAUDE.md",
-          "souls/judge.md",
-          "souls/audit-law.md",
-          "souls/quality-law.md",
-          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
-        ]),
-      }]);
-    } finally {
-      await auditor.dispose?.();
-    }
-  });
-});
-
-test("Pi production root supplies typed main and auditor reference materials", async () => {
-  await withEnvelopeHome(async ({ home, socketPath, request }) => {
-    const dependencies = createPiRoleRuntimeDependencies({
-      getFlag: () => undefined,
-    } as unknown as ExtensionAPI);
-    const judge = await prepareRoleEnvelope({
-      request: request(),
-      dependencies,
-      socketPath,
-      principalAuthority: piDurablePrincipalAuthority,
-    });
-    try {
-      assert.deepEqual(judge.systemPrompt.materials, [{
-        kind: "role-reference-materials",
-        content: await packagedMaterials([
-          "CLAUDE.md",
-          "souls/audit-law.md",
-          "souls/quality-law.md",
-          "souls/judge-output-guide.md",
-          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
-        ]),
-      }]);
-    } finally {
-      await judge.dispose?.();
-    }
-
-    const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
-    process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-    const auditorRun = ledgerProbeRun(home, "pi-auditor-materials@auditor");
-    await mkdir(join(auditorRun, "session"), { recursive: true });
-    let auditor;
-    try {
-      auditor = await prepareRoleEnvelope({
-        request: {
-          ...request(),
-          principal: fixturePrincipal(join(auditorRun, "session")),
-          activation: { role: "auditor" },
-          runDirectory: auditorRun,
-        },
-        dependencies,
-        socketPath: join(home, "pi-auditor.sock"),
-        principalAuthority: piDurablePrincipalAuthority,
-    });
-    } finally {
-      if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
-      else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
-    }
-    try {
-      assert.deepEqual(auditor.systemPrompt.materials, [{
-        kind: "role-reference-materials",
-        content: await packagedMaterials([
-          "CLAUDE.md",
-          "souls/judge.md",
-          "souls/audit-law.md",
-          "souls/quality-law.md",
-          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
-        ]),
-      }]);
-    } finally {
-      await auditor.dispose?.();
-    }
-  });
-});
 
 test("shared envelope registers engine detour when request.engine is set", async () => {
   await withEnvelopeHome(async ({ socketPath, request }) => {

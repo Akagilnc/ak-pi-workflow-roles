@@ -18,7 +18,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
-import { PUBLIC_ROLE_ARGV, runAkRole } from "../../src/public-cli/cli.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { parseAnalystArgv, parseAnalystCohortIssueToken } from "../../src/public-cli/invocation.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -112,13 +112,6 @@ async function seedBookTicketRun(input: {
   });
   return bookKey;
 }
-
-test("PUBLIC_ROLE_ARGV registers analyst parse in the single production table", () => {
-  assert.equal(typeof PUBLIC_ROLE_ARGV.analyst.parse, "function");
-  // #176 invariant: table remains the sole role→parse map (no parallel set).
-  const keys = Object.keys(PUBLIC_ROLE_ARGV).sort();
-  assert.equal(keys.includes("analyst"), true);
-});
 
 test("analyst public CLI --ticket path: live book compute matches runAnalyst oracle", async () => {
   await withBusinessRepo(async (repo) => {

@@ -17,10 +17,10 @@ import {
   parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
-import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -87,50 +87,40 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
   });
 });
 
-test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
+test("public gleaner-left records completed and non-verdict submissions unchanged", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const runId = "01a0glean00-0000-7000-8000-000000000010";
-    const receipt = { status: "completed" as const, findings: [] as const };
-    const { io } = captureIo();
-    const result = await runAkRole(["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io,
-        createRunId: () => runId,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+    for (const submitted of [
+      { status: "completed", findings: [] },
+      { status: "bounce", findings: ["opaque"] },
+      { status: "pass" },
+      { countersignStatus: "converged" },
+    ]) {
+      const receipt = { ...submitted, ticketNumber: 1237 };
+      const { io } = captureIo();
+      const result = await runAkRole(
+        ["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
+        {
+          home,
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedGleanerLeftSession(receipt),
-        }),
-      },
-    );
-    assert.equal(result.exitCode, 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
-    const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
-    assert.equal(facts.status, "completed");
-    assert.deepEqual(facts.findings, []);
-
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId,
-      role: "gleaner-left",
-      home,
-    });
-    const state = await readRoleRunState(
-      coords.runDirectory,
-      piDurablePrincipalAuthority,
-    );
-    assert.equal(state?.role, "gleaner-left");
-    assert.equal(state?.state, "terminal");
+          cwd: project,
+          io,
+          roleTurnHost: roleTurnHostFromStructuredOutputRounds({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            submissions: [receipt],
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.ok(result.terminal);
+      assert.equal(result.terminal.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
+      assert.deepEqual(objectPayloads(result.terminal.roleOutcome), [receipt]);
+    }
   });
 });
 

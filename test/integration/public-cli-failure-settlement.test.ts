@@ -46,6 +46,11 @@ test("malformed CLI structure and empty --project= reject structurally before ad
       label: "empty --project=",
       args: () => ["judge", "--model", "test/caller-seat:high", "--project=", "task"],
     },
+    {
+      label: "repeated non-repeatable option",
+      args: (project: string) => ["judge", "--model", "test/caller-seat:high",
+        "--project", project, "--project", project, "task"],
+    },
   ] as const;
   for (const row of rows) {
     await withTempHome(async (home) => {

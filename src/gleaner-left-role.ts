@@ -3,7 +3,6 @@ import type { Static } from "typebox";
 import {
   GLEANER_LEFT_OUTPUT_TOOL_NAME,
   gleanerLeftOutputSchema,
-  validateRecordedGleanerLeftOutput,
   type GleanerLeftOutput,
 } from "./gleaner-left-contracts.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
@@ -13,7 +12,6 @@ export {
   gleanerLeftOutputSchema,
 } from "./gleaner-left-contracts.ts";
 export type { GleanerLeftOutput };
-export { validateRecordedGleanerLeftOutput };
 
 export type GleanerLeftOutputParameters = Static<typeof gleanerLeftOutputSchema>;
 

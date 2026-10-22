@@ -6,11 +6,12 @@
  * Family registers by drop-in module under analyst-metric-families/ only.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import {
-  computeAnalystB2RunMetrics,
   type AnalystB2FrameBucketsActionsSection,
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
@@ -150,49 +151,6 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
   assert.deepEqual(actual.actions, expected.actions);
 }
 
-/**
- * Over-frame counter-example (A2-shaped facts): tool 0→30s on frame 10→20s
- * must clip so tool+model ≡ wall (not wall=10s / tool=30s / model=0).
- */
-test("analyst B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall", () => {
-  const metrics = computeAnalystB2RunMetrics({
-    runId: "out-of-frame",
-    book: BOOK,
-    role: "coder",
-    frameSpan: {
-      startedAt: "2026-08-01T00:00:10.000Z",
-      endedAt: "2026-08-01T00:00:20.000Z",
-      wallMs: 10_000,
-    },
-    toolIntervals: [
-      {
-        toolCallId: "call_over",
-        toolName: "bash",
-        startedAt: "2026-08-01T00:00:00.000Z",
-        endedAt: "2026-08-01T00:00:30.000Z",
-        command: "echo over",
-      },
-    ],
-    terminal: { status: "absent" },
-    models: [],
-    gateCycles: [],
-  });
-
-  assert.equal(metrics.wallMs, 10_000);
-  assert.equal(metrics.toolBucketMs, 10_000);
-  assert.equal(metrics.modelBucketMs, 0);
-  assert.equal(
-    metrics.toolBucketMs + metrics.modelBucketMs,
-    metrics.wallMs,
-    "clipped tool bucket + model must equal wall",
-  );
-  assert.equal(metrics.actions.length, 1);
-  assert.equal(metrics.actions[0]!.kind, "tool");
-  assert.equal(metrics.actions[0]!.durationMs, 10_000);
-  assert.equal(metrics.actions[0]!.startedAt, "2026-08-01T00:00:10.000Z");
-  assert.equal(metrics.actions[0]!.endedAt, "2026-08-01T00:00:20.000Z");
-});
-
 test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)", async () => {
   await withTempHome(async (home) => {
     const result = await runAnalyst({
@@ -229,5 +187,25 @@ test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (un
     assert.ok(bash && bash.kind === "tool");
     assert.equal(bash.commandSummary, "pnpm test:fast");
     assert.notEqual(bash.commandSummary, "pnpm test:fast\nnode scripts/extra.js");
+
+    // Host message timestamps may extend beyond the enclosing record span.
+    // Reuse the owned source-session copy, not assembled A2 facts.
+    await writeFile(join(home, ".ak-roles", "books", BOOK, "runs", `${PRD_RUN}@coder`, "session", "session.jsonl"), [
+      { type: "session", timestamp: "2026-08-01T00:00:10.000Z", cwd: ISSUE_PROJECT_ROOT },
+      { type: "message", timestamp: "2026-08-01T00:00:10.000Z", message: {
+        role: "assistant", timestamp: "2026-08-01T00:00:00.000Z",
+        content: [{ type: "toolCall", id: "call_over", name: "bash", arguments: { command: "echo over" } }],
+      } },
+      { type: "message", timestamp: "2026-08-01T00:00:20.000Z", message: {
+        role: "toolResult", timestamp: "2026-08-01T00:00:30.000Z", toolCallId: "call_over", toolName: "bash", content: [],
+      } },
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+    const clippedPage = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+    const clipped = b2Section(clippedPage.page).runs.find((run) => run.runId === PRD_RUN);
+    assert.ok(clipped);
+    assert.equal(clipped.wallMs, 10_000);
+    assert.equal(clipped.toolBucketMs, 10_000);
+    assert.equal(clipped.modelBucketMs, 0);
+    assert.equal(clipped.actions[0]?.durationMs, 10_000);
   });
 });

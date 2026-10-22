@@ -8,7 +8,6 @@ import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
-import { isRecord } from "./unknown-value.ts";
 
 export const GLEANER_LEFT_OUTPUT_TOOL_NAME = "ak_gleaner_left_output";
 
@@ -52,19 +51,3 @@ export type GleanerLeftOutput = {
   readonly status: "completed";
   readonly findings: readonly GleanerLeftFinding[];
 };
-
-export function validateRecordedGleanerLeftOutput(value: unknown): GleanerLeftOutput {
-  if (!isRecord(value)) {
-    throw new Error("Gleaner-left output has no execution discriminator");
-  }
-  let status: unknown;
-  try {
-    status = (value as Record<string, unknown>).status;
-  } catch {
-    throw new Error("Gleaner-left output has no execution discriminator");
-  }
-  if (status === "completed") {
-    return value as GleanerLeftOutput;
-  }
-  throw new Error("Gleaner-left output has no execution discriminator");
-}

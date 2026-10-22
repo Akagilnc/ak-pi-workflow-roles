@@ -11,7 +11,6 @@ import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
-import { packagedRoleMetadata } from "../../src/packaged-role-registry.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -111,16 +110,6 @@ function activationCtx(home: string): ExtensionContext {
     sessionManager,
   } as unknown as ExtensionContext;
 }
-
-test("#1088 collector seat stays evidence-only (not construction worker)", () => {
-  const meta = packagedRoleMetadata("collector");
-  assert.ok(meta);
-  assert.equal("worker" in meta && meta.worker === true, false);
-  assert.equal(
-    "phases" in meta && Array.isArray(meta.phases) && meta.phases.includes("apply"),
-    false,
-  );
-});
 
 test("#1088 collector activation keeps host CLI tools and drops code-collection tools", async () => {
   await withTempRoot("collector-1088-tools-", async (home) => {

@@ -4,7 +4,6 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import type { RoleEnvelopeHost } from "../../src/host-contracts.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
@@ -68,7 +67,7 @@ function piCapture() {
   };
 }
 
-test("Pi adapter folds readingMaterial into provider systemPrompt and strips the typed field", async () => {
+test("Pi adapter strips typed readingMaterial before provider delivery", async () => {
   const bound = projectNotaryAuditedRunIdentity({
     sourceRun: {
       runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -110,36 +109,10 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
     systemPrompt: "BASE",
     readingMaterial: otherBound,
   });
-  const { pi, handlers, ctx } = piCapture();
-  const adapter = createPiRoleHostAdapter(pi);
-  adapter.host.on("before_agent_start", () => ({ readingMaterial: bound }));
-  adapter.host.on("before_agent_start", () => ({ readingMaterial: otherBound }));
-  let currentSystemPrompt = "BASE";
-  for (const handler of handlers.get("before_agent_start") ?? []) {
-    const result = await handler(
-      { prompt: "", systemPrompt: currentSystemPrompt, systemPromptOptions: {} },
-      ctx,
-    );
-    if (result?.systemPrompt !== undefined) currentSystemPrompt = result.systemPrompt;
+  for (const delivered of [bodyOnly, withBound, withOther]) {
+    assert.equal("readingMaterial" in delivered, false);
+    assert.equal(typeof delivered.systemPrompt, "string");
   }
-
-  // Empty materials: body passthrough; typed field never reaches Pi.
-  assert.equal(bodyOnly.systemPrompt, "BASE");
-  assert.equal("readingMaterial" in bodyOnly, false);
-
-  // Materials change the provider-visible prompt; distinct materials differ.
-  // No free-text/substring lock — only external equality/inequality on the wire form.
-  assert.equal("readingMaterial" in withBound, false);
-  assert.equal(typeof withBound.systemPrompt, "string");
-  assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
-  assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
-  assert.equal(
-    currentSystemPrompt,
-    renderAgentStartMaterials(
-      renderAgentStartMaterials("BASE", [bound]),
-      [otherBound],
-    ),
-  );
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {

@@ -153,6 +153,15 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
     }[] = [
       // ① cardinality (0 / >1 / mixed with issue faces)
       { name: "no-attach", argv: ["analyst", "sweep"] },
+      { name: "cohort-missing-groups", argv: ["analyst", "--cohort"] },
+      { name: "group-on-issue", argv: ["analyst", "--group-a-label", "A", "--ticket", "1"] },
+      { name: "sweep-ticket", argv: ["analyst", "--attach", validPath, "--ticket", "1"] },
+      { name: "repeated-sweep", argv: ["analyst", "sweep", "sweep", "--attach", validPath] },
+      ...["--ticket", "--attach"].map((flag) => ({
+        name: `cohort-conflict-${flag}`,
+        argv: ["analyst", "--cohort", "--group-a-label", "A", "--group-a-issues", "1",
+          "--group-b-label", "B", "--group-b-issues", "2", flag, flag === "--attach" ? validPath : "1"],
+      })),
       {
         name: "multi-attach",
         argv: ["analyst", "--attach", validPath, "--attach", validPathB],
