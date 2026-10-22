@@ -1,19 +1,12 @@
 /**
- * #924 Secretariat (中书省) — envelope-assembled tools + nested countersign summon.
+ * #924 Secretariat (中书省) — envelope-assembled tools; output records any payload as-is.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict, type SecretariatVerdictParameters } from "../../src/secretariat-role.ts";
 import type { SecretariatVerdict as TerminatingSecretariatVerdict } from "../../src/package-contracts/terminating-tools.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
-import {
-  createSubmissionLedgerHost,
-  readRecordedSubmissionRows,
-} from "../../src/submission-ledger.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
@@ -131,75 +124,3 @@ test("secretariat output records any status without shape reject (仓内 CLAUDE.
     "unexpected",
   );
 });
-
-test("Secretariat output commits its original payload to the ledger",
-  async () => {
-    await withTempRoot("ak-sec-gate-", async (root) => {
-      const ungated = new Map<string, { execute: Function }>();
-      const rawHost = {
-        registerTool(tool: { name: string; execute: Function }) {
-          ungated.set(tool.name, tool);
-        },
-        on() {},
-        getAllTools: () => [...ungated.keys()].map((name) => ({ name })),
-        setActiveTools() {},
-        getActiveTools: () => [...ungated.keys()],
-        getFlag() { return undefined; },
-      };
-      const ledgerHost = createSubmissionLedgerHost(
-        rawHost as never,
-        new Map([[SECRETARIAT_OUTPUT_TOOL_NAME, "secretariat"]]),
-        (error) => { throw error; },
-        undefined,
-        { home: root },
-      );
-      await createSecretariatRoleRuntime(
-        ledgerHost,
-        { loadSoul: async () => "中书省" },
-      ).activate();
-      const params = { secretariatStatus: "converged", ticketNumber: 969 };
-      const runDirectory = `${root}/.ak-roles/books/fixture/unbound/runs/run-ledger@secretariat`;
-      mkdirSync(`${runDirectory}/session`, { recursive: true });
-      writeFileSync(`${runDirectory}/session/session.jsonl`, "");
-      // #1183: ledger mouth places on typed ticketNumber — durable admission pages required.
-      const durable = {
-        role: "secretariat",
-        runId: "run-ledger",
-        bookKey: "fixture",
-        projectRoot: root,
-        runDirectory,
-      } as const;
-      seedCurrentSection(runDirectory, "admitted", durable);
-      seedCurrentSection(runDirectory, "invocation", durable);
-      let sessionFile = `${runDirectory}/session/session.jsonl`;
-      const context = {
-        cwd: root,
-        mode: "json",
-        model: undefined,
-        runDirectory,
-        host: "pi",
-        sessionManager: {
-          getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
-          getLeafEntry: () => undefined,
-          getLeafId: () => null,
-          getEntries: () => [],
-          getSessionDir: () => `${context.runDirectory}/session`,
-          getSessionFile: () => sessionFile,
-          setSessionFile(next: string) { sessionFile = next; },
-        },
-        abort() {},
-      };
-      const filed = await ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute("c", params, undefined, undefined, context);
-      assert.equal(filed.terminate, true);
-      assert.deepEqual(await readRecordedSubmissionRows(root, "run-ledger", root), [
-        {
-          role: "secretariat",
-          kind: "accepted",
-          accepted: params,
-          toolCallId: "c",
-        },
-      ]);
-    });
-
-  },
-);

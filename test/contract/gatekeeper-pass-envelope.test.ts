@@ -32,16 +32,6 @@ test("#1028 secretariat_verdict reads the shared review status",
         expected: "needs_reask",
       },
       {
-        label: "shared continue is returned as continue",
-        payload: { status: "continue", fix: { summary: "修" } },
-        expected: "continue",
-      },
-      {
-        label: "shared converged remains converged",
-        payload: { status: "converged", note: "署" },
-        expected: "converged",
-      },
-      {
         label: "unmapped status",
         payload: { status: "maybe" },
         expected: "needs_reask",

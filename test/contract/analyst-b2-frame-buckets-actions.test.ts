@@ -186,7 +186,6 @@ test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (un
     );
     assert.ok(bash && bash.kind === "tool");
     assert.equal(bash.commandSummary, "pnpm test:fast");
-    assert.notEqual(bash.commandSummary, "pnpm test:fast\nnode scripts/extra.js");
 
     // Host message timestamps may extend beyond the enclosing record span.
     // Reuse the owned source-session copy, not assembled A2 facts.

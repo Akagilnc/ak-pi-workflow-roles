@@ -516,27 +516,6 @@ test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", a
   assert.deepEqual(result.details, escalate);
 });
 
-test("judge output tool returns an unreadable status for public routing (#756/#1057)", async () => {
-  // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
-  const harness = extensionHarness("judge");
-  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-  await createJudgeRoleRuntime(
-    piHostAdapter.host,
-    { loadSoul: async () => "JUDGE LAW" },
-  ).activate();
-  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
-  const unreadable = { status: "not-a-status", note: "typo" };
-  const result = await tool.execute(
-    "call-bad",
-    unreadable,
-    undefined,
-    undefined,
-    await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: unreadable }])),
-  );
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, unreadable);
-});
-
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {

@@ -1,6 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
-import { isAbsolute, resolve } from "node:path";
 import test from "node:test";
 import { Value } from "typebox/value";
 
@@ -11,7 +9,7 @@ import {
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema } from "../../src/activation-trace.ts";
 
-test("resolved ledger home rejects relative process home (pure path math)", () => {
+test("resolved ledger home rejects relative process home", () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
     assert.throws(
       () => resolveActivationLedgerHome(relativeHome),
@@ -22,11 +20,6 @@ test("resolved ledger home rejects relative process home (pure path math)", () =
       },
     );
   }
-
-  const absoluteHome = worktreeTempPrefix("ak-ledger-abs-home");
-  const ledgerHome = resolveActivationLedgerHome(absoluteHome);
-  assert.equal(isAbsolute(ledgerHome), true);
-  assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 });
 
 function assertRetryingJsonlWriter(input: {

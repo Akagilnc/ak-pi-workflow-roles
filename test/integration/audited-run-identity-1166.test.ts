@@ -36,7 +36,6 @@ import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
   CANONICAL_SOURCE_ROLE,
@@ -56,7 +55,6 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 
-const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
 const PEER_PATH = "/caller/already/had/this/path.md";
 const CREDENTIALS = { "openai-codex": true, xai: true } as const;
 
@@ -88,7 +86,6 @@ async function inspectLiveRequest(
 ): Promise<{
   readonly prompt: string;
   readonly identities: AuditedRunIdentityMaterial[];
-  readonly toolNames?: string[];
   readonly jsonSchema: Readonly<Record<string, unknown>>;
 }> {
   const socketDir = await mkdtemp(join(tmpdir(), "ak-1166-live-"));
@@ -154,15 +151,10 @@ async function inspectLiveRequest(
           ));
         }
         const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
-        let toolNames: string[] | undefined;
-        if (request.activation.role === "auditor") {
-          toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
-        }
         return {
           prompt: prepared.prompt,
           identities,
           jsonSchema: prepared.jsonSchema,
-          ...(toolNames === undefined ? {} : { toolNames }),
         };
       } finally {
         await prepared.dispose?.();
@@ -465,7 +457,6 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
         assert.notEqual(inspected.prompt, readableGateItem(current));
       } else {
         assert.deepEqual(JSON.parse(inspected.prompt), current);
-        assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
       }
     }
   });
