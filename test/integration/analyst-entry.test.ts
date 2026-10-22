@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   ActivationLedgerError,

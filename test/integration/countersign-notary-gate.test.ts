@@ -3,7 +3,7 @@
  * Pointer-only summons; parent status read for queue only; raw receipt back on bounce.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
