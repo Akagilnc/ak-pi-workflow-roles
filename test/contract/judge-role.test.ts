@@ -206,7 +206,7 @@ function extensionHarness(
     registerTool(tool: Tool) {
       tools.set(tool.name, tool);
       allToolNames.add(tool.name);
-      // Pi 0.99.1: default direct tools refresh into the active set on register.
+      // Pi: default direct tools refresh into the active set on register.
       const prior = activeToolSets.at(-1) ?? [];
       if (!prior.includes(tool.name)) {
         activeToolSets.push([...prior, tool.name]);
@@ -752,11 +752,11 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const turnPrompt = "Finish the unfinished adapter branch.";
   // Real hook input: a later user turn must replace any earlier dialogue bytes.
   await harness2.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: "stale-prior-turn" },
+    { messageType: "user", systemPrompt: "BASE", prompt: "stale-prior-turn" },
     {},
   );
   await harness2.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: turnPrompt },
+    { messageType: "user", systemPrompt: "BASE", prompt: turnPrompt },
     {},
   );
   const deliveryPrompts: Array<{ customType: string; content: string }> = [];
