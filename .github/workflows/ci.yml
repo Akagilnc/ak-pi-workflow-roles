@@ -24,6 +24,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
+    # Expand phase (#1245): keep legacy coverage while migrating each layer.
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [test:all, test:vitest]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,7 +44,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
-      - run: pnpm run test:all
+        if: matrix.suite == 'test:all'
+      - run: pnpm run ${{ matrix.suite }}
         env:
           AK_LEGACY_CASE_A_LIVE_SOURCE: "0"
           GH_TOKEN: ${{ github.token }}

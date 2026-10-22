@@ -9,13 +9,17 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { materializePackageTree } from "../helpers/pi-test-harness.ts";
+
+// Expand phase: retain the same case under both native runners (#1245).
+const test: (name: string, fn: () => void | Promise<void>) => void = process.env.VITEST
+  ? (await import("vitest")).test
+  : (await import("node:test")).test;
 
 const execFileAsync = promisify(execFile);
 
