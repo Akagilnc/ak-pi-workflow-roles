@@ -204,23 +204,12 @@ test("package.json test entries route migrated batches to Vitest and retain isol
     "pnpm run test:vitest && node scripts/run-test-all.mjs",
     "test:all must run both migration batches",
   );
-  const preload = "--import ./scripts/test-process-env-preload.mjs";
-  // #1206 B: native dual reporters — dot→stdout, spec→fixed repo-root report file.
-  const reporter =
-    "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt";
   assert.equal(pkg.scripts["test"], "vitest run --project unit-contract");
   assert.equal(pkg.scripts["test:fast"], "pnpm test");
-  assert.equal(
-    pkg.scripts["test:vitest"],
-    "vitest run test/unit/ test/contract/ test/primary-aware-cleanup.test.ts test/integration/factory-board.test.ts test/integration/public-cli-bin-startup.test.ts test/integration/test-user-profile-preload.test.ts test/package/published-dist-import-closure.test.ts",
-  );
+  assert.equal(pkg.scripts["test:vitest"], "vitest run");
   assert.equal(
     pkg.scripts["test:integration"],
     "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
-  );
-  assert.equal(
-    pkg.scripts["test:adjudication"],
-    `node --import tsx ${preload} ${reporter} --test test/adjudication/**/*.test.ts`,
   );
 });
 

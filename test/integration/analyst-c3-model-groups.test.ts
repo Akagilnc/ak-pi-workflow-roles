@@ -7,7 +7,7 @@
  * C3 fixture runs use exclusive runId segment 019ff000-3xxx.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type {

@@ -48,8 +48,7 @@
     "test:fast": "pnpm test",
     "test:integration": "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
     "test:all": "pnpm run test:vitest && node scripts/run-test-all.mjs",
-    "test:vitest": "vitest run test/unit/ test/contract/ test/primary-aware-cleanup.test.ts test/integration/factory-board.test.ts test/integration/public-cli-bin-startup.test.ts test/integration/test-user-profile-preload.test.ts test/package/published-dist-import-closure.test.ts",
-    "test:adjudication": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt --test test/adjudication/**/*.test.ts",
+    "test:vitest": "vitest run",
     "typecheck": "tsc --noEmit",
     "migrate:book-topology": "node dist/migrate-book-topology.js"
   },

@@ -15,7 +15,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";

@@ -4,16 +4,18 @@
  * test/unit/host-retry-verdict-relay.test.ts — together they cover both families.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test as base } from "vitest";
 
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { environmentFixtures } from "../helpers/environment-fixtures.ts";
+
+const test = base.extend(environmentFixtures);
 
 /** Same opaque payload as the unit ACP tracer — not a free-text template. */
 const OPAQUE_RETRY_MESSAGE = JSON.stringify({
@@ -64,55 +66,50 @@ printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_i
   return binary;
 }
 
-test("headless executeTurn delivers opaque retry.message on resume", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-820-headless-relay-"));
+test("headless executeTurn delivers opaque retry.message on resume", async ({ home }) => {
   const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-headless");
   await mkdir(runDirectory, { recursive: true });
-  try {
-    const promptLog = join(runDirectory, "prompts.log");
-    const binary = await writeFakeHeadlessBinary(runDirectory, promptLog);
-    let closeRoundCalls = 0;
-    const host = createHeadlessRoleTurnHost({
-      description: HEADLESS_PROBE_DESCRIPTION,
-      hostName: "claude",
-      binary,
-      sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
-        resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
-        principalAuthority: piDurablePrincipalAuthority,
+  const promptLog = join(runDirectory, "prompts.log");
+  const binary = await writeFakeHeadlessBinary(runDirectory, promptLog);
+  let closeRoundCalls = 0;
+  const host = createHeadlessRoleTurnHost({
+    description: HEADLESS_PROBE_DESCRIPTION,
+    hostName: "claude",
+    binary,
+    sessionIdentity: {
+      async load() { return undefined; },
+      async bind() {},
+      resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      principalAuthority: piDurablePrincipalAuthority,
+    },
+    prepare: async () => ({
+      mcpServers: [{ name: "ak-probe", type: "stdio", command: "/usr/bin/true", args: [] }],
+      systemPrompt: { body: "probe", materials: [] },
+      prompt: "initial-assignment",
+      jsonSchema: { type: "object" },
+      terminatingToolName: "ak_judge_output",
+      async ingestStructuredOutput() {},
+      async closeRound() {
+        closeRoundCalls += 1;
+        if (closeRoundCalls === 1) {
+          return {
+            accepted: false as const,
+            retry: {
+              code: "bounce",
+              toolCallIds: ["call-1"],
+              message: OPAQUE_RETRY_MESSAGE,
+            },
+          };
+        }
+        return { accepted: true as const };
       },
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio", command: "/usr/bin/true", args: [] }],
-        systemPrompt: { body: "probe", materials: [] },
-        prompt: "initial-assignment",
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput() {},
-        async closeRound() {
-          closeRoundCalls += 1;
-          if (closeRoundCalls === 1) {
-            return {
-              accepted: false as const,
-              retry: {
-                code: "bounce",
-                toolCallIds: ["call-1"],
-                message: OPAQUE_RETRY_MESSAGE,
-              },
-            };
-          }
-          return { accepted: true as const };
-        },
-      }),
-    });
-    const result = await host.executeTurn(baseRequest(runDirectory, home));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
-    const prompts = (await readFile(promptLog, "utf8"))
-      .split("\n")
-      .filter((line) => line.length > 0);
-    assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    }),
+  });
+  const result = await host.executeTurn(baseRequest(runDirectory, home));
+  assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+  assert.equal(result.code, 0);
+  const prompts = (await readFile(promptLog, "utf8"))
+    .split("\n")
+    .filter((line) => line.length > 0);
+  assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";

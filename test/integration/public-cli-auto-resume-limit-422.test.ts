@@ -12,7 +12,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";

@@ -3,12 +3,14 @@
  * Seam: connectAcpStdio — real stdio JSON-RPC framing with one scripted agent child.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test as base } from "vitest";
 
 import { connectAcpStdio } from "../../src/acp-host/role-turn-host.ts";
+import { environmentFixtures } from "../helpers/environment-fixtures.ts";
+
+const test = base.extend(environmentFixtures);
 
 type HostToAgentFrame = {
   id?: unknown;
@@ -52,8 +54,7 @@ async function waitForHostFrame(
   }
 }
 
-test("unknown ACP client request gets JSON-RPC method-not-found and the connection stays live", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ak-acp-unknown-"));
+test("unknown ACP client request gets JSON-RPC method-not-found and the connection stays live", async ({ home: dir }) => {
   const agentPath = join(dir, "fake-acp-agent.mjs");
   const framesPath = join(dir, "stdin-frames.jsonl");
 
@@ -79,40 +80,36 @@ rl.on("line", (line) => {
 });
 `;
 
+  await writeFile(agentPath, agentScript, "utf8");
+  const connection = await connectAcpStdio({
+    binary: process.execPath,
+    args: [agentPath],
+    cwd: dir,
+    env: { ...process.env, AK_FRAMES_PATH: framesPath },
+  });
   try {
-    await writeFile(agentPath, agentScript, "utf8");
-    const connection = await connectAcpStdio({
-      binary: process.execPath,
-      args: [agentPath],
-      cwd: dir,
-      env: { ...process.env, AK_FRAMES_PATH: framesPath },
+    const initialized = await connection.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {},
     });
-    try {
-      const initialized = await connection.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-      });
-      assert.equal(initialized.protocolVersion, 1);
+    assert.equal(initialized.protocolVersion, 1);
 
-      // Causal: host must answer id 9001 with -32601 and the agent must record it
-      // before we assert or tear down. Fixed setImmediate turns do not establish this.
-      const methodNotFound = await waitForHostFrame(
-        framesPath,
-        (frame) => frame.id === 9001 && frame.error !== undefined,
-        "error reply for id 9001",
-      );
-      assert.equal(methodNotFound.error?.code, -32601);
-      assert.equal(typeof methodNotFound.error?.message, "string");
+    // Causal: host must answer id 9001 with -32601 and the agent must record it
+    // before we assert or tear down. Fixed setImmediate turns do not establish this.
+    const methodNotFound = await waitForHostFrame(
+      framesPath,
+      (frame) => frame.id === 9001 && frame.error !== undefined,
+      "error reply for id 9001",
+    );
+    assert.equal(methodNotFound.error?.code, -32601);
+    assert.equal(typeof methodNotFound.error?.message, "string");
 
-      const prompt = await connection.request("session/prompt", {
-        sessionId: "s1",
-        prompt: [{ type: "text", text: "continue" }],
-      });
-      assert.equal(prompt.stopReason, "end_turn");
-    } finally {
-      try { await connection.close(); } catch { /* child may already be gone */ }
-    }
+    const prompt = await connection.request("session/prompt", {
+      sessionId: "s1",
+      prompt: [{ type: "text", text: "continue" }],
+    });
+    assert.equal(prompt.stopReason, "end_turn");
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    try { await connection.close(); } catch { /* child may already be gone */ }
   }
 });

@@ -1,4 +1,3 @@
-import { outsideWorktreeTempPrefix, withTempRoot, withProcessCwd } from "../helpers/environment-fixtures.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
@@ -9,12 +8,12 @@ import { outsideWorktreeTempPrefix, withTempRoot, withProcessCwd } from "../help
 import assert from "node:assert/strict";
 import {
   mkdir,
-  mkdtemp,
+  readdir,
   readFile,
   writeFile,
 } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test as base } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
@@ -27,10 +26,12 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { snapshotAnalystDir, withBusinessRepo, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withBusinessRepo, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { environmentFixtures, withTempRoot, withProcessCwd } from "../helpers/environment-fixtures.ts";
 import { seedCurrentSection, seedTerminal, readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+const test = base.extend(environmentFixtures);
 
 /** C4 typed ticket face present on fixture runs. */
 const TICKET_C4 = 4401;
@@ -60,16 +61,6 @@ const SESSION_JSONL = [
     message: { role: "assistant", timestamp: "2026-08-21T00:00:10.000Z", content: [] },
   }),
 ].join("\n") + "\n";
-
-function assertSnapshotsEqual(
-  before: Map<string, string>,
-  after: Map<string, string>,
-): void {
-  assert.deepEqual([...after.keys()].sort(), [...before.keys()].sort());
-  for (const [key, bytes] of before) {
-    assert.equal(after.get(key), bytes, `analyst file changed: ${key}`);
-  }
-}
 
 async function seedBookTicketRun(input: {
   readonly home: string;
@@ -191,15 +182,13 @@ test("analyst public CLI --project-root: deleted, loud reject", async () => {
   await withTempHome(async (home) => {
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-    const before = await snapshotAnalystDir(ledgerHome);
     const { io } = captureIo();
     const result = await runAkRole(
       ["analyst", "--project-root", "/unused-project"],
       { packageRoot, home, io },
     );
     assert.equal(result.exitCode, 2);
-    const after = await snapshotAnalystDir(ledgerHome);
-    assertSnapshotsEqual(before, after);
+    assert.deepEqual(await readdir(join(ledgerHome, "analyst")), []);
   });
 });
 
@@ -207,32 +196,26 @@ test("analyst public CLI --model-groups: disabled, redesign message", async () =
   await withTempHome(async (home) => {
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-    const before = await snapshotAnalystDir(ledgerHome);
     const { io } = captureIo();
     const result = await runAkRole(
       ["analyst", "--model-groups"],
       { packageRoot, home, io },
     );
     assert.equal(result.exitCode, 2);
-    const after = await snapshotAnalystDir(ledgerHome);
-    assertSnapshotsEqual(before, after);
+    assert.deepEqual(await readdir(join(ledgerHome, "analyst")), []);
   });
 });
 
-test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst writes", async () => {
+test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst writes", async ({ outsideDir: nonGit }) => {
   await withTempHome(async (home) => {
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-    const before = await snapshotAnalystDir(ledgerHome);
-    // Must sit outside this git worktree so analyst sees a true non-repo cwd.
-    // Outside isolation root is not deleted (r12/r6 outside-worktree rule).
-    const nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-336-nongit-"));
+    // Outside this git worktree so analyst sees a true non-repo cwd.
     await withProcessCwd(nonGit, async () => {
       const { io } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
-      const after = await snapshotAnalystDir(ledgerHome);
-      assertSnapshotsEqual(before, after);
+      assert.deepEqual(await readdir(join(ledgerHome, "analyst")), []);
     });
   });
 });

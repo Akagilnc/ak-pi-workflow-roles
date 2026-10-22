@@ -3,11 +3,11 @@
 // B1-B4 四个 metric family，且无 sibling family 目录。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test as base } from "vitest";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { withPrimaryAwareCleanup, worktreeTempPrefix, machineLedgerHome, seedGitRepository, withProcessCwd, withTestUserProfileEnv, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
+import { environmentFixtures, machineLedgerHome, seedGitRepository, withProcessCwd, withTestUserProfileEnv, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 import type {
   AnalystAcceptanceSuccessReworkSection,
@@ -31,6 +31,7 @@ import {
 import { ANALYST_FIXTURE_BOOK as BOOK, fixtureHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+const test = base.extend(environmentFixtures);
 
 type PageWithMetricFamilies = AnalystIssueMetricsPage & {
   readonly legWallClock?: AnalystLegWallClockSection;
@@ -49,55 +50,49 @@ type PageWithMetricFamilies = AnalystIssueMetricsPage & {
  * temporary user profile at an explicit temp home via test-process preload so
  * books/config never enter the operator's real machine home.
  */
-test("public ak-role bundle assembles B1-B4 + gate-cycles metric families without sibling family dir", async () => {
+test("public ak-role bundle assembles B1-B4 + gate-cycles metric families without sibling family dir", async ({ home: root }) => {
   const buildUrl = pathToFileURL(join(packageRoot, "scripts/build-package.mjs")).href;
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  // Worktree-owned sibling roots: shallow bin path still outside package source tree.
-  const binDir = await mkdtemp(worktreeTempPrefix("analyst-bundle-bin-"));
-  const binPath = join(binDir, "main.js");
-  const project = await mkdtemp(worktreeTempPrefix("analyst-bundle-cwd-"));
-  const profileHome = await mkdtemp(worktreeTempPrefix("analyst-bundle-profile-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      await withProcessCwd(packageRoot, async () => {
-        await buildPublicAkRoleBin(binPath);
-      });
-      // Prove the shipped layout has no sibling family tree next to the bin.
+  // One worktree-owned root: the shallow bin path stays outside the package source tree.
+  const binPath = join(root, "main.js");
+  const project = join(root, "project");
+  const profileHome = join(root, "profile");
+  await mkdir(project);
+  await mkdir(profileHome);
+  await withProcessCwd(packageRoot, async () => {
+    await buildPublicAkRoleBin(binPath);
+  });
+  // Prove the shipped layout has no sibling family tree next to the bin.
 
-      seedGitRepository(project);
-      const bookKey = basename(project);
-      const ledgerHome = machineLedgerHome(profileHome);
-      const srcBook = join(fixtureHome, "books", BOOK);
-      const dstBook = join(ledgerHome, "books", bookKey);
-      await cp(srcBook, dstBook, { recursive: true });
+  seedGitRepository(project);
+  const bookKey = basename(project);
+  const ledgerHome = machineLedgerHome(profileHome);
+  const srcBook = join(fixtureHome, "books", BOOK);
+  const dstBook = join(ledgerHome, "books", bookKey);
+  await cp(srcBook, dstBook, { recursive: true });
 
-      const env = withTestUserProfileEnv(
-        isolatedTestProcessEnv({ home: profileHome }),
-        profileHome,
-      );
-      // Real bin execution; stdout is free presentation — contract is the typed page (ADR 0052).
-      execFileSync(process.execPath, [binPath, "analyst"], {
-        cwd: project,
-        encoding: "utf8",
-        env,
-      });
-      const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
-      const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
-      assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
-      assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
-      assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
-      assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
-      assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
-      assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
-      assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
-      assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
-      assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
-      assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
-    },
-    async () => { await rm(binDir, { recursive: true, force: true }); },
-    async () => { await rm(project, { recursive: true, force: true }); },
-    async () => { await rm(profileHome, { recursive: true, force: true }); },
+  const env = withTestUserProfileEnv(
+    isolatedTestProcessEnv({ home: profileHome }),
+    profileHome,
   );
+  // Real bin execution; stdout is free presentation — contract is the typed page (ADR 0052).
+  execFileSync(process.execPath, [binPath, "analyst"], {
+    cwd: project,
+    encoding: "utf8",
+    env,
+  });
+  const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
+  const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
+  assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
+  assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
+  assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
+  assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
+  assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
+  assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
+  assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
+  assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
+  assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
+  assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
 });

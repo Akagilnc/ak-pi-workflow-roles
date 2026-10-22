@@ -22,7 +22,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
