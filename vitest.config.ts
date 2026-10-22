@@ -1,6 +1,19 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+// Expand phase (ADR 0090): these lists are the migrated set. scripts/run-test-all.mjs
+// runs every other integration/package file under node:test; #1250 restores the globs.
+const integrationMigrated = [
+  "test/integration/acp-unknown-client-request.test.ts",
+  "test/adjudication/activation-bare-seam.test.ts",
+  "test/integration/factory-board.test.ts",
+  "test/integration/public-cli-bin-startup.test.ts",
+  "test/integration/test-user-profile-preload.test.ts",
+];
+const packageMigrated = [
+  "test/package/published-dist-import-closure.test.ts",
+];
+
 export default defineConfig({
   test: {
     testTimeout: 300_000,
@@ -18,13 +31,13 @@ export default defineConfig({
       {
         test: {
           name: "integration",
-          include: ["test/integration/**/*.test.ts", "test/adjudication/**/*.test.ts"],
+          include: integrationMigrated,
         },
       },
       {
         test: {
           name: "package",
-          include: ["test/package/**/*.test.ts"],
+          include: packageMigrated,
         },
       },
     ],

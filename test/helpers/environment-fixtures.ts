@@ -49,7 +49,11 @@ export function outsideWorktreeTempPrefix(
 
 /** Callback consumers share the same allocation seam during runner migration. */
 export async function withTempRoot<T>(prefix: string, body: (root: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix(prefix));
+  return withTempDir(worktreeTempPrefix(prefix), body);
+}
+
+async function withTempDir<T>(prefixPath: string, body: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(prefixPath);
   return withPrimaryAwareCleanup(() => body(root), () => rm(root, { recursive: true, force: true }));
 }
 
@@ -316,6 +320,10 @@ export const environmentFixtures = {
     const path = machineLedgerHome(home);
     await mkdir(path, { recursive: true });
     await use(path);
+  },
+  /** Outside this checkout: no upward Git discovery, and short enough for Unix socket paths. */
+  outsideDir: async ({}, use: (path: string) => Promise<void>) => {
+    await withTempDir(outsideWorktreeTempPrefix("ak-test-outside-"), use);
   },
   gitRepo: async ({ home }: { home: string }, use: (path: string) => Promise<void>) => {
     const path = join(home, "repo");
