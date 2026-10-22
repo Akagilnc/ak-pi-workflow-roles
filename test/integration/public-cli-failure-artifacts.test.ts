@@ -94,7 +94,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io } = captureIo();
+    const { io, stdout } = captureIo();
     let currentJson: string | undefined;
     const runId = "run-unwritable-run-dir-001";
     // No auto-resume: a retry would meet the same refused dossier. Temp-home config only.
@@ -140,6 +140,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
       assert.equal(result.exitCode, 1);
       const terminal = result.terminal;
       assert.ok(terminal, "the failure still settles a Terminal");
+      assert.ok(stdout.join("").length > 0, "the refused write does not suppress delivery");
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
         // A bare nonzero exit names no cause; the child's own diagnostic stays

@@ -118,7 +118,7 @@
 | `test/integration/public-cli-engine-startup-material.test.ts` | T/M | 改：runAkRole→prepared host，恢复 handbook/dispatchHandbook 等于源文件 UTF-8 的递送契约；保 typed kind/name/model、输入 dispatch，不检查文档措辞。 |
 | `test/integration/public-cli-escalation-resume.test.ts` | B | 留：公开 gate escalation/continue/transport_failure 到同次父卷与恢复路由。 |
 | `test/integration/public-cli-explicit-internal.test.ts` | B | 留：假 CLI 子进程 argv/stdin/env、PATH、SIGTERM/关闭与投递错误，不调用真实模型。 |
-| `test/integration/public-cli-failure-artifacts.test.ts` | T | 改：删 stdout/stderr 分块计数及死变量；保实际 public terminal/artifact 写故障、旧卷隔离及宿主结果不被产物错误顶替。第四轮（R3-A）：删计数时连交付观察一并删掉是误删；no_receipt 交付在 `:76` 既有 malformed session 案断言整段 stdout 非空，失败交付由共享 `assertPublicFailureSettlement`（`test/helpers/failure-settlement-kit.ts:95`）接住；其余同路径案不逐例补回。 |
+| `test/integration/public-cli-failure-artifacts.test.ts` | T | 改：删 stdout/stderr 分块计数及死变量；保实际 public terminal/artifact 写故障、旧卷隔离及宿主结果不被产物错误顶替。第四轮（R3-A）：删计数时连交付观察一并删掉是误删；no_receipt 交付在 `:76` 既有 malformed session 案断言整段 stdout 非空；current.json 写入被拒、Terminal 无产物引用时仍须交付，在 `:143` 既有写故障案断言；普通失败交付由共享 `assertPublicFailureSettlement`（`test/helpers/failure-settlement-kit.ts:95`）接住；其余同路径案不逐例补回。 |
 | `test/integration/public-cli-failure-provider-stop.test.ts` | B | 留：真实 public 入口只认宿主 typed report，不从旧 transcript 推造 provider failure。 |
 | `test/integration/public-cli-failure-real-entry.test.ts` | T/M | 改：删输出分块计数；第三轮把 `stderr[0]` 取首块改为整段输出非空，不依赖写入分块；第四轮这两处并入共享 `assertPublicFailureSettlement` 的 stdout/stderr 交付观察（`test/helpers/failure-settlement-kit.ts:95`、`:96`），本文件删去重复行；保公开 entry 的 typed failure 与 packageFact/timeout、封卷后非零退出；保存而不洗白。 |
 | `test/integration/public-cli-failure-settlement.test.ts` | D/C/M | 改：既有零 dispatch/零 admission 的结构性错误表接住非 repeatable option 重复；第三轮删两处 `stdout.length === 1` 写入次数锁，保 exitCode、Terminal、payload 结构化断言（两案均 accepted，交付观察由 `test/integration/public-cli-judge.test.ts:299`、`:391` 承接；失败案经共享 kit 观察 stdout/stderr 交付）；拒收表的「零写入／有诊断」不锁分块数，留。其余实际 failure/Terminal 分支保留。 |
@@ -230,7 +230,7 @@ R2-B 只删写入次数锁，不需变异；改后 `public-cli-failure-settlemen
 
 ### 第四轮（大理寺 receipts/3.json R3-A/B）
 
-R3-A 交付辨别力：本票删的 stdout/stderr 观察逐条见回执 classResults；按交付分支各留一处最小观察（整段输出非空，不锁分块、措辞），不逐例补回。新增 `test/helpers/failure-settlement-kit.ts:95`–`:96`（失败 stdout/stderr，经 kit 覆盖全部失败案）、`test/integration/public-cli-failure-artifacts.test.ts:76`（no_receipt stdout）、`test/integration/public-cli-navigator-lookup.test.ts:150`（无 Terminal 的记录失败 stderr）；`test/integration/public-cli-failure-real-entry.test.ts` 两行同义 stderr 观察并入 kit 后删除。
+R3-A 交付辨别力：本票删的 stdout/stderr 观察逐条见回执 classResults；按交付分支各留一处最小观察（整段输出非空，不锁分块、措辞），不逐例补回。新增 `test/helpers/failure-settlement-kit.ts:95`–`:96`（失败 stdout/stderr，经 kit 覆盖全部失败案）、`test/integration/public-cli-failure-artifacts.test.ts:76`（no_receipt stdout）、`:143`（current.json 写入被拒仍交付）、`test/integration/public-cli-navigator-lookup.test.ts:150`（无 Terminal 的记录失败 stderr）；`test/integration/public-cli-failure-real-entry.test.ts` 两行同义 stderr 观察并入 kit 后删除。
 
 R3-B 注册布局锁：同形状扫描（测试中对 hook 注册表 has/size/keys 的断言）只命中 `test/contract/judge-role.test.ts` 一处，已改为行为断言。`tools.has` 断言是模型可见工具面（行为），`activation-bare-seam` 的 `assert.ok(found)` 是调用前置，不同类。
 
@@ -243,7 +243,8 @@ R3-B 注册布局锁：同形状扫描（测试中对 hook 注册表 has/size/ke
 | `presentTerminal` 删 accepted 分支 stdout | 同上 | 2 败（public-cli-judge `:299`、`:391` 所在案） |
 | `presentTerminal` 删 held 回放 | 同上 | 15 败 |
 | 外层 catch 删 stderr 诊断 | 同上 | 1 败（navigator-lookup `:150`） |
-| `tool_call` 钩子改为装载即注册（保原守卫，删惰性注册） | judge-role、collector-self-collect | 15/15 绿（旧布局锁在此会报红） |
+| `tool_call` 钩子改为装载即注册（保原守卫，删惰性注册） | judge-role、collector-self-collect | 15/15 绿（大理寺 receipts/3.json 隔离复现：旧布局锁在同类重排下 2 案 1 败） |
 | 装载即注册一个无条件 block 的 `tool_call` | 同上 | 2 败（无角色案、Collector 案） |
+| `presentTerminal` 遇无产物引用的 Terminal 即不交付 | 第一组 | 2 败（failure-artifacts `:76` no_receipt 案、`:143` 写故障案）；`post-admission` 失败收尾处同样门控 59/59 绿，该案不走那个调用点 |
 
-恢复后同一组 59/59 绿。
+恢复后同一组 59/59 绿。另核 Collector accepted 交付：临时在其案补整段 stdout 观察，删 accepted 分支 stdout 即红、删 held 回放仍绿，确认走 accepted 分支，由 public-cli-judge 两案承接；探针已撤。
