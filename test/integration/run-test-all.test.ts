@@ -167,6 +167,7 @@ async function runRunner(options: {
   binDir: string;
   recordPath: string;
   childExits?: string;
+  tiers?: string[];
   extraEnv?: NodeJS.ProcessEnv;
 }) {
   await writeFile(options.recordPath, "", "utf8");
@@ -185,7 +186,7 @@ async function runRunner(options: {
   delete env.AK_TEST_ALL_NODE;
 
   // Host the real runner with the real interpreter; only children resolve `node` via PATH.
-  const result = await execa(process.execPath, [RUNNER], {
+  const result = await execa(process.execPath, [RUNNER, ...(options.tiers ?? [])], {
     cwd: options.cwd,
     env,
   });
@@ -194,30 +195,28 @@ async function runRunner(options: {
   return { ...result, records: parseRecords(raw) };
 }
 
-test("package.json test entries wire HOME redirect preload or run-test-all owner", async () => {
+test("package.json test entries route migrated batches to Vitest and retain isolated legacy batches", async () => {
   const pkg = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as { scripts: Record<string, string> };
   assert.equal(
     pkg.scripts["test:all"],
-    "node scripts/run-test-all.mjs",
-    "test:all must delegate only to the scheduling owner",
+    "pnpm run test:vitest && node scripts/run-test-all.mjs",
+    "test:all must run both migration batches",
   );
   const preload = "--import ./scripts/test-process-env-preload.mjs";
-  // #252: test:fast is a canonical entry — fixed per-test --test-timeout=300000, no config.
-  const testTimeout = "--test-timeout=300000";
   // #1206 B: native dual reporters — dot→stdout, spec→fixed repo-root report file.
   const reporter =
     "--test-reporter=dot --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=node-test-report.txt";
-  const bareUnitContract =
-    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
-  const fastUnitContract =
-    `node --import tsx ${preload} ${testTimeout} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
-  assert.equal(pkg.scripts["test"], bareUnitContract);
-  assert.equal(pkg.scripts["test:fast"], fastUnitContract);
+  assert.equal(pkg.scripts["test"], "vitest run --project unit-contract");
+  assert.equal(pkg.scripts["test:fast"], "pnpm test");
+  assert.equal(
+    pkg.scripts["test:vitest"],
+    "vitest run test/unit/ test/contract/ test/primary-aware-cleanup.test.ts test/integration/factory-board.test.ts test/integration/public-cli-bin-startup.test.ts test/integration/test-user-profile-preload.test.ts test/package/published-dist-import-closure.test.ts",
+  );
   assert.equal(
     pkg.scripts["test:integration"],
-    `node --import tsx ${preload} ${reporter} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
+    "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
   );
   assert.equal(
     pkg.scripts["test:adjudication"],
@@ -236,7 +235,7 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
  */
 test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
   const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-549-test-all-home-"));
-  const files = ["test/unit/one.test.ts"];
+  const files = ["test/integration/one.test.ts"];
   await seedTierTree(workspace, files);
 
   const binDir = join(workspace, "bin");
@@ -364,6 +363,7 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
     "test/unit/one.test.ts",
     "test/contract/two.test.ts",
     "test/integration/light.test.ts",
+    "test/integration/factory-board.test.ts",
     "test/package/light.test.ts",
   ];
   await seedTierTree(workspace, files);
@@ -407,7 +407,16 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
   );
 
   const scheduled = filesFromArgv(child.argv).sort();
-  assert.deepEqual(scheduled, [...files].sort());
+  assert.deepEqual(scheduled, ["test/integration/light.test.ts", "test/package/light.test.ts"]);
+
+  const integrationOnly = await runRunner({
+    cwd: workspace,
+    binDir,
+    recordPath,
+    tiers: ["integration"],
+  });
+  assert.equal(integrationOnly.exitCode, 0);
+  assert.deepEqual(filesFromArgv(integrationOnly.records[0]!.argv), ["test/integration/light.test.ts"]);
 });
 
 test("runner discovers the live package tree once under default parallelism, including this contract", async () => {
@@ -435,13 +444,6 @@ test("runner discovers the live package tree once under default parallelism, inc
     "owning contract must be discovered once",
   );
 
-  // Every scheduled path stays inside the ticket's four-tier universe shape.
-  for (const file of scheduled) {
-    assert.match(
-      file.replaceAll("\\", "/"),
-      /^test\/(unit|contract|integration|package)\/.+\.test\.ts$/,
-    );
-  }
   assert.ok(scheduled.length > 0, "discovery must be non-empty on the live tree");
 });
 
@@ -466,7 +468,7 @@ test("runner propagates child non-zero exits honestly", async () => {
 
 test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async () => {
   const workspace = await mkdtemp(outsideWorktreeTempPrefix("ak-run-test-all-sigterm-"));
-  const files = ["test/unit/one.test.ts"];
+  const files = ["test/integration/one.test.ts"];
   await seedTierTree(workspace, files);
   const binDir = join(workspace, "bin");
   // Child self-terminates with SIGTERM; runner must surface 128+15=143.

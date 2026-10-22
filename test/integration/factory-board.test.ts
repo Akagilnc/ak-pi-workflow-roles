@@ -9,11 +9,10 @@
 import assert from "node:assert/strict";
 import { cp, mkdir, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { afterEach, test, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { withTempRoot, testExeca as execa } from "../helpers/environment-fixtures.ts";
-import { manualScheduler } from "../helpers/manual-scheduler.ts";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -46,6 +45,8 @@ import {
   BoardSortElement,
 } from "../helpers/factory-board-shared.ts";
 import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+
+afterEach(() => { vi.useRealTimers(); });
 
 /** Page sort modes advertised by the embedded production control (not a board export). */
 
@@ -2038,8 +2039,8 @@ test("production factory-board lifecycle regenerates within refresh boundary and
 
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
-    let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-    const { scheduler, ticks } = manualScheduler();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-08-05T16:00:00.000Z"));
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
     const view: FactoryBoardView = {
       ok: true,
@@ -2060,8 +2061,6 @@ test("production factory-board lifecycle regenerates within refresh boundary and
       view,
       outputPath,
       refreshBoundarySeconds: 1,
-      clock: () => new Date(nowMs),
-      scheduler,
     });
 
     const first = await handle.started;
@@ -2077,7 +2076,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
       "2026-08-05T16:00:00.000Z",
     );
     assert.equal(elementsWith(html, "data-run-id").length, 1);
-    assert.equal(ticks.length, 1, "lifecycle arms a real scheduler tick");
+    assert.equal(vi.getTimerCount(), 1, "lifecycle arms a real interval");
     assert.equal(await treeFingerprint(ledgerDir), before, "initial render is read-only");
 
     // New run arrives in the ledger (test-owned mutation of the fixture copy).
@@ -2094,14 +2093,12 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     const afterAdd = await treeFingerprint(ledgerDir);
     assert.notEqual(afterAdd, before);
 
-    nowMs = Date.parse("2026-08-05T16:00:10.000Z");
-    ticks[0]!();
-    await new Promise((r) => setTimeout(r, 50));
-    for (let i = 0; i < 20; i += 1) {
+    vi.setSystemTime(new Date("2026-08-05T16:00:09.000Z"));
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitUntil(async () => {
       html = await readFile(outputPath, "utf8");
-      if (elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z") break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+      return elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z";
+    });
     assert.equal(
       elementsWith(html, "data-generated-at")[0]?.["data-generated-at"],
       "2026-08-05T16:00:10.000Z",
@@ -2118,14 +2115,13 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     );
 
     await handle.stop();
-    assert.equal(ticks.length, 0, "stop cancels scheduler");
+    assert.equal(vi.getTimerCount(), 0, "stop cancels interval");
     const frozen = await readFile(outputPath, "utf8");
     const frozenAt = elementsWith(frozen, "data-generated-at")[0]?.["data-generated-at"];
     assert.equal(frozenAt, "2026-08-05T16:00:10.000Z");
 
-    nowMs = Date.parse("2026-08-05T16:00:20.000Z");
-    assert.equal(ticks.length, 0);
-    await new Promise((r) => setTimeout(r, 30));
+    await vi.advanceTimersByTimeAsync(10_000);
+    assert.equal(vi.getTimerCount(), 0);
     assert.equal(await readFile(outputPath, "utf8"), frozen);
     assert.equal(await treeFingerprint(ledgerDir), afterAdd);
 
@@ -2766,8 +2762,8 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     }
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
-    let nowMs = Date.parse(RETENTION_NOW);
-    const { scheduler, ticks } = manualScheduler();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date(RETENTION_NOW));
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
 
     const counters = { closedDrainCalls: 0 };
@@ -2827,15 +2823,13 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
         const snapshot = await fetchBoardSnapshot({
           bindings: [{ bookKey: "roles", owner: "acme", repo: "roles" }],
           closedIssueNumbersByBook: { roles: [50] },
-          retentionNow: new Date(nowMs),
+          retentionNow: new Date(),
           transport,
         });
         return { ok: true, snapshot };
       },
       outputPath,
       refreshBoundarySeconds: 1,
-      clock: () => new Date(nowMs),
-      scheduler,
     });
 
     const first = await handle.started;
@@ -2879,13 +2873,12 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     assert.equal(placementOf(html, "roles", 41), "done", "just-closed retained ticket lands in 已完成");
 
     // Next tick: advance past #41's closedAt+24h so the same transport path drops it.
-    nowMs = Date.parse("2026-08-06T12:00:00.002Z");
-    ticks[0]!();
-    for (let i = 0; i < 25; i += 1) {
+    vi.setSystemTime(new Date("2026-08-06T11:59:59.002Z"));
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitUntil(async () => {
       html = await readFile(outputPath, "utf8");
-      if (loadCalls >= 2 && elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-06T12:00:00.002Z") break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+      return loadCalls >= 2 && elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-06T12:00:00.002Z";
+    });
     assert.ok(loadCalls >= 2, "each tick re-loads the snapshot through the adapter");
     assert.equal(
       elementsWith(html, "data-generated-at")[0]?.["data-generated-at"],
@@ -2911,8 +2904,6 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
-    const nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-
     const upstream = new Error("snapshot source exploded");
     const failing = startFactoryBoardPage({
       books,
@@ -2921,8 +2912,6 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
       },
       outputPath: join(workspace, "out", "board2.html"),
       refreshBoundarySeconds: 1,
-      clock: () => new Date(nowMs),
-      scheduler: manualScheduler().scheduler,
     });
     await assert.rejects(failing.started, (err: unknown) => err === upstream);
     await assert.rejects(() => failing.stop(), (err: unknown) => err === upstream);

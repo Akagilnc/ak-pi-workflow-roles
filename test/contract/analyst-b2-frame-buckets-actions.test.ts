@@ -6,7 +6,7 @@
  * Family registers by drop-in module under analyst-metric-families/ only.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import {

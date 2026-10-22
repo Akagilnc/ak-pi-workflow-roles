@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { CANONICAL_JSON_VALIDATION_ERROR_CODE, CanonicalJsonValidationError, canonicalJson, canonicalJsonBytes } from "../../src/canonical-json.ts";
 

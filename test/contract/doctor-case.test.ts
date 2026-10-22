@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DoctorEvidenceStore } from "../../src/doctor-contracts.ts";

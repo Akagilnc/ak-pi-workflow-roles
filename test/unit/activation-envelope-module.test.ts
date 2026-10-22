@@ -1,7 +1,7 @@
 import { worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 import assert from "node:assert/strict";
 import { isAbsolute, resolve } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { Value } from "typebox/value";
 
 import {

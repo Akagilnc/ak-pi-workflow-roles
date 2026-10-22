@@ -11,7 +11,7 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: "unit",
+          name: "unit-contract",
           include: ["test/unit/**/*.test.ts", "test/contract/**/*.test.ts", "test/*.test.ts"],
         },
       },

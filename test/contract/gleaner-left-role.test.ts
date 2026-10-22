@@ -4,7 +4,7 @@
  * No bounce/verdict channel (言不为狱).
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   GLEANER_LEFT_OUTPUT_TOOL_NAME,

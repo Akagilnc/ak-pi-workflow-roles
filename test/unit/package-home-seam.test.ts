@@ -15,10 +15,7 @@ import {
   tryHomeFromAkRolesPath,
 } from "../../src/activation-ledger-topology.ts";
 
-// Expand phase: retain the same cases under both native runners (#1245).
-const test: (name: string, fn: () => void | Promise<void>) => void = process.env.VITEST
-  ? (await import("vitest")).test
-  : (await import("node:test")).test;
+import { test } from "vitest";
 
 test("resolveActivationLedgerHome with explicit absolute home ignores process.env.HOME", () => {
   const previousHome = process.env.HOME;

@@ -2,7 +2,7 @@
  * #836: projectLawfulGatekeeperOutput is passthrough — no field drop / filter.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { projectLawfulGatekeeperOutput } from "../../src/package-contracts/gatekeeper-output.ts";
 

@@ -60,7 +60,6 @@ function captureExtensionHandlers(
  */
 function runtimeHarness(options: {
   activate?: () => Promise<string>;
-  clock?: () => string;
   writeTrace?: (record: ActivationTraceRecord) => void | Promise<void>;
   mode?: ExtensionContext["mode"];
   home: string;
@@ -71,7 +70,6 @@ function runtimeHarness(options: {
   const { handlers } = captureExtensionHandlers(
     (pi) => createPiRoleRuntimeExtension({
       loadRoleSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
-      activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
       activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
     })(pi),
     { getFlag: (name) => name === "ak-role" ? "judge" : undefined },

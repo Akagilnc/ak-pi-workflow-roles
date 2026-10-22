@@ -14,17 +14,19 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { afterEach, beforeEach, test, vi } from "vitest";
 
 
 import {
   createOAuthKeepalive,
+  OAUTH_KEEPALIVE_INTERVAL_MS,
   OAUTH_KEEPALIVE_SETTING_FILENAME,
   readOAuthKeepaliveProviders,
 } from "../../src/oauth-keepalive.ts";
-import { flushEventLoopTurns } from "../helpers/pi-test-harness.ts";
 import { withActivationHome } from "../helpers/environment-fixtures.ts";
-import { manualScheduler } from "../helpers/manual-scheduler.ts";
+
+beforeEach(() => { vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] }); });
+afterEach(() => { vi.useRealTimers(); });
 
 type OAuthCounters = {
   refreshCount: number;
@@ -35,13 +37,6 @@ type OAuthCounters = {
 
 
 
-async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
-  assert.ok(ticks[index], `expected scheduled tick at index ${index}`);
-  ticks[index]!();
-  // Allow the async runTick body (and nested refresh) to settle.
-  await flushEventLoopTurns(30);
-}
-
 test("#351 single-flight: in-flight refresh causes second tick to skip", async () => {
   let release!: () => void;
   const hold = {
@@ -51,11 +46,8 @@ test("#351 single-flight: in-flight refresh causes second tick to skip", async (
   };
   const counters: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
   const refreshCalls: number[] = [];
-  const { scheduler, ticks } = manualScheduler();
-
   const keepalive = createOAuthKeepalive({
     providers: ["kimi-coding"],
-    scheduler,
   });
 
   const modelRegistry = {
@@ -68,25 +60,22 @@ test("#351 single-flight: in-flight refresh causes second tick to skip", async (
   };
 
   keepalive.start({ modelRegistry });
-  assert.equal(ticks.length, 1);
+  assert.equal(vi.getTimerCount(), 1);
 
-  // Start first tick (held open).
-  ticks[0]!();
-  await flushEventLoopTurns(5);
+  // The production interval is unref'd; fake time must still drive it.
+  await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
   assert.equal(refreshCalls.length, 1);
 
   // Second tick while in-flight — must not start another refresh.
-  ticks[0]!();
-  await flushEventLoopTurns(5);
+  await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
   assert.equal(refreshCalls.length, 1, "single-flight must skip overlapping tick");
 
   release();
-  await flushEventLoopTurns(10);
+  await vi.advanceTimersByTimeAsync(0);
   assert.equal(counters.refreshCount, 1);
 
   // After settle, next tick may run.
-  ticks[0]!();
-  await flushEventLoopTurns(10);
+  await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
   assert.equal(refreshCalls.length, 2);
 
   keepalive.stop();
@@ -107,11 +96,7 @@ test(
     const refreshSettled: number[] = [];
     let callIndex = 0;
 
-    const { scheduler, ticks } = manualScheduler();
-    const keepalive = createOAuthKeepalive({
-      providers: ["kimi-coding"],
-      scheduler,
-    });
+    const keepalive = createOAuthKeepalive({ providers: ["kimi-coding"] });
 
     const modelRegistry = {
       async refresh(_options?: { signal?: AbortSignal }) {
@@ -131,32 +116,29 @@ test(
     };
 
     keepalive.start({ modelRegistry });
-    assert.equal(ticks.length, 1);
+    assert.equal(vi.getTimerCount(), 1);
 
     // Generation-0 tick: refresh starts and is held open (ignores abort).
-    ticks[0]!();
-    await flushEventLoopTurns(5);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.deepEqual(refreshStarted, [0]);
     assert.equal(active, 1);
 
     // stop→start: new generation interval; old refresh still unsettled.
     keepalive.stop();
     keepalive.start({ modelRegistry });
-    assert.equal(ticks.length, 1, "restart must schedule exactly one new interval");
+    assert.equal(vi.getTimerCount(), 1, "restart must schedule exactly one new interval");
 
     // New-generation tick while old refresh still in flight — must be skipped.
-    ticks[0]!();
-    await flushEventLoopTurns(5);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.deepEqual(refreshStarted, [0], "new tick must not start while old refresh unsettled");
     assert.equal(maxConcurrent, 1);
 
     // Old call settles; next tick may run.
     releaseOld();
-    await flushEventLoopTurns(10);
+    await vi.advanceTimersByTimeAsync(0);
     assert.deepEqual(refreshSettled, [0]);
 
-    ticks[0]!();
-    await flushEventLoopTurns(10);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.deepEqual(refreshStarted, [0, 1], "post-settle tick must run");
     assert.equal(maxConcurrent, 1, "instance concurrent refresh must stay ≤ 1 across restart");
 
@@ -172,12 +154,8 @@ test("#351 error path: refresh rejection emits one warning; interval continues",
   };
 
   try {
-    const { scheduler, ticks } = manualScheduler();
     let attempts = 0;
-    const keepalive = createOAuthKeepalive({
-      providers: ["kimi-coding"],
-      scheduler,
-    });
+    const keepalive = createOAuthKeepalive({ providers: ["kimi-coding"] });
     const boom = new Error("token endpoint down");
     boom.name = "TokenEndpointError";
 
@@ -190,17 +168,17 @@ test("#351 error path: refresh rejection emits one warning; interval continues",
       },
     });
 
-    await fireTick(ticks, 0);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.equal(attempts, 1);
     assert.equal(warningCount, 1, "exactly one warning per failed tick/provider");
 
     // Interval still alive — next tick retries (no circuit breaker).
-    await fireTick(ticks, 0);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.equal(attempts, 2);
     assert.equal(warningCount, 2);
 
     keepalive.stop();
-    assert.equal(ticks.length, 0);
+    assert.equal(vi.getTimerCount(), 0);
   } finally {
     console.warn = originalWarn;
   }
@@ -215,12 +193,8 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
   };
 
   try {
-    const { scheduler, ticks } = manualScheduler();
     let attempts = 0;
-    const keepalive = createOAuthKeepalive({
-      providers: ["kimi-coding"],
-      scheduler,
-    });
+    const keepalive = createOAuthKeepalive({ providers: ["kimi-coding"] });
     const boom = new Error("token endpoint down");
     boom.name = "TokenEndpointError";
 
@@ -238,7 +212,7 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
       },
     });
 
-    await fireTick(ticks, 0);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.equal(attempts, 1);
     assert.equal(notificationTypes.length, 1, "ui.notify must receive exactly one warning");
     assert.equal(notificationTypes[0], "warning");
@@ -249,7 +223,7 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
     );
 
     // No immediate retry / no circuit breaker — next natural tick tries again.
-    await fireTick(ticks, 0);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.equal(attempts, 2);
     assert.equal(notificationTypes.length, 2);
     assert.equal(consoleWarningCount, 0);
@@ -268,11 +242,7 @@ test("#351 notify throw: falls back once to console.warn with provider/class and
   };
 
   try {
-    const { scheduler, ticks } = manualScheduler();
-    const keepalive = createOAuthKeepalive({
-      providers: ["kimi-coding"],
-      scheduler,
-    });
+    const keepalive = createOAuthKeepalive({ providers: ["kimi-coding"] });
     const boom = new Error("token endpoint down");
     boom.name = "TokenEndpointError";
     const notifyBoom = new Error("ui bus closed");
@@ -291,7 +261,7 @@ test("#351 notify throw: falls back once to console.warn with provider/class and
       },
     });
 
-    await fireTick(ticks, 0);
+    await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
     assert.equal(consoleArgs.length, 1, "exactly one console fallback when notify throws");
     // Route/cause identity only — do not lock warning presentation text (#685 C3).
     const cause = consoleArgs[0]![1];
@@ -321,9 +291,8 @@ test(
           "setting reader must return trimmed provider ids",
         );
 
-        const { scheduler, ticks } = manualScheduler();
         const seenProviders: string[][] = [];
-        const keepalive = createOAuthKeepalive({ providers, scheduler });
+        const keepalive = createOAuthKeepalive({ providers });
         keepalive.start({
           modelRegistry: {
             async refresh(options) {
@@ -333,7 +302,7 @@ test(
           },
         });
 
-        await fireTick(ticks, 0);
+        await vi.advanceTimersByTimeAsync(OAUTH_KEEPALIVE_INTERVAL_MS);
         assert.deepEqual(
           seenProviders,
           [["custom-oauth"]],

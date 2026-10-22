@@ -4,7 +4,7 @@ import { withPrimaryAwareCleanup, withActivationHome, createTempPackageHomeLedge
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test, { after, afterEach } from "node:test";
+import { test, afterAll, afterEach } from "vitest";
 
 import { fauxProvider, type AssistantMessage, type JsonObject, type Usage } from "@earendil-works/pi-ai";
 import {
@@ -103,7 +103,7 @@ async function withInstitutionalRunDir<T>(
 // Parent agent process may inject AK_ROLE_RUN_DIR; isolate this file from that binding.
 const ambientRunDirAtLoad = process.env.AK_ROLE_RUN_DIR;
 delete process.env.AK_ROLE_RUN_DIR;
-after(() => {
+afterAll(() => {
   if (ambientRunDirAtLoad === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = ambientRunDirAtLoad;
 });

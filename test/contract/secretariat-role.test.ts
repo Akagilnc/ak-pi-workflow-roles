@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import test from "node:test";
+import { test } from "vitest";
 
 import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict, type SecretariatVerdictParameters } from "../../src/secretariat-role.ts";
 import type { SecretariatVerdict as TerminatingSecretariatVerdict } from "../../src/package-contracts/terminating-tools.ts";
