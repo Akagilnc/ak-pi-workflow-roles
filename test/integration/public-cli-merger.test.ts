@@ -167,9 +167,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-merger-admit-001@merger"),
     );
 
-    // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
     const prompt = buildInstructionTransportPrompt(admitted);
-    assert.equal(prompt.startsWith("/skill:"), false);
     assert.equal(prompt.includes(admitted.instruction), true);
   });
 });

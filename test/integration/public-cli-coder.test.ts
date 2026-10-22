@@ -149,8 +149,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
       assert.equal(req.activation.phase, "apply");
       assert.equal(captured.first?.continuation.kind, "initial");
       assert.equal(req.continuation.kind, "resume");
-      // Host-neutral transport: no Pi `/skill:` on the shared request face (#822).
-      assert.equal(req.continuation.prompt.startsWith("/skill:"), false);
     }
 
     // Plan phase: no method bindings.

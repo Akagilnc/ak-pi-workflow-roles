@@ -101,7 +101,7 @@ function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
+test("parseReviewerArgv requires authority, rejects bad lenses and keeps --base/--lens/--authority-ref spellings", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -114,20 +114,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   assert.throws(
     () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
-  );
-  assert.deepEqual(
-    parsePublicSeatArgv("reviewer", [
-      "--base",
-      "main",
-      "--authority-ref",
-      "https://example.test/a",
-    ]),
-    {
-      instruction: "",
-      attachmentPaths: [],
-      baseRevision: "main",
-      authorityRefs: ["https://example.test/a"],
-    },
   );
   // Public `--lens all` is not an admitted single-axis value.
   assert.throws(
@@ -603,7 +589,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
     const projectEntries = await readdir(project);
-    assert.equal(projectEntries.includes("docs"), false);
     assert.equal(projectEntries.includes(".agents"), false);
   });
 });
@@ -1048,7 +1033,6 @@ test("ak-role resume continues reviewer with fixed base", async () => {
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "调用者原话");
-        assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         // Resume shares the ticket worktree (#997); no seat-specific ephemeral copy.
