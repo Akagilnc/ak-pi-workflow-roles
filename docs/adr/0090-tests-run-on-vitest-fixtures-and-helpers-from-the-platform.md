@@ -6,7 +6,7 @@ Status: proposed（2026-10-22，源卷 d634a8d9，owner uuid `a75453ff-aacd-4e93
 
 1. 测试运行器换成 **Vitest 5**（`vitest run`），三个 `projects` 对应现有目录：`unit`＋`contract`、`integration`、`package`；CI 跑全部。进程池用默认 `forks`。
 2. 集成测试的公共前置（临时 git 仓、隔离 home、账本目录）由**唯一的夹具模块**按案直接建（`test.extend` test 作用域：mkdtemp＋按需 git init＋账本目录，跑完清）；只有实测贵的前置（物化包、打包）才用 file 作用域共享。不做模板目录与复制（陛下 P1 答「可以」选乙：建仓毫秒级，模板要配防污染机制，只为模板而存在）。席位表与账本从 `os.userInfo().homedir` 找，隔离 HOME 环境变量挡不住它们：进程内测试显式传 home，forks 的 worker 与子进程都加载同一个 userInfo 预载（`AK_TEST_REAL_MACHINE_HOME` 留真 home 给 agent-dir guard）。
-3. 子进程起停与结果用 **execa**；快照不自写：`snapshotAnalystDir` 9 处只是「目录仍为空」的前后对照，改直接断言、helper 删；本票没有金样用例，不为此造；日后有真实金样用例时用 Vitest 自带快照（陛下：「可以选甲，但是不能说死，有需要的时候还是要用」）；定时器只用 `vi.useFakeTimers`，生产代码里三处只为测试存在的 `scheduler`／clock 注入接缝与同构默认实现随改动删除，生产行为不变。
+3. 子进程起停与结果用 **execa**；快照逐处选型、不自写：`snapshotAnalystDir` 9 处只是「目录仍为空」的前后对照，改直接断言、helper 删；不预先决定本票不引快照，哪处真是金样对照就用 Vitest 自带快照，不得为满足选项字面强行造快照用例（陛下：「可以选甲，但是不能说死，有需要的时候还是要用」「那就2」）；定时器只用 `vi.useFakeTimers`，生产代码里三处只为测试存在的 `scheduler`／clock 注入接缝与同构默认实现随改动删除，生产行为不变。
 4. 自写物随改动退役：`scripts/run-test-all.mjs`、`test/helpers/manual-scheduler.ts`、`snapshotAnalystDir`、`test-subprocess.ts`、`public-cli-subprocess.ts`（其中 userInfo 预载拼装归夹具模块）及只为它们活着的测试；`node:test` 入口脚本删除。环境前置收成一个夹具模块；宿主假件按宿主各留一处，只删重复，不并成一个文件。`test/adjudication/` 与根目录零散测试并入 projects，不让任何测试在 Vitest 下悄悄不跑。
 5. 迁移按层分批（unit＋contract → integration → package），expand–contract：先装 Vitest 与 projects，各批独立提交、CI 绿，最后删旧入口。耗时不设硬闸：同一台机器迁前迁后各测一次全量写进交卷（本机 10 核基线 727 案 45 秒）。
 
