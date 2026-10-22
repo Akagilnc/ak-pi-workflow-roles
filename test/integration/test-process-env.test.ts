@@ -10,9 +10,8 @@ import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
-import { isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 const HOST_HOME = userInfo().homedir;
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));

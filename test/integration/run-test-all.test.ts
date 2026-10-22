@@ -21,8 +21,7 @@ import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { execa } from "execa";
-import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { outsideWorktreeTempPrefix, testExeca as execa } from "../helpers/environment-fixtures.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
@@ -189,9 +188,6 @@ async function runRunner(options: {
   const result = await execa(process.execPath, [RUNNER], {
     cwd: options.cwd,
     env,
-    extendEnv: false,
-    reject: false,
-    forceKillAfterDelay: false,
   });
 
   const raw = await readFile(options.recordPath, "utf8");
@@ -346,9 +342,6 @@ console.log(JSON.stringify({ ok: true, home, hostHome }));
         AK_549_SENTINEL_NAME: sentinelName,
         AK_549_BEFORE_HASH: beforeHash ?? "",
       },
-      extendEnv: false,
-      reject: false,
-      forceKillAfterDelay: false,
       timeout: 15_000,
     },
   );

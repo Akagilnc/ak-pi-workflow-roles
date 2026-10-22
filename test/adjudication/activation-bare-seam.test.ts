@@ -12,9 +12,8 @@ import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   activationBookKeyFor,
   activationExtensionContext,
-  machineLedgerHome,
 } from "../helpers/pi-test-harness.ts";
-import { seedGitRepository, withActivationHome, withHermeticHome, outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { machineLedgerHome, seedGitRepository, withActivationHome, withHermeticHome, outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });

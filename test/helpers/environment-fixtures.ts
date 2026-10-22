@@ -1,17 +1,27 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFile, cp, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { execa } from "execa";
 import { withPrimaryAwareCleanup } from "./primary-aware-cleanup.ts";
 export { withPrimaryAwareCleanup } from "./primary-aware-cleanup.ts";
 
-export const worktreePackageRoot = dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
+export const packageRoot = dirname(fileURLToPath(new URL("../../package.json", import.meta.url)));
+
+// Native bound method, not a subprocess wrapper. Callers supply their complete
+// environment so deleted parent variables cannot be inherited again.
+export const testExeca = execa({
+  reject: false,
+  forceKillAfterDelay: false,
+  extendEnv: false,
+});
 
 export function worktreeTempPrefix(label: string): string {
-  return join(worktreePackageRoot, label.startsWith(".test-tmp-") ? label : `.test-tmp-${label}`);
+  return join(packageRoot, label.startsWith(".test-tmp-") ? label : `.test-tmp-${label}`);
 }
 
 function hasNodeModulesInAncestry(start: string): boolean {
@@ -30,7 +40,7 @@ export function outsideWorktreeTempPrefix(
 ): string {
   const bases = [...new Set([tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp", "/var/tmp"])])];
   for (const base of bases) {
-    if (base === worktreePackageRoot || base.startsWith(`${worktreePackageRoot}/`) || base.startsWith(`${worktreePackageRoot}\\`)) continue;
+    if (base === packageRoot || base.startsWith(`${packageRoot}/`) || base.startsWith(`${packageRoot}\\`)) continue;
     if (options.isolateNodeAncestors && hasNodeModulesInAncestry(base)) continue;
     return join(base, label);
   }
@@ -137,8 +147,7 @@ export async function withHermeticHome<T>(
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
 ): Promise<T> {
   return withProcessGlobalLock(() => withTempRoot(options.prefix ?? "ak-pi-test-", async (home) => {
-    const agentDir = resolve(home, ".pi-agent");
-    await mkdir(agentDir, { recursive: true });
+    const agentDir = await createAgentDir(home);
     const previous = { ...process.env };
     applyIsolatedTestProcessEnv({ home, agentDir });
     process.env.PI_OFFLINE = "1";
@@ -153,6 +162,122 @@ export async function withHermeticHome<T>(
 
 export function seedGitRepository(cwd: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+}
+
+/** Sole machine ledger home under a hermetic process home (ADR 0048). */
+export function machineLedgerHome(home: string): string {
+  return join(home, ".ak-roles");
+}
+
+/** Package-home ledger topology for callers that need synchronous disposal. */
+export function createTempPackageHomeLedger(input: {
+  prefix: string;
+  runName?: string;
+}): {
+  home: string;
+  bookKey: string;
+  ledgerHome: string;
+  runDirectory: string;
+  sessionDirectory: string;
+  sessionFile: string;
+  dispose(): void;
+} {
+  const home = mkdtempSync(worktreeTempPrefix(input.prefix));
+  try {
+    const bookKey = basename(home);
+    const ledgerHome = machineLedgerHome(home);
+    const runDirectory = join(ledgerHome, "books", bookKey, "runs", input.runName ?? "test-run");
+    const sessionDirectory = join(runDirectory, "session");
+    mkdirSync(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    return {
+      home, bookKey, ledgerHome, runDirectory, sessionDirectory, sessionFile,
+      dispose() {
+        rmSync(home, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    // Preserve the setup primary if cleanup also fails.
+    try {
+      rmSync(home, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Test failed and cleanup failed", { cause: error });
+    }
+    throw error;
+  }
+}
+
+/** Git-visible package inputs eligible for private materialization. */
+export function trackedPackageInputPaths(): string[] {
+  return execFileSync(
+    "git", ["-C", packageRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { encoding: "utf8" },
+  ).split("\0").filter(Boolean);
+}
+
+export interface MaterializePackageOptions {
+  /** Default symlink; copy preserves the historical full tree copy. */
+  nodeModules?: boolean | "symlink" | "copy";
+  /** Initialize a git repo and commit the seeded tree. Default false. */
+  gitSeed?: boolean;
+}
+
+/** Private checkout: lifecycle scripts must not rewrite the shared worktree. */
+export async function materializePackageTree(
+  dest: string,
+  options: MaterializePackageOptions = {},
+): Promise<void> {
+  await mkdir(dest, { recursive: true });
+  for (const rel of trackedPackageInputPaths()) {
+    const src = resolve(packageRoot, rel);
+    if (!existsSync(src)) continue;
+    const dst = resolve(dest, rel);
+    await mkdir(dirname(dst), { recursive: true });
+    await copyFile(src, dst);
+  }
+  const nodeModulesMode = options.nodeModules === undefined || options.nodeModules === true
+    ? "symlink" : options.nodeModules;
+  if (nodeModulesMode === "copy") {
+    await cp(resolve(packageRoot, "node_modules"), resolve(dest, "node_modules"), { recursive: true, force: true });
+  } else if (nodeModulesMode === "symlink") {
+    const target = resolve(dest, "node_modules");
+    if (!existsSync(target)) await symlink(resolve(packageRoot, "node_modules"), target, "dir");
+  }
+  if (options.gitSeed) {
+    seedGitRepository(dest);
+    execFileSync("git", ["config", "user.email", "lifecycle@test.local"], { cwd: dest });
+    execFileSync("git", ["config", "user.name", "Lifecycle Test"], { cwd: dest });
+    execFileSync("git", ["add", "-A"], { cwd: dest });
+    execFileSync("git", ["commit", "-m", "seed clean package checkout"], { cwd: dest });
+  }
+}
+
+export interface IsolatedPackResult {
+  /** Private materialization root, removed before return. */
+  root: string;
+  /** Absolute path to the packed tarball under the caller-owned destination. */
+  tarball: string;
+  filename: string;
+  files: Array<{ path: string }>;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Real prepack/build in a private checkout, never the shared dist/. */
+export async function packIsolatedPackage(
+  packDestination: string,
+  options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
+): Promise<IsolatedPackResult> {
+  await mkdir(packDestination, { recursive: true });
+  return withTempRoot("ak-pack-mat-", async (root) => {
+    await materializePackageTree(root, { nodeModules: options.nodeModules ?? "symlink" });
+    const { stdout } = await execFileAsync(
+      "npm", ["pack", "--json", "--pack-destination", packDestination],
+      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const [entry] = JSON.parse(stdout) as Array<{ filename: string; files: Array<{ path: string }> }>;
+    return { root, tarball: resolve(packDestination, entry!.filename), filename: entry!.filename, files: entry!.files };
+  });
 }
 
 export async function withActivationHome<T>(
@@ -173,18 +298,22 @@ export async function withProcessCwd<T>(cwd: string, scenario: () => Promise<T>)
   });
 }
 
+async function createAgentDir(home: string): Promise<string> {
+  const path = resolve(home, ".pi-agent");
+  await mkdir(path, { recursive: true });
+  return path;
+}
+
 /** Native test.extend definitions, lazy and test-scoped; no template/copy layer. */
 export const environmentFixtures = {
   home: async ({}, use: (home: string) => Promise<void>) => {
     await withTempHome(use);
   },
   agentDir: async ({ home }: { home: string }, use: (path: string) => Promise<void>) => {
-    const path = join(home, ".pi-agent");
-    await mkdir(path, { recursive: true });
-    await use(path);
+    await use(await createAgentDir(home));
   },
   ledgerHome: async ({ home }: { home: string }, use: (path: string) => Promise<void>) => {
-    const path = join(home, ".ak-roles");
+    const path = machineLedgerHome(home);
     await mkdir(path, { recursive: true });
     await use(path);
   },

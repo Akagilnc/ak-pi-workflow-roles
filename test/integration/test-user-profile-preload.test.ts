@@ -5,8 +5,8 @@ import { mkdir } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execa } from "execa";
 import {
+  testExeca as execa,
   environmentFixtures,
   isolatedTestProcessEnv,
   withTempHome,
@@ -70,7 +70,7 @@ const scenarios = [
           }));`,
         ].join("\n"),
       ], {
-        cwd: process.cwd(), env, extendEnv: false, timeout: 15_000, forceKillAfterDelay: false, reject: false,
+        cwd: process.cwd(), env, timeout: 15_000,
       });
       assert.equal(result.exitCode, 0, result.stderr);
       assert.equal(result.signal, undefined);
@@ -103,7 +103,7 @@ const scenarios = [
           "}));",
         ].join("\n"),
       ], {
-        cwd: process.cwd(), env, extendEnv: false, timeout: 15_000, forceKillAfterDelay: false, reject: false,
+        cwd: process.cwd(), env, timeout: 15_000,
       });
       assert.equal(result.exitCode, 0, result.stderr);
       const body = JSON.parse(result.stdout);

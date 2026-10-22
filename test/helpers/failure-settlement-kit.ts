@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { terminalBodyAt } from "./run-dossier-fixture.ts";
+import { seedGitRepository } from "./environment-fixtures.ts";
 
 import {
   exitCodeForTerminalOutcome,
@@ -34,7 +35,7 @@ export function captureIo() {
 }
 
 export function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  seedGitRepository(root);
   execFileSync("git", ["config", "user.email", "fail@test.local"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Fail Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });

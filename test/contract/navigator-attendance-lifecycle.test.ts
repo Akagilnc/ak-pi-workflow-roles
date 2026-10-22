@@ -20,8 +20,7 @@ import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { flushEventLoopTurns, packageRoot, seedRoleRepo, waitForEventLoopCondition } from "../helpers/pi-test-harness.ts";
-import { seedGitRepository, withActivationHome } from "../helpers/environment-fixtures.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { seedGitRepository, withActivationHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import {
   roleTurnHostFromLegacyPiRunner,

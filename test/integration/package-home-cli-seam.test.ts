@@ -1,4 +1,4 @@
-import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
+import { withTempRoot, withPrimaryAwareCleanup, withTestUserProfileEnv, testExeca as execa } from "../helpers/environment-fixtures.ts";
 /**
  * #604 acceptance: production CLI home does not follow process.env.HOME.
  * Real entry (runAkRole) + disk observation — mid-size integration seam.
@@ -10,8 +10,6 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { withTestUserProfileEnv } from "../helpers/environment-fixtures.ts";
-import { execa } from "execa";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI_MODULE = new URL("../../src/public-cli/cli.ts", import.meta.url).href;
@@ -74,10 +72,7 @@ test("unavailable user profile: help succeeds; home-needing command settles non-
     {
       cwd: process.cwd(),
       env,
-      extendEnv: false,
       timeout: 15_000,
-      forceKillAfterDelay: false,
-      reject: false,
     },
   );
   assert.equal(result.exitCode, 0, result.stderr);

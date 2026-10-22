@@ -11,7 +11,7 @@ import test from "node:test";
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 function request(runDirectory: string, home: string): RoleTurnRequest {

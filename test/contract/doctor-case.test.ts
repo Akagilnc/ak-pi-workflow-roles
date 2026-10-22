@@ -5,8 +5,7 @@ import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DoctorEvidenceStore } from "../../src/doctor-contracts.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { withTempRoot, outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },

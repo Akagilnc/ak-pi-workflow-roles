@@ -12,10 +12,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withTempRoot, testExeca as execa } from "../helpers/environment-fixtures.ts";
 import { manualScheduler } from "../helpers/manual-scheduler.ts";
-
-import { execa } from "execa";
 
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
@@ -560,7 +558,7 @@ async function runFactoryBoardCli(args: string[]) {
   return execa(
     process.execPath,
     ["--import", "tsx", join(packageRoot, "scripts/render-factory-board.ts"), ...args],
-    { cwd: packageRoot, reject: false, forceKillAfterDelay: false },
+    { cwd: packageRoot, env: process.env },
   );
 }
 

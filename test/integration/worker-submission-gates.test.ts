@@ -15,8 +15,7 @@ import {
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { withPrimaryAwareCleanup, withTempRoot, outsideWorktreeTempPrefix, machineLedgerHome } from "../helpers/environment-fixtures.ts";
 
 import {
   createWorkerSubmissionGate,
@@ -27,9 +26,6 @@ import {
 import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { parseSitianRecordText } from "../../src/sitian-reader.ts";
 import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
-import {
-  machineLedgerHome,
-} from "../helpers/pi-test-harness.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 

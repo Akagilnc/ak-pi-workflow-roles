@@ -12,9 +12,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-
-import { materializePackageTree } from "../helpers/pi-test-harness.ts";
+import { withTempRoot, materializePackageTree } from "../helpers/environment-fixtures.ts";
 
 // Expand phase: retain the same case under both native runners (#1245).
 const test: (name: string, fn: () => void | Promise<void>) => void = process.env.VITEST

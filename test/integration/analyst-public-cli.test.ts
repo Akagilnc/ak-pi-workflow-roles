@@ -1,4 +1,4 @@
-import { outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { outsideWorktreeTempPrefix, withTempRoot, withProcessCwd } from "../helpers/environment-fixtures.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
@@ -26,8 +26,6 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { withProcessCwd } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { snapshotAnalystDir, withBusinessRepo, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { seedCurrentSection, seedTerminal, readCurrentSection } from "../helpers/run-dossier-fixture.ts";

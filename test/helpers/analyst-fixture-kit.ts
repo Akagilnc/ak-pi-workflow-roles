@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { withTempRoot } from "./environment-fixtures.ts";
+import { machineLedgerHome, seedGitRepository, withTempRoot } from "./environment-fixtures.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,7 +33,7 @@ export function gitPorcelain(cwd: string): string {
 
 export async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
   return withTempRoot("analyst-business-", async (businessRepo) => {
-    execFileSync("git", ["init"], { cwd: businessRepo });
+    seedGitRepository(businessRepo);
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
     execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
     execFileSync(
@@ -55,7 +55,7 @@ export async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Pro
  */
 export async function withAnalystHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("analyst-home-", async (home) => {
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+    await cp(fixtureHome, machineLedgerHome(home), { recursive: true });
     return await fn(home);
   });
 }

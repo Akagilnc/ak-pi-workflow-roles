@@ -1,14 +1,7 @@
-import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import {
-  copyFile,
-  cp,
-  mkdir,
-  readFile,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   assertWritableTestAgentDir,
@@ -17,9 +10,8 @@ import {
 } from "./test-agent-dir-guard.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
-import { fileURLToPath } from "node:url";
-import { withTempRoot, worktreeTempPrefix, seedGitRepository } from "./environment-fixtures.ts";
-import { promisify } from "node:util";
+import { machineLedgerHome, packageRoot, seedGitRepository } from "./environment-fixtures.ts";
+export { packageRoot } from "./environment-fixtures.ts";
 
 import {
   fauxProvider,
@@ -29,8 +21,6 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
-
-const execFileAsync = promisify(execFile);
 
 export async function flushEventLoopTurns(times = 20): Promise<void> {
   for (let i = 0; i < times; i += 1) {
@@ -59,134 +49,6 @@ export async function waitForEventLoopCondition(
   }
 }
 
-export const packageRoot = dirname(
-  fileURLToPath(new URL("../../package.json", import.meta.url)),
-);
-
-/**
- * Git-visible package inputs eligible for private materialization.
- */
-export function trackedPackageInputPaths(): string[] {
-  const raw = execFileSync(
-    "git",
-    ["-C", packageRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-    { encoding: "buffer" },
-  ).toString("utf8");
-  return raw
-    .split("\0")
-    .filter(Boolean);
-}
-
-export interface MaterializePackageOptions {
-  /**
-   * Provide package node_modules for offline prepack/install.
-   * Default "symlink" (cheap). "copy" keeps the historical full tree copy.
-   * false skips node_modules entirely.
-   */
-  nodeModules?: boolean | "symlink" | "copy";
-  /** Initialize a git repo and commit the seeded tree. Default false. */
-  gitSeed?: boolean;
-}
-
-/**
- * Copy tracked package inputs into an isolated directory so lifecycle scripts
- * (prepack/build) cannot rewrite the shared repository tree.
- */
-export async function materializePackageTree(
-  dest: string,
-  options: MaterializePackageOptions = {},
-): Promise<void> {
-  const paths = trackedPackageInputPaths();
-  await mkdir(dest, { recursive: true });
-
-  for (const rel of paths) {
-    const src = resolve(packageRoot, rel);
-    if (!existsSync(src)) continue;
-    const dst = resolve(dest, rel);
-    await mkdir(dirname(dst), { recursive: true });
-    await copyFile(src, dst);
-  }
-
-  const nodeModulesMode = options.nodeModules === undefined
-    ? "symlink"
-    : options.nodeModules === true
-    ? "symlink"
-    : options.nodeModules === false
-    ? false
-    : options.nodeModules;
-
-  if (nodeModulesMode === "copy") {
-    await cp(
-      resolve(packageRoot, "node_modules"),
-      resolve(dest, "node_modules"),
-      { recursive: true, force: true },
-    );
-  } else if (nodeModulesMode === "symlink") {
-    const target = resolve(dest, "node_modules");
-    if (!existsSync(target)) {
-      await symlink(resolve(packageRoot, "node_modules"), target, "dir");
-    }
-  }
-
-  if (options.gitSeed) {
-    execFileSync("git", ["init", "-b", "main"], { cwd: dest });
-    execFileSync("git", ["config", "user.email", "lifecycle@test.local"], {
-      cwd: dest,
-    });
-    execFileSync("git", ["config", "user.name", "Lifecycle Test"], {
-      cwd: dest,
-    });
-    execFileSync("git", ["add", "-A"], { cwd: dest });
-    execFileSync("git", ["commit", "-m", "seed clean package checkout"], {
-      cwd: dest,
-    });
-  }
-}
-
-export interface IsolatedPackResult {
-  /**
-   * Private materialization root used for pack.
-   * Ephemeral packs remove this before return; shared packs keep a durable cache root.
-   */
-  root: string;
-  /** Absolute path to the packed tarball under packDestination. */
-  tarball: string;
-  filename: string;
-  files: Array<{ path: string }>;
-}
-
-/**
- * Materialize a private package tree and run real `npm pack` there so the
- * prepack → retained package build cannot rewrite shared dist/.
- */
-export async function packIsolatedPackage(
-  packDestination: string,
-  options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
-): Promise<IsolatedPackResult> {
-  await mkdir(packDestination, { recursive: true });
-  return withTempRoot("ak-pack-mat-", async (root) => {
-    await materializePackageTree(root, {
-      nodeModules: options.nodeModules ?? "symlink",
-    });
-    const { stdout } = await execFileAsync(
-      "npm",
-      ["pack", "--json", "--pack-destination", packDestination],
-      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
-    );
-    const pack = JSON.parse(stdout) as Array<{
-      filename: string;
-      files: Array<{ path: string }>;
-    }>;
-    const entry = pack[0]!;
-    return {
-      root,
-      tarball: resolve(packDestination, entry.filename),
-      filename: entry.filename,
-      files: entry.files,
-    };
-  });
-}
-
 export interface RawPackageManifest {
   files?: string[];
   bin?: Record<string, string>;
@@ -213,68 +75,6 @@ export function addRoleRepoOrigin(cwd: string): void {
 export function seedRoleRepo(cwd: string): void {
   seedGitRepository(cwd);
   addRoleRepoOrigin(cwd);
-}
-
-/** Sole machine ledger home under a hermetic process home (ADR 0048). */
-export function machineLedgerHome(home: string): string {
-  return join(home, ".ak-roles");
-}
-
-/**
- * #604: temporary package home whose run/session paths sit under `.ak-roles/`
- * so path-derive never falls through to the real machine home. Prefer this over
- * bare mkdtemp run dirs whenever archivist/sitian/ledger may resolve from session.
- */
-export function createTempPackageHomeLedger(input: {
-  prefix: string;
-  runName?: string;
-}): {
-  home: string;
-  bookKey: string;
-  ledgerHome: string;
-  runDirectory: string;
-  sessionDirectory: string;
-  sessionFile: string;
-  dispose(): void;
-} {
-  const home = mkdtempSync(worktreeTempPrefix(input.prefix));
-  try {
-    const bookKey = basename(home);
-    const ledgerHome = machineLedgerHome(home);
-    const runDirectory = join(
-      ledgerHome,
-      "books",
-      bookKey,
-      "runs",
-      input.runName ?? "test-run",
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    mkdirSync(sessionDirectory, { recursive: true });
-    const sessionFile = join(sessionDirectory, "session.jsonl");
-    return {
-      home,
-      bookKey,
-      ledgerHome,
-      runDirectory,
-      sessionDirectory,
-      sessionFile,
-      dispose() {
-        rmSync(home, { recursive: true, force: true });
-      },
-    };
-  } catch (error) {
-    // Setup primary must survive dispose failure (same rule as withPrimaryAwareCleanup).
-    try {
-      rmSync(home, { recursive: true, force: true });
-    } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        "Test failed and cleanup failed",
-        { cause: error },
-      );
-    }
-    throw error;
-  }
 }
 
 /** Book key for a git cwd whose common-dir host basename is the directory name. */

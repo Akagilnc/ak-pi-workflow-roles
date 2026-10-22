@@ -44,8 +44,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { seedGitRepository } from "../helpers/environment-fixtures.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { seedGitRepository, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,

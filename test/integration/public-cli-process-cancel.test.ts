@@ -11,9 +11,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { seedGitRepository } from "../helpers/environment-fixtures.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
+import { seedGitRepository, withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 const CATCHABLE = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const driverPath = fileURLToPath(

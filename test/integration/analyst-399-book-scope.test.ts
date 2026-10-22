@@ -1,4 +1,4 @@
-import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix, withPrimaryAwareCleanup, withProcessCwd } from "../helpers/environment-fixtures.ts";
 /**
  * #399 analyst book-scope — three defects on the analysis seat (owner-ratified).
  *
@@ -26,9 +26,7 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { withProcessCwd } from "../helpers/environment-fixtures.ts";
 import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));

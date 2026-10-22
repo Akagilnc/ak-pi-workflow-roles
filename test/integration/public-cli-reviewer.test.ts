@@ -39,8 +39,7 @@ import {
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withProcessCwd } from "../helpers/environment-fixtures.ts";
-import { withTempHome } from "../helpers/environment-fixtures.ts";
+import { withProcessCwd, withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 

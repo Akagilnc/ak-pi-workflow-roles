@@ -18,11 +18,9 @@ import {
 } from "../../src/role-runtime.ts";
 import {
   activationBookKeyFor,
-  machineLedgerHome,
   persistActivationSessionFile,
 } from "../helpers/pi-test-harness.ts";
-import { withActivationHome, outsideWorktreeTempPrefix } from "../helpers/environment-fixtures.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
+import { machineLedgerHome, withActivationHome, outsideWorktreeTempPrefix, withTempRoot } from "../helpers/environment-fixtures.ts";
 
 
 const originalExitCode = process.exitCode;

@@ -17,7 +17,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 const description: HeadlessHostDescription = Object.freeze({
