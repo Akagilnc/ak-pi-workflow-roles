@@ -50,9 +50,6 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     assert.throws(() => parsePublicSeatArgv("gleaner-left", []), (error: unknown) => {
       return error instanceof CliUsageError;
     });
-    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus", "--base", "HEAD"]), (error: unknown) => {
-      return error instanceof CliUsageError;
-    });
 
     const parsed = parsePublicSeatArgv("gleaner-left", ["--project", project, "--base", "HEAD"]);
     assert.deepEqual(

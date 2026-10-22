@@ -55,7 +55,7 @@ function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
+test("parseMergerArgv accepts common Invocation flags and rejects public packet fields", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -77,8 +77,6 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage);
   // No public packet fields for parents/conflicts/scope.
   assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isUsage);

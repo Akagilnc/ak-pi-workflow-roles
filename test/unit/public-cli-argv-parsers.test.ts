@@ -3,20 +3,12 @@ import test from "node:test";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 
-test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () => {
+// Phase default/plan, unknown flags, empty --project and --project= are carried by
+// public runAkRole cases (public-cli-coder, public-cli-fixer, public-cli-failure-settlement).
+test("public seat argv keeps explicit phase, file flags and joined instruction; rejects blank project and missing file-flag value", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parsePublicSeatArgv("coder", ["Implement the slice."]), {
-    phase: "apply",
-    instruction: "Implement the slice.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(parsePublicSeatArgv("coder", ["plan", "Propose first cut."]), {
-    phase: "plan",
-    instruction: "Propose first cut.",
-    attachmentPaths: [],
-  });
   assert.deepEqual(
     parsePublicSeatArgv("coder", [
       "apply",
@@ -33,17 +25,14 @@ test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () =>
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parsePublicSeatArgv("coder", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("coder", ["--project", "", "task"]), isUsage);
+  assert.equal(parsePublicSeatArgv("coder", ["opaque", "instruction"]).instruction, "opaque instruction");
+  assert.throws(() => parsePublicSeatArgv("coder", ["--project", "   ", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("coder", ["--attach"]), isUsage);
 });
 
-test("public Collector accepts PR/repository without an observer declaration", () => {
-  assert.deepEqual(parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets"]), {
-    prNumber: 1168,
-    repo: "acme/widgets",
-    instruction: "",
-    attachmentPaths: [],
-  });
+// --pr binding is carried by public-cli-collector "#676 J2 explicit --pr is unique bound at admission".
+test("public Collector keeps --repo without an observer declaration", () => {
+  assert.equal(parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets"]).repo, "acme/widgets");
 });
 
 test("parseDoctorArgv requires positive issue; accepts optional runs and rejects malformed grammar", () => {
@@ -82,7 +71,6 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
     ["--issue", "1.5"],
     ["--issue", "1", "--runs"],
     ["--issue", "1", "--runs", ""],
-    ["--issue", "1", "--unknown"],
     ["40"], // bare number is not a typed issue selector
   ] as const;
   for (const raw of rejected) {
@@ -90,39 +78,11 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
   }
 });
 
-test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
+// Fixer phase and a provided --prerequisites path are carried by public-cli-fixer runAkRole cases.
+test("parseFixerArgv keeps an empty --prerequisites path opaque and rejects a missing one", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parsePublicSeatArgv("fixer", ["Repair the class."]), {
-    phase: "apply",
-    instruction: "Repair the class.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(parsePublicSeatArgv("fixer", ["plan", "Propose the repair."]), {
-    phase: "plan",
-    instruction: "Propose the repair.",
-    attachmentPaths: [],
-  });
-  assert.deepEqual(
-    parsePublicSeatArgv("fixer", [
-      "apply",
-      "--prerequisites",
-      "prereq.json",
-      "--attach",
-      "a.md",
-      "--project",
-      "/tmp/p",
-      "Settle findings.",
-    ]),
-    {
-      phase: "apply",
-      instruction: "Settle findings.",
-      attachmentPaths: ["a.md"],
-      prerequisitesPath: "prereq.json",
-      project: "/tmp/p",
-    },
-  );
   // #1168: empty prerequisites path is opaque (same as --attach), only missing arg is usage.
   assert.deepEqual(
     parsePublicSeatArgv("fixer", ["--prerequisites", "", "Repair."]),
@@ -133,7 +93,5 @@ test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus pr
       prerequisitesPath: "",
     },
   );
-  assert.throws(() => parsePublicSeatArgv("fixer", ["--unknown-flag"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("fixer", ["--project", "", "task"]), isUsage);
 });

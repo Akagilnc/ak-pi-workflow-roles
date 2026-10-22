@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -110,6 +110,7 @@ async function inspectLiveRequest(
   // (cleanup failure alone fails; primary failure is not erased).
   return withPrimaryAwareCleanup(
     async () => {
+      let auditorSubject: string | undefined;
       if (request.activation.role === "auditor") {
         priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
         priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
@@ -119,6 +120,7 @@ async function inspectLiveRequest(
             ? admitted.auditorSubject
             : "judge";
         process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
+        auditorSubject = subject;
         envMutated = true;
         if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
           process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
@@ -126,21 +128,39 @@ async function inspectLiveRequest(
       }
       const soul = randomUUID();
       const auditedSoul = randomUUID();
+      const production = createRoleRuntimeDependencies(packageRootPath);
+      const loadedReferences: string[] = [];
       const prepared = await prepareRoleEnvelope({
         request,
         dependencies: {
-          ...createRoleRuntimeDependencies(packageRootPath),
-          loadRoleSoul: async (role) => role === request.activation.role ? soul : auditedSoul,
+          ...production,
+          // Auditor keeps the production subject Soul loader; other seats get distinct probes.
+          loadRoleSoul: auditorSubject === undefined
+            ? async (role) => role === request.activation.role ? soul : auditedSoul
+            : production.loadRoleSoul,
+          loadRoleReferenceMaterials: async (role) => {
+            const loaded = await production.loadRoleReferenceMaterials!(role);
+            loadedReferences.push(loaded);
+            return loaded;
+          },
         },
         socketPath,
         sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
         principalAuthority: piDurablePrincipalAuthority,
       });
       try {
-        assert.ok(prepared.systemPrompt.body.includes(soul));
+        assert.ok(prepared.systemPrompt.body.includes(auditorSubject === undefined
+          ? soul
+          : (await readFile(join(packageRootPath, "souls", `${auditorSubject}-auditor.md`), "utf8")).trim()));
         if (request.activation.role === "notary") {
           assert.ok(prepared.systemPrompt.body.includes(auditedSoul));
         }
+        // The packaged reference materials loaded for the seat reach startup materials unchanged.
+        assert.equal(loadedReferences.length, 1);
+        assert.notEqual(loadedReferences[0], "");
+        assert.ok(prepared.systemPrompt.materials.some(
+          (material) => (material as { content?: unknown }).content === loadedReferences[0],
+        ));
         const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
         const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
         let toolNames: string[] | undefined;

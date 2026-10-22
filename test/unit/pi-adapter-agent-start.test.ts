@@ -67,7 +67,7 @@ function piCapture() {
   };
 }
 
-test("Pi adapter strips typed readingMaterial before provider delivery", async () => {
+test("Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial", async () => {
   const bound = projectNotaryAuditedRunIdentity({
     sourceRun: {
       runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -82,39 +82,24 @@ test("Pi adapter strips typed readingMaterial before provider delivery", async (
       role: "coder",
     },
   });
-
-  async function providerVisible(returnValue: {
-    systemPrompt?: string;
-    readingMaterial?: unknown;
-  }): Promise<{ systemPrompt?: string } & Record<string, unknown>> {
-    const { pi, handlers, ctx } = piCapture();
-    const adapter = createPiRoleHostAdapter(pi);
-    adapter.host.on("before_agent_start", () => returnValue);
-    const handler = handlers.get("before_agent_start")?.[0];
-    assert.ok(handler);
-    const result = await handler(
-      { prompt: "", systemPrompt: "BASE", systemPromptOptions: {} },
-      ctx,
-    );
+  const { pi, handlers, ctx } = piCapture();
+  const adapter = createPiRoleHostAdapter(pi);
+  // Production shapes: a Soul handler returns systemPrompt; envelope handlers
+  // return readingMaterial only and must keep everything delivered before them.
+  adapter.host.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\nSOUL` }));
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: bound }));
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: otherBound }));
+  // Pi runner chain: each handler sees the previous handler's systemPrompt.
+  let systemPrompt = "BASE";
+  for (const handler of handlers.get("before_agent_start") ?? []) {
+    const result = await handler({ prompt: "", systemPrompt, systemPromptOptions: {} }, ctx);
     assert.ok(result && typeof result === "object");
-    return result as { systemPrompt?: string } & Record<string, unknown>;
+    assert.equal("readingMaterial" in result, false);
+    systemPrompt = result.systemPrompt;
   }
-
-  const bodyOnly = await providerVisible({ systemPrompt: "BASE" });
-  const withBound = await providerVisible({
-    systemPrompt: "BASE",
-    readingMaterial: bound,
-  });
-  const withOther = await providerVisible({
-    systemPrompt: "BASE",
-    readingMaterial: otherBound,
-  });
-  for (const delivered of [bodyOnly, withBound, withOther]) {
-    assert.equal("readingMaterial" in delivered, false);
-    assert.equal(typeof delivered.systemPrompt, "string");
+  for (const delivered of ["BASE", "SOUL", bound.auditedRun, otherBound.auditedRun]) {
+    assert.ok(systemPrompt.includes(delivered), delivered);
   }
-  assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
-  assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {

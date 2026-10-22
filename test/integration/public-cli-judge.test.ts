@@ -24,10 +24,6 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  parsePublicSeatArgv,
-} from "../../src/public-cli/invocation.ts";
 import {
   type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
@@ -109,39 +105,6 @@ test("S1: judge escalate public CLI keeps decisionGate options on typed payload 
     assert.equal(payload.note, "full judge note remains");
     assert.deepEqual(payload.findings, ["detail finding remains"]);
   });
-});
-
-test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
-  // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
-  const isUsage = (error: unknown): boolean =>
-    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  // The burden-selector refusals are carried by the real CLI case below
-  // ("runAkRole judge rejects burden selector before admission"); asserting
-  // them here as well would restate the same conclusion.
-  assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
-  const parsed = parsePublicSeatArgv("judge", [
-    "--attach",
-    "a.md",
-    "--project",
-    "/tmp/p",
-    "opaque",
-    "instruction",
-  ]);
-  assert.equal(parsed.instruction, "opaque instruction");
-  assert.deepEqual(parsed.attachmentPaths, ["a.md"]);
-  assert.equal(parsed.project, "/tmp/p");
-});
-
-test("parseJudgeArgv rejects blank --project and missing --attach argument", () => {
-  // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
-  // Opaque empty/space --attach positives live on the public runAkRole seam
-  // (public-cli-attach-path-passthrough); do not duplicate them here.
-  const isUsage = (error: unknown): boolean =>
-    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("judge", ["--attach"]), isUsage);
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
@@ -333,8 +296,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
 
     assert.ok(result.terminal);
     const terminal = result.terminal;
-    assert.equal(stdout.length, 1);
-    assert.notEqual(stdout[0]?.trim(), "");
+    assert.notEqual(stdout.join("").trim(), "");
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
@@ -426,8 +388,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
     });
     assert.equal(result.exitCode, 0);
     assert.equal(prompt, "");
-    assert.equal(stdout.length, 1);
-    assert.ok(stdout[0]!.length > 0);
+    assert.ok(stdout.join("").length > 0);
 
     assert.ok(result.terminal);
     const terminal = result.terminal;

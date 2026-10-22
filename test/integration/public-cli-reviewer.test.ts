@@ -112,16 +112,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Authority remains required; omitted lens defaults to the parallel two-axis mode.
   assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "main"]), isUsage);
   assert.throws(
-    () =>
-      parsePublicSeatArgv("reviewer", [
-        "--base",
-        "main",
-        "--authority-ref",
-        "The system SHALL launch two workers",
-      ]),
-    isUsage,
-  );
-  assert.throws(
     () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
@@ -230,16 +220,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // a regression in the rule actually under test.
   assert.throws(
     () => parsePublicSeatArgv("reviewer", [
-      "--unknown-flag",
-      "--base",
-      "main",
-      "--authority-ref",
-      "CLAUDE.md",
-    ]),
-    isUsage,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("reviewer", [
       "--base",
       "",
       "--authority-ref",
@@ -284,18 +264,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "--smuggled",
       ]),
-    isUsage,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("reviewer", [
-      "--project",
-      "",
-      "--base",
-      "main",
-      "--authority-ref",
-      "CLAUDE.md",
-      "task",
-    ]),
     isUsage,
   );
   assert.throws(

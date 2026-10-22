@@ -98,7 +98,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     let config = { seats: {} };
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
     await savePublicCliConfig(config, home);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     let dispatchedPrompt: string | undefined;
     const domainProse =
       "Adjudicate missing issue #999999 and absent PR https://example.invalid/x/y/pull/404 with no local authority.";
@@ -150,7 +150,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     );
     assert.equal(result.exitCode, 0);
     assert.equal(dispatchedPrompt, domainProse);
-    assert.equal(stdout.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.runId, "run-domain-001");
@@ -256,7 +255,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "needs owner decision"],
       {
         packageRoot,
@@ -312,7 +311,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");

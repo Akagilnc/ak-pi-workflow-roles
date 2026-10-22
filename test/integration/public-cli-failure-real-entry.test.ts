@@ -428,7 +428,7 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
     assert.equal(errorBody.cause, undefined);
     assert.equal(errorBody.diagnostic, hostStderr);
     assert.notEqual(errorBody.identity?.name, "MissingProviderCredential");
-    assert.ok(stderr[0]!.length > 0);
+    assert.ok(stderr.join("").length > 0);
   });
 });
 
@@ -619,7 +619,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
     assert.equal(errorBody.cause, "provider");
     assert.equal(errorBody.identity?.name, "MissingProviderCredential");
     assert.equal(errorBody.identity?.code, "xai");
-    assert.ok(stderr[0]!.length > 0);
+    assert.ok(stderr.join("").length > 0);
   });
 });
 test("a sealed receipt stays recorded when the host CLI reported a nonzero exit", async () => {

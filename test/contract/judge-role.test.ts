@@ -368,6 +368,14 @@ test("focused Judge controller registers output without narrowing host tools", a
   for (const name of ["read", "grep", "find", "ls", "bash", "write", "edit", "arbitrary_sibling"]) {
     assert.ok(active.includes(name), `host tool ${name} must remain active`);
   }
+  const startup = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  ) as { systemPrompt: string };
+  // Loaded Soul reaches the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "JUDGE LAW"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
 });
 
 test("named Judge and worker tools preserve opaque receipts", async () => {
@@ -553,10 +561,14 @@ test("coder plan activates without task copy and returns planned", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  await harness.handlers.get("before_agent_start")?.(
+  const startup = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},
-  );
+  ) as { systemPrompt: string };
+  // Loaded Soul and phase reach the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "CODER LAW", "plan"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
   assert.deepEqual(
     await harness.handlers.get("input")?.(
       { text: "Plan the approved seam.", source: "interactive" },
@@ -808,6 +820,14 @@ test("fixer apply returns a thin report envelope", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
+  const startup = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  ) as { systemPrompt: string };
+  // Loaded Soul and phase reach the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "FIXER LAW\nCreate one forward commit.", "apply"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);

@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -124,6 +124,10 @@ test("shared envelope ignores ambient AK_ROLE_ENGINE when request has no engine"
         principalAuthority: piDurablePrincipalAuthority,
     });
       try {
+        // Production loader: the packaged Judge Soul bytes reach the system prompt.
+        assert.ok(prepared.systemPrompt.body.includes(
+          (await readFile(join(packageRoot, "souls", "judge.md"), "utf8")).trim(),
+        ));
         assert.equal(process.env[AK_ROLE_ENGINE_ENV], "ambient-should-not-arm");
         const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
         assert.equal(
