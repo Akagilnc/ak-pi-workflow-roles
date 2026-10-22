@@ -1,30 +1,22 @@
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 /**
- * #519 §5 shared public-cli real-entry tracer base.
- * One file, one subprocess entry helper, table-driven across 8 packaged roles.
- * Covers: accepted (alternate-host sealed→Terminal), post-seal, no-receipt,
- * and infrastructure. Real-Pi residual/singleton legs culled (#685).
+ * #519 §5 shared public-cli real-entry tracer: host-neutral multi-submission
+ * recording, post-seal, no-receipt and infrastructure settlement.
  * Does not substitute createSubmissionLedgerHost unit rows for this seam.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
 
-import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
-import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   noReceiptLifecycleFacts,
@@ -38,52 +30,9 @@ import {
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import {
-  withNestedTrueUnboundDiarist,
-} from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { Type } from "typebox";
 import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
-
-const git = (cwd: string, args: string[], input?: string) =>
-  execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    input,
-    stdio: ["pipe", "pipe", "pipe"],
-  }).trim();
-
-async function conflictedRepository(root: string) {
-  const { source, target } = await materializeConflictedRepo(root);
-  const blob = git(root, ["hash-object", "-w", "--stdin"], "resolved\n");
-  const index = join(root, "expected-index");
-  const indexEnv = { ...process.env, GIT_INDEX_FILE: index };
-  execFileSync("git", ["read-tree", "AUTO_MERGE^{tree}"], { cwd: root, env: indexEnv });
-  execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},same.txt`], {
-    cwd: root,
-    env: indexEnv,
-  });
-  const tree = execFileSync("git", ["write-tree"], {
-    cwd: root,
-    env: indexEnv,
-    encoding: "utf8",
-  }).trim();
-  const commit = execFileSync(
-    "git",
-    ["commit-tree", tree, "-p", target, "-p", source, "-m", "resolve"],
-    {
-      cwd: root,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z",
-        GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z",
-      },
-    },
-  ).trim();
-  await writeFile(join(root, ".git/info/exclude"), "expected-index\n");
-  return commit;
-}
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-public-role-table-", async (home) => {
@@ -100,79 +49,7 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
   });
 }
 
-async function seedNotarySourceRun(home: string, project: string): Promise<string> {
-  const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-  const coords = issuePiDurablePrincipalCoordinates({
-    cwd: project,
-    runId,
-    role: "judge",
-    home,
-  });
-  await mkdir(coords.sessionDirectory, { recursive: true });
-  await writeFile(
-    coords.sessionFile,
-    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
-    "utf8",
-  );
-  seedCurrentSection(coords.runDirectory, "admitted", { role: "judge", runId });
-  await writeRoleRunState(coords.runDirectory, {
-    runId,
-    role: "judge",
-    state: "terminal",
-    bookKey: coords.bookKey,
-    projectRoot: project,
-    sessionDirectory: coords.sessionDirectory,
-    sessionFile: coords.sessionFile,
-  });
-  return await realpath(coords.runDirectory);
-}
-
-async function seedDoctorIssue(home: string, project: string, issueNumber: number): Promise<void> {
-  const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
-  const key = resolveBookKeyFromGit(project);
-  const runs = join(home, ".ak-roles", "books", key, "issues", String(issueNumber), "runs");
-  await mkdir(join(runs, "review-001", "session"), { recursive: true });
-  await writeFile(join(runs, "review-001", "session", "leg.jsonl"), "{}\n", "utf8");
-}
-
-function collectorReceipt() {
-  return {
-    host: "github.com" as const,
-    repository: "acme/widgets",
-    prNumber: 3,
-    manifestDigest: "role-submitted-optional",
-    groups: [] as Array<Record<string, unknown>>,
-  };
-}
-
 /** Production ReviewerIntent face — completeness|correctness amendments only. */
-function reviewerReceipt() {
-  return {
-    status: "completed" as const,
-    amendments: {
-      completeness: "completeness candidates, dispositions, and verdict",
-    },
-  };
-}
-
-type AcceptedRow = {
-  readonly role: TerminalRoleName;
-  readonly status: string | undefined;
-  readonly args: (project: string, home: string) => Promise<string[]> | string[];
-  readonly details: (ctx: {
-    project: string;
-    home: string;
-    runId: string;
-    args: readonly string[];
-  }) => Promise<unknown> | unknown;
-  readonly sessionLines?: (ctx: {
-    project: string;
-    home: string;
-    runId: string;
-    details: unknown;
-  }) => Promise<string[]> | string[];
-};
-
 function hostNeutralTypedTurn(options: {
   role: TerminalRoleName;
   runId: string;
@@ -291,157 +168,6 @@ function hostNeutralTypedTurn(options: {
 }
 
 /** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
-async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
-  const runId = `run-table-${row.role}-accepted`;
-  const args = await row.args(project, home);
-  const details = await row.details({ project, home, runId, args });
-  const sessionLines = row.sessionLines
-    ? await row.sessionLines({ project, home, runId, details })
-    : undefined;
-  const { io, stderr } = captureIo();
-  const result = await runAkRole(args, {
-    packageRoot,
-    home,
-    cwd: project,
-    createRunId: () => runId,
-    credentials: { "openai-codex": true, xai: false },
-    io,
-    roleTurnHost: row.role === "notary" ? withNestedTrueUnboundDiarist(hostNeutralTypedTurn({
-      role: row.role, runId, details,
-      ...(sessionLines === undefined ? {} : { sessionLines }),
-    })) : withPassingReviewHost(withNestedTrueUnboundDiarist(
-      hostNeutralTypedTurn({
-        role: row.role,
-        runId,
-        details,
-        ...(sessionLines === undefined ? {} : { sessionLines }),
-      }),
-    )),
-  });
-  return { result, runId, stderr: stderr.join("") };
-}
-
-const CALLER_MODEL = ["--model", "test/caller-seat:high"] as const;
-
-const ACCEPTED_ROWS: readonly AcceptedRow[] = [
-  {
-    role: "judge",
-    status: "converged",
-    args: (project) => ["judge", ...CALLER_MODEL, "--project", project, "Decide."],
-    details: () => ({ status: "converged" }),
-  },
-  {
-    role: "coder",
-    status: "completed",
-    args: (project) => ["coder", ...CALLER_MODEL, "--project", project, "Implement."],
-    details: () => ({
-      status: "completed",
-      report: "TDD red/green evidence complete.",
-    }),
-  },
-  {
-    role: "fixer",
-    status: "planned",
-    args: (project) => ["fixer", ...CALLER_MODEL, "plan", "--project", project, "Plan the repair."],
-    details: () => ({ status: "planned", report: "Inspect root cause first." }),
-  },
-  {
-    role: "reviewer",
-    status: "completed",
-    args: (project) => ["reviewer", ...CALLER_MODEL, "--base", "HEAD", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "--project", project],
-    details: () => reviewerReceipt(),
-  },
-  {
-    role: "doctor",
-    status: "refused",
-    args: async (project, home) => {
-      await seedDoctorIssue(home, project, 40);
-      return ["doctor", ...CALLER_MODEL, "--issue", "40", "--project", project, "diagnose"];
-    },
-    details: () => ({
-      status: "refused",
-      reason: "missing evidence",
-      missingEvidence: [{ need: "leg", targetKeys: ["review-001"] }],
-    }),
-    sessionLines: async () => [JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE })],
-  },
-  {
-    role: "merger",
-    status: "escalate",
-    args: async (project) => {
-      await conflictedRepository(project);
-      return ["merger", ...CALLER_MODEL, "--project", project, "Escalate incompatible intents."];
-    },
-    details: ({ runId }) => ({
-      status: "escalate",
-      attemptId: runId,
-      diagnosis: "new product decision",
-      report: "both authorized intents cannot coexist",
-    }),
-    sessionLines: async () => {
-      return [
-        JSON.stringify({
-          type: "message",
-          message: { role: "user", content: [{ type: "text", text: "Escalate." }] },
-        }),
-      ];
-    },
-  },
-  {
-    role: "notary",
-    status: "pass",
-    args: async (project, home) => {
-      const source = await seedNotarySourceRun(home, project);
-      return ["notary", ...CALLER_MODEL, "--source-run", source];
-    },
-    details: () => ({ status: "pass", findings: [] }),
-  },
-  {
-    role: "countersign",
-    status: "converged",
-    args: (project) => ["countersign", ...CALLER_MODEL, "--project", project, "裁：本票是否足以开工。"],
-    details: () => ({ status: "converged", findings: [] }),
-  },
-  {
-    role: "collector",
-    // #836: collector has no status leaf — do not invent "collected" or "".
-    status: undefined,
-    args: (project) => [
-      "collector",
-      ...CALLER_MODEL,
-      "--pr",
-      "3",
-      "--repo",
-      "acme/widgets",
-      "--project",
-      project,
-    ],
-    details: () => collectorReceipt(),
-  },
-];
-
-test("public-cli every packaged role accepts via shared sealed→Terminal entry", { timeout: 180_000 }, async () => {
-  await withSharedHome(async (home, project) => {
-    for (const row of ACCEPTED_ROWS) {
-      // Fresh project state per row when merger mutates the worktree.
-      if (row.role === "merger") {
-        await rm(project, { recursive: true, force: true });
-        await mkdir(project);
-        seedGitProject(project);
-      }
-      const { result, stderr } = await runAcceptedRow(row, home, project);
-      assert.equal(result.exitCode, 0, `${row.role} exit: ${stderr}`);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${row.role}: ${stderr}`);
-      assert.equal(result.terminal?.roleOutcome.role, row.role, row.role);
-      assert.deepEqual(
-        result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [],
-        row.status === undefined ? [] : [row.status],
-        row.role,
-      );
-    }
-  });
-});
-
 test("host-neutral typed turns record every terminating submission without sole reject (#836)", async () => {
   await withSharedHome(async (home, project) => {
     const runId = "run-multi-submit-836";

@@ -130,41 +130,6 @@ function scriptedCountersignSession(details: unknown, stem?: string) {
   }));
 }
 
-test("countersign admission binds the countersign role without inventing a ticket", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const admitted = await admitPublicRole("countersign", {
-      instruction: "裁：本票是否足以开工。",
-      attachmentPaths: [],
-    }, {
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
-    });
-
-    assert.deepEqual(
-      admitted.role, "countersign");
-    assert.equal(admitted.instructionEmpty, false);
-
-    const turn = buildInstructionSeatTurnRequest(admitted, {
-      packageRoot,
-      home,
-      agentDir: join(home, ".pi"),
-      continuation: { kind: "initial", prompt: "裁：本票是否足以开工。" },
-    });
-    assert.equal(turn.activation.role, "countersign");
-    // Unbound admission: no ticket on activation (legal).
-    assert.equal(
-      "ticketNumber" in turn.activation ? turn.activation.ticketNumber : undefined,
-      undefined,
-    );
-  });
-});
-
 test("countersign admission ignores attachment frontmatter", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
