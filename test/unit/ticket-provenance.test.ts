@@ -3,7 +3,7 @@
  * Medium reproject proofs live under test/integration/public-cli-diarist-run.test.ts.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   projectTicketProvenanceHeader,

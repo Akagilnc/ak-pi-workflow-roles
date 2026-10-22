@@ -3,7 +3,7 @@
  * Real material delivery is proven at the envelope entry (role-envelope-engine-axis).
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { joinPackageMaterials } from "../../src/session-opening-materials.ts";
 

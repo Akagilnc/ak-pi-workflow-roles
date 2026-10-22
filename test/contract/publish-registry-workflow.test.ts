@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
 
 const stampScriptPath = resolve(packageRoot, "scripts/publish-registry-stamp.sh");
 
@@ -107,9 +108,12 @@ function runStamp(
     execFileSync("bash", [stampScriptPath], {
       cwd: root,
       env: {
+        // Reuse the worker preload's isolated HOME/XDG so real npm writes under the test home.
+        ...isolatedTestProcessEnv({ home: process.env.HOME! }),
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         CHANNEL: options.channel,
         // Routing owns channel selection; stamp must not consult GITHUB_REF_NAME.
+        GITHUB_REF_NAME: undefined,
         GITHUB_STEP_SUMMARY: join(root, "summary.md"),
       },
       encoding: "utf8",

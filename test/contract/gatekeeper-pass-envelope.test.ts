@@ -4,7 +4,7 @@
  * Pure projection cases remain in test/unit/gate-officer-resume-accounting.test.ts.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";

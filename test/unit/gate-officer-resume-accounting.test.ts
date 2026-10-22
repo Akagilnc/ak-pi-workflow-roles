@@ -12,7 +12,7 @@
  * test/integration/gate-officer-resume-accounting.test.ts
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 

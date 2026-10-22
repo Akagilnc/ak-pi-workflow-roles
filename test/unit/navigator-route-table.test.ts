@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { NAVIGATOR_ADVICE_MAX_CHARS, NAVIGATOR_ROUTE_TABLE } from "../../src/navigator-route-table.ts";
 

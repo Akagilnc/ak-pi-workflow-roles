@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Sole scheduling owner for `npm run test:all` (Issue #160).
-// Discovers test/{unit,contract,integration,package}/**/*.test.ts and runs
-// them under default Node file parallelism.
+// Remaining node:test batches during the Vitest migration (#1247).
+// package.json runs migrated batches with Vitest first. Optional positional
+// tiers let test:integration reuse this discovery without the package tier.
 // #685: heavy manifest removed — real-host Pi/install/cold-session cases
 // culled per quality-law (真宿主以真跑为证) and imperial ≤1 real-pi order.
 import { spawn } from "node:child_process";
@@ -11,12 +11,9 @@ import { join, relative } from "node:path";
 
 import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 
-const TIERS = Object.freeze([
-  "unit",
-  "contract",
-  "integration",
-  "package",
-]);
+const TIERS = process.argv.length > 2
+  ? process.argv.slice(2)
+  : ["integration", "package"];
 
 const root = process.cwd();
 
@@ -42,9 +39,10 @@ function discoverTestFiles(repoRoot) {
     for (const name of dirs) walk(join(dir, name));
     for (const name of files) {
       if (!name.endsWith(".test.ts")) continue;
-      discovered.push(
-        relative(repoRoot, join(dir, name)).split("\\").join("/"),
-      );
+      const file = relative(repoRoot, join(dir, name)).split("\\").join("/");
+      // Migrated early with the production timer seam it exercises (#1247).
+      if (file === "test/integration/factory-board.test.ts") continue;
+      discovered.push(file);
     }
   };
 

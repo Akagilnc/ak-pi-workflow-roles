@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { headlessMcpConfigDocument } from "../../src/headless-host/description.ts";
 import { parseHeadlessCliStdout } from "../../src/headless-host/role-turn-host.ts";

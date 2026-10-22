@@ -405,7 +405,7 @@ async function emitActivationTrace(
 async function executeActivationStage(
   role: string,
   stage: { id: string; run(): Promise<void> },
-  infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
+  infrastructure: { writeTrace(record: ActivationTraceRecord): void | Promise<void> },
 ): Promise<void> {
   try {
     await stage.run();
@@ -415,7 +415,7 @@ async function executeActivationStage(
         role,
         stageId: stage.id,
         status: "failed",
-        timestamp: infrastructure.clock(),
+        timestamp: new Date().toISOString(),
         cause: namedActivationCause(activationError),
       });
     } catch (traceError) {
@@ -469,7 +469,6 @@ export type RoleRuntimeDependencies = {
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; invocationId: string; onEvent: NavigatorAttendanceOptions["onEvent"] }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
 
@@ -1499,7 +1498,6 @@ export function createRoleRuntimeExtension(
       },
     };
 
-    const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
 
     roleHost.on("session_start", async (event, ctx) => {
@@ -1631,7 +1629,7 @@ export function createRoleRuntimeExtension(
           navigatorAttendance.prepare();
         }
 
-        await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
+        await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { writeTrace });
         // #1171: same registration mouth as submission tools; when-to-call is on the tool itself.
         registerReportTicketTool(roleHost, hostActions);
         roleHost.setActiveTools([
