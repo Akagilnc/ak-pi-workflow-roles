@@ -29,7 +29,7 @@ const fixerOutputObject = Type.Object({
   }),
   classResults: Type.Unknown({
     description:
-      "各类 class 结算，原样留存。每类写 name、shape（错误形状一句）。按代码形状认的类写 search（实际跑的搜索命令，原样）、hits（命令输出的每个命中一行 { where: path:line, outcome: 已修 | 不同类：理由 }）；按情形认的类写 cases（每种前序经历一行 { case: 对象先经历了什么, entry: 从真实入口怎么走到它, before: 修前结果, after: 修后结果 }）。完成项的 disposition 为 completed，可写 commitSha。拒绝项的 disposition 为 refused，可写 remainingScope、blocker。",
+      "各类 class 结算，原样留存。每类写 name、shape（错误形状一句）。按代码形状认的类写 search（实际跑的搜索命令，原样）、hits（命令输出的每个命中一行 { where: path:line, outcome: 已修 | 不同类：理由 }）；按情形认的类写 cases（每种前序经历一行 { case: 对象先经历了什么, entry: 从真实入口怎么走到它, before: 修前结果, after: 修后结果 }）。删并类写 files（本票起点到 HEAD 的 git diff --stat 里每个文件一行 { file, hits: 该类在此文件的命中 path:line 列表，没有为空, outcome: 已修 | 无 }）。完成项的 disposition 为 completed，可写 commitSha。拒绝项的 disposition 为 refused，可写 remainingScope、blocker。",
   }),
   diffItems: diffItemsField,
   testEvidence: Type.Unknown({
