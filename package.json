@@ -46,9 +46,8 @@
     "prepack": "npm run build",
     "test": "vitest run --project unit-contract",
     "test:fast": "pnpm test",
-    "test:integration": "pnpm run test:vitest && node scripts/run-test-all.mjs integration",
-    "test:all": "pnpm run test:vitest && node scripts/run-test-all.mjs",
-    "test:vitest": "vitest run",
+    "test:integration": "vitest run --project integration",
+    "test:all": "vitest run",
     "typecheck": "tsc --noEmit",
     "migrate:book-topology": "node dist/migrate-book-topology.js"
   },

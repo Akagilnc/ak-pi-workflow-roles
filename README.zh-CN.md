@@ -134,7 +134,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 
 ## 测试
 
-Vitest 渐进迁移期间的聚焦命令、报告位置与旧入口共存说明见 [Tests](README.md#tests)。
+聚焦命令与报告位置见 [Tests](README.md#tests)。
 
 ## 班子（唐宋官署命名）
 
