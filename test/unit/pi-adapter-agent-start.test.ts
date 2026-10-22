@@ -178,7 +178,9 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
       };
     },
   });
+  let seenEvent: object | undefined;
   adapter.host.on("before_agent_start", (event) => {
+    seenEvent = event;
     seenPrompt = event.prompt;
     return {};
   });
@@ -231,6 +233,7 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
     await startHandler({ messageType: "custom", systemPrompt: "BASE", systemPromptOptions: {} } as never, startCtx);
   }
   assert.equal(seenPrompt, undefined);
+  assert.equal(Object.hasOwn(seenEvent!, "prompt"), false);
 });
 
 test("#1199 Pi spawn env must not carry summons body (stdin already holds dialogue)", async () => {
