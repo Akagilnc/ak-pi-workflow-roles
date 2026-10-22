@@ -1,7 +1,7 @@
 /**
  * #1166 — four audit seats share audited-run identity `<runId>@<席>` in startup
- * materials; first utterance stays the peer submission bytes from this-round ledger;
- * package adds no audited-run directory path. Navigator prompt stays caller bytes.
+ * materials; first utterance stays the peer submission bytes from this-round ledger.
+ * Navigator prompt stays caller bytes.
  *
  * Seam: public `ak-role` + in-repo fake host (same createMinimalHost shape for
  * judge / coder / secretariat parents). prepareRoleEnvelope only reads the live
@@ -81,15 +81,6 @@ function auditedIdentityMaterials(
 }
 
 /** Package path handoffs about the audited run — structured field presence, not wire text. */
-function packageAuditedPathMaterials(materials: readonly unknown[]): unknown[] {
-  return materials.filter((material) => {
-    if (!isRecord(material)) return false;
-    if (material.kind === AUDITED_RUN_IDENTITY_KIND) return false;
-    return typeof material.sourceRunPath === "string"
-      || typeof material.runDirectory === "string";
-  });
-}
-
 /** Prepare from a live public-entry RoleTurnRequest — prompt already set by gate/direct. */
 async function inspectLiveRequest(
   request: RoleTurnRequest,
@@ -97,7 +88,6 @@ async function inspectLiveRequest(
 ): Promise<{
   readonly prompt: string;
   readonly identities: AuditedRunIdentityMaterial[];
-  readonly pathMaterials: unknown[];
   readonly toolNames?: string[];
   readonly jsonSchema: Readonly<Record<string, unknown>>;
 }> {
@@ -164,7 +154,6 @@ async function inspectLiveRequest(
           ));
         }
         const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
-        const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
         let toolNames: string[] | undefined;
         if (request.activation.role === "auditor") {
           toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
@@ -172,7 +161,6 @@ async function inspectLiveRequest(
         return {
           prompt: prepared.prompt,
           identities,
-          pathMaterials,
           jsonSchema: prepared.jsonSchema,
           ...(toolNames === undefined ? {} : { toolNames }),
         };
@@ -371,7 +359,6 @@ test("#1166 public gate: four seats share identity; peer reviewers receive ledge
         } else {
           assert.match(inspected.identities[0]!.auditedRun, gate.identitySuffix!);
         }
-        assert.equal(inspected.pathMaterials.length, 0);
         seen.push({
           role: request.activation.role,
           identity: inspected.identities[0]!.auditedRun,
@@ -474,7 +461,6 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
         kind: AUDITED_RUN_IDENTITY_KIND,
         auditedRun: expectedIdentity,
       });
-      assert.equal(inspected.pathMaterials.length, 0);
       if (seat.role === "notary") {
         assert.notEqual(inspected.prompt, readableGateItem(current));
       } else {
