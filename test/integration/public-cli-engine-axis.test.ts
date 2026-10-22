@@ -364,6 +364,23 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         { packageRoot, home, io: setEscape.io },
       );
       assert.equal(setEscapeResult.exitCode, 2);
+
+      // Exact directory aliases and NUL are separate syntax branches from "../escape".
+      for (const engine of [".", "..", "has\0nul"]) {
+        const alias = captureIo();
+        const aliasResult = await runAkRole(
+          ["judge", "--model", "test/caller-seat:high", "--engine", engine, "--project", project, "x"],
+          { packageRoot, home, cwd: project, credentials, io: alias.io },
+        );
+        assert.equal(aliasResult.exitCode, 2);
+      }
+      // Empty name is dropped by the dashed-option parser; set-engine passes it through.
+      const empty = captureIo();
+      const emptyResult = await runAkRole(
+        ["config", "set-engine", "judge", ""],
+        { packageRoot, home, io: empty.io },
+      );
+      assert.equal(emptyResult.exitCode, 2);
     }
 
     // Reviewer command with --engine is admitted at the call-request seam (#378).

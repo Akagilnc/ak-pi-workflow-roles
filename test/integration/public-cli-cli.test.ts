@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
@@ -290,6 +293,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     );
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    const handed: { required?: unknown; hitsType?: unknown } = {};
     // No --model: #620 proves inherit-gatekeeper is the sole model source.
     await runAkRole(["inspector", "--project", project, "--attach", attachment, "Review this material."],
       {
@@ -299,12 +303,32 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         credentials,
         createRunId: () => "inspector-inherit-620",
         io: captureIo().io,
-        roleTurnHost: createMinimalHost((request) => {
+        roleTurnHost: createMinimalHost(async (request) => {
           captured.current = request;
-          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          const prepared = await prepareRoleEnvelope({
+            request,
+            dependencies: createRoleRuntimeDependencies(packageRoot),
+            socketPath: `/tmp/ak-inspector-schema-${randomUUID()}.sock`,
+            sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
+          });
+          try {
+            // Observe only. Assert after the public entry returns; a throw inside the host is swallowed.
+            handed.required = prepared.jsonSchema.required;
+            handed.hitsType = (prepared.jsonSchema.properties as {
+              ticketComplexity?: { items?: { properties?: { hits?: { type?: unknown } } } };
+            }).ticketComplexity?.items?.properties?.hits?.type;
+          } finally {
+            await prepared.dispose?.();
+          }
+          return { code: 1, stderr: "stop", timedOut: false };
         }),
       },
     );
+    const required = handed.required;
+    assert.equal(Array.isArray(required) && required.includes("suspect"), true);
+    assert.equal(Array.isArray(required) && required.includes("ticketComplexity"), true);
+    assert.equal(handed.hitsType, "array");
     const inherited = captured.current!;
     assert.equal(inherited.activation.role, "inspector");
     assert.deepEqual(inherited.model, {

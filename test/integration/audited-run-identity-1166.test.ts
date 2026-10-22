@@ -484,6 +484,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     const notaryPrompts: string[] = [];
     const notaryIdentities: string[] = [];
     let parentSeals = 0;
+    let countersignRequired: string[] | undefined;
 
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "notary") {
@@ -518,6 +519,9 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       }
       const inspected = await inspectLiveRequest(request, packageRoot);
       assert.equal(Object.hasOwn(inspected.jsonSchema.properties as object, "clauses"), false);
+      if (request.activation.role === "countersign" && countersignRequired === undefined) {
+        countersignRequired = inspected.jsonSchema.required as string[];
+      }
       parentSeals += 1;
       const body = parentSeals === 1 ? first : second;
       const { sessionDirectory, sessionFile } =
@@ -553,6 +557,8 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       },
     );
     assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
+    assert.equal(countersignRequired?.includes("suspect"), false);
+    assert.equal(countersignRequired?.includes("ticketComplexity"), false);
     assert.ok(notaryPrompts.length >= 1);
     assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
 

@@ -5,7 +5,7 @@
  * parent's actual status. Oracles: structured events and run records.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -248,6 +248,17 @@ for (const scenario of CASES) {
         assert.equal(fact?.disposition, "no-advice");
       } else if (scenario.expect === "unavailable") {
         assert.equal(fact?.disposition, "unavailable");
+        if (fact?.disposition !== "unavailable") throw new Error("expected unavailable");
+        // Same directory-as-file fault the lookup hits. Value-equal the opaque cause; do not lock the wrapper wording.
+        const statePath = join(home, ".ak-roles", "books", "project", "unbound", "runs", "01a0navi00-0000-7000-8000-00000000f001@navigator", "state.jsonl");
+        let reproduced = "";
+        try {
+          appendFileSync(statePath, "x", "utf8");
+        } catch (error) {
+          reproduced = error instanceof Error ? error.message : String(error);
+        }
+        assert.notEqual(reproduced, "");
+        assert.equal(fact.reason.slice(fact.reason.length - reproduced.length), reproduced);
       } else {
         assert.equal(fact?.disposition, "advice");
       }
