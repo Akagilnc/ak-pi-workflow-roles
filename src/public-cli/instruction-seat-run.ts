@@ -973,7 +973,8 @@ async function runOmittedLensBatch(
 
 /**
  * One same-parent lookup. Seat branches still build their own summons.
- * A found child resumes that child; no prior run returns undefined so the caller mints.
+ * A found child resumes that child. No prior run, explicit new, or a typed
+ * session-id-missing resume (失败照记，记完再起新) returns undefined so the caller mints.
  */
 function resumeSameParentInstructionSeat(input: {
   readonly env: InstructionSeatRunEnv;
