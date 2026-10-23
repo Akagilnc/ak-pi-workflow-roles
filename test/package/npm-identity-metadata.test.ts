@@ -1,13 +1,13 @@
+import { build } from "esbuild";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { AUDITOR_SESSION_MATERIALS } from "../../src/auditor-soul.ts";
+import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterAll, test } from "vitest";
 import { promisify } from "node:util";
-import { build } from "esbuild";
-import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
-import { AUDITOR_SESSION_MATERIALS } from "../../src/auditor-soul.ts";
-import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import { worktreeTempPrefix, packIsolatedPackage } from "../helpers/environment-fixtures.ts";
 
 import {

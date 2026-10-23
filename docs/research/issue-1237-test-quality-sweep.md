@@ -774,7 +774,7 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 
 官方资料先查：npm pack 的 JSON/file list（https://docs.npmjs.com/cli/v11/commands/npm-pack）、esbuild packages/external 与真实导入解析（https://esbuild.github.io/api/#packages）、Git merge-tree 的显式 merge-base（https://git-scm.com/docs/git-merge-tree）。生态已有件足够；本轮无新通用件。
 
-核账复扫：`rg -n 'BASE|HEAD|git\("diff"' docs/research/issue-1237-deletion-ledger.py`。两处统计 diff 均用 ticket_tree；BASE 仍只负责冻结的删除坐标与原文读取，不是漏改的终点。修后核账 COUNT/MATCH 1139，18 文件＋115 案＋1006 断言，未新增他票行。
+核账复扫：`rg -n 'BASE|HEAD|git\("diff"' docs/research/issue-1237-deletion-ledger.py`。两处统计 diff 均用 ticket_tree；BASE 仍只负责冻结的删除坐标与原文读取，不是漏改的终点。提交前 HEAD=c2c9175d 时核账 COUNT/MATCH 1139，18 文件＋115 案＋1006 断言，未新增他票行。首提交 0a93f2a9 后重核暴露真实三方冲突：main 的 vitest/helper imports 迁移与本轮新增 imports 相邻，merge-tree exit 1。没有使用偏向合并、吞错或冻结旧终点来造 MATCH；仅把新增 imports 移到文件头，使两笔独立改动不重叠。修正暂存树实测 `git merge-tree --write-tree --merge-base=c2c9175d c2c9175d^1 "$(git write-tree)"` exit 0，树为 6bf15b6a25586105d1c654ae3bdc664f7dc9cc17。另建修正提交，最终 HEAD 再执行原核账命令；此前结果不冒作最终 HEAD 证据。
 
 ### 交卷自审
 
