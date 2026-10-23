@@ -163,6 +163,51 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       assert.equal(restored.bookKey, "root:foo");
       assert.equal(restored.issueNumber, 7);
       assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
+
+      // projectRoot-only (no bookKey) is the scan that calls isSyntheticAnalystBookKey.
+      // A sibling in book root:foo with another root is in scope only when that
+      // basename is not synthetic. An absent root resolves to root:<absolute>;
+      // its run, stored under another book, is in scope only when that key is synthetic.
+      const seedReadable = (book: string, runId: string, rootIdentity: string) => {
+        const runDir = join(ledgerHome, "books", book, "runs", `${runId}@coder`);
+        mkdirSync(join(runDir, "session"), { recursive: true });
+        seedCurrentSection(runDir, "invocation", {
+          role: "coder",
+          runId,
+          bookKey: book,
+          projectRoot: rootIdentity,
+          ticketNumber: 9,
+        });
+        seedTerminal(runDir, "report", {
+          role: "coder",
+          runId,
+          phase: "apply",
+          outcome: {
+            kind: "accepted",
+            role: "coder",
+            status: "completed",
+            decisiveFacts: {},
+            payloads: [],
+          },
+        });
+        writeFileSync(
+          join(runDir, "session", "session.jsonl"),
+          JSON.stringify({ type: "session", version: 3, id: runId, timestamp: "2026-08-04T03:00:00.000Z", cwd: rootIdentity }) + "\n",
+          "utf8",
+        );
+      };
+      const other = join(repoParent, "other");
+      mkdirSync(other);
+      const siblingId = "019ff000-9001-7000-8000-0000000009a2";
+      seedReadable("root:foo", siblingId, physicalPathIdentity(other));
+      const keptBook = await runAnalyst({ mode: "issue", projectRoot: repo }, { home });
+      assert.equal(keptBook.page.legs.some((leg) => leg.runId === siblingId), true);
+
+      const absent = join(repoParent, "missing", "root");
+      const plainId = "019ff000-9001-7000-8000-0000000009a3";
+      seedReadable("plain-book", plainId, physicalPathIdentity(absent));
+      const pathScope = await runAnalyst({ mode: "issue", projectRoot: absent }, { home });
+      assert.equal(pathScope.page.legs.some((leg) => leg.runId === plainId), true);
     },
     async () => {
       await rm(home, { recursive: true, force: true });

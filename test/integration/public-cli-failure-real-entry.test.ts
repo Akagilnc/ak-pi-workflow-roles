@@ -292,6 +292,8 @@ test("production knownFailure channel reaches settlement as provider with typed 
       identityName: "ProviderUnavailableError",
       identityCode: "PROVIDER_UNAVAILABLE",
     });
+    // Opaque host stderr is attached to the CLI stderr as a whole, not merely non-empty.
+    assert.equal(stderr.join("").includes(hostStderr), true);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind !== "failure") return;
     assert.equal(result.terminal!.roleOutcome.cause, "provider");
