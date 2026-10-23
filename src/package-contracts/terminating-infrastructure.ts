@@ -2,8 +2,9 @@
  * Package-owned shared infrastructure-failure declaration for every primary
  * packaged-role output tool (#541 / #1214 A2).
  *
- * One module owns the typed `infrastructureFailure.diagnostic` declaration
- * composed into each output tool's schema. The field is part of the role's
+ * One module owns the infrastructureFailure declaration composed into each
+ * output tool's schema. Name and semantic description only — no object type, so
+ * a null fill is not a shape rejection (#1134). The field is part of the role's
  * original receipt: ledger records it as-is. Declaration alone does not abort
  * the host (#1214 A2). True host/lifecycle failure still fails honestly on its
  * own channel.
@@ -12,34 +13,11 @@ import { Type, type TSchema } from "typebox";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
-export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 
-/**
- * Shared declaration fragment for model guidance (#541 / #676 C / ADR 0057).
- * Nested field declarations + descriptions only — host must not pure-shape-reject
- * the envelope (仓内 CLAUDE.md 开篇). No required/minLength/type host gates on
- * the declaration fragment.
- */
-const infrastructureFailureNested = Type.Object(
-  {
-    [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type.Unknown({
-      description: "基础设施失败诊断字符串。",
-    }),
-  },
-  {
-    additionalProperties: true,
-    description: "仅基础设施真实失败时出现。",
-  },
-);
-// Open nested required so host cannot pure-shape-reject the declaration fragment.
-(infrastructureFailureNested as unknown as { required: string[] }).required = [];
-
-const infrastructureFailureDeclarationSchema = Type.Object(
-  {
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureNested,
-  },
-  { additionalProperties: true },
-);
+/** Name + semantic description. diagnostic's meaning lives in the description. */
+const infrastructureFailureField = Type.Unknown({
+  description: "仅基础设施真实失败时填 {diagnostic}；没有就填 null",
+});
 
 /**
  * Compose declarations shared by terminating output tools: infrastructure failure,
@@ -62,7 +40,7 @@ export function withTerminatingOutputDeclarations<
         ? {
             ticketNumber: Type.Unknown({
               description:
-                "可选本票号。尚未绑定时由角色在既有回执中申报（正整数、数字串或前导 #N；归位只读本字段）。",
+                "仅尚未绑定时填本票号（正整数、数字串或前导 #N；归位只读本字段）；没有就填 null",
             }),
           }
         : {}
@@ -72,15 +50,12 @@ export function withTerminatingOutputDeclarations<
         ? {
             summary: Type.Unknown({
               description:
-                "本席自行填写的一两句、20–50 字结论摘要。可选；不因缺失或超长拒收、截断或代填。",
+                "仅本席有结论时填一两句、20–50 字结论摘要；没有就填 null。不因缺失或超长拒收、截断或代填。",
             }),
           }
         : {}
     ),
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
-      infrastructureFailureDeclarationSchema.properties[
-        INFRASTRUCTURE_FAILURE_DECLARATION_KEY
-      ],
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureField,
   };
   const object = Type.Object(properties, { additionalProperties: true });
   const incoming = (schema as { required?: unknown }).required;

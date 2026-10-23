@@ -27,7 +27,7 @@ const reviewNarrativeFields = {
   reason: Type.Optional(Type.Unknown({ description: "上呈理由" })),
   violations: Type.Optional(Type.Unknown({ description: "违规条目" })),
   conflicts: Type.Optional(Type.Unknown({ description: "待决冲突" })),
-  fix: Type.Optional(Type.Unknown({ description: "continue 时的补救说明；可写 summary 摘要，其余内容原样留存" })),
+  fix: Type.Optional(Type.Unknown({ description: "仅 continue 时填补救说明（可写 summary 摘要，其余内容原样留存）；没有就填 null" })),
   classes: Type.Optional(Type.Unknown({ description: "已裁决 finding 类；可说明 name、owner、boundary、disposition，原样留存" })),
   note: Type.Optional(Type.Unknown({ description: "裁决附注" })),
   evidence: Type.Optional(Type.Unknown({ description: "留存证据" })),
