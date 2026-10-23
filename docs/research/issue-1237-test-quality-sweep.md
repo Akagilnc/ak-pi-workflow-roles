@@ -2,7 +2,7 @@
 
 基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）；第七版依大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/2.json` 的 R6-A/R6-B 续修（见文末「第七轮」）；第八版是对现存全部测试文件的整卷复扫（见文末「第八轮」），每行末尾的「第八轮整卷复扫」即本轮结论。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
-当前结算以文末「第十七轮复审修理（R17-A）」及逐条账 R17-A 为准；此前各轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
+当前结算以文末「第十八轮（R18-A）」及逐条账 R18-A 为准；此前各轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
 
 ## 方法与边界
 
@@ -556,3 +556,42 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - 修后 `npx tsc --noEmit` exit 0，`git diff --check` 无输出；工作树账核算 COUNT/MATCH 1065 = 18 文件 + 115 案 + 932 断言，a/D 525，其他桶不变。提交后用未改的 `python3 -I docs/research/issue-1237-deletion-ledger.py` 再核 HEAD。
 - 没有新增函数/测试，diffItems=[]。所有测试仍走原入口、保留原强 oracle 与状态变化；本轮是删重而非生产行为修复，不新增证明性测试、不改生产逻辑作验收机制。测试 diff 只有删除（29 断言及专属变量/注释），未删整案或输入。
 - 没跑全量；没改生产、helper 接口、runner、Soul、配置或治理文件。官方 Node assert 文档用于核对 equal 与 ok 的诊断区别，没有引入依赖。
+
+## 第十八轮（R18-A）
+
+起点 `a835809e43b4c97eca4f214b2942d464c333d10a`，工作树开工时干净。依据大理寺 `01a16776-ad9c-7cd8-89ec-4449a93eb38f@judge/receipts/3.json`；符宝郎 `01a16782-cd82-77f5-8a51-72d631eb9f2d@notary/receipts/3.json`、审刑院 `01a16784-f637-7e7e-ae7b-4b6517d372a0@auditor/receipts/3.json` 均署。这里只记施工，未代任何审席作复审结论。
+
+错误形状与根因：判别谓词已经决定中间变量的真假分支，后续断言又拒收假分支；此前扫描只在一条 assert 内追踪条件与期望，漏掉中间绑定，也漏掉 `assert.equal(predicate, true)` 对谓词的布尔编码。原 R17-A「条件候选零」不是完整数据流零命中，本轮纠正此扫描边界；不重开已经结清的其他类。
+
+### 全树扫描与复扫
+
+扫描全部 153 个 TS/JS 源文件，复用现有账本 `assert_calls`，内联 Python 只产候选，不入仓、不自动删行。先向前查断言后的同谓词（不设 40 行窗口，遇下一案或 await 截止），再反向枚举条件绑定并看来源与消费者；包含换行、optional/non-null 写法、布尔谓词及 helper 内部，不只查 kind/status 名称。`curl -fsSL https://nodejs.org/api/assert.html` 核对 ok 的 truthiness 契约，未引入依赖。
+
+- 第一遍直接字段扫描产 58 条引用候选；逐项看上下文，除 merger-run 外是 if/提前返回/throw 缩窄、注释或不同对象，不把 if 内检查会跳过的情形当作蕴含。
+- 反向条件绑定提取产 275 条宽候选（含类型可选字段、正则和夹具），读谓词来源与后续消费者，补到 durable-session 的 `"failure" in closed`。它与点名样本是同一链路，不是另起类别。
+- 将布尔编码归一后，同谓词紧接 `?` / `&&` 的正向候选为下表 4 条；删两条后按同一内联命令复扫剩 2 条，均为已列的静默跳过 if。**实质命中 2 条，已删 2 条，未修 0 条**；不把判词预估的一处当作白名单。
+
+| 起点命中 | 取值／消费者与结果 |
+| --- | --- |
+| `test/contract/durable-session-write-failure.test.ts:95` | 已修。:96 条件取 failure，:97 的 ok 拒收 undefined；修后承接 :95–96。辅助函数两次 closeRound 的输入仍各自验证，未跨调用相并。 |
+| `test/integration/public-cli-merger-run.test.ts:243` | 已修。:245–248 条件取 recorded，:249 的 ok 拒收 undefined；修后承接 :244–248。原 payload 数量与两个原始对象精确检查全部保留。 |
+| `test/integration/dossier-resolution.test.ts:46` | 不同类，保留。:48 的 if 要求 a、b 同时为 ok；否则内部路径检查静默跳过，不会拒收兜底。 |
+| `test/integration/dossier-resolution.test.ts:71` | 不同类，保留。:73 同上，且是另一次入口调用；不借前案结果。 |
+
+### 本轮逐文件表
+
+`git diff --name-status a835809e` 的四文件逐项核；基线核算仍用 `7997ffb2`。本轮两条删除均先打开基线断言及相邻条件绑定核过，再按累计 diff 复核为下面两个位置；没有把 merger-run 基线 :602 的另一调用混进来。
+
+| 文件 | 删除基线位置／处置 |
+| --- | --- |
+| `test/contract/durable-session-write-failure.test.ts` | :95，账 #1067；只删判别谓词的前置断言，条件取值和拒收断言保留。 |
+| `test/integration/public-cli-merger-run.test.ts` | :517，账 #1068；只删 accepted 判别断言，条件取值和拒收断言保留。 |
+| `docs/research/issue-1237-deletion-ledger.md` | 新增两条及修后拒收断言坐标；R17-A 承接坐标明确锚定 a835809e。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 本节记录真实两处命中、两处排除及复扫；历史结论不冒作本轮结论。 |
+
+### 自验与自审
+
+- 修前两文件原入口案：5/5，1756.113542 ms；修后同命令：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/contract/durable-session-write-failure.test.ts test/integration/public-cli-merger-run.test.ts`，5/5、0 fail，1543.806334 ms。输出的 EISDIR 是既有 shutdown 故障注入案的预期诊断，不是测试失败。
+- 修后 `npx tsc --noEmit` exit 0。原入口、输入、拒收断言及具体结构化值检查不变；这次纯删重，不改生产作变异，也不新增证明性测试。
+- 工作树账 COUNT/MATCH 1067 = 文件 18 + 案 115 + 断言 934；a/D 527，其余桶不变。提交后再用原命令 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
+- `git diff HEAD` 自审：测试仅删两行，新增生产函数/测试函数/helper 均无，diffItems=[]；无死变量，两个前置断言已退役。没改生产、runner、Soul、配置或治理文件；没跑全量、没派角色、没 amend/rewrite/push。

@@ -1,4 +1,4 @@
-# #1237 删除与改弱逐条账（R17-A，起点 9bd67a84）
+# #1237 删除与改弱逐条账（R18-A，起点 a835809e）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 1065 行 = 整文件 18 + 整案 115 + 断言 932。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指本轮修后工作树。
+本表 1067 行 = 整文件 18 + 整案 115 + 断言 934。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068；承接位置指第十八轮修后文件，删除位置仍是 `7997ffb2`。
 
 ## 处置口径
 
@@ -30,7 +30,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：525
+- a/D：527
 - a/M：198
 - a/S：134
 - b：61
@@ -146,6 +146,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 840 | assert | `test/contract/doctor-role.test.ts:39` | assert.ok(typeof prompt.systemPrompt === "string") | a/M；R13-A 没有：只锁 parameters 或 systemPrompt 的形状，不检查在役分支的输出值或失败行为。 |
 | 841 | assert | `test/contract/doctor-role.test.ts:39` | assert.equal(prompt.systemPrompt.includes(soul), true) | a/T；R13-A 有：行为=激活提示包含 doctor soul。变异：doctor_soul 段不插入 activation.soul；报红「Doctor activation delivers its Soul and exposes only evidence and output tools」，expected true actual false。 |
 | 84 | case | `test/contract/doctor-role.test.ts:39` | Doctor activation exposes only paged session evidence and output tools | a/T；依据 sweep:52；诊断句式锁。工具能力面在 test/contract/doctor-role.test.ts:58，不恢复句子 R13-A 没有：只锁句子或措辞，不检查在役分支的输出值或失败行为。 |
+| 1067 | assert | `test/contract/durable-session-write-failure.test.ts:95` | assert.equal("failure" in closed, true, "typed infrastructure failure required") | a/D；R18-A，承接 test/contract/durable-session-write-failure.test.ts:95–96；同一谓词条件取 failure，假分支 undefined 被 assert.ok(failure !== undefined) 拒收；无 await 或状态变化。 |
 | 1038 | assert | `test/contract/gatekeeper-pass-envelope.test.ts:115` | needs_reask status | a/D；R17-A，承接 test/contract/gatekeeper-pass-envelope.test.ts:104；三元分支取 receivedStatus 精确 other，非 needs_reask 返回 undefined 必败。 |
 | 85 | assert | `test/contract/gatekeeper-pass-envelope.test.ts:158` | assert.equal(booked.length, 0, "parent history must not book officer-pointer rows"); | a/S；依据 sweep:55；退役 officer-pointer 零行哨兵 |
 | 86 | assert | `test/contract/gatekeeper-projection.test.ts:15` | assert.deepEqual(projectLawfulGatekeeperOutput(input), input); | a/退役；依据 sweep:56；孤立投影函数已删。公开收卷在 public-cli-seat-pipeline.test.ts:35，原 params 落账在 submission-ledger.test.ts:174 |
@@ -814,6 +815,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 559 | assert | `test/integration/public-cli-merger-run.test.ts:434` | assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${row.role}: ${stderr}`); | a/D；依据 sweep:132；全角色 accepted 表与 seat-pipeline.test.ts:35 同结论。换宿主收卷在 pipeline-lifecycle-formalization.test.ts:28 R13-A 没有：全角色 accepted 表的 exitCode / kind 等值是同一收卷的平行观察，不另检查失败行为。 |
 | 560 | assert | `test/integration/public-cli-merger-run.test.ts:435` | assert.equal(result.terminal?.roleOutcome.role, row.role, row.role); | a/D；依据 sweep:132；全角色 accepted 表与 seat-pipeline.test.ts:35 同结论。换宿主收卷在 pipeline-lifecycle-formalization.test.ts:28 R13-A 没有：全角色 accepted 表的 exitCode / kind 等值是同一收卷的平行观察，不另检查失败行为。 |
 | 561 | assert | `test/integration/public-cli-merger-run.test.ts:436` | assert.deepEqual( result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], row.status === undefined ? [] : [row.status], row.role, ); | a/D；依据 sweep:132；全角色 accepted 表与 seat-pipeline.test.ts:35 同结论。换宿主收卷在 pipeline-lifecycle-formalization.test.ts:28 R13-A 没有：全角色 accepted 表的 exitCode / kind 等值是同一收卷的平行观察，不另检查失败行为。 |
+| 1068 | assert | `test/integration/public-cli-merger-run.test.ts:517` | assert.equal(result.terminal?.roleOutcome.kind, "accepted") | a/D；R18-A，承接 test/integration/public-cli-merger-run.test.ts:244–248；同一 kind 条件取 recorded，假分支 undefined 被 :248 assert.ok(recorded) 拒收；无 await 或状态变化。 |
 | 562 | case | `test/integration/public-cli-merger-run.test.ts:423` | public-cli every packaged role accepts via shared sealed→Terminal entry | a/D；依据 sweep:132；全角色 accepted 表与 seat-pipeline.test.ts:35 同结论。换宿主收卷在 pipeline-lifecycle-formalization.test.ts:28 R13-A 没有：全角色 accepted 表的 exitCode / kind 等值是同一收卷的平行观察，不另检查失败行为。 |
 | 563 | assert | `test/integration/public-cli-merger.test.ts:80` | assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage); | a/D；R13-A 有：行为=未知旗在准入前被拒、不派发。变异：invocation.ts 未知 option 改为推进 positional；报红「malformed CLI structure and empty --project= reject structurally before admission」的 unknown flag 行。 |
 | 564 | assert | `test/integration/public-cli-merger.test.ts:81` | assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage); | a/D；R13-A 有：行为=空 --project 在准入前被拒，不把空路径当成 cwd。变异：requireOptionPath 对空值不再 throw；报红「malformed CLI structure and empty --project= reject structurally before admission」的 empty --project= 行。 |

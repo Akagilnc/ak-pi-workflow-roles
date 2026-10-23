@@ -240,7 +240,6 @@ test("host-neutral typed turns record every terminating submission without sole 
       },
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], ["continue", "converged"]);
     const recorded =
       result.terminal?.roleOutcome.kind === "accepted"
