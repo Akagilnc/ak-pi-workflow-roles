@@ -145,7 +145,7 @@ Tests run on Vitest ([ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-h
 ```bash
 pnpm exec vitest run --project unit-contract
 pnpm exec vitest run --project integration test/integration/public-cli-bin-startup.test.ts
-pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts
+pnpm exec vitest run --project package test/package/npm-identity-metadata.test.ts
 ```
 
 Progress uses the dot reporter; the full structured report is `.vitest/results.json`.

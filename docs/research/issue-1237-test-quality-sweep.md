@@ -806,3 +806,19 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - npm files 排除 souls/judge.md：材料路径断言报红（2.46s），未反向撤掉 R21-A 缺件守护。
 
 临时诊断脚本 `/tmp/1237-i22-mutations.py`、日志 `/tmp/1237-i22-evidence/` 不入仓库。首次合并聚焦 3/3 绿3.18s，前三项变异复原后 3/3 绿3.01s；最终聚焦、tsc、提交后原核账命令结果随本轮回执，不索全量。diffItems=[]：无新增测试/生产函数；修改的 git 函数复用原封装，只让既有调用可指定私有索引环境与 stdin。原材料与模块/进程断言不放松，旧整套前置已删除。原有 node-test-report.txt 不改不删；不 amend/rewrite/push，不派角色。
+
+## 第二十一轮：R22-A 文档引用同步（起点 93629c0e）
+
+裁决真源：本票 `runs/01a16876-ad7d-7a18-8be1-8e4ac923c070@judge/receipts/1.json`；R21-A、R21-B、I22-A 的结清与合入 main 复审结论均以该卷为准。本轮只处置其 R22-A remedy，不重写此前历史记录或删除账。
+
+错误形状：测试文件删除或并入后，现行文档的运行命令仍指向旧路径。修前按本票基线到 HEAD 的全部 24 个已删测试/helper 路径扫描现行引用（含 main 合入带来的删除，不缩窄到点名文件）：
+
+```bash
+git diff --diff-filter=D --name-only 7997ffb2 HEAD -- test | while IFS= read -r path; do git grep -n -F -- "$path" . ':!docs/research/**' ':!docs/adr/**'; result=$?; if [ "$result" -gt 1 ]; then exit "$result"; fi; done
+```
+
+唯一命中 `README.md:148`，已将 package focused run 示例改到现存 `test/package/npm-identity-metadata.test.ts`。同命令复扫零命中；`git grep -n published-dist-import-closure -- . ':!docs/research/**' ':!docs/adr/**'` 亦无输出、exit 1。历史研究/ADR 中的路径引用原样保留。
+
+验证：旧示例 `pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts` 实跑 exit 1（No test files found）；新示例 `pnpm exec vitest run --project package test/package/npm-identity-metadata.test.ts` 实跑 1 file / 3 tests passed，3.00s，exit 0。Vitest 官方 filtering 文档（https://vitest.dev/guide/filtering.html）确认位置参数按路径过滤；无需新增检查机制或测试。
+
+自审：本轮仅 README 一行替换与本节追加，diffItems=[]；无新增生产/测试函数、无断言变动，失效示例已替换。未跑全量，未改配置、生产、Soul 或治理文件；原有未跟踪 `node-test-report.txt` 保留。R22-A 已修，待大理寺亲验；不表示整票已合并收官。
