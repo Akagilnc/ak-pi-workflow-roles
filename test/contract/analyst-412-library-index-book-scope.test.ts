@@ -1,5 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { worktreeTempPrefix, withTempRoot, withPrimaryAwareCleanup } from "../helpers/environment-fixtures.ts";
 /**
  * #412 — analyst library-index legacy bookKey + cohort book scope.
  *
@@ -13,7 +12,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import {

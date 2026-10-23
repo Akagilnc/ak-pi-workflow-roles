@@ -229,7 +229,9 @@ export function createPiRoleHostAdapter(
             }
             return folded;
           };
-          const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, projected);
+          // Pi 1.2+ also fires this for runs started by sendMessage(triggerTurn): messageType "custom", no prompt.
+          // Older Pi sends no messageType at all, so only an explicit "custom" drops the prompt.
+          const result = handler({ ...(value.messageType === "custom" ? {} : { prompt: value.prompt }), systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, projected);
           if (result instanceof Promise) return result.then(fold);
           return fold(result);
         });

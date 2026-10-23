@@ -19,10 +19,10 @@ export const gatekeeperDecisionSchema = openToolObject(
       description: "dispatch | pass",
     }),
     officer: Type.Unknown({
-      description: "status 为 dispatch 时为 inspector | notary",
+      description: "仅 status 为 dispatch 时填 inspector | notary；没有就填 null",
     }),
     findings: Type.Unknown({
-      description: "status 为 pass 时可选 string[] findings",
+      description: "仅 status 为 pass 时填 string[] findings；没有就填 null",
     }),
   }),
 );

@@ -15,7 +15,7 @@ import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:
 import { chmod, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
-import test from "node:test";
+import { test } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -44,7 +44,7 @@ import { readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { readSitianRecords, resolveSitianRecordPath, resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 

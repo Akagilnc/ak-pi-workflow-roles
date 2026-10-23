@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import { test, vi } from "vitest";
 
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -16,10 +16,10 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
-import { createTempPackageHomeLedger, packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, seedGitRepository, withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
+import { writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -227,7 +227,8 @@ process.on("SIGTERM", () => {
 });
 
 test("explicit short budget sends only SIGTERM after readiness and preserves prior session output", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  t.onTestFinished(() => { vi.useRealTimers(); });
   await withTempHome(async (home) => {
     const signalFile = join(home, "signal");
     const ready = join(home, "ready");
@@ -294,7 +295,7 @@ setInterval(() => {}, 1000);
       timeoutMs: 750,
     });
     await waitForFile(ready, resultPromise);
-    t.mock.timers.tick(750);
+    vi.advanceTimersByTime(750);
     const result = await resultPromise;
 
     assert.equal(result.timedOut, true);
@@ -323,7 +324,7 @@ process.exit(0);
     const runner = createDefaultPiSpawnRunner({});
     const result = await runner([], {
       cwd: home,
-      env: { ...isolatedTestProcessEnv(), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
+      env: { ...isolatedTestProcessEnv({ home }), PI_BINARY: stub, AK_ROLE_RUN_DIR: ledger.runDirectory },
       stdin: "x".repeat(8 * 1024 * 1024),
     });
     assert.equal(result.code, 0);
@@ -556,7 +557,8 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
     }
     // SIGTERM timeout
     {
-      t.mock.timers.enable({ apis: ["setTimeout"] });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      t.onTestFinished(() => { vi.useRealTimers(); });
       const ready = join(home, "to-ready");
       const signal = join(home, "to-signal");
       const stub = join(home, "timeout.mjs");
@@ -576,11 +578,10 @@ setInterval(() => {}, 1000);
         timeoutMs: 500,
       });
       await waitForFile(ready, resultPromise);
-      t.mock.timers.tick(500);
+      vi.advanceTimersByTime(500);
       const result = await resultPromise;
       assert.equal(result.timedOut, true);
       assert.equal(await readFile(signal, "utf8"), "SIGTERM");
-      t.mock.timers.reset();
     }
   });
 });

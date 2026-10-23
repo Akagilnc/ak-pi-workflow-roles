@@ -3,7 +3,7 @@
  * --source-run and analyst --ticket are carried by public runAkRole cases.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 test("parseCountersignArgv preserves attachment and instruction", () => {

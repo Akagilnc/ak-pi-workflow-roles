@@ -71,7 +71,7 @@ const doctorSubmissionObject = Type.Object({
       `逐条资产观察与处方，原样留存。一条可含 targetKey、targetKind（${DOCTOR_TARGET_KINDS.join(" | ")}）、observation、evidenceIds、disposition（${DOCTOR_DISPOSITIONS.join(" | ")}）、assetEvidence（targetKey、targetKind、evidenceId）、guardrails（reproducibleFailure、owningSeamOrInvariant、deletionOrSimplificationSuffices，各项可含 answer、evidenceIds、explanation）、prescription（kind 为 ${DOCTOR_PRESCRIPTION_KINDS.join(" | ")}，另可写 recommendation、necessityExplanation）、lastRealBite（kind 为 ${DOCTOR_BITE_KINDS.join(" | ")}，另可写 targetKey、evidenceId、eligibleEvidenceIds）。不要求任何处方或可复用 finding；缺可复用资产或 bounded-bite 证据只排除对应资产处方。机器不核验。`,
   }),
   reason: Type.Unknown({
-    description: "证据不足以支撑如实证词的原因；仅 refused 时用。",
+    description: "仅 refused 时填证据不足以支撑如实证词的原因；没有就填 null",
   }),
   missingEvidence: Type.Unknown({
     description: "如实证词所需而尚缺的证据，原样留存（如每项 need、targetKeys）。",

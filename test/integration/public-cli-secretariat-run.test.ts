@@ -6,10 +6,9 @@
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
@@ -49,7 +48,7 @@ import {
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withOutsideTempRoot, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   objectPayloads,
@@ -358,38 +357,39 @@ function secretariatHostDrivingRealTools(input: {
         if (request.activation.role !== "secretariat") {
           return nestedTracked.executeTurn(request);
         }
-        const socketDir = await mkdtemp(join(tmpdir(), "ak-969-sec-env-"));
-        const coords = piDurablePrincipalAuthority.decode(request.principal);
-        const prepared = await prepareRoleEnvelope({
-          request: {
-            ...request,
-            host: submissionGateHost,
-          },
-          dependencies: {
-            ...createRoleRuntimeDependencies(input.packageRoot),
-            hostAdapters: nestAdapters,
-          },
-          socketPath: join(socketDir, "mcp.sock"),
-          listTerminatingToolOnMcp: false,
-          sessionFile: coords.sessionFile,
-          principalAuthority: piDurablePrincipalAuthority,
-    });
-        try {
-          while (nextStep < input.steps.length) {
-            const step = input.steps[nextStep++]!;
-            // One accepted tool call finishes the turn; a reviewer rejection
-            // resumes this same host for the next submitted output.
-            await prepared.ingestStructuredOutput(step.details);
-            const closed = await prepared.closeRound();
-            if (!closed.accepted && "retry" in closed && closed.retry !== undefined) {
-              continue;
+        return withOutsideTempRoot("ak-969-sec-env-", async (socketDir) => {
+          const coords = piDurablePrincipalAuthority.decode(request.principal);
+          const prepared = await prepareRoleEnvelope({
+            request: {
+              ...request,
+              host: submissionGateHost,
+            },
+            dependencies: {
+              ...createRoleRuntimeDependencies(input.packageRoot),
+              hostAdapters: nestAdapters,
+            },
+            socketPath: join(socketDir, "mcp.sock"),
+            listTerminatingToolOnMcp: false,
+            sessionFile: coords.sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
+      });
+          try {
+            while (nextStep < input.steps.length) {
+              const step = input.steps[nextStep++]!;
+              // One accepted tool call finishes the turn; a reviewer rejection
+              // resumes this same host for the next submitted output.
+              await prepared.ingestStructuredOutput(step.details);
+              const closed = await prepared.closeRound();
+              if (!closed.accepted && "retry" in closed && closed.retry !== undefined) {
+                continue;
+              }
+              break;
             }
-            break;
+            return { code: 0, stderr: "", timedOut: false };
+          } finally {
+            await prepared.dispose?.();
           }
-          return { code: 0, stderr: "", timedOut: false };
-        } finally {
-          await prepared.dispose?.();
-        }
+        });
       },
     };
   }
@@ -949,144 +949,145 @@ async function adapterBoundaryCase(input: {
       countersignRequests,
     });
     const nestAdapters = [adapter("pi", nest)];
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-969-adp-sock-"));
-    const sessionFile = join(runDirectory, "session", "session.jsonl");
-    const request: RoleTurnRequest = {
-      principal: fixturePrincipal(join(runDirectory, "session")),
-      activation: { role: "secretariat" },
-      methods: [],
-      continuation: { kind: "initial", prompt: "整理 #924" },
-      model: { provider: "test", model: "caller-seat", thinking: "high" },
-      cwd: project,
-      home,
-      agentDir: join(home, "agent"),
-      runDirectory,
-      host: input.hostName,
-    };
-    const submitted = async () => (await readRecordedSubmissionRows(
-      project, "01a0adp969-0000-7000-8000-000000000001", home,
-    )).map((row) => row.accepted);
-
-    const prepare = () =>
-      prepareRoleEnvelope({
-        request,
-        dependencies: {
-          ...createRoleRuntimeDependencies(packageRoot),
-          hostAdapters: nestAdapters,
-        },
-        socketPath: join(socketDir, "mcp.sock"),
-        listTerminatingToolOnMcp: input.hostName === "grok-build",
-        sessionFile,
-        principalAuthority: piDurablePrincipalAuthority,
-    });
-
-    if (input.hostName === "grok-build") {
-      const description = lookupHostDescription("grok-build");
-      assert.ok(description);
-      let mcpSocket: string | undefined;
-      let mcpToken: string | undefined;
-      const connection: AcpConnection = {
-        async request(method, params) {
-          if (method === "initialize") return { protocolVersion: 1 };
-          if (method === "session/new" || method === "session/load") {
-            const servers =
-              (params as {
-                mcpServers?: Array<{ env?: Array<{ name: string; value: string }> }>;
-              })?.mcpServers ?? [];
-            const envRows = servers[0]?.env ?? [];
-            mcpSocket = envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value;
-            mcpToken = envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value;
-            return { sessionId: "acp-969-sess" };
-          }
-          if (method === "session/prompt") {
-            assert.ok(mcpSocket && mcpToken, "MCP socket/token required");
-            await new Promise<void>((resolve, reject) => {
-              const sock = connect(mcpSocket!);
-              let buf = "";
-              sock.setEncoding("utf8");
-              sock.on("data", (chunk) => {
-                buf += chunk;
-                if (buf.includes("\n")) {
-                  sock.destroy();
-                  resolve();
-                }
-              });
-              sock.on("error", reject);
-              sock.on("connect", () => {
-                sock.write(
-                  `${JSON.stringify({
-                    id: 1,
-                    token: mcpToken,
-                    method: "tools/call",
-                    params: {
-                      name: SECRETARIAT_OUTPUT_TOOL_NAME,
-                      arguments: input.receipt,
-                    },
-                  })}\n`,
-                );
-              });
-            });
-            return { stopReason: "end_turn" };
-          }
-          if (method === "session/close") return {};
-          return {};
-        },
-        notify() {},
-        onNotification() {},
-        async close() {},
+    return withOutsideTempRoot("ak-969-adp-sock-", async (socketDir) => {
+      const sessionFile = join(runDirectory, "session", "session.jsonl");
+      const request: RoleTurnRequest = {
+        principal: fixturePrincipal(join(runDirectory, "session")),
+        activation: { role: "secretariat" },
+        methods: [],
+        continuation: { kind: "initial", prompt: "整理 #924" },
+        model: { provider: "test", model: "caller-seat", thinking: "high" },
+        cwd: project,
+        home,
+        agentDir: join(home, "agent"),
+        runDirectory,
+        host: input.hostName,
       };
-      const host = createAcpRoleTurnHost({
-        hostName: "grok-build",
-        modelPassing: "argv",
-        sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build"),
-        connect: async () => connection,
+      const submitted = async () => (await readRecordedSubmissionRows(
+        project, "01a0adp969-0000-7000-8000-000000000001", home,
+      )).map((row) => row.accepted);
+
+      const prepare = () =>
+        prepareRoleEnvelope({
+          request,
+          dependencies: {
+            ...createRoleRuntimeDependencies(packageRoot),
+            hostAdapters: nestAdapters,
+          },
+          socketPath: join(socketDir, "mcp.sock"),
+          listTerminatingToolOnMcp: input.hostName === "grok-build",
+          sessionFile,
+          principalAuthority: piDurablePrincipalAuthority,
+      });
+
+      if (input.hostName === "grok-build") {
+        const description = lookupHostDescription("grok-build");
+        assert.ok(description);
+        let mcpSocket: string | undefined;
+        let mcpToken: string | undefined;
+        const connection: AcpConnection = {
+          async request(method, params) {
+            if (method === "initialize") return { protocolVersion: 1 };
+            if (method === "session/new" || method === "session/load") {
+              const servers =
+                (params as {
+                  mcpServers?: Array<{ env?: Array<{ name: string; value: string }> }>;
+                })?.mcpServers ?? [];
+              const envRows = servers[0]?.env ?? [];
+              mcpSocket = envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value;
+              mcpToken = envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value;
+              return { sessionId: "acp-969-sess" };
+            }
+            if (method === "session/prompt") {
+              assert.ok(mcpSocket && mcpToken, "MCP socket/token required");
+              await new Promise<void>((resolve, reject) => {
+                const sock = connect(mcpSocket!);
+                let buf = "";
+                sock.setEncoding("utf8");
+                sock.on("data", (chunk) => {
+                  buf += chunk;
+                  if (buf.includes("\n")) {
+                    sock.destroy();
+                    resolve();
+                  }
+                });
+                sock.on("error", reject);
+                sock.on("connect", () => {
+                  sock.write(
+                    `${JSON.stringify({
+                      id: 1,
+                      token: mcpToken,
+                      method: "tools/call",
+                      params: {
+                        name: SECRETARIAT_OUTPUT_TOOL_NAME,
+                        arguments: input.receipt,
+                      },
+                    })}\n`,
+                  );
+                });
+              });
+              return { stopReason: "end_turn" };
+            }
+            if (method === "session/close") return {};
+            return {};
+          },
+          notify() {},
+          onNotification() {},
+          async close() {},
+        };
+        const host = createAcpRoleTurnHost({
+          hostName: "grok-build",
+          modelPassing: "argv",
+          sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, "grok-build"),
+          connect: async () => connection,
+          prepare,
+        });
+        const result = await host.executeTurn(request);
+        assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+        return { gateEntered: countersignRequests.length > 0, submitted: await submitted() };
+      }
+
+      const description = lookupHeadlessHostDescription(input.hostName);
+      assert.ok(description);
+      const fakeBin = join(home, `fake-${input.hostName}`);
+      if (input.hostName === "codex") {
+        await writeFile(
+          fakeBin,
+          `#!/usr/bin/env node
+  const receipt = ${JSON.stringify(JSON.stringify(input.receipt))};
+  process.stdout.write([
+    JSON.stringify({ type: "thread.started", thread_id: "t-969" }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: receipt } }),
+    JSON.stringify({ type: "turn.completed" }),
+  ].join("\\n") + "\\n");
+  `,
+          "utf8",
+        );
+      } else {
+        await writeFile(
+          fakeBin,
+          `#!/usr/bin/env node
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    session_id: "claude-969",
+    structured_output: ${JSON.stringify(input.receipt)},
+  }) + "\\n");
+  `,
+          "utf8",
+        );
+      }
+      await chmod(fakeBin, 0o755);
+      const host = createHeadlessRoleTurnHost({
+        description,
+        hostName: input.hostName,
+        binary: fakeBin,
+        sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, input.hostName),
         prepare,
       });
       const result = await host.executeTurn(request);
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       return { gateEntered: countersignRequests.length > 0, submitted: await submitted() };
-    }
-
-    const description = lookupHeadlessHostDescription(input.hostName);
-    assert.ok(description);
-    const fakeBin = join(home, `fake-${input.hostName}`);
-    if (input.hostName === "codex") {
-      await writeFile(
-        fakeBin,
-        `#!/usr/bin/env node
-const receipt = ${JSON.stringify(JSON.stringify(input.receipt))};
-process.stdout.write([
-  JSON.stringify({ type: "thread.started", thread_id: "t-969" }),
-  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: receipt } }),
-  JSON.stringify({ type: "turn.completed" }),
-].join("\\n") + "\\n");
-`,
-        "utf8",
-      );
-    } else {
-      await writeFile(
-        fakeBin,
-        `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({
-  type: "result",
-  session_id: "claude-969",
-  structured_output: ${JSON.stringify(input.receipt)},
-}) + "\\n");
-`,
-        "utf8",
-      );
-    }
-    await chmod(fakeBin, 0o755);
-    const host = createHeadlessRoleTurnHost({
-      description,
-      hostName: input.hostName,
-      binary: fakeBin,
-      sessionIdentity: createSessionIdentityAuthority(piDurablePrincipalAuthority, input.hostName),
-      prepare,
     });
-    const result = await host.executeTurn(request);
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    return { gateEntered: countersignRequests.length > 0, submitted: await submitted() };
   });
 }
 

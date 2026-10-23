@@ -1,6 +1,6 @@
 /**
- * Owning seam for scripts/test-process-env.mjs pure option contract (#549 AC5).
- * Host-miss / preload / package.json wiring live on the real-entry integration seam.
+ * Owning seam for environment-fixtures.ts option contract (#549 AC5).
+ * Worker and dist-CLI home isolation is asserted by the public CLI startup test.
  * #685/#612: default process test home is worktree-internal create-and-delete.
  */
 import assert from "node:assert/strict";
@@ -9,14 +9,13 @@ import { existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { test } from "vitest";
+import { withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
-import { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
 
 const HOST_HOME = userInfo().homedir;
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const PROCESS_ENV_MODULE = join(REPO_ROOT, "scripts/test-process-env.mjs");
+const PROCESS_ENV_MODULE = join(REPO_ROOT, "test/helpers/environment-fixtures.ts");
 
 /** AC5: explicit options.home wins over default and over env.HOME. */
 test("isolatedTestProcessEnv: options.home wins over default and env.HOME", async () => {

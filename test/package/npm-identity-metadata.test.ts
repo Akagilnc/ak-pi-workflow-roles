@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import test, { after } from "node:test";
+import { afterAll, test } from "vitest";
 import { promisify } from "node:util";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix, packIsolatedPackage } from "../helpers/environment-fixtures.ts";
 
 import {
   packageRoot,
-  packIsolatedPackage,
 } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
@@ -105,7 +104,7 @@ async function disposeExtracted(fixture: ExtractedPack): Promise<void> {
  * 不触「独立契约塞共享可变状态」禁令）。本文件拥有 pack 临时根完整生命周期。
  */
 const extracted = await extractPackedArtifact();
-after(async () => {
+afterAll(async () => {
   await disposeExtracted(extracted);
 });
 

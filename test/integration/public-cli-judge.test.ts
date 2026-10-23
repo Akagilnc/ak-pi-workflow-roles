@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -31,7 +31,7 @@ import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
 
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
@@ -46,9 +46,6 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
   })}\n`;
 }
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-judge-", scenario);
-}
 
 test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {

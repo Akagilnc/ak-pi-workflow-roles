@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -24,7 +24,8 @@ import {
   configurePassingReviewSeats,
   seedPublicSeat,
 } from "../helpers/passing-review-host.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 import {
   capturePreparedEnvelope,
   createMinimalHost,

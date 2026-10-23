@@ -19,7 +19,7 @@ export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
  */
 export const navigatorAdviceFields = {
   prose: Type.Unknown({
-    description: "单条散文建议。无状态分叉时使用；原样呈现。",
+    description: "仅无状态分叉时填单条散文建议；没有就填 null。原样呈现。",
   }),
   byStatus: Type.Unknown({
     description:
@@ -28,7 +28,7 @@ export const navigatorAdviceFields = {
   }),
   byRole: Type.Unknown({
     description:
-      "整张路线表：键为衙门角色，值为该衙门 status → 建议。直接入口不给角色时使用。",
+      "仅直接入口不给角色时填整张路线表（键为衙门角色，值为该衙门 status → 建议）；没有就填 null",
   }),
 } as const;
 

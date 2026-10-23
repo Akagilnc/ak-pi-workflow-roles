@@ -6,8 +6,8 @@ import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { test } from "vitest";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";

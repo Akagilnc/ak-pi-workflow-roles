@@ -7,12 +7,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
-import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
 
 const CATCHABLE = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const driverPath = fileURLToPath(

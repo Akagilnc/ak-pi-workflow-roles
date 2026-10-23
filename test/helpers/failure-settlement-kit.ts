@@ -4,21 +4,14 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { terminalBodyAt } from "./run-dossier-fixture.ts";
+import { seedGitRepository } from "./environment-fixtures.ts";
 
 import type {
   ControlledFailureCause,
   TerminalArtifactRef,
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
-
-export async function withTempHome<T>(
-  scenario: (home: string) => Promise<T>,
-  options: { prefix?: string } = {},
-): Promise<T> {
-  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", scenario);
-}
 
 export function captureIo() {
   const stdout: string[] = [];
@@ -38,7 +31,7 @@ export function captureIo() {
 }
 
 export function seedGitProject(root: string): void {
-  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  seedGitRepository(root);
   execFileSync("git", ["config", "user.email", "fail@test.local"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Fail Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });

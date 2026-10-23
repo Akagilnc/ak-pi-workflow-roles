@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -24,7 +24,7 @@ import {
   type AnalystOptionalMetricNumber,
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
-import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, C1_ALPHA_RUN, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, C1_ALPHA_RUN, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /**
  * C1-owned negative: readable earlier + newer terminal-unreadable with later end-frame.

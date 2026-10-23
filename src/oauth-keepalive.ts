@@ -59,19 +59,11 @@ export function readOAuthKeepaliveProviders(
   }
 }
 
-/** Injected interval scheduler (same shape as TrajectoryScheduler). */
-export type OAuthKeepaliveScheduler = {
-  /** Schedule `tick` every `ms` milliseconds; return a cancel function. */
-  every: (ms: number, tick: () => void) => () => void;
-};
-
 export type OAuthKeepaliveOptions = {
   /** Static provider id list; frozen at construction. Default: ["kimi-coding"]. */
   providers?: readonly string[];
   /** Interval between ticks in ms. Default: 60_000. First tick is after one interval. */
   intervalMs?: number;
-  /** Injectable scheduler for tests. Default: setInterval + unref. */
-  scheduler?: OAuthKeepaliveScheduler;
 };
 
 /** Minimal context surface used by keepalive (public extension facade only). */
@@ -95,15 +87,6 @@ export type OAuthKeepaliveContext = {
 export type OAuthKeepalive = {
   start(ctx: OAuthKeepaliveContext): void;
   stop(): void;
-};
-
-const defaultScheduler: OAuthKeepaliveScheduler = {
-  every(ms, tick) {
-    const timer = setInterval(tick, ms);
-    // Allow the process to exit if a caller forgets stop (same discipline as trajectory).
-    timer.unref?.();
-    return () => clearInterval(timer);
-  },
 };
 
 function errorClassName(error: unknown): string {
@@ -148,8 +131,6 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
     (options.providers ?? DEFAULT_OAUTH_KEEPALIVE_PROVIDERS).map((id) => id),
   ) as readonly string[];
   const intervalMs = options.intervalMs ?? OAUTH_KEEPALIVE_INTERVAL_MS;
-  const scheduler = options.scheduler ?? defaultScheduler;
-
   let cancel: (() => void) | undefined;
   let abortController: AbortController | undefined;
   /** Bare single-flight gate; survives stop/start until the in-flight call settles. */
@@ -194,9 +175,9 @@ export function createOAuthKeepalive(options: OAuthKeepaliveOptions = {}): OAuth
       // Reload / re-start: tear down any prior interval before hanging a new one.
       stop();
       abortController = new AbortController();
-      cancel = scheduler.every(intervalMs, () => {
-        void runTick(ctx);
-      });
+      const timer = setInterval(() => { void runTick(ctx); }, intervalMs);
+      timer.unref?.();
+      cancel = () => clearInterval(timer);
     },
     stop,
   };

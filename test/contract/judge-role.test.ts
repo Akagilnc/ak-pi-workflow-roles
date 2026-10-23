@@ -1,10 +1,10 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withActivationHome, createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test, { after, afterEach } from "node:test";
+import { test, afterAll, afterEach } from "vitest";
 
 import { fauxProvider, type AssistantMessage, type JsonObject, type Usage } from "@earendil-works/pi-ai";
 import {
@@ -69,7 +69,6 @@ async function acceptThroughTypedRoundClosure(input: {
   return { sealed: { role: sealed.role, accepted: sealed.accepted }, pending };
 }
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import { createTempPackageHomeLedger, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -108,7 +107,7 @@ async function withInstitutionalRunDir<T>(
 // Parent agent process may inject AK_ROLE_RUN_DIR; isolate this file from that binding.
 const ambientRunDirAtLoad = process.env.AK_ROLE_RUN_DIR;
 delete process.env.AK_ROLE_RUN_DIR;
-after(() => {
+afterAll(() => {
   if (ambientRunDirAtLoad === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = ambientRunDirAtLoad;
 });
@@ -194,7 +193,7 @@ function extensionHarness(
     registerTool(tool: Tool) {
       tools.set(tool.name, tool);
       allToolNames.add(tool.name);
-      // Pi 0.99.1: default direct tools refresh into the active set on register.
+      // Pi: default direct tools refresh into the active set on register.
       const prior = activeToolSets.at(-1) ?? [];
       if (!prior.includes(tool.name)) {
         activeToolSets.push([...prior, tool.name]);
@@ -723,11 +722,11 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const turnPrompt = "Finish the unfinished adapter branch.";
   // Real hook input: a later user turn must replace any earlier dialogue bytes.
   await harness2.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: "stale-prior-turn" },
+    { messageType: "user", systemPrompt: "BASE", prompt: "stale-prior-turn" },
     {},
   );
   await harness2.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: turnPrompt },
+    { messageType: "user", systemPrompt: "BASE", prompt: turnPrompt },
     {},
   );
   const deliveryPrompts: Array<{ customType: string; content: string }> = [];

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { Value } from "typebox/value";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -34,12 +34,9 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { objectPayloads} from "../helpers/terminal-payload.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-cli-", scenario);
-}
 
 test("Inspector public runner preserves typed converged/continue/escalate, and non-three-state reply", async () => {
   await withTempHome(async (home) => {

@@ -17,7 +17,7 @@
  */
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
@@ -26,7 +26,7 @@ import type {
   AnalystCohortOptionalMetric,
   AnalystCohortRoleStats,
 } from "../../src/analyst-cohort.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const ISSUE_201_ROOT = "/analyst-fixture/c2-issue-201";
 const ISSUE_202_ROOT = "/analyst-fixture/c2-issue-202";

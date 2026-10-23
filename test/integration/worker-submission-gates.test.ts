@@ -12,11 +12,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { test } from "vitest";
+import { withPrimaryAwareCleanup, withTempRoot, withOutsideTempRoot, machineLedgerHome, seedGitRepository } from "../helpers/environment-fixtures.ts";
 
 import {
   createWorkerSubmissionGate,
@@ -26,9 +25,6 @@ import {
 import { formatRunLeaf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { parseSitianRecordText } from "../../src/sitian-reader.ts";
 import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
-import {
-  machineLedgerHome,
-} from "../helpers/pi-test-harness.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 
@@ -53,7 +49,7 @@ async function withTempGit<T>(
   return withTempRoot("ak-worker-gate-home-", async (home) => {
     const root = join(home, "repo");
     await mkdir(root, { recursive: true });
-    git(root, ["init", "-b", "main"]);
+    seedGitRepository(root);
     configureGitUser(root);
     if (options?.seed !== false) git(root, ["commit", "--allow-empty", "-m", "seed"]);
     return await fn(root, home);
@@ -138,8 +134,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
   await withTempGit(async (root, home) => {
     // bare non-git arm target must sit outside this worktree's upward Git discovery.
     // Creating seam owns create→use→finally cleanup of this self-created root (#1178).
-    const bare = await mkdtemp(outsideWorktreeTempPrefix("ak-worker-gate-bare-"));
-    try {
+    await withOutsideTempRoot("ak-worker-gate-bare-", async (bare) => {
       const parent = durableParent(home, root);
       const gate = gateWithHome(home);
       gate.arm(root, parent);
@@ -181,9 +176,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         g.arm(unborn, durableParent(unbornHome, unborn));
         assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       }, { seed: false });
-    } finally {
-      await rm(bare, { recursive: true, force: true });
-    }
+    });
   });
 });
 

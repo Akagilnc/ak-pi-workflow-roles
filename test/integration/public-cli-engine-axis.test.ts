@@ -15,7 +15,7 @@ import {
 import assert from "node:assert/strict";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { AK_ROLE_ENGINE_ENV } from "../../src/engine-detour.ts";
 import {
@@ -34,7 +34,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
@@ -69,9 +69,6 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   );
 }
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", scenario);
-}
 
 const credentials = { "openai-codex": true, xai: true } as const;
 

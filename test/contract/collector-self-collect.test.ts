@@ -6,14 +6,14 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 type Handler = (...args: unknown[]) => unknown;
 

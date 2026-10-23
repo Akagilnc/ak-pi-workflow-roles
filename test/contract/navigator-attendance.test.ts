@@ -3,7 +3,7 @@
  * the row by the actual status. Oracles are the structured report, never wording.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createNavigatorAttendance, type NavigatorEvent, type NavigatorSettlement } from "../../src/navigator-attendance.ts";
 import { createNavigatorLookup, NavigatorUnavailableError, type NavigatorLookup } from "../../src/navigator-lookup.ts";

@@ -6,7 +6,8 @@ import { isRecord } from "./unknown-value.ts";
  * 排除按来源、不按正文：说话人自己写下的文字一律原样保留，其中引用了 ADR 段落
  * 或工具结果也不删（#901 Out of Scope「不做正文过滤」）。
  *
- * 不入录的是工具结果载荷、附件记录与注入块——它们是独立的机器事件，不是谁说的话。
+ * 不入录的是工具结果载荷、入队行、请求快照与注入块。附件记录同样不入录，
+ * 只有 `queued_command` 例外：它是被吸收插话的带 uuid 说话记录（#1260）。
  *
  * 适配规则按宿主并列，不硬套某一宿主的类型名；一行产出 0..n 条对话事实。
  */
@@ -108,24 +109,11 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
 }
 
 /**
- * 入队事件适配：人类这次输入经队列的来源。
- * 被吸收的插话靠入队事件入录（无独立消息记录，#901 用户故事 11）。
- * 机器入队由整卷适配层排除（#918）；本函数不读正文、不自判机器。
- */
-function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
-  if (row.type !== "queue-operation" || row.operation !== "enqueue") return [];
-  const content = row.content;
-  if (typeof content !== "string" || content === "") return [];
-  const id = nativeEventId(row);
-  return [{ speaker: "owner", text: content, ...(id === undefined ? {} : { id }) }];
-}
-
-/**
  * 票面 #918 准许的唯一固定起始形状：`<task-notification`。
  * 其它标签不在御裁射程内——不得扩表，不得伪造 decision key / 「陛下拍定」。
  * 开标签后可直接 `>`（无属性）、EOF 或空白再接属性；其它字符不成立。
  *
- * 机器 enqueue 的完整判据＝结构化来源（origin.kind）／本固定形状／真实因果与位置；
+ * 无 origin 的 `queued_command` 只靠本固定形状排除；不得扩表。
  * 用可变载荷正文（全等或子串）做 identity join 仍为锚定宪法所禁。
  */
 const TASK_NOTIFICATION_OPEN_TAG = "<task-notification";
@@ -143,9 +131,20 @@ function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
   );
 }
 
-/** enqueue.content 是否以票面准许的 `<task-notification` 固定开标签起头。 */
-function isFixedNonOwnerEnqueueShape(content: string): boolean {
-  return hasFixedOpenTagPrefix(content, TASK_NOTIFICATION_OPEN_TAG);
+/**
+ * 被吸收的中途插话取 `queued_command` 附件原文（#1260）。
+ * 来源按附件 `origin.kind` 判；缺 origin 就当真人，只排除固定开头。
+ * 入队行不再是来源，本函数不读入队行、不做正文比对。
+ */
+function fromQueuedCommandAttachment(row: Record<string, unknown>): DialogueEvent[] {
+  if (!isRecord(row.attachment) || row.attachment.type !== "queued_command") return [];
+  const kind = materializationOriginKind(row.attachment);
+  if (isNonOwnerOriginKind(kind)) return [];
+  const text = textParts(row.attachment.prompt).join("");
+  if (text === "") return [];
+  if (kind === undefined && hasFixedOpenTagPrefix(text, TASK_NOTIFICATION_OPEN_TAG)) return [];
+  const id = nativeEventId(row);
+  return [{ speaker: "owner", text, ...(id === undefined ? {} : { id }) }];
 }
 
 /**
@@ -172,7 +171,7 @@ function isNonOwnerOriginKind(kind: string | undefined): boolean {
 }
 
 /**
- * 消息事件适配：助手回话，以及未经入队事件记录的人类输入。
+ * 消息事件适配：助手回话，以及 `type=user` 的人类输入。
  * 思考块、工具调用块、工具结果块按块排除；同消息的说话人 text 保留
  * （#901 排除按来源不按正文；混合块不得整条丢弃）。
  * Codex response_item user：仅 `content_item_kinds` 含 `user.*` 时入录。
@@ -199,27 +198,19 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
  *
+ * 说话来源只取 `type=user` 行与 `queued_command` 附件。入队行与 `api-request-blob`
+ * 不投。有原生 id 则带上，不另编。不做正文比对或 id 去重。
  * 物化 user 只消费自身的 typed `origin.kind`：human 保留，具名非 human 排除。
- * enqueue 没有与物化 user 的 typed 关联，故不得以位置把某个 user 来源反扣给它；
- * 仅票面准许的 `<task-notification` 固定形状可直接排除，其余维持既有投影。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): DialogueEvent[][] {
   return rows.map((row) => {
     if (row === undefined) return [];
+    if (row.type === "queue-operation" || row.type === "api-request-blob") return [];
+    if (row.type === "attachment") return fromQueuedCommandAttachment(row);
     const originKind = materializationOriginKind(row);
     if (isNonOwnerOriginKind(originKind)) return [];
-    if (
-      row.type === "queue-operation" &&
-      row.operation === "enqueue" &&
-      typeof row.content === "string" &&
-      isFixedNonOwnerEnqueueShape(row.content)
-    ) {
-      return [];
-    }
-    const queued = fromQueueEvent(row);
-    if (queued.length > 0) return queued;
     return fromMessageEvent(row);
   });
 }

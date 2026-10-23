@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -24,8 +24,8 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
-  withTempHome,
   captureIo,
   seedGitProject,
   assertPublicFailureSettlement,

@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   sitianReport,
@@ -21,7 +21,7 @@ import {
 import {
   seedGitRepository,
   withHermeticHome,
-} from "../helpers/pi-test-harness.ts";
+} from "../helpers/environment-fixtures.ts";
 
 test("Sitian facade: Layout supports three levels, usage, raw pointer, and no destination parameter", async () => {
   await withHermeticHome({ prefix: "ak-sitian-layout-" }, async ({ home }) => {

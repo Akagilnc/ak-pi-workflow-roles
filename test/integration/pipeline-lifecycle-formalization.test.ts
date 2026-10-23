@@ -1,9 +1,9 @@
 import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";

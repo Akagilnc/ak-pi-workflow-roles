@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -12,7 +12,7 @@ import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { historyPayloads, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {

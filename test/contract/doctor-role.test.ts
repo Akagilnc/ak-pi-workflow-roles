@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
+import { afterAll, test } from "vitest";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 
 // #604 F1: session/cwd must sit under temp `.ak-roles` so sitian path-derive never
 // falls through to the real machine home (bare `/case` wrote books/case).
@@ -12,7 +12,7 @@ const doctorLedger = createTempPackageHomeLedger({
   prefix: "ak-doctor-role-",
   runName: "contract@doctor",
 });
-test.after(() => doctorLedger.dispose());
+afterAll(() => doctorLedger.dispose());
 
 const zero = { count: 0, sources: [] }; const patient: DoctorCase = { version: 1, identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" }, evidence: [{ id: "review/session/live.jsonl", kind: "session", byteLength: 6, contentLength: 2, sha256: "abc", content: "中文" }], cost: { invocations: zero, legs: zero, modelApiTurns: zero, outputTokens: zero, toolCalls: zero, retries: { ...zero, evidence: "literal run-dir naming" }, statuses: [], commits: [], sessions: [], outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" } } };
 function harness() {

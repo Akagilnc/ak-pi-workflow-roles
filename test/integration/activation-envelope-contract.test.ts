@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
-  mkdtempSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -10,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import test, { afterEach } from "node:test";
+import { afterEach, test as base } from "vitest";
 import {
   ActivationGitRepositoryRequiredError,
   durableSessionPointer,
@@ -18,22 +17,21 @@ import {
 } from "../../src/role-runtime.ts";
 import {
   activationBookKeyFor,
-  machineLedgerHome,
   persistActivationSessionFile,
-  withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { environmentFixtures, machineLedgerHome, seedGitRepository, withActivationHome, withTempRoot } from "../helpers/environment-fixtures.ts";
+
+const test = base.extend(environmentFixtures);
 
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
 
-test("book key follows git common-dir host basename across worktrees, rename, and basename collision", async () => {
+test("book key follows git common-dir host basename across worktrees, rename, and basename collision", async ({ outsideDir: nonGit }) => {
   return await withTempRoot("ak-book-topo-", async (root) => {
     const main = join(root, "project-alpha");
     mkdirSync(main);
-    execFileSync("git", ["init", "-b", "main"], { cwd: main, stdio: "ignore" });
+    seedGitRepository(main);
     execFileSync("git", ["commit", "--allow-empty", "-m", "init"], {
       cwd: main,
       stdio: "ignore",
@@ -51,14 +49,12 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     const twin = join(root, "collision", "project-beta");
     mkdirSync(join(root, "collision"), { recursive: true });
     mkdirSync(twin);
-    execFileSync("git", ["init", "-b", "main"], { cwd: twin, stdio: "ignore" });
+    seedGitRepository(twin);
     assert.equal(resolveBookKeyFromGit(twin), "project-beta");
     assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
 
-    // Non-git cwd must loudly reject even when GIT_DIR points at another repository.
-    // Isolation root must sit outside this worktree's upward Git discovery; outside
-    // named root is not deleted (owner 2026-09-06 directory boundary).
-    const nonGit = mkdtempSync(outsideWorktreeTempPrefix("ak-book-topo-nongit-"));
+    // Non-git cwd (outside this worktree's upward Git discovery) must loudly reject
+    // even when GIT_DIR points at another repository.
     const previousGitDir = process.env.GIT_DIR;
     const previousGitCommon = process.env.GIT_COMMON_DIR;
     const previousGitWorkTree = process.env.GIT_WORK_TREE;
@@ -86,11 +82,8 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     });
 });
 
-test("git spawn infrastructure failures retain identity and do not masquerade as non-git", async () => {
+test("git spawn infrastructure failures retain identity and do not masquerade as non-git", async ({ outsideDir: nonGitCwd }) => {
   return await withTempRoot("ak-book-infra-", async (root) => {
-    // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
-    // Second acquire stays inside try so a failure still hits root's finally.
-    const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
     // Empty PATH makes spawn of `git` fail with ENOENT — infrastructure, not non-git cwd.

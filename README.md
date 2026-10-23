@@ -138,6 +138,18 @@ ak-role analyst
 ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 ```
 
+## Tests
+
+Tests run on Vitest ([ADR 0090](docs/adr/0090-tests-run-on-vitest-fixtures-and-helpers-from-the-platform.md)). `pnpm test` runs the unit and contract projects, including root-level tests. `pnpm test:all` runs all three projects. `pnpm test:integration` runs the integration project. For a focused run:
+
+```bash
+pnpm exec vitest run --project unit-contract
+pnpm exec vitest run --project integration test/integration/public-cli-bin-startup.test.ts
+pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts
+```
+
+Progress uses the dot reporter; the full structured report is `.vitest/results.json`.
+
 ## Names
 
 Roster: [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md). Naming rule: [ADR 0051](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0051-roles-are-named-after-tang-song-offices.md).

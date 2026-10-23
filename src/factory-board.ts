@@ -35,8 +35,6 @@ import {
   renderTicketTrajectoryStationHtml,
   type TicketTrajectoryBookIndex,
   type TicketTrajectoryRun,
-  type TrajectoryClock,
-  type TrajectoryScheduler,
   type UnboundTrajectoryRun,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
@@ -49,10 +47,6 @@ export const UNACCEPTED_WATCH_MS = 15 * 60 * 1000;
 
 /** Same declared refresh bound as the S1 trajectory surface (seconds). */
 export { DEFAULT_REFRESH_BOUNDARY_SECONDS };
-
-/** Injected clock + scheduler for the production board lifecycle. */
-export type FactoryBoardClock = TrajectoryClock;
-export type FactoryBoardScheduler = TrajectoryScheduler;
 
 export type FactoryBoardPageHandle = {
   readonly outputPath: string;
@@ -1680,14 +1674,6 @@ export async function writeFactoryBoardPage(input: {
   return { outputPath, html };
 }
 
-const defaultBoardScheduler: FactoryBoardScheduler = {
-  every(ms, tick) {
-    const timer = setInterval(tick, ms);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  },
-};
-
 /**
  * Production board lifecycle: write immediately, then regenerate on the declared
  * refresh boundary so the same viewing surface observes new runs / generated-at.
@@ -1706,8 +1692,6 @@ export function startFactoryBoardPage(input: {
   loadView?: () => Promise<FactoryBoardView>;
   outputPath: string;
   refreshBoundarySeconds?: number;
-  clock?: FactoryBoardClock;
-  scheduler?: FactoryBoardScheduler;
 }): FactoryBoardPageHandle {
   const refreshBoundarySeconds = input.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
   if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
@@ -1716,8 +1700,6 @@ export function startFactoryBoardPage(input: {
   if (input.view === undefined && input.loadView === undefined) {
     throw new Error("view or loadView is required");
   }
-  const clock = input.clock ?? (() => new Date());
-  const scheduler = input.scheduler ?? defaultBoardScheduler;
 
   let stopped = false;
   let cancel: (() => void) | undefined;
@@ -1759,7 +1741,7 @@ export function startFactoryBoardPage(input: {
     return writeFactoryBoardPage({
       books: input.books,
       view,
-      now: clock(),
+      now: new Date(),
       outputPath: input.outputPath,
       refreshBoundarySeconds,
     });
@@ -1781,9 +1763,9 @@ export function startFactoryBoardPage(input: {
     .then((first) => {
       if (stopped || lastRejection !== undefined) return first;
       const intervalMs = Math.max(1, Math.round(refreshBoundarySeconds * 1000));
-      cancel = scheduler.every(intervalMs, () => {
-        queueWrite();
-      });
+      const timer = setInterval(queueWrite, intervalMs);
+      timer.unref?.();
+      cancel = () => clearInterval(timer);
       return first;
     })
     .catch((error) => {

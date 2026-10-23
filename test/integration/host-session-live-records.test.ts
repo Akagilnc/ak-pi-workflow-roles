@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
@@ -16,7 +16,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 const description: HeadlessHostDescription = Object.freeze({

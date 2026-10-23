@@ -1,4 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 /**
  * #413 r2 finding contracts (U1 + U3 counter-evidence).
  *
@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import {
@@ -28,7 +28,6 @@ import {
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----

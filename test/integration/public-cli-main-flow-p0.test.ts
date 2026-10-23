@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -17,11 +17,8 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import {
-  captureIo,
-  seedGitProject,
-  withTempHome,
-} from "../helpers/failure-settlement-kit.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,

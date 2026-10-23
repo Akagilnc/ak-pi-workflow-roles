@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { randomUUID } from "node:crypto";
 
 import { createNavigatorLookup } from "../../src/navigator-lookup.ts";
@@ -25,7 +25,8 @@ import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { packageRoot, seedRoleRepo, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedRoleRepo, waitForEventLoopCondition } from "../helpers/pi-test-harness.ts";
+import { withActivationHome } from "../helpers/environment-fixtures.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,

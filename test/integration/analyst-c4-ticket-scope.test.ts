@@ -10,11 +10,11 @@
  * Assert only through sole entry runAnalyst — no second parse kernel.
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 /** Issue primary root — legacy path-narrow / display face. */
 const ISSUE_PRIMARY = "/analyst-fixture/c4-issue-primary";

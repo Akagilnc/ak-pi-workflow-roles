@@ -10,11 +10,10 @@
 import assert from "node:assert/strict";
 import { cp, link, lstat, mkdir, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { afterEach, test, vi } from "vitest";
 import { fileURLToPath } from "node:url";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { treeFingerprint } from "../helpers/factory-board-shared.ts";
-import { manualScheduler } from "../helpers/manual-scheduler.ts";
 import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
@@ -25,6 +24,8 @@ import {
   type TicketSnapshot,
 } from "../../src/ticket-trajectory.ts";
 import { elementsWith } from "../helpers/factory-board-shared.ts";
+
+afterEach(() => { vi.useRealTimers(); });
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
@@ -324,16 +325,14 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     const before = await treeFingerprint(ledgerCopy);
     const outputPath = join(workspace, "out", "live.html");
 
-    let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-    const { scheduler, ticks } = manualScheduler();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-08-05T16:00:00.000Z"));
 
     const handle = startTicketTrajectoryPage({
       ledgerDir: ledgerCopy,
       ticketSnapshot: { issueNumber: 127 },
       outputPath,
       refreshBoundarySeconds: 1,
-      clock: () => new Date(nowMs),
-      scheduler,
     });
 
     const first = await handle.started;
@@ -347,7 +346,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     );
     assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:00.000Z");
     assert.equal(elementsWith(html, "data-run-id").length, 6);
-    assert.equal(ticks.length, 1, "lifecycle arms a real scheduler tick");
+    assert.equal(vi.getTimerCount(), 1, "lifecycle arms a real interval");
 
     // New run arrives in the ledger (copy of an authentic accepted run under a new id).
     const srcRun = join(ledgerCopy, "issues/127/runs/coder-plan-001@ak-roles-127");
@@ -355,29 +354,26 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     await cp(srcRun, newRun, { recursive: true });
     const afterAdd = await treeFingerprint(ledgerCopy);
 
-    // Advance clock and fire the production scheduler tick (not a manual second render call).
-    nowMs = Date.parse("2026-08-05T16:00:10.000Z");
-    ticks[0]!();
-    await new Promise((r) => setTimeout(r, 50));
-    for (let i = 0; i < 20; i += 1) {
+    // Advance the production interval; wait only for filesystem work, not wall-clock ticks.
+    vi.setSystemTime(new Date("2026-08-05T16:00:09.000Z"));
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitUntil(async () => {
       html = await readFile(outputPath, "utf8");
-      if (elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z") break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+      return elementsWith(html, "data-generated-at")[0]?.["data-generated-at"] === "2026-08-05T16:00:10.000Z";
+    });
     assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:10.000Z");
     assert.ok(elementsWith(html, "data-run-id").some((r) => r["data-run-id"] === "coder-apply-001@ak-roles-127"));
     assert.equal(elementsWith(html, "data-run-id").length, 7);
 
     // Stop — further ticks must not rewrite the page.
     await handle.stop();
-    assert.equal(ticks.length, 0, "stop cancels scheduler");
+    assert.equal(vi.getTimerCount(), 0, "stop cancels interval");
     const frozen = await readFile(outputPath, "utf8");
     const frozenAt = elementsWith(frozen, "data-generated-at")[0]?.["data-generated-at"];
     assert.equal(frozenAt, "2026-08-05T16:00:10.000Z");
 
-    nowMs = Date.parse("2026-08-05T16:00:20.000Z");
-    assert.equal(ticks.length, 0);
-    await new Promise((r) => setTimeout(r, 30));
+    await vi.advanceTimersByTimeAsync(10_000);
+    assert.equal(vi.getTimerCount(), 0);
     assert.equal(await readFile(outputPath, "utf8"), frozen);
 
     // Lifecycle only wrote outside; ledger changed only by the test's explicit run copy.
@@ -485,27 +481,24 @@ test("post-start regeneration failure faults the lifecycle with the original cau
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
     const outputPath = join(workspace, "out", "live.html");
 
-    let nowMs = Date.parse("2026-08-05T18:00:00.000Z");
-    const { scheduler, ticks } = manualScheduler();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-08-05T18:00:00.000Z"));
 
     const handle = startTicketTrajectoryPage({
       ledgerDir: ledgerCopy,
       ticketSnapshot: { issueNumber: 127 },
       outputPath,
       refreshBoundarySeconds: 1,
-      clock: () => new Date(nowMs),
-      scheduler,
     });
 
     await handle.started;
-    assert.equal(ticks.length, 1);
+    assert.equal(vi.getTimerCount(), 1);
 
     // Force a post-start write failure: replace the output path with a directory.
     await rm(outputPath, { force: true });
     await mkdir(outputPath);
 
-    nowMs = Date.parse("2026-08-05T18:00:10.000Z");
-    ticks[0]!();
+    await vi.advanceTimersByTimeAsync(1000);
 
     // closed must reject with the original cause (not hang / not resolve clean).
     const closedError = await new Promise<unknown>((resolve, reject) => {
@@ -522,7 +515,7 @@ test("post-start regeneration failure faults the lifecycle with the original cau
       );
     });
     assert.ok(closedError instanceof Error, "fault retains an Error cause");
-    assert.equal(ticks.length, 0, "fault cancels further regeneration");
+    assert.equal(vi.getTimerCount(), 0, "fault cancels further regeneration");
 
     // stop surfaces the same original cause — no silent success.
     await assert.rejects(() => handle.stop(), (error: unknown) => error === closedError);

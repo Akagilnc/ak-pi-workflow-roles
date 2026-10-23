@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { AK_ROLE_ENGINE_ENV, resolveEngineName } from "../../src/engine-detour.ts";
 import type { RoleHost } from "../../src/host-contracts.ts";

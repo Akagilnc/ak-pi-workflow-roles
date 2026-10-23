@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   activationBookDirectory,
@@ -20,10 +20,10 @@ import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/c
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withHermeticHome, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 

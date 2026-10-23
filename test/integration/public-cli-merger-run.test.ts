@@ -1,4 +1,4 @@
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer: host-neutral multi-submission
@@ -9,9 +9,9 @@ import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { afterAll, test } from "vitest";
 
-test.after(() => { process.exitCode = undefined; });
+afterAll(() => { process.exitCode = undefined; });
 
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";

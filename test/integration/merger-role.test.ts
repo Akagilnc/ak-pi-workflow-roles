@@ -2,16 +2,16 @@
 // docs/research/issue-685-c3-deleted-contract-handoff.md §C.
 // #827: activation needs no Git state.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { createPiRoleRuntimeExtension, createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { activationExtensionContext, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { activationExtensionContext } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withHermeticHome } from "../helpers/environment-fixtures.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -28,7 +28,7 @@ test("role extension activates Merger without Git state dependency", async () =>
     createPiRoleRuntimeExtension({ loadRoleSoul: async (role) => role === "merger" ? "MERGER LAW" : "unused", loadMergerInput: async () => input })(h.pi as unknown as ExtensionAPI);
     const repoA = join(home, "repository-a");
     mkdirSync(repoA, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: repoA, stdio: "ignore" });
+    seedGitRepository(repoA);
     await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoA, home }));
     assert.equal([...h.tools.keys()].includes(MERGER_OUTPUT_TOOL_NAME), true);
   });

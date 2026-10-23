@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   runAkRole,
@@ -20,13 +20,10 @@ import {
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-config-", scenario);
-}
 
 test("command-local model/thinking overrides do not rewrite persistent configuration", async () => {
   await withTempHome(async (home) => {

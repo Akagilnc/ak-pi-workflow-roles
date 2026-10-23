@@ -286,7 +286,7 @@ export function courtAttemptIdFromHostContext(context: HostContext): string | un
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; };
 
-type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions: { skills?: readonly unknown[]; contextFiles?: readonly unknown[]; appendSystemPrompt?: string } };
+type BeforeAgentStartEvent = { prompt?: string; systemPrompt: string; systemPromptOptions: { skills?: readonly unknown[]; contextFiles?: readonly unknown[]; appendSystemPrompt?: string } };
 type InputEvent = { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }>; source?: string };
 type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> };
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };

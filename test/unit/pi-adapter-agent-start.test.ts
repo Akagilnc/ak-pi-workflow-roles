@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -145,7 +145,9 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
       };
     },
   });
+  let seenEvent: object | undefined;
   adapter.host.on("before_agent_start", (event) => {
+    seenEvent = event;
     seenPrompt = event.prompt;
     return {};
   });
@@ -179,10 +181,24 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
   let systemPrompt = "BASE";
   for (const startHandler of startHandlers) {
     const result = await startHandler(
-      { prompt: collision, systemPrompt, systemPromptOptions: {} },
+      { messageType: "user", prompt: collision, systemPrompt, systemPromptOptions: {} },
       startCtx,
     );
     if (result?.systemPrompt !== undefined) systemPrompt = result.systemPrompt;
   }
   assert.equal(seenPrompt, collision);
+
+  // Pi < 1.2 sends no messageType; the prompt must still reach the role.
+  seenPrompt = undefined;
+  for (const startHandler of startHandlers) {
+    await startHandler({ prompt: collision, systemPrompt: "BASE", systemPromptOptions: {} } as never, startCtx);
+  }
+  assert.equal(seenPrompt, collision);
+  // Pi >= 1.2 custom runs (receipt-delivery nudges) carry no prompt; nothing is passed.
+  seenPrompt = "unchanged";
+  for (const startHandler of startHandlers) {
+    await startHandler({ messageType: "custom", systemPrompt: "BASE", systemPromptOptions: {} } as never, startCtx);
+  }
+  assert.equal(seenPrompt, undefined);
+  assert.equal(Object.hasOwn(seenEvent!, "prompt"), false);
 });

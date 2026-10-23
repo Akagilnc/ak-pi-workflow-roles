@@ -132,6 +132,10 @@ ak-role analyst
 ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 ```
 
+## 测试
+
+聚焦命令与报告位置见 [Tests](README.md#tests)。
+
 ## 班子（唐宋官署命名）
 
 名号判据、朝廷对应与机器键边界见 [ADR 0051](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0051-roles-are-named-after-tang-song-offices.md)。下表为名号索引。

@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
@@ -31,13 +31,10 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-merger-", scenario);
-}
 
 function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
   return admitPublicRole("merger", {

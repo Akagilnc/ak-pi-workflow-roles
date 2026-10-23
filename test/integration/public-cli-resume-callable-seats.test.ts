@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -42,13 +42,10 @@ import {
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-resume-four-seats-", scenario);
-}
 
 
 

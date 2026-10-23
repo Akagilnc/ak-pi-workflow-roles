@@ -12,7 +12,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
@@ -26,12 +26,9 @@ import {
 import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  return withTempRoot("ak-422-", fn);
-}
 
 function failingJudgeRunner(callsRef:{n:number}){
   return async(args:readonly string[])=>{

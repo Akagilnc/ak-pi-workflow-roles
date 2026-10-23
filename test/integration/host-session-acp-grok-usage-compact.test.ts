@@ -9,14 +9,14 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 type Ledger = ReturnType<typeof createTempPackageHomeLedger>;

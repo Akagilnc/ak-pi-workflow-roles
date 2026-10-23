@@ -9,13 +9,11 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-
-import { materializePackageTree } from "../helpers/pi-test-harness.ts";
+import { test } from "vitest";
+import { withTempRoot, materializePackageTree } from "../helpers/environment-fixtures.ts";
 
 const execFileAsync = promisify(execFile);
 

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { appendSitianRecord } from "../../src/sitian-appender.ts";
 import {
@@ -11,7 +11,7 @@ import {
 import {
   seedGitRepository,
   withHermeticHome,
-} from "../helpers/pi-test-harness.ts";
+} from "../helpers/environment-fixtures.ts";
 
 
 test("ADR 0086: Sitian volume write failures still throw SitianInfrastructureError (durable failure honesty)", async () => {

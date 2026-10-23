@@ -39,7 +39,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
-      - run: pnpm run test:all
+      - run: pnpm exec vitest run
         env:
           AK_LEGACY_CASE_A_LIVE_SOURCE: "0"
           GH_TOKEN: ${{ github.token }}

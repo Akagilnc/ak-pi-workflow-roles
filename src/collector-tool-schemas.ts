@@ -14,7 +14,7 @@ export const collectorOutputBaseSchema = openToolObject(
         "按机器身份归组的出席、材料与逐条 findings（LLM 自行从宿主 CLI 取证整理；代码不代收不归并）。",
     }),
     unfinishedReasons: Type.Unknown({
-      description: "未完成原因；取证受限时如实报告。",
+      description: "仅取证受限时填未完成原因；没有就填 null",
     }),
   }),
 );

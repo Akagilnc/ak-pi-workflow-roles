@@ -22,7 +22,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -33,12 +33,9 @@ import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-coder-", scenario);
-}
 
 test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
   await withTempHome(async (home) => {

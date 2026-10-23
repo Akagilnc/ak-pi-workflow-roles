@@ -9,10 +9,9 @@
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
-import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import { OFFICER_POINTER_RECORD_KIND } from "../../src/archivist-record-pointer.ts";
@@ -38,7 +37,7 @@ import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedRoleRepo as seedGitProject } from "../helpers/pi-test-harness.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedGitRepository, withTempRoot } from "../helpers/environment-fixtures.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -295,7 +294,7 @@ test("#879 repeated notary summons retain their own terminal payloads", async ()
 
 test("#879 court-scoped settlement: this-court outcome; empty scope court yields no outcome; history on submissions", async () => {
   await withTempRoot("ak-court-scope-settlement-", async (root) => {
-    execFileSync("git", ["init", "-q", root]);
+    seedGitRepository(root);
     const runId = "run-ledger";
     const runDir = join(root, ".ak-roles", "books", "test-book", "runs", `${runId}@notary`);
     const sessionDirectory = join(runDir, "session");

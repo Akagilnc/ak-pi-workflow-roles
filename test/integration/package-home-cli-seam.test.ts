@@ -1,4 +1,4 @@
-import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot, withPrimaryAwareCleanup, withTestUserProfileEnv, testExeca as execa } from "../helpers/environment-fixtures.ts";
 /**
  * #604 acceptance: production CLI home does not follow process.env.HOME.
  * Real entry (runAkRole) + disk observation — mid-size integration seam.
@@ -7,11 +7,9 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { test } from "vitest";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
-import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI_MODULE = new URL("../../src/public-cli/cli.ts", import.meta.url).href;
@@ -47,7 +45,7 @@ test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async 
  */
 test("unavailable user profile: help succeeds; home-needing command settles non-zero", async () => {
   const env = withTestUserProfileEnv({ ...process.env }, { mode: "unavailable" });
-  const result = await runTestSubprocess(
+  const result = await execa(
     process.execPath,
     [
       "--import",
@@ -74,11 +72,10 @@ test("unavailable user profile: help succeeds; home-needing command settles non-
     {
       cwd: process.cwd(),
       env,
-      timeoutMs: 15_000,
-      owner: "package-home-cli-no-passwd",
+      timeout: 15_000,
     },
   );
-  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.exitCode, 0, result.stderr);
   const body = JSON.parse(result.stdout.trim()) as {
     help: { exitCode: number | null; threw: boolean };
     roles: { exitCode: number | null; threw: boolean };

@@ -8,11 +8,12 @@
 import assert from "node:assert/strict";
 import {
   mkdir,
+  readdir,
   readFile,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -22,9 +23,9 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, snapshotAnalystDir, withTempHome } from "../helpers/analyst-fixture-kit.ts";
+import { ANALYST_ISSUE_DEMO as ISSUE_DEMO, C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ISSUE_BETA as ISSUE_BETA, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -93,7 +94,6 @@ test("analyst public CLI sweep: one typed attach → pages+index match runAnalys
 test("analyst public CLI sweep reject classes: typed envelope + zero writes", async () => {
   await withSweepFixture(async ({ home, ledgerHome, attachDir }) => {
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
-    const before = await snapshotAnalystDir(ledgerHome);
 
     const validPath = join(attachDir, "valid.json");
     await writeFile(validPath, `${JSON.stringify(VALID_SWEEP_INPUT)}\n`);
@@ -183,11 +183,7 @@ test("analyst public CLI sweep reject classes: typed envelope + zero writes", as
       const { io } = captureIo();
       const result = await runAkRole([...entry.argv], { packageRoot, home, io });
       assert.equal(result.exitCode, 2, entry.name);
-      assert.deepEqual(
-        [...(await snapshotAnalystDir(ledgerHome)).entries()].sort(),
-        [...before.entries()].sort(),
-        entry.name,
-      );
+      assert.deepEqual(await readdir(join(ledgerHome, "analyst")), [], entry.name);
     }
 
     const acceptedExtras: readonly { name: string; body: unknown }[] = [

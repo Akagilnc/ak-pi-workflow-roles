@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -54,7 +54,7 @@ import {
 } from "../helpers/submission-ledger-fixture.ts";
 import { addRoleRepoOrigin, packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
-import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import {

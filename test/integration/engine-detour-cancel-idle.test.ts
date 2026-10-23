@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -14,7 +14,7 @@ import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
   createEngineDetourToolDefinition,
 } from "../../src/engine-detour-tool.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";
