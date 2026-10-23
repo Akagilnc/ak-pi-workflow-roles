@@ -34,8 +34,11 @@ import {
 } from "./submission-ledger-fixture.ts";
 
 /** Non-navigator probes must not leave a background lookup writing into a disposed temp home (#959). */
-export function roleRuntimeDependenciesWithoutNavigator(root: string) {
-  const dependencies = createRoleRuntimeDependencies(root);
+export function roleRuntimeDependenciesWithoutNavigator(
+  root: string,
+  createDependencies = createRoleRuntimeDependencies,
+) {
+  const dependencies = createDependencies(root);
   delete dependencies.createNavigatorAttendance;
   return dependencies;
 }

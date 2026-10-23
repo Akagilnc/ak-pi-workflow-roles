@@ -10,6 +10,7 @@
  * reads the returned terminal, and mints. Host-B's first binary request is
  * therefore the new run's initial, not a resume argv.
  */
+import "../helpers/production-host-without-navigator.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";

@@ -1,3 +1,4 @@
+import "../helpers/production-host-without-navigator.ts";
 import assert from "node:assert/strict";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";

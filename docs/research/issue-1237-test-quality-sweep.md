@@ -126,7 +126,7 @@
 | `test/integration/public-cli-failure-settlement.test.ts` | D/C/M | 改：既有零 dispatch/零 admission 的结构性错误表接住非 repeatable option 重复；第三轮删两处 `stdout.length === 1` 写入次数锁，保 exitCode、Terminal、payload 结构化断言（两案均 accepted，交付观察由 `test/integration/public-cli-judge.test.ts:294`、`:386` 承接；失败案经共享 kit 观察 stdout/stderr 交付）；拒收表的「零写入／有诊断」不锁分块数，留。其余实际 failure/Terminal 分支保留。第八轮整卷复扫：未命中。第十二轮账：a/C 2。无未证 null。 |
 | `test/integration/public-cli-fixer.test.ts` | D/S | 改：低层 admission 重复案合入既有公开 opaque prerequisites 表（含 bad-grammar），删除本地孤儿 helper/旧字段哨兵；保公开 opaque prerequisites、phase、restore、声明 prerequisite_unmet 与各合法交卷状态。第七轮（R6-A）：再删漏下的一处 `"packetPath" in admitted === false` 及类型注解里随之无用的 `packetPath`/`prerequisites` 字段。第八轮整卷复扫：未命中。第十二轮账：a/D 10、a/M 1、a/S 13、仍在 1。无未证 null。 |
 | `test/integration/public-cli-gleaner-left-run.test.ts` | S/D | 改：`:90` 从真实 structured-output 收卷走到 Terminal，比原参数，覆盖 completed/bounce/pass/无 status；第三轮删 `--bogus` 未知旗解析重复（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），必填 `--base` 解析案独有，留；其余 base、非空弹章、resume 失败路径仍留。第八轮整卷复扫：未命中。第十二轮账：a/D 6、仍在 5。无未证 null。 |
-| `test/integration/public-cli-host-axis.test.ts` | S | 改（第八轮整卷复扫，原判留）：删三族宿主 prompt 不以 `/skill:` 开头（`42c7b2d3` 后零产出）与 judge run 下无 `*-home` 子目录（#717 `ce69787d` 已撤 run 级 grok home）四处哨兵；prompt 含原话、planned 回执、HOME 继承等结构化断言留，#822 案名改为陈述所留行为。第十二轮账：a/S 5。无未证 null。 |
+| `test/integration/public-cli-host-axis.test.ts` | S | 第二十二轮复审 R23-A：默认生产 host 间接装配不接无关 attendance，保真实 adapter、默认选择及拒绝分支，见文末补扫账。此前：改（第八轮整卷复扫，原判留）：删三族宿主 prompt 不以 `/skill:` 开头（`42c7b2d3` 后零产出）与 judge run 下无 `*-home` 子目录（#717 `ce69787d` 已撤 run 级 grok home）四处哨兵；prompt 含原话、planned 回执、HOME 继承等结构化断言留，#822 案名改为陈述所留行为。第十二轮账：a/S 5。无未证 null。 |
 | `test/integration/public-cli-instruction-seat.test.ts` | D | 改（第八轮整卷复扫，原判留）：表内 dispatch 行与 pass 行同结论（门下省回执原样进 terminal），删 dispatch 行第十二轮账：a/D 2。无未证 null。 |
 | `test/integration/public-cli-judge.test.ts` | D/M/S | 改：删两条直接解析案——未知旗与空 `--project`/`--project=` 重复公开拒收表（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），附件/project 正向重复 `test/integration/public-cli-attach-path-passthrough.test.ts:46`；独有的位置参数拼接、空白 `--project`、缺值 `--attach` 移入 `test/unit/public-cli-argv-parsers.test.ts:8`。删两处 `stdout.length === 1` 写入次数锁，改整段 stdout 非空（`:294`、`:386`，即 accepted 交付观察）。保公开 Judge decisionGate、结构拒收、audit no_receipt 和空请求不发明任务。第七轮（R6-A）：删 internal 激活 argv 不含 `burden` 的断言（src 只在公开拒收拼写里认 burden，internal argv 无产出路径）；公开 burden 拒收仍由拒收表守。第八轮整卷复扫：未命中。第十二轮账：a/D 9、a/S 2、a/C 4。无未证 null。 |
 | `test/integration/public-cli-known-ticket-placement.test.ts` | B | 留：公开已知 ticket 对所有席的落盘位置，不用目录猜 ticket。第八轮整卷复扫：未命中。 |
@@ -143,6 +143,7 @@
 | `test/integration/public-cli-resume.test.ts` | S/T | 改：删 resume-continue 哨兵；quota prose 案验证宿主原 diagnostic、cause 缺席，不凭文案分类；保公开 exact principal、模型覆盖/继承、publication 恢复、lease 失败及 opaque ruling。第七轮（R6-A）：再删 live run 目录下 `attachments` 不存在（#1165 起不再拷附件，src 无建此目录的路径）；admitted 原样路径断言留。第八轮整卷复扫：未命中。第十二轮账：a/S 2、a/T 1、仍在 1。无未证 null。 |
 | `test/integration/public-cli-reviewer.test.ts` | D/S | 改：解析案删未知旗与空 `--project` 重复（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），并删文件内同一条 inline prose 拒收的第一份（保留带齐其余前置的那份）；`--base`/`--lens`/`--authority-ref` 语法与 reviewer 不收 `--attach` 是独有边界，留。公开双 lens/single lens、失败 sibling 保留、scope 与 same session 留。第七轮（R6-A）：删三处 `--ak-review-task` 缺席（#236 已撤）与 admitted 上 `taskPath`/`taskSha256` 缺席（src 零命中）；`--ak-station-child` 缺席是在役旗的分支辨别，留。第八轮整卷复扫（D/S）：删 project 下无 `docs` 目录（src 无写 docs 的路径）与 resume 对话不含 `/skill:`（紧前一句已断言等于原话，且零产出）；解析案删「省略 lens 即双轴」的正向 deepEqual（同文件「default dual-lens admits both axes」经 runAkRole 同结论），拒收语法与各拼写留，案名随之改。第十二轮账：a/D 5、a/S 7。无未证 null。 |
 | `test/integration/public-cli-same-ticket-resume.test.ts` | S | 第二十二轮 R23-A：工人恢复装配不接生产 attendance，见末节逐项账。此前：改：删退役 officer-pointer 哨兵；保公开 re-summon/new/manual resume 的不同身份与审官继续路径，非 ticket 相等就猜 session。第七轮（R6-A）：再删两处 run 目录 `attachments` ENOENT（同上，无生产者）；admitted 原样路径与外部原件可变留。第八轮整卷复扫：未命中。第十二轮账：a/S 3。无未证 null。 |
+| `test/integration/public-cli-session-missing-fresh-summons.test.ts` | B | 第二十二轮复审 R23-A 同类邻接文件：沿默认生产 host 间接装配省略无关 attendance，保同/跨 host 恢复、new-run 及原失败断言；无新增删除账项，见文末补扫账。 |
 | `test/integration/public-cli-seat-pipeline.test.ts` | B | 留：真实 public route/提交/report 与 diarist/countersign 二次 summons 不偷续前 run；非配置表自比对。第八轮整卷复扫：未命中。 |
 | `test/integration/public-cli-seat-self-ticket.test.ts` | B | 留：typed 票号声明才归位，纯文本不推票号，malformed declaration 不拒原卷。第八轮整卷复扫：未命中。 |
 | `test/integration/public-cli-secretariat-run.test.ts` | D/S | 第二十二轮 R23-A：工具及 adapter 两装配不接生产 attendance，见末节逐项账。此前：改：三宿主既有表并入 converged/escalate 原回执及零 nested gate 断言，删伪重复宿主案承接的空结论；保公开中书省→diarist/countersign/notary 链、escalation 与 host failure，不按文本判结论。第七轮（R6-A）：删四案中 `decisiveFacts.countersignTerminal`/`notaryTerminal === undefined`（#1195 `1ea12daa` 已撤他席终局投影，src 零产出）；各案 role/kind 与原回执正向断言留。第八轮整卷复扫：未命中。第十二轮账：a/D 5、a/S 7。无未证 null。 |
@@ -876,9 +877,9 @@ rg -n 'capturePreparedEnvelope|roleTurnHostFromStructuredOutputRounds' test --gl
 rg -n 'createRoleRuntimeDependencies|createNavigatorAttendance|prepareRoleEnvelope|roleRuntimeDependenciesWithoutNavigator' src extensions --glob '*.ts'
 ```
 
-从生产依赖构造器、直接 attendance 构造和 envelope/adapter 入口反向查调用者，不按判词文件白名单。辅助扫描里的 rm 包括缓存/故障注入/普通 ledger 清理，不等于 navigator 写口；headless/ACP 其余测试均在 prepare 注入返回值，没有生产 envelope；Pi legacy runner 接缝只跑脚本化边界，不加载真实 extension。extensions 与生产 composition roots 没有被本轮改写。
+本轮初次扫描覆盖直接 attendance 构造和 envelope/helper 入口，但漏了默认 host 延迟装配。复审撤销原「headless/ACP 其余测试均在 prepare 注入返回值，没有生产 envelope」判断：public-cli-host-axis 与 public-cli-session-missing-fresh-summons 会间接进入生产 envelope，补修见文末。辅助扫描里的普通 rm 不等于 navigator 写口；Pi legacy runner 接缝不加载真实 extension。extensions 与生产 composition roots 没有被改写。
 
-下表是依赖装配形状的完整逐命中账。冻结起点命令 `git grep -n -E 'createRoleRuntimeDependencies\(|createNavigatorAttendance[:(]' d7ba2411 -- test` 为 36 行；复扫命令 `rg -n '(createRoleRuntimeDependencies|roleRuntimeDependenciesWithoutNavigator)\(|createNavigatorAttendance[:(]' test --glob '*.ts'` 为 38 行（多两行是共享装配声明及其生产调用）。坐标为起点→修后，未移动以同号记；一处命中一行。所有「已修」保留原请求输入、断言和失败路径。
+下表仅是直接依赖装配层的逐命中账，不证明默认 host 调用链已扫净；坐标冻结在该次提交3497bab8。冻结起点命令 `git grep -n -E 'createRoleRuntimeDependencies\(|createNavigatorAttendance[:(]' d7ba2411 -- test` 为 36 行；复扫命令 `rg -n '(createRoleRuntimeDependencies|roleRuntimeDependenciesWithoutNavigator)\(|createNavigatorAttendance[:(]' test --glob '*.ts'` 为 38 行（多两行是共享装配声明及其生产调用）。坐标为起点→修后，未移动以同号记；一处命中一行。所有「已修」保留原请求输入、断言和失败路径。
 
 | 命中（起点 path:line） | 修后行 | 结果 |
 | --- | --- | --- |
@@ -938,3 +939,156 @@ rg -n 'createRoleRuntimeDependencies|createNavigatorAttendance|prepareRoleEnvelo
 从 `git diff HEAD` 逐项自审：新增测试函数0、生产函数0；另如实列出唯一新增测试 helper `roleRuntimeDependenciesWithoutNavigator`（test/helpers/role-turn-host-fixture.ts:37）。`rg -n 'deferred|withResolvers|createNavigatorAttendance.*undefined|delete .*createNavigatorAttendance|WithoutNavigator|withoutNavigator' test src` 未找到已有省略生产 attendance 的通用测试装配；原生产构造器 src/role-runtime-dependencies.ts:39 仍被直接复用，不复制其规则。新增 helper 必要性是把20处调用（含 engine 文件原本已 stationChild 隔离的3处）的省略策略放在一个地方，而非复制20份 delete/解构。它不是新生产钩子、重试或等待机制。
 
 入口仍是原有公开 CLI/envelope；断言未增删、未放松，所有失败分支保留。navigator 专项复用原 summon 注入接缝；原两套 success/failure attendance 装配已合并，真正的文件系统故障仍在。不新增 sleep、fs.rm maxRetries、墙钟上限或持久数据。删除账无新删断言/整案/整文件项，不改其统计法和 MAIN_MERGE 边界。暂存树核账首轮 merge-tree 因 main 曾整块重缩进产生5文件冲突（`accounting-conflict.txt`），不是代码运行失败；改为在10个非专项文件的原 import 行显式导入 `roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies`，保留调用体，避免为仅依赖装配变更改写历史重缩进块。实际调用仍是同一个省略 helper，没有放回生产 attendance。暂存树5169b311预核 COUNT/MATCH1142（files19/cases116/asserts1007）；不改脚本、不偏向合并、不吞冲突。提交后执行原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核最终 HEAD，结果随回执。原有 `node-test-report.txt` 已打开核对、未改未删；不 amend/rewrite/push、不派角色。本轮修理交卷待复审，不声称整票已合并。
+
+## 第二十二轮复审补修：R23-A 默认 host 间接装配（起点 3497bab8）
+
+复审明确的四处遗漏成立；R22-A、I23-A、I23-B 不重开。错误形状仍是「父调用结束后删 home，但非阻塞 lookup 可以继续写」，不是生产 dispose 契约错误。漏扫原因是只统计测试里的构造器拼写，没有把默认 composition root 反向追到公开入口。
+
+### 修法与边界
+
+链路逐层核对：`runAkRole` → `openRoleSeatRuntime` → `composeRoleTurnHostAdapters`（src/public-cli/role-turn-host-resolution.ts:54–81）→ `createLazyProductionExternalHost` → 两个 `loadProduction*HostFactory` → ACP :68 / headless :40 的生产依赖 → runtime :1579–1629 的 attendance。延迟加载器优先 dist，缺失才用 src；因此只 mock 源码构造器会漏掉本机已有 bundle。
+
+查官方 `https://vitest.dev/guide/mocking/modules` 后，使用 Vitest 现成模块替换：新增共享测试装配 `test/helpers/production-host-without-navigator.ts`，两个测试文件各导入一次。默认 host 表、host 选择、延迟加载器、真实生产 factory、真实 adapter/二进制协议、envelope 和原断言都保留；只将本地 dist 的两个 factory 模块指向同一份真实 src factory，让共享可选依赖省略策略作用于唯一源码模块。不是 fake host，也不在生产加测试钩子；打包产物本身仍由原 package 测试负责，不以这两个源码行为案代替发布验收。
+
+`roleRuntimeDependenciesWithoutNavigator` 复用原生产构造器，并接受模块替换取到的原 factory，避免递归调用已替换导出。唯一的 delete 仍在原 helper :42；没有复制 loader 表或两份省略策略。测试模块替换只在显式导入的两文件生效，navigator 专项不导入；同一聚焦批次实际复跑专项通过。不能把模块替换放进通用 role-turn-host-fixture：navigator 专项及 lifecycle 契约也导入它（:33/:28），会误隔离被测的真实 attendance；因此单独显式导入。新增测试函数0、生产源码改动0；不加 sleep、rm 重试、超时、后台等待管理器或新生产接口。
+
+### 反向扫类、逐命中账与复扫
+
+实际命令（输出 `/tmp/1237-r23-{roots-baseline,roots-after,composition,entry-details,entry-rescan,process-roots,production-after,direct-after,low-level}.txt`）：
+
+```sh
+git grep -n -E 'public-cli/(cli\.ts|role-seat-runtime|role-turn-host-resolution|load-production)|public-role-summons|acp-host/production-host|headless-host/production-host|productionBase\(|callEnv\(' 3497bab8 -- test
+rg -n 'public-cli/(cli\.ts|role-seat-runtime|role-turn-host-resolution|load-production)|public-role-summons|acp-host/production-host|headless-host/production-host|productionBase\(|callEnv\(' test --glob '*.{ts,mjs}' | sort
+rg -n 'createRoleRuntimeDependencies|createProduction(Acp|Headless)RoleTurnHost|createLazyProductionExternalHost|composeRoleTurnHostAdapters' src test
+rg -n 'role-envelope|role-runtime-dependencies|load-production|public-cli/cli\.ts|public-role-summons' test scripts --glob '*.{ts,mjs,cjs}'
+rg -n 'spawn|execFile|fork|dist/public-cli|bin/ak-role' test --glob '*.{ts,mjs}'
+rg -n 'createRoleRuntimeDependencies|createNavigatorAttendance|prepareRoleEnvelope|roleRuntimeDependenciesWithoutNavigator' src extensions --glob '*.ts'
+rg -n '(createRoleRuntimeDependencies|roleRuntimeDependenciesWithoutNavigator)\(|createNavigatorAttendance[:(]' test --glob '*.ts'
+rg -n 'prepare:' test/integration test/unit -g 'host-session*.test.ts' -g 'host-retry-verdict-relay.test.ts' -g 'resume-missing-host-session-id.test.ts' -g 'headless-codex-host.test.ts'
+```
+
+主命中表起点94行、修后96行（新夹具两个 source factory 指向），下表逐行记结果，坐标为修后；两被修文件原坐标减1即起点。导入行的判断沿该文件所有调用者继续追入 env/helper，不用导入文字本身证明没有写口。直接装配层仍复用上一节逐项账：原 helper 生产调用改名为 `createDependencies(root)`（:41），原两个 envelope 调用移到 :57/:108，新增模块回调 :15 也委托同一个 helper；其余直接入口未变化。
+
+| 命中 path:line | 复扫结果 |
+| --- | --- |
+| test/contract/analyst-412-library-index-book-scope.test.ts:24 | 不同类：:165/:220 为 analyst cohort，同步分析入口，不入 role host。 |
+| test/contract/durable-session-write-failure.test.ts:26 | 不同类：:244 显式 host 表，staged attendance 无 lookup；直接装配见上节。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:112 | 不同类：config set；其余 runtime 的受控 lookup 无生产写口。 |
+| test/helpers/passing-review-host.ts:4 | 不同类：:40/:47 只 config set/set-engine；review host 为脚本 runner。 |
+| test/helpers/production-host-without-navigator.ts:7 | 已修：dist ACP 指向真实 source factory，不替换默认表或 adapter。 |
+| test/helpers/production-host-without-navigator.ts:8 | 已修：dist headless 指向真实 source factory，共用依赖省略接缝。 |
+| test/integration/analyst-399-book-scope.test.ts:21 | 不同类：analyst 书域分析，不入 role host。 |
+| test/integration/analyst-compute-if-missing.test.ts:29 | 不同类：:191/:357 cohort 本地计算/写失败，不入 role host。 |
+| test/integration/analyst-public-cli-sweep.test.ts:19 | 不同类：:66 sweep 与负向输入均走 analyst，不入 role host。 |
+| test/integration/analyst-public-cli.test.ts:20 | 不同类：analyst 分析/查询，不入 role host。 |
+| test/integration/audited-run-identity-1166.test.ts:30 | 不同类：前轮已在 parentGateHost 省略 attendance，其余为 minimal host。 |
+| test/integration/engine-detour-usage-ledger.test.ts:31 | 不同类：:265/:577/:680 等显式 reviewReadyHost/adapter；无默认外部 host。 |
+| test/integration/fixtures/process-cancel-driver.mjs:26 | 不同类：:118 注入 hangingHost，受控子进程无 envelope。 |
+| test/integration/package-home-cli-seam.test.ts:12 | 不同类：:24 仅 roles。 |
+| test/integration/package-home-cli-seam.test.ts:15 | 不同类：子进程仅 help/roles，不执行角色。 |
+| test/integration/pipeline-lifecycle-formalization.test.ts:10 | 不同类：:83 注入 withPassingReviewHost(fauxHost)。 |
+| test/integration/public-cli-1132-delivery-request.test.ts:35 | 不同类：显式 hostAdapters；真实 envelope 前轮已省略 attendance。 |
+| test/integration/public-cli-1169-relocate-resume-no-unbound-paths.test.ts:20 | 不同类：显式 host，capturePreparedEnvelope 已省略 attendance。 |
+| test/integration/public-cli-attach-path-passthrough.test.ts:15 | 不同类：:77/:175 脚本 Pi runner。 |
+| test/integration/public-cli-auto-resume-limit-422.test.ts:17 | 不同类：角色调用显式脚本 runner；其余 config。 |
+| test/integration/public-cli-bin-startup.test.ts:9 | 不同类：源码 config；子进程 config/help/roles，无角色回合。 |
+| test/integration/public-cli-cli.test.ts:23 | 不同类：minimal/脚本 host；:308 envelope 前轮已隔离。 |
+| test/integration/public-cli-coder.test.ts:31 | 不同类：structured-output helper 已隔离，其余 minimal/脚本 host。 |
+| test/integration/public-cli-collector.test.ts:13 | 不同类：:59 structured-output helper 已隔离。 |
+| test/integration/public-cli-config.test.ts:10 | 不同类：:47 显式 host，其余配置处理。 |
+| test/integration/public-cli-countersign-run.test.ts:23 | 不同类：脚本 host/显式 adapter；无默认生产 envelope。 |
+| test/integration/public-cli-diarist-run.test.ts:29 | 不同类：structured-output helper 已隔离；其余脚本 host/dialogue。 |
+| test/integration/public-cli-doctor.test.ts:32 | 不同类：minimal/脚本/withPassingReviewHost；无默认外部 host。 |
+| test/integration/public-cli-engine-axis.test.ts:26 | 不同类：有效角色请求显式 runner；未注入的 :450 等在配置/语法受理阶段退出。 |
+| test/integration/public-cli-engine-resume-detour.test.ts:40 | 不同类：显式 host；材料 envelope 前轮已隔离。 |
+| test/integration/public-cli-engine-startup-material.test.ts:17 | 不同类：显式 host/adapter，capturePreparedEnvelope 已隔离。 |
+| test/integration/public-cli-escalation-resume.test.ts:14 | 不同类：显式 routed adapter，真实 envelope 前轮已隔离。 |
+| test/integration/public-cli-failure-artifacts.test.ts:21 | 不同类：角色调用全用脚本 runner。 |
+| test/integration/public-cli-failure-provider-stop.test.ts:11 | 不同类：角色调用全用脚本 runner。 |
+| test/integration/public-cli-failure-real-entry.test.ts:24 | 不同类：显式拒绝 host/脚本 runner，无默认外部 host。 |
+| test/integration/public-cli-failure-settlement.test.ts:22 | 不同类：脚本 runner，不加载 extension。 |
+| test/integration/public-cli-fixer.test.ts:21 | 不同类：脚本 runner；其余配置。 |
+| test/integration/public-cli-gleaner-left-run.test.ts:14 | 不同类：structured-output helper 已隔离，其余脚本 runner。 |
+| test/integration/public-cli-host-axis.test.ts:20 | 已修：默认 host 调用沿下列逐项装配；其他分支保显式 adapter。 |
+| test/integration/public-cli-host-axis.test.ts:467 | 不同类：config set。 |
+| test/integration/public-cli-host-axis.test.ts:470 | 不同类：默认 Pi 是显式 countingPi。 |
+| test/integration/public-cli-host-axis.test.ts:476 | 不同类：显式 Pi 是 countingPi。 |
+| test/integration/public-cli-host-axis.test.ts:481 | 不同类：未知 host 在执行前拒绝。 |
+| test/integration/public-cli-host-axis.test.ts:651 | 已修：判词 public grok 失败回合，默认 ACP 依赖省略 attendance。 |
+| test/integration/public-cli-host-axis.test.ts:792 | 不同类：config set-auto-resume-limit。 |
+| test/integration/public-cli-host-axis.test.ts:826 | 不同类：config set。 |
+| test/integration/public-cli-host-axis.test.ts:827 | 不同类：config set-host。 |
+| test/integration/public-cli-host-axis.test.ts:830 | 已修：默认 Grok 初始回合统一省略无关 attendance。 |
+| test/integration/public-cli-host-axis.test.ts:848 | 已修：同 host resume 统一省略无关 attendance。 |
+| test/integration/public-cli-host-axis.test.ts:872 | 已修：判词 #822 rejected set_model 的独立 lookup 不再启动。 |
+| test/integration/public-cli-host-axis.test.ts:908 | 不同类：config set。 |
+| test/integration/public-cli-host-axis.test.ts:909 | 不同类：config set-host。 |
+| test/integration/public-cli-host-axis.test.ts:912 | 已修：默认 Hermes 回合统一省略无关 attendance。 |
+| test/integration/public-cli-host-axis.test.ts:952 | 不同类：config set。 |
+| test/integration/public-cli-host-axis.test.ts:953 | 不同类：config set-host。 |
+| test/integration/public-cli-host-axis.test.ts:955 | 已修：默认 Claude 回合统一省略无关 attendance。 |
+| test/integration/public-cli-instruction-seat.test.ts:23 | 不同类：:82 脚本 runner。 |
+| test/integration/public-cli-judge.test.ts:26 | 不同类：角色调用均为脚本 runner。 |
+| test/integration/public-cli-known-ticket-placement.test.ts:19 | 不同类：:56 显式 host。 |
+| test/integration/public-cli-main-flow-p0.test.ts:18 | 不同类：显式 host，structured-output helper 前轮已隔离。 |
+| test/integration/public-cli-merger-run.test.ts:19 | 不同类：显式 typed host/withPassingReviewHost。 |
+| test/integration/public-cli-merger.test.ts:22 | 不同类：脚本 runner，不加载 extension。 |
+| test/integration/public-cli-navigator-attendance.test.ts:109 | 不同类：config；该专项真实 lookup 的结束观察前轮已补。 |
+| test/integration/public-cli-navigator-attendance.test.ts:142 | 不同类：真实 summon 在 dispose 后、rm 前被观察结束；本轮不 mock 专项。 |
+| test/integration/public-cli-navigator-lookup.test.ts:15 | 不同类：navigator 自身的 lookup host，无递归 attendance。 |
+| test/integration/public-cli-notary.test.ts:28 | 不同类：有效请求 minimal/脚本 host；未注入项为非法参数/locator、受理前退出。 |
+| test/integration/public-cli-resume-416.test.ts:26 | 不同类：嵌套 summon 显式 roleTurnHost，脚本/minimal host。 |
+| test/integration/public-cli-resume-416.test.ts:33 | 不同类：角色回合显式 runner/adapter。 |
+| test/integration/public-cli-resume-416.test.ts:56 | 不同类：config set-auto-resume-limit。 |
+| test/integration/public-cli-resume-callable-seats.test.ts:24 | 不同类：:250 显式 host。 |
+| test/integration/public-cli-resume.test.ts:28 | 不同类：显式 runner/hostAdapters，parentChain 同表；未注入项为配置。 |
+| test/integration/public-cli-reviewer.test.ts:28 | 不同类：显式 reviewerHost 脚本 runner，批次子腿不入生产 envelope。 |
+| test/integration/public-cli-same-ticket-resume.test.ts:123 | 不同类：配置种子；角色回合显式 host。 |
+| test/integration/public-cli-same-ticket-resume.test.ts:46 | 不同类：显式 host，worker 退回 envelope 前轮已隔离。 |
+| test/integration/public-cli-same-ticket-resume.test.ts:485 | 不同类：配置种子；角色回合显式 host。 |
+| test/integration/public-cli-seat-pipeline.test.ts:17 | 不同类：:95/:151 显式 adapter。 |
+| test/integration/public-cli-secretariat-run.test.ts:29 | 不同类：显式父/子 adapter，真实 envelope 前轮已隔离。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:168 | 已修：callEnv 仍不注入 host，依赖省略在生产 factory 的模块接缝。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:22 | 已修：默认 host 的所有有效回合统一不接无关 attendance。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:261 | 已修：首次 Claude 回合。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:275 | 已修：跨 host 后 mint。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:297 | 已修：显式 new。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:316 | 已修：显式 resume 的初始卷。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:328 | 已修：显式 resume 跨 host。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:350 | 已修：封卷前的初始调用。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:367 | 不同类：封卷复用不派发；如派发仍受共同依赖装配隔离。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:394 | 已修：封卷后的显式 new。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:411 | 已修：same-host 案初始回合。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:420 | 已修：same-host 成功恢复。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:436 | 已修：判词 nonzero host exit，失败回合不启动后台 lookup。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:452 | 已修：lease/court 案初始回合。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:466 | 不同类：lease/court 阻挡，不进入 host；共同装配仍覆盖后续派发。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:487 | 已修：unbound 初始回合。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:505 | 不同类：unbound lease/court 阻挡，不入 host。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:531 | 已修：new-run 缺 session 案初始回合。 |
+| test/integration/public-cli-session-missing-fresh-summons.test.ts:546 | 已修：判词新 run 缺 session 的 ACP 失败回合不启动后台 lookup。 |
+
+补充边界核对：lower ACP/headless adapter 自身必须传 prepare，不自己构造 dependencies。`host-session-acp-grok-usage-compact:69`、`host-session-acp-write-fail:80`、`host-session-live-records:113,210`、`headless-codex-host:169,435,519,606,688`、`resume-missing-host-session-id:67,118,164`、unit/integration `host-retry-verdict-relay:67/:85` 都返回受控 PreparedRoleTurn；真实 envelope 的 durable-session/secretariat/report-ticket 已在直接账逐项处置，不能再笼统称「ACP/headless 其余都注入」。源码 extension 消费者搜索无测试加载真实 extension；脚本 runner 在 `role-turn-host-fixture.ts:438–469` 接管 spawn。子进程补扫中 public-cli-bin-startup 只 config/help/roles，package 的 npm-identity 只启动 --help；analyst-public-bundle-families:81 是同步分析（cli.ts:1290 分流），process-cancel-driver:118 为显式 hangingHost。其他 spawn 命中是 Git/打包/假 host 二进制或脚本边界，不是默认 production envelope。
+
+### 四案修前、修后与变异取证
+
+仅在 `/tmp/1237-r23-probe` 的 detached 隔离工作树临时插桩；原测试 body、真实 summon/lookup host/ledger 写入均未替换。临时 AsyncLocalStorage 把父 lookup 与其真实 host 联系，在 host 封卷前门闩暂停；清理器确认已到该写口后执行原 rm，再释放并 await 实际 summon，观察 home 是否重建并清掉本席产物。该观察只在临时探针，不落仓为证明测试。是受控调度反例，不是自然复现频率，亦不声称自然复现 ENOTEMPTY。
+
+命令前缀 `node node_modules/vitest/vitest.mjs run`；每次仅运行原文件原案，`-t` 依次为下表名称。选定调度使用 `R23_PARENT=run-822-coder-grok-reject` 或 `R23_SKIP=2/1`；其他回合照常继续。证据 `/tmp/1237-r23-evidence/{before,after}-{grok,822,same,new}.{jsonl,log}`。
+
+| 原案入口与前序经历 | 修前 | 修后（本地 dist 存在） |
+| --- | --- | --- |
+| public-cli-host-axis / public grok-build turn inherits operator HOME；默认 ACP 失败并返回 | 原 body 断言通过，清理后重建；pending=3/entered=3，探针 exit1，2.24s | pending=0，未重建，原案通过，1.29s |
+| public-cli-host-axis / #822 coder apply；仅 rejected set_model 回合暂停，其他成功回合继续 | 原 body 断言通过，清理后重建；pending=1/entered=1，exit1，2.60s | pending=0，未重建，原案通过，3.04s |
+| public-cli-session-missing-fresh-summons / #1253 same-host resume；保前两次成功 lookup，只延后 nonzero exit 回合 | 原 body 断言通过，清理后重建；pending=1/entered=1，exit1，1.03s | pending=0，未重建，原案通过，1.43s |
+| public-cli-session-missing-fresh-summons / #1253 a new run's own session-id-missing；保首次成功 lookup，延后后续 ACP 失败回合 | 原 body 断言通过，清理后重建；pending=4/entered=4，exit1，1.46s | pending=0，未重建，原案通过，1.90s |
+
+修前与变异释放后，已删 cwd 导致 git rev-parse 的诊断如实保留在 log，真实 summon 均 fulfilled，但 home 重建；没有吞成成功证据。变异只在隔离副本撤去原 helper 的 delete：同 grok 真实入口 1.91s exit1，pending=3/entered=3、重建；恢复后1.23s exit0、pending=0、未重建（mutation/restored.jsonl/.log）。这也证明两个 dist 模块指向 source 后的真实依赖接缝已被触达，而非仅断言灯绿。
+
+移除本席复制到隔离工作树的两个 dist 后，同样的 source fallback 首案1.59s通过；两文件全部19案再跑9.78s，19次清理 pending=0、未重建（after-source-all.jsonl/.log）。受审工作树不改 dist；正常聚焦 `pnpm exec vitest run` 的24文件完整参数见 focused.json：179/179、19.24s runner/20.07s墙钟；包含前轮22文件、两新增消费者，navigator 专项仍走真实 lookup 并通过。`pnpm exec tsc --noEmit` exit0。未跑全量。
+
+### 自审、退役与核账
+
+新增测试函数0、生产函数0；新增共享夹具含四个模块装配回调：ACP 模块 factory、headless 模块 factory、依赖模块 partial factory、其返回的 createRoleRuntimeDependencies。`rg -n 'vi\.mock|importOriginal|roleRuntimeDependenciesWithoutNavigator|delete .*createNavigatorAttendance' test --glob '*.ts'` 未找到已有同用途模块接缝；四者仅用 Vitest 原生机制转接原件，不重写 factory/adapter/loader。省略业务规则仍只在原 helper，第二个参数传原构造器，不产生第二份规则。各回调 existing=null，保留；原 helper 是修改而非新增。
+
+入口未换；默认表未注入假 host；所有测试 body、请求和断言逐字未变。没有旧生产分支被替代，故无生产退役项；错误的扫净说明已在上节原位置撤回并补账。无新增删除断言/整案/整文件项目，不改核账算法。提交前逐文件核对 diff（含新夹具），提交后再以原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核实际 HEAD，结果入回执。不 amend/rewrite/push，不派角色；本次仅施工重交，由调用者直回大理寺复审。临时插桩已保存为 evidence 下 throwaway-probe.patch/.ts；隔离工作树及其 node_modules 软链已移除，受审工作树无插桩或变异残留。
