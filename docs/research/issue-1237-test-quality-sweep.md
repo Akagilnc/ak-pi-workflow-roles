@@ -148,7 +148,7 @@
 | `test/integration/public-cli-secretariat-run.test.ts` | D/S | 改：三宿主既有表并入 converged/escalate 原回执及零 nested gate 断言，删伪重复宿主案承接的空结论；保公开中书省→diarist/countersign/notary 链、escalation 与 host failure，不按文本判结论。第七轮（R6-A）：删四案中 `decisiveFacts.countersignTerminal`/`notaryTerminal === undefined`（#1195 `1ea12daa` 已撤他席终局投影，src 零产出）；各案 role/kind 与原回执正向断言留。第八轮整卷复扫：未命中。第十二轮账：a/D 5、a/S 7。无未证 null。 |
 | `test/integration/report-ticket-adapter-exit-copy.test.ts` | B | 留：公开真实 adapter（假 CLI/ACP 对端）中途 relocation 后 exit-copy 和 resume 仍在 ticket。第八轮整卷复扫：未命中。 |
 | `test/integration/resume-missing-host-session-id.test.ts` | B | 留：executeTurn 无 bound session id 不新建，以及 required disposal failure 保宿主事实。第八轮整卷复扫：未命中。 |
-| `test/integration/role-envelope-engine-axis.test.ts` | M/T/S | 改：删 judge/auditor 与 Pi root 两组人工材料清单及 packagedMaterials helper。剩真实 envelope 的 tools/list、request/env 隔离；恢复随机 Soul 输入到 systemPrompt.body 的穿透。第三轮 `:128` 在不覆写装载器的既有案断言包内 `souls/judge.md` 字节进入 systemPrompt。具体材料全集承接者 null，不机械裁定应读哪些法。第七轮（R6-A）：#1092 并发案删种入的 `attachments/case-dossier` 旧文件与按 kind `case-dossier-pointer` 计数为 0（生产零产出该 kind，种文件碰不到断言）；余下「并发 envelope 各自保留 prompt、不写 parent 的 AK_ROLE_RUN_DIR/AK_ROLE_COURT_ATTEMPT」是在役负向（`src/report-ticket-tool.ts:139` 生产中确会写 process.env），案名改为陈述该行为，不并入 #818 案（那案只守 engine env、不带 courtAttemptId）。第八轮整卷复扫：未命中。第十二轮账：a/M 6、a/S 3、b 2。第十四轮（R12-A）：审计官 subject Soul 字节补进同一案 :126，改好 1；judge 随机 Soul 仍为 b 1。无未证 null。 |
+| `test/integration/role-envelope-engine-axis.test.ts` | M/T/S/D | 改：删 judge/auditor 与 Pi root 两组人工材料清单及 packagedMaterials helper。剩真实 envelope 的 tools/list、request/env 隔离；恢复随机 Soul 输入到 systemPrompt.body 的穿透。第三轮 `:128` 在不覆写装载器的既有案断言包内 `souls/judge.md` 字节进入 systemPrompt。具体材料全集承接者 null，不机械裁定应读哪些法。第七轮（R6-A）：#1092 并发案删种入的 `attachments/case-dossier` 旧文件与按 kind `case-dossier-pointer` 计数为 0（生产零产出该 kind，种文件碰不到断言）；余下「并发 envelope 各自保留 prompt、不写 parent 的 AK_ROLE_RUN_DIR/AK_ROLE_COURT_ATTEMPT」是在役负向（`src/report-ticket-tool.ts:139` 生产中确会写 process.env），案名改为陈述该行为，不并入 #818 案（那案只守 engine env、不带 courtAttemptId）。第八轮整卷复扫：未命中。第十二轮账：a/M 6、a/S 3、b 2。第十四轮（R12-A）：审计官 subject Soul 字节补进同一案 :126，改好 1；judge 随机 Soul 仍为 b 1。I23-B：该 auditor 段与公开入口重复，删除其独立 run/env/envelope 前置；账 #628 改为 b，承接 test/integration/audited-run-identity-1166.test.ts:368–458（生产 subject Soul 观察 :137–139）。原 engine 行为、随机 Judge Soul、生产 Judge loader 与其他独有输入观察均保留。无未证 null。 |
 | `test/integration/run-terminal-artifacts.test.ts` | B | 留：实际持久化 API 写/读 terminal，unknown/损坏文件与 sibling 隔离。第八轮整卷复扫：未命中。 |
 | `test/integration/run-test-all.test.ts` | M | 改：删除 package.json scripts 原串镜像，形式语言不是自比豁免；保真实 runner child argv、选集、HOME 隔离及 exit/SIGTERM。第八轮整卷复扫：未命中。第十二轮账：a/M 6。无未证 null。 |
 | `test/integration/test-agent-dir-model-seed.test.ts` | B | 留：fixture models seed 的文件边界、listener cleanup，不写机器 agent tree。第八轮整卷复扫：未命中。 |
@@ -822,3 +822,38 @@ git diff --diff-filter=D --name-only 7997ffb2 HEAD -- test | while IFS= read -r 
 验证：旧示例 `pnpm exec vitest run --project package test/package/published-dist-import-closure.test.ts` 实跑 exit 1（No test files found）；新示例 `pnpm exec vitest run --project package test/package/npm-identity-metadata.test.ts` 实跑 1 file / 3 tests passed，3.00s，exit 0。Vitest 官方 filtering 文档（https://vitest.dev/guide/filtering.html）确认位置参数按路径过滤；无需新增检查机制或测试。
 
 自审：本轮仅 README 一行替换与本节追加，diffItems=[]；无新增生产/测试函数、无断言变动，失效示例已替换。未跑全量，未改配置、生产、Soul 或治理文件；原有未跟踪 `node-test-report.txt` 保留。R22-A 已修，待大理寺亲验；不表示整票已合并收官。
+
+## I23-A/B 续修（起点 876d710a）
+
+依据：本票 `runs/01a16889-5390-73b3-9596-8787119e2c55@inspector/receipts/1.json`，由调用者原样递送。R22-A 的正确 README 示例保留；本轮不改生产、Soul、治理或真席位配置，不另造测试或统计器。
+
+### I23-A：先限定取数范围，不为冲突文件增例外
+
+修前原命令 `python3 -I docs/research/issue-1237-deletion-ledger.py` 在 merge-tree exit 1、尚无 COUNT。展开同一 Git 调用，唯一冲突 README.md；把 HEAD 换为父提交 93629c0e 则成功，`git diff 93629c0e HEAD -- test` 为空，最小故障差异就是无关文档。
+
+根因是只消费 test 的统计却先合并全树。修后沿用原 Git 私有索引、删除处理和 merge-tree，仅把三方输入限定为 test 子树；mktree 恢复账本需要的 test/ 前缀。算法的唯一现行说明在删除账账头。没有 README 例外名单、冲突偏向、吞错或新增函数。官方 git-merge-tree 文档明确显式 merge-base 可直接接受 tree；git-diff 的 --relative 与 git-mktree 的标准树输入直接复用，不自造路径映射或合并器。
+
+同形状全仓检索：`git grep -n -E 'merge-tree|read-tree|write-tree|mktree' 876d710a -- '*.py' '*.mjs' '*.ts'`；修后去掉冻结 ref 重跑。全部命中均在既有核账脚本：:30 read-tree 已限子树，:34 write-tree 输出私有索引子树，:36 merge-tree 三方都限子树；修后新增命中 :40 是 Git 原生 mktree 恢复前缀，不是第二统计实现。
+
+差分验证：`git merge-tree --write-tree --merge-base=c2c9175d:test 4895dc17622e1ad3fc17ba2d23da1217c847926e:test HEAD:test` 与父提交旧算法成功树的 test 子树均为 `33596910db5dd6454004d51ede4151da18627453`。在当前仓通过 `git show 876d710a:docs/research/issue-1237-deletion-ledger.py` 读取旧脚本并原样 exec，仍 exit 1；新原入口 COUNT/MATCH 1142，files19/cases116/asserts1007。这项提交前结果针对起点 HEAD；提交后须再次用原入口核对新 HEAD，不将它冒称提交后证据。
+
+### I23-B：删除已有承接者的第二套 auditor 前置
+
+修前逐项比对 engine 文件 :105–130 与公开入口 :368–458、inspectLiveRequest :118–139，以及生产 loadRegisteredRoleSoul :31–35；均为 subject=judge 的同一装载与字节递送。删独立 auditor run、环境修改、envelope 及唯一断言26行，并去掉首案不用的 home 绑定，不动 engine 与 Judge 观察。账 #628 转为公开入口承接 b，b62→63、改好48→47；基线 where 与总数不变，不为已计过的迁入断言另造账行。
+
+横扫 `rg -n 'AK_ROLE_AUDITOR_SUBJECT|judge-auditor\.md|loadRegisteredRoleSoul' test`，修前命中三文件；修后 engine 文件零命中。逐项打开其余两文件：audited-run-identity-1166 的 :100/:107/:163/:164 是共享真实公开请求的前后环境，保留；public-cli-resume 的 :1704/:1705/:2030/:2032/:2044/:2045 是恢复派发的 subject 环境边界，没有再装一个 envelope 验 Soul，非本类。
+
+本轮 `git diff --name-status 876d710a` 的删并逐文件表（修前打开相关文件、修后重列比对）：
+
+| 文件 | 命中与结果 |
+| --- | --- |
+| test/integration/role-envelope-engine-axis.test.ts | 已修；起点 :105–130 的重复前置删除；:67 无用 home 绑定删除。与公开入口承接者比对，保留其余独有观察。 |
+| docs/research/issue-1237-deletion-ledger.md | 已修；:976 账 #628 的承接改指既有公开入口，不保第二套装配；账头仅同步 I23-A。 |
+| docs/research/issue-1237-deletion-ledger.py | 无；对照既有 git 封装和两处 diff 消费，仅收窄取树范围；没有 envelope 或平行统计入口。 |
+| docs/research/issue-1237-test-quality-sweep.md | 已修；:151 逐文件行及本节记载删并，历史变异事实保留，不再声称应保留独立 auditor 前置。 |
+
+聚焦命令：`pnpm exec vitest run --project integration test/integration/role-envelope-engine-axis.test.ts test/integration/audited-run-identity-1166.test.ts -t 'shared envelope registers engine detour|#1166 direct notary/auditor public entry'`，修前2过/6跳，1.14s；修后2过/6跳，1.03s。另在自建隔离工作树直接调用已安装 Vitest CLI，只把 loadRegisteredRoleSoul 的 auditor 分支临时改为错误 Soul：旧前置在时2败（1.12s）；应用本轮删除后1过1败，公开入口仍在 :446 因 :137 的 Soul 检查报红（760ms）；恢复生产字节后2过（764ms）。印证并保留台院原卷红绿事实，没有新增证明案。
+
+失败诚实：扩到两个整文件的首次运行7过1败（1.55s），未改动的 #1092 案清理 `.ak-roles` 时 ENOTEMPTY。隔离起点单跑该案1过，两个整文件连续三次8过；本树随后重跑两个整文件8过（1.28s）。未能稳定复现该清理失败，未定其根因，也不把重跑绿当成已修复；原失败在此保留。没有为压绿改该案、加等待/重试或放松断言。
+
+自审：diffItems=[]，无新增测试/生产函数，原 helper 无新增孤儿；断言只删已被公开入口承接的一项，其他输入与失败观察未放松。`pnpm exec tsc --noEmit` exit 0。隔离生产变异逐字恢复、本席临时测试补丁反向应用后工作树干净，移除 node_modules 软链再正常移除该工作树；无生产变异残留。不跑全量、不改原有 node-test-report.txt、不 amend/rewrite/push、不派角色；交卷后由调用者续送复审。

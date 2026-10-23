@@ -1,6 +1,6 @@
-# #1237 删除与改弱逐条账（I22-A 续修，起点 889a200a）
+# #1237 删除与改弱逐条账（I23-A/B 续修，起点 876d710a）
 
-范围：只统计 #1237。基线仍为 `7997ffb2`；排除 `c2c9175d` 这一笔 main 合入及其冲突处理差异，保留 `c2c9175d..HEAD` 的后续修理。脚本先在 TemporaryDirectory 内的 Git 私有索引读取 `c2c9175d^1`，再用 `git diff --diff-filter=D --name-only -z c2c9175d HEAD -- test` 与 `git update-index --force-remove -z --stdin` 应用本票合入后明确发生的删除，write-tree 得 preintegration_tree；最后 `git merge-tree --write-tree --merge-base=c2c9175d <preintegration_tree> HEAD` 得统计终点。这样本票删除一个被 main 改过的文件不会被旧版本复活或卡在 modify/delete，其余冲突仍报错。不动调用者索引/工作树、不建提交、不维护文件排除清单；不把 #1246/#1247/#1250 等他票的删除记入本账，也不声称审核了该合入的解冲突。后续若再合入 main，须更新统计边界。原始 `7997ffb2..HEAD` 全树 diff 不是本票计数。计数不包含本轮补回的断言。
+范围：只统计 #1237。基线仍为 `7997ffb2`；排除 `c2c9175d` 这一笔 main 合入及其冲突处理差异，保留 `c2c9175d..HEAD` 的后续修理。脚本只重建 `test` 子树：在 TemporaryDirectory 内的 Git 私有索引读取 `c2c9175d^1:test`，用 `git diff --relative=test --diff-filter=D --name-only -z c2c9175d HEAD -- test` 与 `git update-index --force-remove -z --stdin` 应用本票合入后明确发生的删除，write-tree 得 preintegration_tree；再以 `c2c9175d:test` 为 merge-base，将该树与 `HEAD:test` 交给 `git merge-tree --write-tree`。最后用 `git mktree` 给结果恢复 `test/` 前缀，保持既有账坐标。这样本票删除一个被 main 改过的测试文件不会被旧版本复活或卡在 modify/delete；无关目录不参与合并，测试子树的其余冲突仍报错。不动调用者索引/工作树、不建提交、不维护文件排除清单；不把 #1246/#1247/#1250 等他票的删除记入本账，也不声称审核了该合入的解冲突。后续若再合入 main，须更新统计边界。原始 `7997ffb2..HEAD` 全树 diff 不是本票计数。计数不包含本轮补回的断言。
 
 R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支的输出或失败。没有的写一句话。有的写打中该行为的变异和报红测试名，或改好位置，或 `c/null`。该轮仅阻断 warning 的修法已由 R14-A 判为返工；本轮在现有 ACP 与 headless 案保持 log.jsonl 阻断，沿真实回调分隔 pointer 与出口申报，并分别保留原件缺失（warning）、原件存在（copy）输入。条数锁没有恢复。
 
@@ -8,7 +8,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 在仓库根执行 `python3 docs/research/issue-1237-deletion-ledger.py`。它打印 `COUNT`，并与本表 where 列比对，再按本表处置列汇总。规则：
 
-1. 脚本以以上 `merge-tree` 返回的 tree OID 为 `ticket_tree`（不建提交、不改 index/worktree；三方冲突直接报错），删除行取 `git diff -U0 7997ffb2 "$ticket_tree" -- test`，用 `@@ -start` 还原基线行号。
+1. 脚本以以上子树合并结果经 `mktree` 恢复 `test/` 前缀后的 tree OID 为 `ticket_tree`（不建提交、不改调用者 index/worktree；测试子树三方冲突直接报错），删除行取 `git diff -U0 7997ffb2 "$ticket_tree" -- test`，用 `@@ -start` 还原基线行号。
 2. 整文件：`git diff --diff-filter=D --name-only 7997ffb2 "$ticket_tree" -- test`，一个文件一行。
 3. 整案：基线里以 `test(` / `it(` 开头（允许 `.only` 等）且该行在删除行集合中的，一行一个。HEAD 仍有同名案也不剔除。
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
@@ -33,8 +33,8 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 - a/D：599
 - a/M：186
 - a/S：134
-- b：62
-- 改好：48
+- b：63
+- 改好：47
 - a/T：34
 - a/退役：25
 - a/C：20
@@ -973,7 +973,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 625 | case | `test/integration/public-cli-secretariat-run.test.ts:1142` | #969 adapter boundary ${hostName}: escalate skips gate | a/D；依据 sweep:66；escalate 不派 gate 在同文件 :650；converged 进 gate 在 :400 R13-A 没有：适配器边界的平行观察；escalate 不派 gate 与 converged 进 gate 由同文件 :650 与 :400 守住，本条不另调用分支。 |
 | 626 | assert | `test/integration/role-envelope-engine-axis.test.ts:87` | assert.ok(judge.systemPrompt.body.includes(soul)); | b test/integration/role-envelope-engine-axis.test.ts:82；变异：prepareRoleEnvelope 把 systemPromptBody 写成空串；报红「shared envelope registers engine detour when request.engine is set」。 |
 | 627 | assert | `test/integration/role-envelope-engine-axis.test.ts:88` | assert.deepEqual(judge.systemPrompt.materials, [{ kind: "role-reference-materials", content: await packagedMaterials([ "CLAUDE.md", "souls/audit-law.md", "souls/quality-law.md", "s | a/M；依据 sweep:149；人工材料清单。具体材料全集无行为承接者，表已裁，不机械裁定应读哪些法 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
-| 628 | assert | `test/integration/role-envelope-engine-axis.test.ts:125` | assert.ok(auditor.systemPrompt.body.includes(soul)); | 改好 test/integration/role-envelope-engine-axis.test.ts:126；变异：role 为 auditor 时 before_agent_start 不拼 soul；报红「shared envelope registers engine detour when request.engine is set」。 |
+| 628 | assert | `test/integration/role-envelope-engine-axis.test.ts:125` | assert.ok(auditor.systemPrompt.body.includes(soul)); | b test/integration/audited-run-identity-1166.test.ts:368–458，经 :118–139 的生产 subject Soul 装载与递送观察承接；I23-B 删掉 engine 案中无独有结果的 auditor 二次装配。台院 01a16889-5390-73b3-9596-8787119e2c55@inspector/receipts/1.json：loadRegisteredRoleSoul 的 auditor 分支返回错误 Soul 时，两处既有案均红，恢复均绿；原 engine 案的随机 Judge Soul 与 engine 断言保留。 |
 | 629 | assert | `test/integration/role-envelope-engine-axis.test.ts:126` | assert.deepEqual(auditor.systemPrompt.materials, [{ kind: "role-reference-materials", content: await packagedMaterials([ "CLAUDE.md", "souls/judge.md", "souls/audit-law.md", "souls | a/M；依据 sweep:149；人工材料清单。具体材料全集无行为承接者，表已裁，不机械裁定应读哪些法 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 630 | assert | `test/integration/role-envelope-engine-axis.test.ts:154` | assert.deepEqual(judge.systemPrompt.materials, [{ kind: "role-reference-materials", content: await packagedMaterials([ "CLAUDE.md", "souls/audit-law.md", "souls/quality-law.md", "s | a/M；依据 sweep:149；人工材料清单。具体材料全集无行为承接者，表已裁，不机械裁定应读哪些法 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 631 | assert | `test/integration/role-envelope-engine-axis.test.ts:190` | assert.deepEqual(auditor.systemPrompt.materials, [{ kind: "role-reference-materials", content: await packagedMaterials([ "CLAUDE.md", "souls/judge.md", "souls/audit-law.md", "souls | a/M；依据 sweep:149；人工材料清单。具体材料全集无行为承接者，表已裁，不机械裁定应读哪些法 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |

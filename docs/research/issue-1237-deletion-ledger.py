@@ -20,22 +20,24 @@ def git(*args: str, env: dict[str, str] | None = None, input: str | None = None)
     )
 
 # Exclude the main integration, retaining #1237 before it and all later repairs.
-# Git applies the integration..HEAD delta to the pre-integration ticket tree;
-# conflicts fail via check_output rather than silently dropping ticket changes.
+# Merge only test subtrees: unrelated files cannot affect test accounting.
+# Conflicts fail via check_output rather than silently dropping ticket changes.
 MAIN_MERGE = "c2c9175dacecc8121be7005eb55501e213f62787"
 # A later ticket deletion also wins over the old pre-integration version.
 # Use Git's private index, not the caller's index or a text-conflict preference.
 with tempfile.TemporaryDirectory(prefix="ak-1237-ledger-") as temporary:
     env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
-    git("read-tree", f"{MAIN_MERGE}^1", env=env)
+    git("read-tree", f"{MAIN_MERGE}^1:test", env=env)
     git("update-index", "--force-remove", "-z", "--stdin", env=env, input=git(
-        "diff", "--diff-filter=D", "--name-only", "-z", MAIN_MERGE, "HEAD", "--", "test",
+        "diff", "--relative=test", "--diff-filter=D", "--name-only", "-z", MAIN_MERGE, "HEAD", "--", "test",
     ))
     preintegration_tree = git("write-tree", env=env).strip()
-ticket_tree = git(
-    "merge-tree", "--write-tree", f"--merge-base={MAIN_MERGE}",
-    preintegration_tree, "HEAD",
+test_tree = git(
+    "merge-tree", "--write-tree", f"--merge-base={MAIN_MERGE}:test",
+    preintegration_tree, "HEAD:test",
 ).strip()
+# Restore the test/ prefix for the existing baseline paths and ledger readers.
+ticket_tree = git("mktree", input=f"040000 tree {test_tree}\ttest\n").strip()
 deleted_files = [p for p in git("diff", "--diff-filter=D", "--name-only", BASE, ticket_tree, "--", "test").split() if p]
 
 diff = git("diff", "-U0", BASE, ticket_tree, "--", "test")
