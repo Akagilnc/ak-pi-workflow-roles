@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "vitest";
 import { Value } from "typebox/value";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";

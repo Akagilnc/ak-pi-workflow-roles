@@ -32,7 +32,7 @@ import {
   readRoleRunIdentity,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,

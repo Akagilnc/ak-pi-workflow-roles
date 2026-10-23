@@ -16,7 +16,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   argvFlagValue,

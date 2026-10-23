@@ -24,7 +24,7 @@ import {
   runPublicInstructionSeatResume,
 } from "../../src/public-cli/instruction-seat-run.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import {
   REPORT_TICKET_TOOL_NAME,
   reportTicketFromHostContext,

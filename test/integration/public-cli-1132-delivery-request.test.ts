@@ -30,7 +30,7 @@ import { resolveBoundHostSessionId } from "../../src/prepared-role-turn.ts";
 import { recordAdmittedCorrelation } from "../../src/public-cli/invocation.ts";
 import { findRunDirectoryById, loadResumablePublicRole } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";

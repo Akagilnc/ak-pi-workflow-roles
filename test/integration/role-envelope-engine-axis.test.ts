@@ -20,7 +20,7 @@ import {
   type RoleTurnRequest,
 } from "../../src/host-contracts.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";

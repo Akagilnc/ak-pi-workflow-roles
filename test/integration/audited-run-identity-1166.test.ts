@@ -30,7 +30,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import { isRecord } from "../../src/unknown-value.ts";

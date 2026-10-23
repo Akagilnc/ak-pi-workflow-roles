@@ -123,45 +123,46 @@ for (const scenario of CASES) {
       seedRoleRepo(project);
 
       const events: NavigatorEvent[] = [];
+      let lookupCompletion = Promise.resolve();
       const baseDeps = createRoleRuntimeDependencies(packageRoot);
       const deps = {
         ...baseDeps,
         createNavigatorAttendance: async (
           options: Parameters<NonNullable<typeof baseDeps.createNavigatorAttendance>>[0],
-        ) => scenario.failingLookup === true
-          ? createNavigatorAttendance({
-            context: options.context,
-            role: options.role,
-            phase: options.phase,
-            subjectKey: options.subjectKey,
-            invocationId: options.invocationId,
-            // The real summons; the fault is in the filesystem: the lookup run's own state file is a directory.
+        ) => {
+          let complete!: () => void;
+          const completed = new Promise<void>((resolve) => { complete = resolve; });
+          // Plan never starts lookup. Other turns may outlive dispose, including host failure.
+          lookupCompletion = options.phase === "plan" ? Promise.resolve() : completed;
+          return createNavigatorAttendance({
+            ...options,
             lookup: createNavigatorLookup({
               summonPublicRole: async (summonOptions) => {
-                const { summonPublicRole } = await import("../../src/public-role-summons.ts");
-                return summonPublicRole({
-                  ...summonOptions,
-                  createRunId: () => {
-                    const id = "01a0navi00-0000-7000-8000-00000000f001";
-                    mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${id}@navigator`, "state.jsonl"), { recursive: true });
-                    return id;
-                  },
-                });
+                try {
+                  const { summonPublicRole } = await import("../../src/public-role-summons.ts");
+                  return await summonPublicRole({
+                    ...summonOptions,
+                    ...(scenario.failingLookup === true ? {
+                      // Real filesystem fault: the lookup run's state file is a directory.
+                      createRunId: () => {
+                        const id = "01a0navi00-0000-7000-8000-00000000f001";
+                        mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${id}@navigator`, "state.jsonl"), { recursive: true });
+                        return id;
+                      },
+                    } : {}),
+                  });
+                } finally {
+                  // Observe the real public summons returning, not dispose or a grace projection.
+                  complete();
+                }
               },
             }),
             onEvent: async (event, report) => {
               events.push(event);
               await options.onEvent?.(event, report);
             },
-          })
-          : baseDeps.createNavigatorAttendance!({
-            ...options,
-            context: { ...(options.context as object), home } as never,
-            onEvent: async (event, report) => {
-              events.push(event);
-              await options.onEvent?.(event, report);
-            },
-          }),
+          });
+        },
       };
 
       const officerHost = roleTurnHostFromLegacyPiRunner({
@@ -206,7 +207,11 @@ for (const scenario of CASES) {
               },
             });
           } finally {
-            await prepared.dispose?.();
+            try {
+              await prepared.dispose?.();
+            } finally {
+              await lookupCompletion;
+            }
           }
         },
       };
