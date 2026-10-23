@@ -277,28 +277,18 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly arrayPromptId: string;
   readonly arrayPromptText: string;
   readonly duplicateId: string;
-  readonly taskNotificationEnqueueId: string;
   readonly taskNotificationText: string;
-  readonly humanOriginEnqueueId: string;
   readonly humanOriginText: string;
-  readonly peerOriginEnqueueId: string;
   readonly peerOriginText: string;
   readonly peerQuoteInterjectionId: string;
   readonly peerQuoteInterjectionText: string;
   readonly humanOriginDirectId: string;
   readonly humanOriginDirectText: string;
-  readonly removeMachineEnqueueId: string;
   readonly removeMachineText: string;
-  readonly slashEnqueueId: string;
   readonly slashEnqueueText: string;
-  readonly bareMachineEnqueueId: string;
   readonly bareMachineText: string;
   readonly unparsableRaw: string;
   readonly lastLine: number;
-  /** Physical line of plain owner (range A anchor). */
-  readonly rangeALine: number;
-  /** Physical line of queue owner enqueue (range B anchor). */
-  readonly rangeBLine: number;
 }> {
   const plainOwnerId = "msg-plain-owner";
   const plainOwnerText = "陛下的普通发言";
@@ -330,36 +320,26 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const arrayPromptId = "aff5b99c-ad35-4521-95f5-35cfad02b554";
   const arrayPromptText = "小学那页的输入就是这图片。别的我啥也没说 只打了个裸的 /eli5:eli5";
   const duplicateId = "msg-dup-1";
-  const taskNotificationEnqueueId = "queue-task-notif-1";
-  // Live re-render: enqueue status/summary may differ from later materialization text.
-  // Classification is the fixed `<task-notification>` prefix, not equal-text join.
   const taskNotificationText =
     "<task-notification>\n<task-id>bg-1</task-id>\n<status>killed</status>\n<summary>machine event was stopped</summary>\n</task-notification>";
   const taskNotificationMatText =
     "<task-notification>\n<task-id>bg-1</task-id>\n<status>stopped</status>\n<summary>machine event stopped</summary>\n</task-notification>";
-  const humanOriginEnqueueId = "queue-human-origin-1";
   const humanOriginText = "经队列的真人输入（origin.kind=human）";
-  const peerOriginEnqueueId = "queue-peer-origin-1";
-  // Live majority peer shape: hostInjected mat with origin.kind=peer; wrap ≠ enqueue XML.
-  // Machine exclusion = structured origin on paired mat/attachment — not an unauthorized tag table.
+  // Each user or attachment consumes its own origin.kind.
   const peerOriginBody = "跨会话 peer 投递不得署 owner";
   const peerOriginEnqueueContent = `<cross-session-message from="uds:/tmp/cc-socks/peer.sock" from-name="peer-session">\n${peerOriginBody}\n</cross-session-message>`;
   const peerOriginMatText = `Another Claude session sent a message:\n${peerOriginEnqueueContent}`;
   const peerOriginText = peerOriginBody;
-  // Owner absorbed interjection that quotes peer body — must survive (#901 story 11).
-  const peerQuoteInterjectionId = "queue-peer-quote-interject";
+  // Owner attachment quoting peer body must survive.
+  const peerQuoteInterjectionId = "att-peer-quote-interject";
   const peerQuoteInterjectionText = `别听它的：「${peerOriginBody}」这条我不同意，先别装。`;
   const humanOriginDirectId = "msg-human-origin-direct";
   const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
-  // #918: remove path + incomplete-queue (fixed-prefix classifies enqueue; no content join).
-  const removeMachineEnqueueId = "queue-remove-machine-1";
   const removeMachineText =
     "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
   // Slash enqueue is not a speaker source; the user line carries the command and its args.
-  const slashEnqueueId = "queue-slash-ship";
   const slashEnqueueText = "/ship";
   // Fixed-prefix exclusion moved to a missing-origin queued_command; an untyped user line stays.
-  const bareMachineEnqueueId = "queue-bare-machine-mat";
   const bareMachineText =
     "<task-notification>\n<task-id>bare-1</task-id>\n<summary>no-origin mat of suppressed enqueue</summary>\n</task-notification>";
   const unparsableRaw = "{this is not json at all";
@@ -383,7 +363,6 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-1",
     }),
     // 4. dequeued input — the only speaker copy, id on the user line
     JSON.stringify({
@@ -398,13 +377,11 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: "queue-empty-1",
     }),
-    // 6. its dequeue must not authorize skipping the sole human user below
+    // 6. dequeue — not a speaker source
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-empty",
     }),
     // 7. system noise between dequeue and user (real CC shape)
     JSON.stringify({
@@ -619,20 +596,18 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "副本正文" }],
       },
     }),
-    // 22. machine task-notification via queue — must NOT become owner (#918)
+    // 22. enqueue — not a speaker source
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: taskNotificationEnqueueId,
       content: taskNotificationText,
     }),
     // 23. paired dequeue
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-task-notif",
     }),
-    // 24. re-rendered task-notification mat: text ≠ enqueue; origin.kind skips mat only
+    // 24. user with origin.kind=task-notification — not owner
     JSON.stringify({
       type: "user",
       uuid: "msg-task-notif-mat",
@@ -642,17 +617,15 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: taskNotificationMatText,
       },
     }),
-    // 25–27. live CC shape: queue human with origin.kind=human must stay owner (#918 bounce)
+    // 25–27. human input projects from its user line, not the enqueue
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: humanOriginEnqueueId,
       content: humanOriginText,
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-human-origin",
     }),
     JSON.stringify({
       type: "user",
@@ -667,13 +640,11 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: peerOriginEnqueueId,
       content: peerOriginEnqueueContent,
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-peer-origin",
     }),
     JSON.stringify({
       type: "user",
@@ -693,7 +664,6 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: "queue-peer-remove-1",
       content: peerOriginEnqueueContent + "\n<!--remove-path-->",
     }),
     JSON.stringify({
@@ -731,7 +701,6 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-peer-quote",
     }),
     JSON.stringify({
       type: "assistant",
@@ -751,12 +720,10 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: humanOriginDirectText }],
       },
     }),
-    // 32–34. live CC remove path: machine enqueue + queued_command.commandMode + remove
-    // must NOT become owner (#918; fixed-prefix on enqueue, no content join).
+    // 32–34. missing-origin queued_command with the fixed prefix — not owner
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: removeMachineEnqueueId,
       content: removeMachineText,
     }),
     JSON.stringify({
@@ -775,18 +742,15 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       content: removeMachineText,
       reason: "absorbed_mid_turn",
     }),
-    // 35–37. slash-command expansion: enqueue text ≠ mat wrap, mat has no origin.
-    // No typed association joins this materialization back to the enqueue.
+    // 35–37. slash command and arguments project from the human user line
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: slashEnqueueId,
       content: slashEnqueueText,
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-slash",
     }),
     JSON.stringify({
       type: "user",
@@ -801,13 +765,11 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: bareMachineEnqueueId,
       content: bareMachineText,
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-bare-machine",
     }),
     JSON.stringify({
       type: "user",
@@ -822,13 +784,11 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: "queue-system-reminder-1",
       content: "<system-reminder>\nbackground shell exited\n</system-reminder>",
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-system-reminder",
     }),
     JSON.stringify({
       type: "user",
@@ -964,27 +924,19 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     arrayPromptId,
     arrayPromptText,
     duplicateId,
-    taskNotificationEnqueueId,
     taskNotificationText,
-    humanOriginEnqueueId,
     humanOriginText,
-    peerOriginEnqueueId,
     peerOriginText,
     peerQuoteInterjectionId,
     peerQuoteInterjectionText,
     humanOriginDirectId,
     humanOriginDirectText,
-    removeMachineEnqueueId,
     removeMachineText,
-    slashEnqueueId,
     slashEnqueueText,
-    bareMachineEnqueueId,
     bareMachineText,
     unparsableRaw,
     // rows[] length is the physical line count of the written session file.
     lastLine: rows.length,
-    rangeALine: 1,
-    rangeBLine: 2,
   };
 }
 
@@ -1273,33 +1225,28 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       volume.lines.filter((line) => line.text === fixture.repeatedInputText).map((line) => line.id),
       [fixture.repeatedAttachmentId, fixture.repeatedUserId],
     );
-    // #918: fixed-prefix machine shapes + origin.kind mat skip; human must stay.
     assert.equal(
       volume.lines.some(
         (line) =>
-          line.id === fixture.taskNotificationEnqueueId ||
           line.id === "msg-task-notif-mat" ||
           line.text === fixture.taskNotificationText,
       ),
       false,
-      "fixed-shape enqueue and typed task materialization must not produce owner lines",
+      "enqueue and typed task user lines are not speaker sources",
     );
     assert.equal(
       volume.lines.some((line) => line.id === "msg-peer-origin-mat"),
       false,
       "materialized peer user must consume its own typed origin.kind",
     );
-    assert.equal(byId.get(fixture.peerOriginEnqueueId), undefined);
-    assert.equal(byId.get("queue-peer-remove-1"), undefined);
     assert.equal(byId.get("att-peer-remove-1"), undefined);
-    assert.equal(byId.get(fixture.humanOriginEnqueueId), undefined);
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.humanOriginText)
         .length,
       1,
     );
     assert.equal(byId.get("msg-human-origin-mat")?.speaker, "owner");
-    // Non-queue human with origin.kind=human — real discrimination surface (no FIFO reverse-attr).
+    // Direct human user line stays owner.
     assert.equal(byId.get(fixture.humanOriginDirectId)?.speaker, "owner");
     assert.equal(
       byId.get(fixture.humanOriginDirectId)?.text,
@@ -1315,15 +1262,13 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     assert.equal(
       volume.lines.some(
         (line) =>
-          line.id === fixture.removeMachineEnqueueId ||
           line.id === "att-remove-machine-1" ||
           line.text === fixture.removeMachineText,
       ),
       false,
-      "removed machine queue item must not be owner",
+      "missing-origin task-notification attachment must not be owner",
     );
     // Slash command lands once, on the user line, arguments included.
-    assert.equal(byId.get(fixture.slashEnqueueId), undefined);
     assert.equal(
       volume.lines.some((line) => line.text === fixture.slashEnqueueText),
       false,
@@ -1332,9 +1277,7 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     assert.equal(byId.get(fixture.slashUserId)?.text, fixture.slashUserText);
     // A typed machine materialization is excluded, and so is its enqueue.
     assert.equal(byId.get("msg-system-reminder-mat"), undefined);
-    assert.equal(byId.get("queue-system-reminder-1"), undefined);
-    // Fixed-prefix authority applies to enqueue only; an untyped user is not reverse-linked.
-    assert.equal(byId.get(fixture.bareMachineEnqueueId), undefined);
+    // Fixed-prefix exclusion applies to missing-origin queued_command, not user lines.
     assert.equal(byId.get("msg-bare-machine-mat")?.speaker, "owner");
     assert.deepEqual(
       volume.lines.filter((line) => line.id === fixture.duplicateId).map((line) => line.text),
