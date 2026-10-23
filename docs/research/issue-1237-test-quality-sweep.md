@@ -1091,4 +1091,21 @@ rg -n 'prepare:' test/integration test/unit -g 'host-session*.test.ts' -g 'host-
 
 新增测试函数0、生产函数0；新增共享夹具含四个模块装配回调：ACP 模块 factory、headless 模块 factory、依赖模块 partial factory、其返回的 createRoleRuntimeDependencies。`rg -n 'vi\.mock|importOriginal|roleRuntimeDependenciesWithoutNavigator|delete .*createNavigatorAttendance' test --glob '*.ts'` 未找到已有同用途模块接缝；四者仅用 Vitest 原生机制转接原件，不重写 factory/adapter/loader。省略业务规则仍只在原 helper，第二个参数传原构造器，不产生第二份规则。各回调 existing=null，保留；原 helper 是修改而非新增。
 
-入口未换；默认表未注入假 host；所有测试 body、请求和断言逐字未变。没有旧生产分支被替代，故无生产退役项；错误的扫净说明已在上节原位置撤回并补账。无新增删除断言/整案/整文件项目，不改核账算法。提交前逐文件核对 diff（含新夹具），提交后再以原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核实际 HEAD，结果入回执。不 amend/rewrite/push，不派角色；本次仅施工重交，由调用者直回大理寺复审。临时插桩已保存为 evidence 下 throwaway-probe.patch/.ts；隔离工作树及其 node_modules 软链已移除，受审工作树无插桩或变异残留。
+入口未换；默认表未注入假 host；所有测试 body、请求和断言逐字未变。没有旧生产分支被替代，故无生产退役项；错误的扫净说明已在上节原位置撤回并补账。无新增删除断言/整案/整文件项目，断言计数算法不改；提交后的取树冲突及追加修复见下节。提交前逐文件核对 diff（含新夹具），提交后再以原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核实际 HEAD，结果入回执。不 amend/rewrite/push，不派角色；本次仅施工重交，由调用者直回大理寺复审。临时插桩已保存为 evidence 下 throwaway-probe.patch/.ts；隔离工作树及其 node_modules 软链已移除，受审工作树无插桩或变异残留。
+
+### 提交后核账冲突：main 新增文件的后续修复
+
+实际首提交 `cda91d17` 后原核账入口 exit1，不是1142通过：`public-cli-session-missing-fresh-summons.test.ts` 在 MAIN_MERGE 集成才进入本分支；原取树把它排除，HEAD 的一行测试装配修改与此形成 modify/delete。`/tmp/1237-r23-evidence/accounting-conflict.txt` 保留 Git 原冲突，不能改测试接缝来躲核账，也不能吞掉冲突或伪称已验。
+
+修共同取树原因：在既有私有 index 中，对「集成时新增、集成后又有票内修改」的路径保留 MAIN_MERGE 原始 blob 作为上下文，然后仍由原 merge-tree 重放 HEAD 变化；后续真正删除仍由原 force-remove 生效。新增文件不在 BASE，所以不新增 BASE 的断言/整案计数；不是把所有 main 改动计入本票，不使用 ours/theirs 冲突偏好。当前交集仅该文件，已逐项核对；不硬编码文件名。复用 Git 原生 `ls-tree -rz` → `update-index -z --index-info`（官方 https://git-scm.com/docs/git-update-index 明示支持 ls-tree 格式），未自造合并器或新函数。
+
+代码形状扫类及复扫命令：`rg -n '"read-tree"|"merge-tree"|"update-index"' docs scripts --glob '*.{py,ts,mjs}'`；输出仅下列四处（accounting-scan.txt），每处已复核：
+
+| 命中 path:line | 结果 |
+| --- | --- |
+| docs/research/issue-1237-deletion-ledger.py:30 | 已修：read-tree 后为 main 新增且后续改过的路径补集成点上下文。 |
+| docs/research/issue-1237-deletion-ledger.py:40 | 已修：只向原私有 index 补原始 blob，不预吞 HEAD 变化。 |
+| docs/research/issue-1237-deletion-ledger.py:44 | 不同类：原后续删除优先规则保留，删除项仍真实计数。 |
+| docs/research/issue-1237-deletion-ledger.py:49 | 不同类：原生 merge-tree 及冲突非零退出保留，无偏好合并。 |
+
+同一个工作树/HEAD，`git show cda91d17:docs/research/issue-1237-deletion-ledger.py` 原版落到 evidence/accounting-old.py，从原 cwd 用 `python3 -I` 重跑 exit1；恢复取树逻辑的原入口 exit0，COUNT/MATCH1142，files19/cases116/asserts1007（accounting-mutation.log、accounting-restored.log）。该附带脚本修复另建提交，不 amend 第一提交。新增函数/测试均0；仅原核账入口聚焦复核，测试源码与先前179/179的内容未再变化；最终提交后再核真实 HEAD，结果见回执。

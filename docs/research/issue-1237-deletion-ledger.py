@@ -28,6 +28,19 @@ MAIN_MERGE = "c2c9175dacecc8121be7005eb55501e213f62787"
 with tempfile.TemporaryDirectory(prefix="ak-1237-ledger-") as temporary:
     env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
     git("read-tree", f"{MAIN_MERGE}^1:test", env=env)
+    # Main-born files have no pre-integration version. Retain their merge-point
+    # context when replaying a later repair, rather than manufacture delete/modify.
+    introduced = set(git(
+        "diff", "--relative=test", "--diff-filter=A", "--name-only", "-z",
+        f"{MAIN_MERGE}^1", MAIN_MERGE, "--", "test",
+    ).split("\0"))
+    repaired = introduced & set(git(
+        "diff", "--relative=test", "--name-only", "-z", MAIN_MERGE, "HEAD", "--", "test",
+    ).split("\0"))
+    git("update-index", "-z", "--index-info", env=env, input="".join(
+        row + "\0" for row in git("ls-tree", "-r", "-z", f"{MAIN_MERGE}:test").split("\0")
+        if row and row.split("\t", 1)[1] in repaired
+    ))
     git("update-index", "--force-remove", "-z", "--stdin", env=env, input=git(
         "diff", "--relative=test", "--diff-filter=D", "--name-only", "-z", MAIN_MERGE, "HEAD", "--", "test",
     ))
