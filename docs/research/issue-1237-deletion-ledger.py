@@ -15,9 +15,17 @@ BASE = "7997ffb2"
 def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True, errors="replace")
 
-deleted_files = [p for p in git("diff", "--diff-filter=D", "--name-only", BASE, "HEAD", "--", "test").split() if p]
+# Exclude the main integration, retaining #1237 before it and all later repairs.
+# Git applies the integration..HEAD delta to the pre-integration ticket tree;
+# conflicts fail via check_output rather than silently dropping ticket changes.
+MAIN_MERGE = "c2c9175dacecc8121be7005eb55501e213f62787"
+ticket_tree = git(
+    "merge-tree", "--write-tree", f"--merge-base={MAIN_MERGE}",
+    f"{MAIN_MERGE}^1", "HEAD",
+).strip()
+deleted_files = [p for p in git("diff", "--diff-filter=D", "--name-only", BASE, ticket_tree, "--", "test").split() if p]
 
-diff = git("diff", "-U0", BASE, "HEAD", "--", "test")
+diff = git("diff", "-U0", BASE, ticket_tree, "--", "test")
 
 # removed lines: file -> set of 1-based baseline line numbers
 removed: dict[str, set[int]] = {}

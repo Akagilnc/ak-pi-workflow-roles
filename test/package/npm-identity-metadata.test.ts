@@ -4,6 +4,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterAll, test } from "vitest";
 import { promisify } from "node:util";
+import { build } from "esbuild";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { AUDITOR_SESSION_MATERIALS } from "../../src/auditor-soul.ts";
+import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import { worktreeTempPrefix, packIsolatedPackage } from "../helpers/environment-fixtures.ts";
 
 import {
@@ -130,8 +134,32 @@ test("packed artifact carries the settled license identity", async () => {
   assert.notEqual(extracted.thirdPartyNoticeText, extracted.licenseText);
 });
 
-/** Exercise the npm bin target, not a copied source/module inventory. */
-test("packed CLI bin starts and auto-extension list stays empty", async () => {
+/** Check the real pack against runtime declarations, not a copied inventory. */
+test("packed runtime resolves its materials, modules and CLI bin", async () => {
+  const materials = new Set([
+    ...PUBLIC_ROLE_RECORDS.flatMap((record) => [...record.sessionMaterials]),
+    ...Object.values(AUDITOR_SESSION_MATERIALS).flat(),
+  ]);
+  for (const path of materials) {
+    assert.equal(extracted.paths.includes(path), true, path);
+  }
+
+  // Resolve actual shipped import edges, including the explicit Pi entrypoint.
+  // Unlike the fresh-build closure test, this catches npm files exclusions.
+  await build({
+    absWorkingDir: resolve(extracted.root, "package"),
+    entryPoints: [
+      INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+      ...extracted.paths.filter((path) => path.startsWith("dist/") && /\.(?:m?js)$/.test(path)),
+    ],
+    outdir: resolve(extracted.root, "closure-check"),
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "node",
+    packages: "external",
+    logLevel: "silent",
+  });
   const bin = extracted.packageJson.bin?.["ak-role"];
   assert.equal(typeof bin, "string");
   await execFileAsync(process.execPath, [resolve(extracted.root, "package", bin!), "--help"]);

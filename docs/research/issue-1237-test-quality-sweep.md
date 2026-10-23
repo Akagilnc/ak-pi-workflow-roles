@@ -158,7 +158,7 @@
 | `test/integration/ticket-trajectory-binding.test.ts` | D | 改：删重复 legacy/计数，保真实 ledger index/render 消费 typed ticket、legacy、unbound 与 ambiguous run 路径。第八轮整卷复扫（D）：「flat run without ticketNumber」案 length===0 后紧跟同义 some===false，删后者第十二轮账：a/D 5、仍在 1。无未证 null。 |
 | `test/integration/worker-submission-gates.test.ts` | S | 本票误判为重复，第二轮改正：unfinished reason 不是重复结论，有承接 `test/contract/judge-role.test.ts:629`。独有空白输入仍走 runtime 收卷；删旧目录哨兵（S），保真实 Git 的 commit 提醒、unborn/失败、开放前缀及现役 hook 清理。第八轮整卷复扫：未命中。第十二轮账：a/S 1、b 9。无未证 null。 |
 | `test/adjudication/activation-bare-seam.test.ts` | B | 留：extension 激活入口的 git/durable principal 故障、原 cause、零加载及退出/abort 策略。第八轮整卷复扫：未命中。 |
-| `test/package/npm-identity-metadata.test.ts` | M/D/S | 改：tarball manifest bin→真实 --help 正常退出；删 source/Soul/module/packet 手工清单和重复 license 排除。许可证/peer/无 method Skills/禁自动激活仍是安装者契约。第七轮（R6-A）：删 tarball 不含 `patches`、不含 `resources/methods/` 两句（`patches/` 与 `resources/methods` 已从仓删除，`b75a1fe4` 等，无生产者；前六版把它们判作安装者契约留，本轮依大理寺对御史台 C1 边界的驳回「判据是被断言缺席的名字有无生产者，与断言面是否落盘无关」改删）；bin 真实 --help、空自动注册、许可证/peer 留，案名改为陈述所留行为。第八轮整卷复扫：未命中。第十二轮账：a/D 3、a/M 15、a/S 4。无未证 null。 |
+| `test/package/npm-identity-metadata.test.ts` | M/D/S | 改（第二十轮 R21-A 更正原整删）：一次真实 npm pack/解包，:136 既有 bin 案同时检查生产声明的材料路径与 esbuild 解析的真实模块依赖；bin --help、空自动注册、许可证/peer 保留。源码中有实际读者的 doctor/merger/navigator 依赖不能一概判删；无读者 canonical-json、fixer-repair.md 及退役名字哨兵不恢复。逐项重判唯一真源为删除账 #666–#683；本文件累计 a/D 3、a/M 3、a/S 4、b 1、改好 11。变异与反例见第二十轮。 |
 | `test/package/published-dist-import-closure.test.ts` | B | 留：实际 build 后用生态 esbuild 解析真实 import edges 并加载根模块；不是手抄模块全集。第八轮整卷复扫：未命中。 |
 | `test/primary-aware-cleanup.test.ts` | M | 删（第七轮 R6-B，原判留不成立）：只测测试夹具 `test/helpers/primary-aware-cleanup.ts`，无生产入口，且不在 package.json 任一测试 glob、`scripts/run-test-all.mjs` TIERS 或 CI 之内，从未执行；改不成真入口测试。承接者 null。夹具本身仍被 60 余个测试文件使用，不动。第十二轮账：a/M 12。无未证 null。 |
 
@@ -744,3 +744,38 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - 修前 `npx tsc --noEmit` 通过；四项单删各自 tsc 0。聚焦命令 `node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/factory-board.test.ts test/integration/public-cli-diarist-run.test.ts test/integration/public-cli-report-ticket.test.ts test/integration/public-cli-engine-resume-detour.test.ts`，修前 82/82、0 fail、6238.228625 ms；修后同命令 82/82、0 fail、6306.83575 ms（`/tmp/r19-cont-before.log`、`/tmp/r19-cont-after.log`）。修后 tsc 通过；不虚报生产变异或全量。
 - 累计 R19-A 实删 67 条；机械账比首交多四条，工作树口径 COUNT/MATCH 1139。提交后用未改动的 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
 - `git diff HEAD` 自审：测试侧只有四行删除，新增生产函数、测试函数、helper 均无，diffItems=[]；输入、承接者、judge station 独立检查与失败路径全部保留。未增加扫描机制、证明测试、新断言或配置改动；不 amend/rewrite/push、不派角色，交卷由调用方续送复审。
+
+## 第二十轮：R21-A / R21-B（起点 c2c9175d）
+
+依据：本票 `runs/01a16776-ad9c-7cd8-89ec-4449a93eb38f@judge/receipts/10.json`。只改该判词圈定的一个测试、核账脚本及两张账表；不改生产、Soul、治理、席位或宿主配置。原有未跟踪 `node-test-report.txt` 未动。
+
+### R21-A：真实打包行为不能因期望表坏而整删
+
+根因：此前把真实 npm pack 的输出检查误称为「不调用在役分支」，把手抄期望值的缺陷误当成被守行为不存在。修法并入现有 bin 案，没有增加测试案、夹具、打包次数或复制清单。材料期望直接取 PUBLIC_ROLE_RECORDS.sessionMaterials 与 AUDITOR_SESSION_MATERIALS；实际解包的模块依赖复用 esbuild（仓内 fresh-build closure 已用的解析器），包含生产声明的内部入口与包内 dist 模块。后者检查的是 npm 裁剪后的树，不是 fresh-build 案的构建输出，故能抓它抓不到的 files 排除。断言只落在 pack JSON 的路径字段与模块/进程成功结果，不检查材料文案。
+
+扫类与复扫命令（均真跑）：
+
+- `rg -n 'extracted\.paths|release inventory|packageJson\.bin' docs/research/issue-1237-deletion-ledger.md`：命中 #662、#666–#683，逐条结论直接落在该账行，不在此维护第二份。#662 退役 patches 哨兵不属本类；#666–#683 全部重判，无漏行。
+- `git grep -n -E 'canonical-json|fixer-repair' -- src extensions scripts`：零引用。`git grep -n -E 'method-skill|fixer-prerequisites.json|fixer-repair.json' -- src extensions scripts`：仅有三个 machine-method-skills 引用，不是退役 package-resources 装载器。
+- 进一步打开 extensions/role-runtime.ts、src/role-runtime.ts、src/role-runtime-dependencies.ts、src/packaged-role-registry.ts、src/auditor-soul.ts、src/session-opening-materials.ts、scripts/build-package.mjs，以及 `7997ffb2:test/package/npm-identity-metadata.test.ts` 的完整旧清单。确认 src/doctor-contracts、doctor-evidence、navigator-attendance、merger-contracts、merger-git-state、merger-role 有在役值导入；不是「src 都不读」。canonical-json 无读者，未恢复其存在性要求。
+
+变异命令：每次只在 `package.json.files` 追加一个 `!<path>`，执行 `npx vitest run test/package/npm-identity-metadata.test.ts`，最后恢复原始字节。临时驱动 `/tmp/1237-r20-mutations.py` 和 `/tmp/1237-r20-evidence/` 仅作诊断记录，不纳入仓库测试。以下各路径分别运行，不是一次排除一组：
+
+- souls/judge.md、souls/doctor-auditor.md、resources/collector-bot-handbook.md、resources/diarist-collect.md：各 1 failed / 2 passed，exit 1，材料路径缺失断言红。
+- extensions/role-runtime.ts、src/doctor-contracts.ts、src/doctor-evidence.ts、src/navigator-attendance.ts、dist/navigator-attendance.js、dist/activation-ledger-topology.js、src/merger-contracts.ts、src/merger-git-state.ts、src/merger-role.ts：各 1 failed / 2 passed，exit 1，真实入口/导入解析失败。navigator dist 两个报错来自包内 role-runtime.js、role-runtime-dependencies.js 的真实导入边。
+- CLAUDE.md：只追加负项时 3 passed，npm 仍保留 files 的显式正项，不能算缺件变异。去掉显式正项并追加负项后 1 failed / 2 passed，断言 `false !== true`，exit 1；日志 `CLAUDE-removed-positive.log`。
+- src/canonical-json.ts、packets/fixer-repair.md：各 3 passed，exit 0，符合无运行时读者的删除边界；不为这两个名字造新守卫。
+- bin.ak-role 指向不存在的 dist/nonexistent-bin.js：1 failed / 2 passed，MODULE_NOT_FOUND，exit 1。已有真实 bin 执行承接 #671；#682 固定拼写仍删。
+- 旧逻辑对照：换回 c2c9175d 的旧测试并排除 souls/judge.md，3 passed；恢复新测试，同一排除 1 failed。复原 package.json 后 3 passed，2.82s。未把旧测试漏检说成红，也未用别的失败冒充变异证据。
+
+### R21-B：排除 main 合入，不借他票删除凑账
+
+修前两次执行 `python3 -I docs/research/issue-1237-deletion-ledger.py` 均为 COUNT 1427 / files 23 / MISMATCH ledger 1139。根因是两处 git diff 直接比较基线到混入 main 的 HEAD。两处统一使用 Git 原生 merge-tree 返回的本票树，边界、命令及后续 main 合入的处理要求见删除账账头（唯一统计口径）；未自造补丁回放、行号映射或五文件排除表。Git 冲突/失败仍由 check_output 原样报错。
+
+官方资料先查：npm pack 的 JSON/file list（https://docs.npmjs.com/cli/v11/commands/npm-pack）、esbuild packages/external 与真实导入解析（https://esbuild.github.io/api/#packages）、Git merge-tree 的显式 merge-base（https://git-scm.com/docs/git-merge-tree）。生态已有件足够；本轮无新通用件。
+
+核账复扫：`rg -n 'BASE|HEAD|git\("diff"' docs/research/issue-1237-deletion-ledger.py`。两处统计 diff 均用 ticket_tree；BASE 仍只负责冻结的删除坐标与原文读取，不是漏改的终点。修后核账 COUNT/MATCH 1139，18 文件＋115 案＋1006 断言，未新增他票行。
+
+### 交卷自审
+
+`git diff HEAD` 的四文件逐一打开。测试改名扩充而非另建平行案；diffItems 中 `packed runtime resolves its materials, modules and CLI bin` 对应起点文件 :134 的既有 bin 案，已并入。对照现有 `published-dist-import-closure.test.ts:69`：它不经 npm pack，不能检测 files 排除；复用 esbuild 而不复制 listJsFiles/assertRelativeImportClosure helper。无新增生产函数、测试 helper 或计数脚本函数。旧手抄表/无读者文件要求未复活。真实入口为 npm pack，断言面是产物路径字段与解析/执行结果；没有放松既有失败路径。本轮只作聚焦验证，不索取/运行全量：`npx vitest run test/package` 为 2 files / 4 tests passed，3.26s；`npx tsc --noEmit` exit 0；`git diff --check` 无输出。提交后仍须由调用方续送复审，不表示已合并收官。
