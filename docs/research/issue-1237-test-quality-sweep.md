@@ -58,7 +58,7 @@
 | `test/contract/gatekeeper-projection.test.ts` | D/S | 删：孤立投影 helper 的原样返回；承接 `test/integration/public-cli-seat-pipeline.test.ts:35` 各席公开入口 accepted 收卷（换宿主收卷 `test/integration/pipeline-lifecycle-formalization.test.ts:28`；第九轮改指：原承接的 merger-run 全角色表已在第八轮删除）及 `test/contract/submission-ledger.test.ts:174` 的真实多提交原 params 落账；孤立投影函数已删除。第十二轮账：a/退役 3。无未证 null。 |
 | `test/contract/gleaner-left-role.test.ts` | M/S | 删并入：真实入口收卷行为在 `test/integration/public-cli-gleaner-left-run.test.ts:90`；不保死 helper 拒 bounce/pass。第十二轮账：a/D 5、a/M 5、a/S 1。无未证 null。 |
 | `test/contract/judge-role.test.ts` | M/T/D/S | 改：删 handler 全集、focused worker 注册/文案重复案及 assertDelivers；从 extension/runtime 到 tool、ledger closure 的空 Soul/未完成提醒/原卷数据等行为仍留。worker phase 承接 `test/integration/public-cli-coder.test.ts:122`、`test/integration/public-cli-fixer.test.ts` 默认 phase 案；空白 unfinished reason 并入本文件 `:629` 的 runtime→tool→收卷案，缺理由/两次提醒/理由重交边界均留。Soul 模板无承接者。第三轮补回 Worker/Judge 输入递送：`:351` Judge、`:587` Coder、`:847` Fixer 既有案断言 `before_agent_start` 返回的 systemPrompt 含 BASE、所载 Soul 与 phase（只查输入到达，不锁标签布局）。第四轮（R3-B）：`:319` 无角色案删 `handlers.has("tool_call") === false` 注册布局锁及与之相抵的注释，改为调用已注册（若有）的 `tool_call` 钩子、断言返回 undefined（不干预工具）；不加载、不加角色工具的既有断言留。第七轮（R6-A）：删 `result.usage === undefined`（#756 已撤 judge 对父回执的 usage 投影，src 无此字段的产出者）。第八轮整卷复扫（D）：删「judge output tool returns an unreadable status」。第九轮更正：当时所指案只送对象型未知 status，不覆盖被删案的字符串型未知 status。字符串与对象型未知 status 现由同文件 `:388` 对 judge 自己的注册断言原样收第十二轮账：a/D 4、a/M 12、a/S 2、b 4、a/T 3、仍在 1。无未证 null。 |
-| `test/contract/navigator-attendance-lifecycle.test.ts` | T | 改：删 grace 报错句式锁；保受控 promise/clock 驱动 attendance grace、取消和 settlement；不是实际宿主并发测试。第八轮整卷复扫：未命中。第十二轮账：a/T 1。无未证 null。 |
+| `test/contract/navigator-attendance-lifecycle.test.ts` | T/M | 第二十三轮 R24-A：grace 案删除手工 attendance/lookup 装配，改用生产依赖表，只在 summons 边界控制挂起与 abort；逐命中账见末节。此前：改：删 grace 报错句式锁；保受控 promise/clock 驱动 attendance grace、取消和 settlement；不是实际宿主并发测试。第八轮整卷复扫：未命中。第十二轮账：a/T 1。无未证 null。 |
 | `test/contract/navigator-attendance.test.ts` | B | 留：缺状态、无行、arrival、取消、failure/no-terminal；opaque 上游失败真因传递不是锁系统报错句式。第八轮整卷复扫：未命中。 |
 | `test/contract/notary-role.test.ts` | M/T | 本票误判为重复，第十一轮改正：旗绑定不是重复结论，是 `readNotaryTicketFlag` 的唯一守卫，公开入口产不出非法值，本账记 c/null。payload helper 已退役，不是重复。audited Soul XML 模板无行为承接者，本账记 a/T。身份字段与 source-run 边界见 `test/integration/public-cli-notary.test.ts:168`、`:266`、`:332` 及 `test/integration/audited-run-identity-1166.test.ts` 的身份字段与 Soul 输入穿透。第十一轮（R10-A）：「blank unbound; valid binds; invalid throws」是 `readNotaryTicketFlag` 的唯一守卫，上述公开入口产不出非法值，仓内无现成扩展激活案能把非法旗送进去，本账记 c/null。模板无行为承接者，本账记 a/T。第十二轮账：a/M 2、a/T 1、a/退役 8、c/null 8。c/null 仅 readNotaryTicketFlag，公开入口产不出非法旗。无未证 null。 |
 | `test/contract/oauth-keepalive.test.ts` | B | 留：手动 scheduler、刷新服务边界、single-flight 与 warning 类型/原 cause，不连真实 OAuth。第八轮整卷复扫：未命中。 |
@@ -133,7 +133,7 @@
 | `test/integration/public-cli-main-flow-p0.test.ts` | B | 留：无配置在 dispatch 前失败，以及真实公开 escalate→owner ruling→resume 主链。第八轮整卷复扫：未命中。 |
 | `test/integration/public-cli-merger-run.test.ts` | D | 改（第八轮整卷复扫，原判留）：删「every packaged role accepts via shared sealed→Terminal entry」——各席经 runAkRole 收 accepted 与 test/integration/public-cli-seat-pipeline.test.ts「every active seat routes, submits, and settles」同结论，换宿主收卷由 test/integration/pipeline-lifecycle-formalization.test.ts 承接；随删只剩它用的行表与五个种子 helper；多次提交、post-seal/no-receipt/infrastructure 留第十二轮账：a/D 5。无未证 null。 |
 | `test/integration/public-cli-merger.test.ts` | S/D | 改：删退役 dossier/旧 manifest 字段哨兵；第三轮删解析案中未知旗与空 `--project` 重复（承接 `test/integration/public-cli-failure-settlement.test.ts:36`），Merger 专属的公开 packet 字段拒收与附件正向留；保公开 Merger 从真实 Git 派生 materials，再到 host/Terminal、resume 与 malformed 收卷。第七轮（R6-A）：再删 materials 上 `"task"`/`"authority"` 缺席两句（#1168 已撤，且与同案 materials 键集 deepEqual 重复）。第八轮整卷复扫（S）：再删 transport prompt 不以 `/skill:` 开头（同上，零产出）；prompt 含原话留。第十二轮账：a/D 3、a/S 4。无未证 null。 |
-| `test/integration/public-cli-navigator-attendance.test.ts` | T/M | 第二十二轮 R23-A：清理前观察真实 navigator public summon 返回，含父宿主失败路径，见末节逐项账。此前：改：真实父入口到 lookup，建议对应同次回执 byStatus[status]，不同 status 有区别、缺行无建议；父失败 diagnostic 等于输入真因，保 disposition/run/receipt/session。第八轮整卷复扫：未命中。第十一轮（R10-B）：不可用真因断言曾被改弱，第十轮在 `:261` 恢复为与独立复现的文件系统错误值相等，不锁包装措辞。第十二轮账：a/T 4。无未证 null。 |
+| `test/integration/public-cli-navigator-attendance.test.ts` | T/M | 第二十三轮 R24-A：撤回前轮测试内重建 attendance/lookup 的修法，成功及 failingLookup 共用生产装配；只观察真实 public summon 返回，按生产 isPreparing 状态等待后清理，含父宿主失败。见末节逐项账。此前：改：真实父入口到 lookup，建议对应同次回执 byStatus[status]，不同 status 有区别、缺行无建议；父失败 diagnostic 等于输入真因，保 disposition/run/receipt/session。第八轮整卷复扫：未命中。第十一轮（R10-B）：不可用真因断言曾被改弱，第十轮在 `:261` 恢复为与独立复现的文件系统错误值相等，不锁包装措辞。第十二轮账：a/T 4。无未证 null。 |
 | `test/integration/public-cli-navigator-lookup.test.ts` | T/M | 改：真实整表与 coder/reviewer/judge 筛选互证，能抓错角色与只剩 coder 的整表；保落原卷、零 host session、usage/记录失败，不导入内部建议常量。记录失败案删 `/EISDIR/` 正则（锁诊断措辞）；第四轮补最小交付观察 `:150` stderr 整段非空——此案无 Terminal，诊断只在 stderr。第八轮整卷复扫：未命中。第十二轮账：a/M 5、a/T 1。无未证 null。 |
 | `test/integration/public-cli-notary.test.ts` | D | 改：删与公开负向案重复的 locator/run-state 底层调用；保公开 source locator 输入边界与三态/no_receipt/transport、绑定继承和 Terminal；不是旧 helper 拒收测试。第八轮整卷复扫：未命中。第十二轮账：a/D 4。无未证 null。 |
 | `test/integration/public-cli-process-cancel.test.ts` | B | 留：实际 CLI/process 信号入口产生结构化失败并停止受控 host child。第八轮整卷复扫：未命中。 |
@@ -879,6 +879,8 @@ rg -n 'createRoleRuntimeDependencies|createNavigatorAttendance|prepareRoleEnvelo
 
 本轮初次扫描覆盖直接 attendance 构造和 envelope/helper 入口，但漏了默认 host 延迟装配。复审撤销原「headless/ACP 其余测试均在 prepare 注入返回值，没有生产 envelope」判断：public-cli-host-axis 与 public-cli-session-missing-fresh-summons 会间接进入生产 envelope，补修见文末。辅助扫描里的普通 rm 不等于 navigator 写口；Pi legacy runner 接缝不加载真实 extension。extensions 与生产 composition roots 没有被改写。
 
+第二十三轮更正：下表 navigator 专项三行的「已修」只说明当时的清理观察，不再作为合法装配结论；R24-A 已证明它旁路生产。lifecycle 三行当时按清理竞态判不同类，不豁免其本轮发现的装配旁路。最终处置见第二十三轮。
+
 下表仅是直接依赖装配层的逐命中账，不证明默认 host 调用链已扫净；坐标冻结在该次提交3497bab8。冻结起点命令 `git grep -n -E 'createRoleRuntimeDependencies\(|createNavigatorAttendance[:(]' d7ba2411 -- test` 为 36 行；复扫命令 `rg -n '(createRoleRuntimeDependencies|roleRuntimeDependenciesWithoutNavigator)\(|createNavigatorAttendance[:(]' test --glob '*.ts'` 为 38 行（多两行是共享装配声明及其生产调用）。坐标为起点→修后，未移动以同号记；一处命中一行。所有「已修」保留原请求输入、断言和失败路径。
 
 | 命中（起点 path:line） | 修后行 | 结果 |
@@ -1109,3 +1111,79 @@ rg -n 'prepare:' test/integration test/unit -g 'host-session*.test.ts' -g 'host-
 | docs/research/issue-1237-deletion-ledger.py:49 | 不同类：原生 merge-tree 及冲突非零退出保留，无偏好合并。 |
 
 同一个工作树/HEAD，`git show cda91d17:docs/research/issue-1237-deletion-ledger.py` 原版落到 evidence/accounting-old.py，从原 cwd 用 `python3 -I` 重跑 exit1；恢复取树逻辑的原入口 exit0，COUNT/MATCH1142，files19/cases116/asserts1007（accounting-mutation.log、accounting-restored.log）。该附带脚本修复另建提交，不 amend 第一提交。新增函数/测试均0；仅原核账入口聚焦复核，测试源码与先前179/179的内容未再变化；最终提交后再核真实 HEAD，结果见回执。
+
+## 第二十三轮：R24-A navigator 专项旁路生产装配（起点 5a988e93）
+
+裁决：本票 `runs/01a16876-ad7d-7a18-8be1-8e4ac923c070@judge/receipts/4.json`；符宝郎 `01a16883-0bdc-7419-8706-f9e285f074b8@notary/receipts/4.json` 署。审刑院 `01a16884-9a43-7f9b-b87b-8a06d7d0d4ca@auditor/receipts/4.json` 维持 R24-A，另以 A24-A 要求判词更正统计。此处不冒改判词：依审刑院原始核对，旧压力运行实际16遍、15过1次未定位失败；其 `-maxdepth 6` 不覆盖深度7的 navigator，不能主张两处全程零残留。本轮仅主张下述自己实测的范围。
+
+错误形状：跨 runtime/envelope 的 navigator 专项，测试自行拼 attendance 与 lookup，绕过生产依赖构造器传递 role/phase 等输入；生产装错时测试仍绿。按代码形状扫，不按文件名豁免。纯单模块 attendance/lookup 输入测试、以假 attendance 驱动消费者的闭包/持久化测试，不声称覆盖装配，不混为此类。
+
+先查 Vitest 官方 `https://vitest.dev/api/vi.html` 的 spyOn/mockImplementation/mockRestore；仓内无已有 summons spy（搜索 `rg -n 'vi\.spyOn|summonPublicRole' test --glob '*.ts'`），不自造拦截器。生产 `src/navigator-lookup.ts:65–66` 动态 import 正是既有观察边界。保留一个生产装配真源；没有新 helper、新生产钩子或通用件。
+
+### 扫类与复扫逐项表
+
+全仓 TS 候选及 JS/mjs 补扫：
+
+```sh
+rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance\.ts|navigator-lookup\.ts' --glob '*.ts' --glob '!src/**' --glob '!dist/**' --glob '!node_modules/**' --glob '!docs/**'
+rg -n 'createNavigatorAttendance|NavigatorLookup|navigator-attendance|navigator-lookup' --glob '*.{js,mjs,cts,mts}' --glob '!node_modules/**' --glob '!dist/**' --glob '!docs/**'
+```
+
+覆盖测试、夹具、间接装配与构建脚本的最终记账命令（起点28行、修后21行；模块引用同时捕获别名导入）：
+
+```sh
+git grep -n -E 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navigator-lookup' 5a988e93 -- test scripts extensions
+rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navigator-lookup' test scripts extensions
+```
+
+原始输出 `/tmp/1237-r24-evidence/class-before.txt`、`class-after.txt`。下表一命中一行，坐标为起点→修后；删除的行注明承接，不伪称还存在。修后命中均包含在对应行，没有新增未结命中。
+
+| 起点 path:line | 修后 | 结果 |
+| --- | --- | --- |
+| scripts/build-package.mjs:12 | 12 | 不同类：发布构建入口，不是测试装配。 |
+| scripts/build-package.mjs:13 | 13 | 不同类：构建依赖注释。 |
+| scripts/build-package.mjs:15 | 15 | 不同类：发布构建入口。 |
+| test/contract/durable-session-write-failure.test.ts:37 | 37 | 不同类：向真实持久化消费者注入受控事件，守 flush failure，不测 lookup 装配。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:8 | 8 | 已修：移除 attendance 构造器导入，只留事件常量。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:9 | 删除 | 已修：移除 lookup 构造器导入，改用生产依赖表。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:52 | 53 | 不同类：受控回调守 closure 绑定与旧激活迟到消息隔离，不装配真实 attendance/lookup。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:168 | 169 | 不同类：工厂调用标记守 stationChild 是否创建依赖，不测构造器内部。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:395 | 389 | 已修：runtime 直接用 createRoleRuntimeDependencies。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:396 | 删除 | 已修：测试内 attendance 装配删除，由 :389 生产依赖表承接。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:402 | 删除 | 已修：测试内 lookup 装配删除；:343 原生 spy 在 summons 边界保持原挂起/abort 输入。 |
+| test/contract/navigator-attendance.test.ts:8 | 8 | 不同类：单模块输入测试的被测入口导入，不替换生产依赖表。 |
+| test/contract/navigator-attendance.test.ts:9 | 9 | 不同类：lookup 单模块入口与类型导入。 |
+| test/contract/navigator-attendance.test.ts:20 | 20 | 不同类：attendance 单模块案的内存 lookup 输入，不宣称穿过 runtime 装配。 |
+| test/contract/navigator-attendance.test.ts:76 | 76 | 不同类：上游 failure terminal 到 lookup unavailable 的独立转换契约。 |
+| test/contract/navigator-attendance.test.ts:84 | 84 | 不同类：无 terminal 的上游输入边界。 |
+| test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl:7 | 7 | 不同类：冻结 session 数据，无执行装配。 |
+| test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl:15 | 15 | 不同类：冻结 session 数据，无执行装配。 |
+| test/helpers/role-turn-host-fixture.ts:42 | 42 | 不同类：非 navigator 测试省略无关 attendance；R23-A 已裁合法，未撤回。 |
+| test/integration/public-cli-judge.test.ts:227 | 227 | 不同类：故意矛盾的迟到消息输入，守 bound closure 优先，不构造 lookup。 |
+| test/integration/public-cli-navigator-attendance.test.ts:14 | 删除 | 已修：删除测试 lookup 导入，观察迁到 public-role-summons。 |
+| test/integration/public-cli-navigator-attendance.test.ts:18 | 18 | 不同类：仅类型，新增句柄类型用于读取生产 isPreparing。 |
+| test/integration/public-cli-navigator-attendance.test.ts:24 | 删除 | 已修：删除测试 attendance 构造器导入。 |
+| test/integration/public-cli-navigator-attendance.test.ts:130 | 152 | 已修：包装只收集 onEvent，委托生产工厂。 |
+| test/integration/public-cli-navigator-attendance.test.ts:131 | 153 | 不同类：原生产函数的参数类型，未自行定义装配契约。 |
+| test/integration/public-cli-navigator-attendance.test.ts:137 | 155 | 已修：成功与 failingLookup 都调用 baseDeps.createNavigatorAttendance。 |
+| test/integration/public-cli-navigator-attendance.test.ts:139 | 删除 | 已修：移除手工 lookup；:128 原生 spy 委托真实 summon，仅失败案注入原文件系统故障。 |
+| test/package/npm-identity-metadata.test.ts:166 | 166 | 不同类：发布物原生动态加载，不自行构造 attendance。 |
+
+直接 navigator 公开入口 `test/integration/public-cli-navigator-lookup.test.ts` 全文另核：runAkRole → 真实 lookup 管线，无 attendance 替身。上述被排除的单模块案也纳入聚焦验证。
+
+### 修法、退役与进口账
+
+- integration：真实入口仍是 runPublicInstructionSeat → prepareRoleEnvelope → 生产依赖表 → attendance/lookup → public summon → ledger/Terminal。只把旧 summon 委托回调移到 Vitest spy；成功路径输入原样，failingLookup 仍令 state.jsonl 成为目录，不替换真实失败结果。清理前读生产句柄 isPreparing：尚在准备才等待真实 summon 的 finally；plan 不启动时不等，不从测试自己的 phase 推算生产状态。父宿主失败也保留 finally。Spy 由 onTestFinished(mockRestore) 恢复。
+- lifecycle：原同构手工装配整块删除，runtime 直接取生产依赖表；仅原挂起的 summons 输入移到 spy，取消 signal/宽限期/不阻塞 shutdown 的原断言全部保留。未加 sleep、重试、轮询或墙钟上限；原先既有等待函数未扩增。
+- 进口：integration 旁路在本票 `3497bab8` 引入；本票台院 `runs/01a168bd-392a-73a8-a954-815f499c29ef@inspector/receipts/2.json` 放行时仍记「navigator 专项未受模块替换污染」，未拦住手工装配；御史台 correctness 与本轮大理寺才指出。lifecycle 旁路由 `git blame -L 390,405 5a988e93 -- test/contract/navigator-attendance-lifecycle.test.ts` 定位 `77d37bc7`（#1192）；`~/.ak-roles/books/ak-pi-workflow-roles/1192/runs/01a14ed5-38de-75c1-8db1-f2344e1418d8@inspector/receipts/3.json` 在后继 HEAD 382ec72f 纳入 lifecycle 并放行，未指出此装配旁路。不推断其他未打开席位的判断。
+
+### 验证与自审
+
+证据统一放 `/tmp/1237-r24-evidence/`，保留完整 stdout/stderr，不只保留计数：
+
+- 修前生产 `src/role-runtime-dependencies.ts:54` 临时改 `phase: "plan"`，`npx vitest run --project integration test/integration/public-cli-navigator-attendance.test.ts --reporter=verbose` → 10 passed、exit0、2.04s（before-phase.log），复现漏报。
+- 修后同一生产变异，`npx vitest run test/integration/public-cli-navigator-attendance.test.ts test/contract/navigator-attendance-lifecycle.test.ts --reporter=verbose --reporter=json --outputFile.json=/tmp/1237-r24-evidence/final-phase.json` → 9 failed / 5 passed、exit1、3.21s。专项是8败2过（含 failingLookup 的 unavailable 断言报红）；lifecycle 是1败3过。这里不照抄判词旧测试的7败3过。
+- 复原生产源码，`npx vitest run test/contract/navigator-attendance-lifecycle.test.ts test/contract/navigator-attendance.test.ts test/integration/public-cli-navigator-attendance.test.ts test/integration/public-cli-navigator-lookup.test.ts --reporter=verbose` → 26/26、exit0、1.94s（final-focused.log）。`npx tsc --noEmit` exit0（final-tsc.log）。`git diff --exit-code -- src` exit0。
+- 最后一次测试代码变动后，`npx vitest run --project integration test/integration/public-cli-navigator-attendance.test.ts test/integration/role-envelope-engine-axis.test.ts test/integration/audited-run-identity-1166.test.ts --reporter=verbose --reporter=json --outputFile.json=/tmp/1237-r24-evidence/final-load-N.json` 连续10遍，每遍三文件并跑、18/18、exit0；墙钟依次3.22/2.72/3.15/2.97/3.17/2.94/3.45/2.72/3.37/2.96s。每遍 ENOTEMPTY=0、新 home=0、新 @navigator=0。范围严格是系统 TMPDIR、解析后的 /tmp、工作树三根下顶层 ak-* / .test-tmp-* home；所有后代不限深度递归，与运行前快照比对，每轮结束检查。非这些 home 的既存目录不在结论中；完整根、基线、逐轮结果见 final-load-summary.json。此前还有一组10遍均18/18（load-summary.json），最终验收只引用后组，不混算次数。
+- 自审：`git diff HEAD` 中新增测试函数0、生产函数0、helper 0，diffItems=[]；summon/createRunId/onEvent/Promise 回调只是搬移或修改，恢复直接用 Vitest 的 mockRestore，不新增包装函数。原输入、断言、失败路径未删弱；只删测试复制的生产装配与假 Soul loader。两处测试改动净减17行，未引入新机制。`git diff --check` 通过；原有未跟踪 node-test-report.txt 已打开，未改、未删、未提交。
+- 无新增删除断言、整案、整文件，删除账计数算法与 MAIN_MERGE 不改。独立新提交后运行 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核真实 HEAD，实际结果入终局回执。不跑全量，不动真实席位/宿主配置，不 push、不派角色；本轮交修理回执待复审，不声称整票合并。

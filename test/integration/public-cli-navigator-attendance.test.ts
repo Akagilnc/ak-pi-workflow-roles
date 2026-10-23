@@ -8,20 +8,19 @@ import assert from "node:assert/strict";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
-import { createNavigatorLookup } from "../../src/navigator-lookup.ts";
+import * as publicRoleSummons from "../../src/public-role-summons.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
-import type { NavigatorEvent } from "../../src/navigator-attendance.ts";
+import type { NavigatorAttendance, NavigatorEvent } from "../../src/navigator-attendance.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
-import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
@@ -104,7 +103,7 @@ const CASES: readonly Case[] = [
 ];
 
 for (const scenario of CASES) {
-  test(scenario.name, async () => {
+  test(scenario.name, async ({ onTestFinished }) => {
     await withActivationHome({ prefix: "ak-nav-attendance-" }, async ({ home }) => {
       const { runAkRole } = await import("../../src/public-cli/cli.ts");
       await runAkRole(
@@ -123,45 +122,44 @@ for (const scenario of CASES) {
       seedRoleRepo(project);
 
       const events: NavigatorEvent[] = [];
-      let lookupCompletion = Promise.resolve();
+      let complete!: () => void;
+      const lookupCompletion = new Promise<void>((resolve) => { complete = resolve; });
+      const summonPublicRole = publicRoleSummons.summonPublicRole;
+      const summonSpy = vi.spyOn(publicRoleSummons, "summonPublicRole").mockImplementation(async (options) => {
+        if (options.role !== "navigator") return summonPublicRole(options);
+        try {
+          return await summonPublicRole({
+            ...options,
+            ...(scenario.failingLookup === true ? {
+              // Real filesystem fault: the lookup run's state file is a directory.
+              createRunId: () => {
+                const id = "01a0navi00-0000-7000-8000-00000000f001";
+                mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${id}@navigator`, "state.jsonl"), { recursive: true });
+                return id;
+              },
+            } : {}),
+          });
+        } finally {
+          // Observe the real public summons returning, not dispose or a grace projection.
+          complete();
+        }
+      });
+      onTestFinished(summonSpy.mockRestore);
+      let attendance: NavigatorAttendance | undefined;
       const baseDeps = createRoleRuntimeDependencies(packageRoot);
       const deps = {
         ...baseDeps,
         createNavigatorAttendance: async (
           options: Parameters<NonNullable<typeof baseDeps.createNavigatorAttendance>>[0],
         ) => {
-          let complete!: () => void;
-          const completed = new Promise<void>((resolve) => { complete = resolve; });
-          // Plan never starts lookup. Other turns may outlive dispose, including host failure.
-          lookupCompletion = options.phase === "plan" ? Promise.resolve() : completed;
-          return createNavigatorAttendance({
+          attendance = await baseDeps.createNavigatorAttendance!({
             ...options,
-            lookup: createNavigatorLookup({
-              summonPublicRole: async (summonOptions) => {
-                try {
-                  const { summonPublicRole } = await import("../../src/public-role-summons.ts");
-                  return await summonPublicRole({
-                    ...summonOptions,
-                    ...(scenario.failingLookup === true ? {
-                      // Real filesystem fault: the lookup run's state file is a directory.
-                      createRunId: () => {
-                        const id = "01a0navi00-0000-7000-8000-00000000f001";
-                        mkdirSync(join(home, ".ak-roles", "books", "project", "unbound", "runs", `${id}@navigator`, "state.jsonl"), { recursive: true });
-                        return id;
-                      },
-                    } : {}),
-                  });
-                } finally {
-                  // Observe the real public summons returning, not dispose or a grace projection.
-                  complete();
-                }
-              },
-            }),
             onEvent: async (event, report) => {
               events.push(event);
               await options.onEvent?.(event, report);
             },
           });
+          return attendance;
         },
       };
 
@@ -210,7 +208,8 @@ for (const scenario of CASES) {
             try {
               await prepared.dispose?.();
             } finally {
-              await lookupCompletion;
+              // Observe production state, not the phase we expect it to use.
+              if (attendance?.isPreparing()) await lookupCompletion;
             }
           }
         },
