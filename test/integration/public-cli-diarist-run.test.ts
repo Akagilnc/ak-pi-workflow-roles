@@ -241,13 +241,13 @@ function diaristEnvelopeRunner(
 }
 
 /**
- * Session fixture covering the #901 external contracts in one volume:
- * ordinary owner message coexisting with enqueue, queue-sourced owner input +
- * paired dequeue materialization (no double-count), empty-content enqueue whose
- * sole materialization user must be kept, runner reply, pure tool result
- * (excluded), mixed tool_result+text (text kept), Codex response_item dialogue,
- * absorbed interjection (enqueue-only), repeated native id, and one
- * unparsable line. Path must sit under an authorized host session root.
+ * Session fixture covering dialogue projection in one volume:
+ * ordinary owner message, a dequeued input taken once from its user line,
+ * empty-content enqueue whose sole materialization user must be kept,
+ * runner reply, pure tool result (excluded), mixed tool_result+text (text kept),
+ * Codex response_item dialogue, an absorbed interjection taken once from its
+ * queued_command attachment, repeated native id, and one unparsable line.
+ * Path must sit under an authorized host session root.
  */
 async function writeDialogueSessionFixture(path: string): Promise<{
   readonly path: string;
@@ -262,6 +262,18 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly codexRunnerText: string;
   readonly codexInjectionText: string;
   readonly interjectionId: string;
+  readonly absorbedInterjectionText: string;
+  readonly undeliveredEnqueueText: string;
+  readonly missingOriginHumanId: string;
+  readonly missingOriginHumanText: string;
+  readonly ciMonitorId: string;
+  readonly ciMonitorText: string;
+  readonly repeatedInputText: string;
+  readonly repeatedAttachmentId: string;
+  readonly repeatedUserId: string;
+  readonly taskNotificationAttachmentId: string;
+  readonly slashUserId: string;
+  readonly slashUserText: string;
   readonly duplicateId: string;
   readonly taskNotificationEnqueueId: string;
   readonly taskNotificationText: string;
@@ -297,7 +309,22 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const codexOwnerText = "Codex 上拍的决定";
   const codexRunnerText = "Codex runner 回话";
   const codexInjectionText = "# AGENTS.md instructions for /workspace";
-  const interjectionId = "queue-interject-1";
+  const interjectionId = "b5ad7231-9a04-4529-be9d-04c0f42e9b28";
+  const absorbedInterjectionText =
+    "用我们的自己的御史台 大理寺 \n看看他的26 27 质量咋样。不按他的套路出牌🤣";
+  const undeliveredEnqueueText = "什么证据？你票都合并了。还要什么证据？弄什么垃圾场呢";
+  const missingOriginHumanId = "0a82ccfb-bd6c-4e1c-a57e-0b45e941579a";
+  const missingOriginHumanText = "现在先不动手";
+  const ciMonitorId = "566a9b98-5382-44c7-adcf-ebe2076c70dc";
+  const ciMonitorText =
+    '<ci-monitor-event>"Auto-fix pull requests" was just enabled for this session.';
+  const repeatedInputText = "同一句，两次输入";
+  const repeatedAttachmentId = "repeat-attachment-1";
+  const repeatedUserId = "repeat-user-1";
+  const taskNotificationAttachmentId = "971b2deb-48a8-45e5-a8cb-a1d305a060c0";
+  const slashUserId = "af7cc718-ef33-4aab-83c7-bf94a0e8c8ce";
+  const slashUserText =
+    "<command-message>anti-ai-writing-kit</command-message>\n<command-name>/anti-ai-writing-kit</command-name>\n<command-args>去一下ai味道。</command-args>";
   const duplicateId = "msg-dup-1";
   const taskNotificationEnqueueId = "queue-task-notif-1";
   // Live re-render: enqueue status/summary may differ from later materialization text.
@@ -324,12 +351,10 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const removeMachineEnqueueId = "queue-remove-machine-1";
   const removeMachineText =
     "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
-  // Slash-command expansion: mat wrap ≠ enqueue and has no typed association.
+  // Slash enqueue is not a speaker source; the user line carries the command and its args.
   const slashEnqueueId = "queue-slash-ship";
   const slashEnqueueText = "/ship";
-  const slashMatText =
-    "<command-message>ship</command-message>\n<command-name>/ship</command-name>";
-  // Fixed-prefix enqueue suppressed; same-text mat without origin must also stay out (not fall to fromMessageEvent).
+  // Fixed-prefix exclusion moved to a missing-origin queued_command; an untyped user line stays.
   const bareMachineEnqueueId = "queue-bare-machine-mat";
   const bareMachineText =
     "<task-notification>\n<task-id>bare-1</task-id>\n<summary>no-origin mat of suppressed enqueue</summary>\n</task-notification>";
@@ -344,11 +369,10 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: plainOwnerText }],
       },
     }),
-    // 2. owner via queue enqueue
+    // 2. enqueue copy of a dequeued input — not a speaker source
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: ownerId,
       content: "立文件。送司天台记录。",
     }),
     // 3. paired dequeue
@@ -357,16 +381,16 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-1",
     }),
-    // 4. dequeue materialization — same words as enqueue; must not double-count
+    // 4. dequeued input — the only speaker copy, id on the user line
     JSON.stringify({
       type: "user",
-      uuid: "msg-owner-materialized",
+      uuid: ownerId,
       message: {
         role: "user",
         content: [{ type: "text", text: "立文件。送司天台记录。" }],
       },
     }),
-    // 5. empty-content enqueue — fromQueueEvent retains nothing
+    // 5. empty-content enqueue — not a speaker source
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -521,17 +545,55 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "output_text", text: codexRunnerText }],
       },
     }),
-    // 18. absorbed interjection (enqueue + dequeue; no independent message record)
+    // 18. absorbed interjection: uuid-bearing queued_command is the only copy.
+    // Enqueue has no uuid; api-request-blob is the request snapshot.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
+      timestamp: "2026-10-23T01:55:34.530Z",
+      sessionId: "41e95abf-1d71-4bea-9495-fe35efbc0a05",
+      content: absorbedInterjectionText,
+    }),
+    JSON.stringify({
+      type: "attachment",
       uuid: interjectionId,
-      content: "中途插一句：保留原话。",
+      timestamp: "2026-10-23T01:55:34.530Z",
+      attachment: {
+        type: "queued_command",
+        prompt: absorbedInterjectionText,
+        source_uuid: "c0904867-1ab0-4298-8d80-5f7522dfd84c",
+        delivery_id: "d28983fe-703c-413c-8e18-4d91bb122b53",
+        commandMode: "prompt",
+        origin: { kind: "human" },
+        timestamp: "2026-10-23T01:55:34.530Z",
+        humanTurn: true,
+      },
+    }),
+    JSON.stringify({
+      type: "api-request-blob",
+      sessionId: "41e95abf-1d71-4bea-9495-fe35efbc0a05",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_01E1oFBKjiqwX1jRswr8QQF4",
+            content: "tool output",
+            is_error: false,
+          },
+          {
+            type: "text",
+            text: `The user sent a new message while you were working:\n${absorbedInterjectionText}`,
+          },
+        ],
+      },
     }),
     JSON.stringify({
       type: "queue-operation",
-      operation: "dequeue",
-      uuid: "queue-deq-2",
+      operation: "enqueue",
+      timestamp: "2026-10-22T02:02:53.000Z",
+      sessionId: "e4b50c8e-15c7-4c92-9263-959efadb24eb",
+      content: undeliveredEnqueueText,
     }),
     // 19. first occurrence of duplicate id
     JSON.stringify({
@@ -623,7 +685,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: peerOriginMatText }],
       },
     }),
-    // 28b–28d. peer remove path: fixed prefix on enqueue; no body/prompt identity join
+    // 28b–28d. peer queued_command is not owner; origin.kind=peer, not a text join.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -651,12 +713,16 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       content: peerOriginEnqueueContent + "\n<!--remove-path-->",
       reason: "absorbed_mid_turn",
     }),
-    // 28e–28g. owner interjection quoting peer body — must keep (no substring suppress).
+    // 28e–28g. owner interjection quoting peer body — attachment, not enqueue.
     JSON.stringify({
-      type: "queue-operation",
-      operation: "enqueue",
+      type: "attachment",
       uuid: peerQuoteInterjectionId,
-      content: peerQuoteInterjectionText,
+      attachment: {
+        type: "queued_command",
+        prompt: peerQuoteInterjectionText,
+        commandMode: "prompt",
+        origin: { kind: "human" },
+      },
     }),
     JSON.stringify({
       type: "queue-operation",
@@ -720,13 +786,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     }),
     JSON.stringify({
       type: "user",
-      uuid: "msg-slash-mat",
+      uuid: slashUserId,
+      origin: { kind: "human" },
       message: {
         role: "user",
-        content: [{ type: "text", text: slashMatText }],
+        content: slashUserText,
       },
     }),
-    // 38–40. fixed-prefix classifies the enqueue only; the untyped materialization stays.
+    // 38–40. enqueue is not a source; an untyped user line of the same words still is.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -746,8 +813,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: bareMachineText,
       },
     }),
-    // 41–43. origin.kind classifies the materialized user only; it is not
-    // reverse-attributed to the unlinked enqueue.
+    // 41–43. origin.kind=task-notification on the user line excludes that line.
+    // The enqueue is not a source either.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -773,6 +840,62 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         ],
       },
     }),
+    // Missing-origin human queued_command (no origin object) is owner and keeps its uuid.
+    JSON.stringify({
+      type: "attachment",
+      uuid: missingOriginHumanId,
+      attachment: {
+        type: "queued_command",
+        prompt: missingOriginHumanText,
+        source_uuid: "source-missing-origin-human",
+        commandMode: "prompt",
+      },
+    }),
+    // Missing-origin ci-monitor has no other structured kind; it stays owner.
+    JSON.stringify({
+      type: "attachment",
+      uuid: ciMonitorId,
+      attachment: {
+        type: "queued_command",
+        prompt: ciMonitorText,
+        source_uuid: "ci-source",
+        delivery_id: "ci-delivery",
+        commandMode: "prompt",
+        timestamp: "2026-10-01T00:00:00.000Z",
+      },
+    }),
+    // Named non-human origin on the attachment is not owner.
+    JSON.stringify({
+      type: "attachment",
+      uuid: taskNotificationAttachmentId,
+      attachment: {
+        type: "queued_command",
+        prompt: taskNotificationText,
+        source_uuid: "task-origin-source",
+        commandMode: "task-notification",
+        origin: { kind: "task-notification" },
+      },
+    }),
+    // Same words at different times: attachment and user line each stay.
+    JSON.stringify({
+      type: "attachment",
+      uuid: repeatedAttachmentId,
+      timestamp: "2026-10-23T01:00:00.000Z",
+      attachment: {
+        type: "queued_command",
+        prompt: repeatedInputText,
+        commandMode: "prompt",
+        origin: { kind: "human" },
+        timestamp: "2026-10-23T01:00:00.000Z",
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: repeatedUserId,
+      timestamp: "2026-10-23T02:00:00.000Z",
+      origin: { kind: "human" },
+      message: { role: "user", content: repeatedInputText },
+    }),
   ];
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, `${rows.join("\n")}\n`, "utf8");
@@ -790,6 +913,18 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     codexRunnerText,
     codexInjectionText,
     interjectionId,
+    absorbedInterjectionText,
+    undeliveredEnqueueText,
+    missingOriginHumanId,
+    missingOriginHumanText,
+    ciMonitorId,
+    ciMonitorText,
+    repeatedInputText,
+    repeatedAttachmentId,
+    repeatedUserId,
+    taskNotificationAttachmentId,
+    slashUserId,
+    slashUserText,
     duplicateId,
     taskNotificationEnqueueId,
     taskNotificationText,
@@ -809,7 +944,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     bareMachineText,
     unparsableRaw,
     // rows[] length is the physical line count of the written session file.
-    lastLine: 50,
+    lastLine: rows.length,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -1045,14 +1180,12 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     assert.equal(byId.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText);
     assert.equal(byId.get(fixture.ownerId)?.speaker, "owner");
     assert.equal(byId.get(fixture.ownerId)?.text, "立文件。送司天台记录。");
-    // enqueue has no typed link to its materialized user. Preserve both rather than
-    // guessing an identity from position or equal text.
+    // Dequeued input is the user line only. The enqueue copy is not a speaker source.
     assert.equal(
       volume.lines.filter((line) => line.text === "立文件。送司天台记录。")
         .length,
-      2,
+      1,
     );
-    assert.equal(byId.get("msg-owner-materialized")?.speaker, "owner");
     // Empty-content enqueue retains nothing — its sole user materialization stays.
     assert.equal(byId.get(fixture.emptyEnqueueOwnerId)?.speaker, "owner");
     assert.equal(
@@ -1067,7 +1200,37 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
     assert.equal(
       byId.get(fixture.interjectionId)?.text,
-      "中途插一句：保留原话。",
+      fixture.absorbedInterjectionText,
+    );
+    assert.equal(
+      volume.lines.filter((line) => line.text === fixture.absorbedInterjectionText).length,
+      1,
+    );
+    assert.equal(
+      spoken.find((entry) => entry.id === fixture.interjectionId)?.speaker,
+      "owner",
+    );
+    assert.equal(
+      volume.lines.some((line) => line.text === fixture.undeliveredEnqueueText),
+      false,
+    );
+    assert.equal(
+      volume.lines.some((line) =>
+        line.text === `The user sent a new message while you were working:\n${fixture.absorbedInterjectionText}`,
+      ),
+      false,
+    );
+    assert.equal(byId.get(fixture.missingOriginHumanId)?.speaker, "owner");
+    assert.equal(
+      byId.get(fixture.missingOriginHumanId)?.text,
+      fixture.missingOriginHumanText,
+    );
+    assert.equal(byId.get(fixture.ciMonitorId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.ciMonitorId)?.text, fixture.ciMonitorText);
+    assert.equal(byId.get(fixture.taskNotificationAttachmentId), undefined);
+    assert.deepEqual(
+      volume.lines.filter((line) => line.text === fixture.repeatedInputText).map((line) => line.id),
+      [fixture.repeatedAttachmentId, fixture.repeatedUserId],
     );
     // #918: fixed-prefix machine shapes + origin.kind mat skip; human must stay.
     assert.equal(
@@ -1085,23 +1248,16 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       false,
       "materialized peer user must consume its own typed origin.kind",
     );
-    assert.equal(
-      byId.get(fixture.peerOriginEnqueueId)?.speaker,
-      "owner",
-      "unlinked enqueue must retain the approved existing projection",
-    );
-    assert.equal(byId.get("queue-peer-remove-1")?.speaker, "owner");
-    assert.equal(byId.get(fixture.humanOriginEnqueueId)?.speaker, "owner");
-    assert.equal(
-      byId.get(fixture.humanOriginEnqueueId)?.text,
-      fixture.humanOriginText,
-    );
+    assert.equal(byId.get(fixture.peerOriginEnqueueId), undefined);
+    assert.equal(byId.get("queue-peer-remove-1"), undefined);
+    assert.equal(byId.get("att-peer-remove-1"), undefined);
+    assert.equal(byId.get(fixture.humanOriginEnqueueId), undefined);
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.humanOriginText)
         .length,
-      2,
-      "human materialization and unlinked enqueue both remain",
+      1,
     );
+    assert.equal(byId.get("msg-human-origin-mat")?.speaker, "owner");
     // Non-queue human with origin.kind=human — real discrimination surface (no FIFO reverse-attr).
     assert.equal(byId.get(fixture.humanOriginDirectId)?.speaker, "owner");
     assert.equal(
@@ -1114,26 +1270,28 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       fixture.peerQuoteInterjectionText,
       "owner interjection quoting peer body must stay",
     );
-    // #918: remove path still classified by fixed prefix on enqueue content.
+    // Missing-origin queued_command with the fixed prefix is not owner.
     assert.equal(
       volume.lines.some(
         (line) =>
           line.id === fixture.removeMachineEnqueueId ||
+          line.id === "att-remove-machine-1" ||
           line.text === fixture.removeMachineText,
       ),
       false,
       "removed machine queue item must not be owner",
     );
-    // Untyped materializations are not classified by wrappers or queue position.
-    assert.equal(byId.get(fixture.slashEnqueueId)?.speaker, "owner");
+    // Slash command lands once, on the user line, arguments included.
+    assert.equal(byId.get(fixture.slashEnqueueId), undefined);
     assert.equal(
-      byId.get(fixture.slashEnqueueId)?.text,
-      fixture.slashEnqueueText,
+      volume.lines.some((line) => line.text === fixture.slashEnqueueText),
+      false,
     );
-    assert.equal(byId.get("msg-slash-mat")?.speaker, "owner");
-    // A typed machine materialization is excluded, but its unlinked enqueue remains.
+    assert.equal(byId.get(fixture.slashUserId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.slashUserId)?.text, fixture.slashUserText);
+    // A typed machine materialization is excluded, and so is its enqueue.
     assert.equal(byId.get("msg-system-reminder-mat"), undefined);
-    assert.equal(byId.get("queue-system-reminder-1")?.speaker, "owner");
+    assert.equal(byId.get("queue-system-reminder-1"), undefined);
     // Fixed-prefix authority applies to enqueue only; an untyped user is not reverse-linked.
     assert.equal(byId.get(fixture.bareMachineEnqueueId), undefined);
     assert.equal(byId.get("msg-bare-machine-mat")?.speaker, "owner");
@@ -1717,9 +1875,9 @@ test("ak-role diarist append-only resubmit leaves a new record", async () => {
 
 
 
-test("ak-role diarist selects user and enqueue boundaries inside their declared ranges", async () => {
+test("ak-role diarist selects user and queued-command boundaries inside their declared ranges", async () => {
   const ownerText = "那就不要行号了嘛。反正全文拿去搜索匹配也很快？";
-  for (const source of ["user", "enqueue"] as const) {
+  for (const source of ["user", "attachment"] as const) {
     await withTempHome(async (home) => {
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
@@ -1727,16 +1885,27 @@ test("ak-role diarist selects user and enqueue boundaries inside their declared 
       const sessionPath = join(home, ".claude", "projects", `probe-${source}`, "session.jsonl");
       await mkdir(join(sessionPath, ".."), { recursive: true });
       const id = `owner-${source}`;
-      const target = source === "user"
-        ? { type: "user", uuid: id, message: { role: "user", content: ownerText }, origin: { kind: "human" } }
-        : { type: "queue-operation", operation: "enqueue", id, content: ownerText };
-      const rows = source === "user"
-        ? [
-            { type: "queue-operation", operation: "enqueue", id: "outside", content: ownerText },
-            { type: "queue-operation", operation: "dequeue" },
-            target,
-          ]
-        : [target];
+      const userRow = {
+        type: "user",
+        uuid: id,
+        message: { role: "user", content: ownerText },
+        origin: { kind: "human" },
+      };
+      const attachmentRow = {
+        type: "attachment",
+        uuid: id,
+        attachment: {
+          type: "queued_command",
+          prompt: ownerText,
+          commandMode: "prompt",
+          origin: { kind: "human" },
+        },
+      };
+      const target = source === "user" ? userRow : attachmentRow;
+      const outside = source === "user"
+        ? { ...attachmentRow, uuid: "outside" }
+        : { ...userRow, uuid: "outside" };
+      const rows = [outside, { type: "queue-operation", operation: "dequeue" }, target];
       await writeFile(
         sessionPath,
         rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
@@ -1762,8 +1931,8 @@ test("ak-role diarist selects user and enqueue boundaries inside their declared 
               sessions: [{
                 path: sessionPath,
                 ranges: [{
-                  from: { line: source === "user" ? 3 : 1 },
-                  to: { line: source === "user" ? 3 : 1 },
+                  from: { line: 3 },
+                  to: { line: 3 },
                 }],
               }],
             }),
