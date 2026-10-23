@@ -130,7 +130,7 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
-const WRITER_LOCK_FILE = "writer.lock";
+export const WRITER_LOCK_FILE = "writer.lock";
 
 export async function writeRoleRunState(
   runDirectory: string,

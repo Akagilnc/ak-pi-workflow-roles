@@ -1,29 +1,50 @@
 /**
- * Shared same-parent resume seam for gate / officer seats (#635 / #637 / #747 / #987).
- *
- * Lookup uses the parent run path; a typed ticket narrows same-ticket gate
- * re-summons, never creates an issue identity. Callers can also use explicit
- * `ak-role resume <runId>`. Lookup/resume failures propagate (失败诚实) — never wash into
- * a fresh mint. Returns undefined when the caller declared an explicit fresh
- * summons (`ak-role new`) or when no prior run exists; both mint new.
- * freshSummons is required so no seat can drift back into its own skip branch.
+ * Shared same-parent resume seam for gate / officer seats (#635 / #637 / #747 / #987 / #1253).
+ * Contract is on tryResumeSameTicketSeatRun.
  */
+import { join } from "node:path";
+
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
+  autopsyWriterLock,
   findLatestRunForSeatTicket,
+  WRITER_LOCK_FILE,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 
+const SESSION_ID_MISSING = "session-id-missing";
+
+function resumedSessionIdMissing(result: unknown, runId: string): boolean {
+  if (typeof result !== "object" || result === null) return false;
+  const terminal = (result as { terminal?: unknown }).terminal;
+  if (typeof terminal !== "object" || terminal === null) return false;
+  if ((terminal as { runId?: unknown }).runId !== runId) return false;
+  const outcome = (terminal as { roleOutcome?: unknown }).roleOutcome;
+  if (typeof outcome !== "object" || outcome === null) return false;
+  if ((outcome as { kind?: unknown }).kind !== "failure") return false;
+  const facts = (outcome as { decisiveFacts?: unknown }).decisiveFacts;
+  if (typeof facts !== "object" || facts === null) return false;
+  return (facts as { errorCode?: unknown }).errorCode === SESSION_ID_MISSING;
+}
+
+/** Live or unverifiable holder: same fail-closed verdict as lease acquire. */
+async function writerLockBlocksFreshSummons(runDirectory: string): Promise<boolean> {
+  const autopsy = await autopsyWriterLock(join(runDirectory, WRITER_LOCK_FILE));
+  return autopsy.verdict === "alive" || autopsy.verdict === "unknown";
+}
+
 /**
- * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987).
+ * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987 / #1253).
  * A supplied typed ticket only narrows the prior-run search. When a prior run is
  * found, resume carries this summons' materials and the located runDirectory so
- * load does not re-walk every book for the bare runId (#1195). Lookup/resume
- * failures propagate (失败诚实) — never wash into a fresh mint. Returns undefined
- * when the caller declared an explicit fresh summons (`ak-role new`), the parent
- * path is blank, or no prior run exists; those mint new. freshSummons is
- * required so no seat can drift back into its own skip branch.
+ * load does not re-walk every book for the bare runId (#1195). Typed
+ * session-id-missing is already recorded on that run (失败照记，记完再起新);
+ * return undefined so the caller mints once. Resume runs first; this seam does
+ * not look up a session id. A held or unverifiable writer lock, and every other
+ * result, returns as-is. Also returns undefined for explicit `ak-role new`, a
+ * blank parent path, or no prior run. freshSummons is required so no seat can
+ * drift back into its own skip branch.
  */
 export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;
@@ -49,5 +70,8 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
   });
   if (previous === undefined) return undefined;
-  return await input.resume(previous.runId, input.summons, previous.runDirectory);
+  const resumed = await input.resume(previous.runId, input.summons, previous.runDirectory);
+  if (!resumedSessionIdMissing(resumed, previous.runId)) return resumed;
+  if (await writerLockBlocksFreshSummons(previous.runDirectory)) return resumed;
+  return undefined;
 }
