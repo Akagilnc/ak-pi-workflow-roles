@@ -1197,3 +1197,33 @@ rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navi
 整理后重复同一 phase 变异与四文件聚焦，分别9败5过（专项8败2过、lifecycle 1败3过，3.71s）与26/26（2.26s），import-phase.json/.log、import-focused.log；生产已恢复，tsc exit0（import-tsc.log）。最终再跑相同三文件并行命令10遍，逐轮18/18、exit0，ENOTEMPTY/新增 home/新增 @navigator 均0；每轮墙钟4.37/3.30/4.23/3.34/3.28/3.71/3.32/3.49/3.01/3.07s。扫描范围与不限深度判据同上，完整基线与逐轮数据 import-load-summary.json，原始日志 import-load-{1..10}.log/.json。此前两组10遍为过程证据，不混为这次最终10遍。不 amend，追加独立提交后原入口再核最终 HEAD，实际结果记终局回执。
 
 追加提交 `5b006ef4` 后取树冲突消失，核账实际为 COUNT1143 / ledger1142、exit1（import-final-ledger.log）：增加的 case 是 integration 的既有 `test(scenario.name, async () => ...)` 声明行改为取 context，统计器按被修改的 case 起始行登记，并非删了一个案。采用更简单且与 lifecycle 一致的 API：从 Vitest 直接导入 onTestFinished，不从测试 context 解构，原 test 声明保留。没有改断言或统计规则，没有新增测试/函数；两种取法都是 Vitest 原件。再建独立提交，不 amend；该最终提交上的 phase 变异、四文件聚焦、三文件10轮并行、tsc、核账的命令与实测结果统一记终局回执及 `/tmp/1237-r24-evidence/receipt-*`。上文各组记录仍保留为对应提交的过程证据，不冒充最终提交结果。
+
+## 第二十四轮：R25-A 核账脚本的 Python 3.9 注解求值（起点 3bcc776c）
+
+裁决：本票 `runs/01a16876-ad7d-7a18-8be1-8e4ac923c070@judge/receipts/8.json`。错误形状：函数定义时求值的 PEP 604 联合类型注解在 Python 3.9 抛 TypeError，文档的 python3 入口无法核账。仅在脚本模块加入 `from __future__ import annotations`，不改计数逻辑、统计边界或删除账，不加版本判断、兼容分支、函数或测试。
+
+先查 Python 3.9 官方 `https://docs.python.org/3.9/library/__future__.html` 的 annotations / PEP 563；采用语言原件，不造机制。`git diff --name-status 7997ffb2 HEAD -- '*.py'` 修前、修后均仅列 `A docs/research/issue-1237-deletion-ledger.py`。按形状而非点名函数扫描，以下命令修前、修后均执行：
+
+```sh
+rg -n '\|' --glob '*.py' docs/research
+rg -n '__future__|get_type_hints|__annotations__' --glob '*.py' .
+```
+
+第二条修前无命中，修后仅脚本 :8 的 future import；没有运行时注解读取者。第一条全部命中逐项如下（路径均为 `docs/research/issue-1237-deletion-ledger.py`）：
+
+| 修前行 | 修后行 | 结果 |
+| --- | --- | --- |
+| 17 | 19 | 已修：git 的 env、input 两处联合注解统一延迟求值。 |
+| 115 | 117 | 已修：paren_delta_from 返回值的嵌套联合注解统一延迟求值。 |
+| 213 | 215 | 不同类：TEST_RE 的正则分支，不是注解。 |
+| 214 | 216 | 不同类：TEST_START 的正则分支，不是注解。 |
+| 233 | 235 | 不同类：集合原地并集，不是注解。 |
+| 255 | 257 | 不同类：账表行前缀字符串，不是注解。 |
+| 257 | 259 | 不同类：账表字段分隔字符串，不是注解。 |
+
+验证均从仓根原入口执行，不造证明性测试：
+- 修前 `/usr/bin/python3 -I docs/research/issue-1237-deletion-ledger.py` 连续两次 exit1，在 :17 报 `TypeError: unsupported operand type(s) for |: 'types.GenericAlias' and 'NoneType'`；解释器为3.9.6。当前 python3 为3.14.8，修前 COUNT/MATCH1142。
+- 修后两解释器均 exit0、COUNT1142 / MATCH1142（19文件、116案、1007断言），分别2.30s / 2.01s。
+- 变异真跑：仅撤掉 future import，原 `/usr/bin/python3 -I docs/research/issue-1237-deletion-ledger.py` 再次同处 TypeError、exit1、0.11s；恢复后两解释器原入口均 exit0、COUNT/MATCH1142，分别2.23s / 1.96s。未留插桩或临时仓内文件。
+- 自审：新增生产函数0、测试函数0，diffItems=[]；无测试或生产代码改动，无需新增承接测试。核账逻辑及所有统计桶未变，删除账仍为1142项。原未跟踪 node-test-report.txt 已打开核对，未改未删未提交。
+- 独立提交后再用两解释器的 `-I` 原入口核最终 HEAD，实测结果记终局回执。不跑全量、不 push、不派角色；本轮仅交修理结果，待大理寺复核与后续新 HEAD 的 CI，不声称整票合并。

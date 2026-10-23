@@ -5,6 +5,8 @@ Count command (repo root):
   python3 docs/research/issue-1237-deletion-ledger.py
 Prints COUNT and checks the ledger where-column.
 """
+from __future__ import annotations
+
 import os
 import re
 import subprocess
