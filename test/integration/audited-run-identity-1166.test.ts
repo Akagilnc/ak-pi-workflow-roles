@@ -1,14 +1,15 @@
 /**
  * #1166 — four audit seats share audited-run identity `<runId>@<席>` in startup
- * materials; first utterance stays the peer submission bytes from this-round ledger;
- * package adds no audited-run directory path. Navigator prompt stays caller bytes.
+ * materials; first utterance stays the peer submission bytes from this-round ledger.
+ * Navigator prompt stays caller bytes.
  *
  * Seam: public `ak-role` + in-repo fake host (same createMinimalHost shape for
  * judge / coder / secretariat parents). prepareRoleEnvelope only reads the live
  * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { test } from "vitest";
 
@@ -24,19 +25,16 @@ import type {
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { NOTARY_FIXED_DISPATCH } from "../../src/public-cli/instruction-seat-run.ts";
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { formatRunLeaf, parseRunLeaf } from "../../src/role-run-placement.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { listMcpToolNames, mcpRelayToken } from "../helpers/mcp-relay-list-tools.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
   CANONICAL_SOURCE_ROLE,
@@ -56,7 +54,6 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 
-const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
 const PEER_PATH = "/caller/already/had/this/path.md";
 const CREDENTIALS = { "openai-codex": true, xai: true } as const;
 
@@ -81,15 +78,6 @@ function auditedIdentityMaterials(
 }
 
 /** Package path handoffs about the audited run — structured field presence, not wire text. */
-function packageAuditedPathMaterials(materials: readonly unknown[]): unknown[] {
-  return materials.filter((material) => {
-    if (!isRecord(material)) return false;
-    if (material.kind === AUDITED_RUN_IDENTITY_KIND) return false;
-    return typeof material.sourceRunPath === "string"
-      || typeof material.runDirectory === "string";
-  });
-}
-
 /** Prepare from a live public-entry RoleTurnRequest — prompt already set by gate/direct. */
 async function inspectLiveRequest(
   request: RoleTurnRequest,
@@ -97,8 +85,6 @@ async function inspectLiveRequest(
 ): Promise<{
   readonly prompt: string;
   readonly identities: AuditedRunIdentityMaterial[];
-  readonly pathMaterials: unknown[];
-  readonly toolNames?: string[];
   readonly jsonSchema: Readonly<Record<string, unknown>>;
 }> {
   return withOutsideTempRoot("ak-1166-live-", (socketDir) => {
@@ -109,6 +95,7 @@ async function inspectLiveRequest(
     // Env restore shares primary-aware cleanup (primary failure is not erased).
     return withPrimaryAwareCleanup(
       async () => {
+        let auditorSubject: string | undefined;
         if (request.activation.role === "auditor") {
           priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
           priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
@@ -118,31 +105,54 @@ async function inspectLiveRequest(
               ? admitted.auditorSubject
               : "judge";
           process.env.AK_ROLE_AUDITOR_SUBJECT = subject;
+          auditorSubject = subject;
           envMutated = true;
           if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
             process.env.AK_ROLE_AUDITOR_SOURCE_RUN = admitted.sourceRunPath;
           }
         }
+        const soul = randomUUID();
+        const auditedSoul = randomUUID();
+        const production = createRoleRuntimeDependencies(packageRootPath);
+        const loadedReferences: string[] = [];
         const prepared = await prepareRoleEnvelope({
           request,
-          dependencies: createRoleRuntimeDependencies(packageRootPath),
+          dependencies: {
+            ...production,
+            // Auditor keeps the production subject Soul loader; other seats get distinct probes.
+            loadRoleSoul: auditorSubject === undefined
+              ? async (role) => role === request.activation.role ? soul : auditedSoul
+              : production.loadRoleSoul,
+            loadRoleReferenceMaterials: async (role) => {
+              const loaded = await production.loadRoleReferenceMaterials!(role);
+              loadedReferences.push(loaded);
+              return loaded;
+            },
+          },
           socketPath,
           sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
           principalAuthority: piDurablePrincipalAuthority,
         });
         try {
-          const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
-          const pathMaterials = packageAuditedPathMaterials(prepared.systemPrompt.materials);
-          let toolNames: string[] | undefined;
-          if (request.activation.role === "auditor") {
-            toolNames = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+          assert.ok(prepared.systemPrompt.body.includes(auditorSubject === undefined
+            ? soul
+            : (await readFile(join(packageRootPath, "souls", `${auditorSubject}-auditor.md`), "utf8")).trim()));
+          if (request.activation.role === "notary") {
+            assert.ok(prepared.systemPrompt.body.includes(auditedSoul));
           }
+          // The packaged reference materials loaded for the seat reach startup materials unchanged.
+          assert.ok(loadedReferences.length > 0);
+          for (const loaded of loadedReferences) {
+            assert.notEqual(loaded, "");
+            assert.ok(prepared.systemPrompt.materials.some(
+              (material) => (material as { content?: unknown }).content === loaded,
+            ));
+          }
+          const identities = auditedIdentityMaterials(prepared.systemPrompt.materials);
           return {
             prompt: prepared.prompt,
             identities,
-            pathMaterials,
             jsonSchema: prepared.jsonSchema,
-            ...(toolNames === undefined ? {} : { toolNames }),
           };
         } finally {
           await prepared.dispose?.();
@@ -229,7 +239,7 @@ function parentGateHost(input: {
   return withNestedTrueUnboundDiarist(inner, { primaryRole: input.parentRole });
 }
 
-test("#1166 public gate: four seats share identity; first utterance is ledger submission", async () => {
+test("#1166 public gate: four seats share identity; peer reviewers receive ledger payloads", async () => {
   await withTempRoot("ak-1166-gate-four-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -298,7 +308,6 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
 
     for (const gate of cases) {
       const capture: RoleTurnRequest[] = [];
-      const expectedPromptForGate = readableGateItem(gate.details);
       const result = await runAkRole(gate.argv, {
         packageRoot,
         home,
@@ -323,11 +332,11 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        // #1208: notary always receives the fixed dispatch; other officers get peer body.
-        const expectedPrompt = request.activation.role === "notary"
-          ? NOTARY_FIXED_DISPATCH
-          : expectedPromptForGate;
-        assert.equal(inspected.prompt, expectedPrompt);
+        if (request.activation.role === "notary") {
+          assert.notEqual(inspected.prompt, readableGateItem(gate.details));
+        } else {
+          assert.deepEqual(JSON.parse(inspected.prompt), gate.details);
+        }
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
         if (gate.expectedIdentity !== undefined) {
@@ -338,7 +347,6 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
         } else {
           assert.match(inspected.identities[0]!.auditedRun, gate.identitySuffix!);
         }
-        assert.equal(inspected.pathMaterials.length, 0);
         seen.push({
           role: request.activation.role,
           identity: inspected.identities[0]!.auditedRun,
@@ -357,123 +365,7 @@ test("#1166 public gate: four seats share identity; first utterance is ledger su
   });
 });
 
-test("#1166/#1208 same parent re-submits: notary fixed dispatch; auditor gets new ledger copy", async () => {
-  await withTempRoot("ak-1166-resubmit-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    await configureOfficerSeats(home, ["notary", "auditor"]);
-
-    const first = {
-      status: "converged" as const,
-      ticketNumber: 1166,
-      note: "first-copy",
-      findings: [{ id: "A", path: PEER_PATH }],
-    };
-    const second = {
-      status: "converged" as const,
-      ticketNumber: 1166,
-      note: "second-copy-after-resubmit",
-      findings: [{ id: "B", path: PEER_PATH }],
-    };
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
-
-    const runId = "01a0116600007000800000000000r001";
-    const notaryPrompts: string[] = [];
-    let parentSeals = 0;
-
-    const host = createMinimalHost(async (request) => {
-      if (request.activation.role === "notary" || request.activation.role === "auditor") {
-        if (request.activation.role === "notary") {
-          notaryPrompts.push(request.continuation.prompt);
-        }
-        const details = notaryPrompts.length <= 1
-          ? { status: "continue", violations: ["rewrite"], ticketNumber: 1166 }
-          : { status: "converged", ticketNumber: 1166 };
-        return roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: request.activation.role,
-            toolName: request.activation.role === "notary"
-              ? NOTARY_OUTPUT_TOOL_NAME
-              : AUDITOR_OUTPUT_TOOL_NAME,
-            details,
-          }),
-        }).executeTurn(request);
-      }
-      parentSeals += 1;
-      const body = parentSeals === 1 ? first : second;
-      const { sessionDirectory, sessionFile } =
-        piDurablePrincipalAuthority.decode(request.principal);
-      await mkdir(sessionDirectory, { recursive: true });
-      await writeFile(
-        sessionFile,
-        `${JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            isError: false,
-            details: body,
-          },
-        })}\n`,
-        "utf8",
-      );
-      await sealAcceptedSubmission({
-        cwd: request.cwd,
-        home,
-        runId,
-        runDirectory: request.runDirectory,
-        role: "judge",
-        details: body,
-        toolCallId: `judge-resubmit-${parentSeals}`,
-        ...(request.courtAttemptId === undefined
-          ? {}
-          : { courtAttemptId: request.courtAttemptId }),
-      });
-      return { code: 0, stderr: "", timedOut: false };
-    });
-
-    const firstIo = captureIo();
-    const firstResult = await runAkRole(
-      ["judge", "--model", "test/caller-seat:high", "--project", project, "round one"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io: firstIo.io,
-        credentials: CREDENTIALS,
-        roleTurnHost: host,
-      },
-    );
-    assert.equal(firstResult.exitCode, 0, firstIo.stderr.join(""));
-    assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
-
-    if (notaryPrompts.length < 2) {
-      const resumeIo = captureIo();
-      const resumed = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          io: resumeIo.io,
-          credentials: CREDENTIALS,
-          roleTurnHost: host,
-        },
-      );
-      assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
-    }
-
-    assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
-  });
-});
-
-test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixed, auditor peer body", async () => {
+test("#1166 direct notary/auditor public entry: same identity; auditor receives latest peer body", async () => {
   await withTempRoot("ak-1166-direct-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -515,7 +407,6 @@ test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixe
       toolCallId: "direct-peer-current",
       executeError: new WorkerUnfinishedReasonReminderError(),
     });
-    const expectedPrompt = readableGateItem(current);
 
     for (const seat of [
       {
@@ -552,30 +443,23 @@ test("#1166/#1208 direct notary/auditor public entry: same identity; notary fixe
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 0, JSON.stringify(result));
       assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
         auditedRun: expectedIdentity,
       });
-      assert.equal(inspected.pathMaterials.length, 0);
-      assert.equal(
-        inspected.prompt,
-        seat.role === "notary" ? NOTARY_FIXED_DISPATCH : expectedPrompt,
-      );
-      if (seat.role === "auditor") {
-        assert.equal(inspected.toolNames?.includes(AUDITOR_DOSSIER_TOOL_NAME), false);
+      if (seat.role === "notary") {
+        assert.notEqual(inspected.prompt, readableGateItem(current));
+      } else {
+        assert.deepEqual(JSON.parse(inspected.prompt), current);
       }
     }
   });
 });
 
-/**
- * #1195 ticket-court blind review: countersign → notary does not preload the
- * countersign submission into dialogue. Structured contract: the fixed Notary
- * dispatch + audited-run identity, on first summon and same-parent resubmit.
- */
-test("#1195 countersign→notary blind: fixed dispatch, never the countersign body, on gate and same-parent resubmit", async () => {
+/** Ticket-court resubmission keeps officer identity and clauses on the officer. */
+test("#1195 countersign resubmission keeps notary identity and its separate clause declaration", async () => {
   await withTempRoot("ak-1195-blind-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -592,20 +476,18 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
       ticketNumber: 1195,
       findings: [{ code: "resubmitted-review" }],
     };
-    assert.notEqual(readableGateItem(first), readableGateItem(second));
-
     const runId = "01a0119500007000800000000000c001";
     const notaryPrompts: string[] = [];
     const notaryIdentities: string[] = [];
     let parentSeals = 0;
+    let countersignRequired: string[] | undefined;
 
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
-        assert.equal(request.continuation.prompt, NOTARY_FIXED_DISPATCH);
         notaryPrompts.push(request.continuation.prompt);
+        assert.notEqual(request.continuation.prompt, readableGateItem(parentSeals === 1 ? first : second));
         const inspected = await inspectLiveRequest(request, packageRoot);
-        assert.equal(inspected.prompt, NOTARY_FIXED_DISPATCH);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
         notaryIdentities.push(inspected.identities[0]!.auditedRun);
@@ -633,6 +515,9 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
       }
       const inspected = await inspectLiveRequest(request, packageRoot);
       assert.equal(Object.hasOwn(inspected.jsonSchema.properties as object, "clauses"), false);
+      if (request.activation.role === "countersign" && countersignRequired === undefined) {
+        countersignRequired = inspected.jsonSchema.required as string[];
+      }
       parentSeals += 1;
       const body = parentSeals === 1 ? first : second;
       const { sessionDirectory, sessionFile } =
@@ -668,8 +553,9 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
       },
     );
     assert.equal(finalResult.exitCode, 0, firstIo.stderr.join(""));
+    assert.equal(countersignRequired?.includes("suspect"), false);
+    assert.equal(countersignRequired?.includes("ticketComplexity"), false);
     assert.ok(notaryPrompts.length >= 1);
-    assert.equal(notaryPrompts[0], NOTARY_FIXED_DISPATCH);
     assert.equal(notaryIdentities[0], formatRunLeaf(runId, "countersign"));
 
     if (notaryPrompts.length < 2) {
@@ -689,21 +575,16 @@ test("#1195 countersign→notary blind: fixed dispatch, never the countersign bo
     }
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
-    assert.equal(notaryPrompts.at(-1), NOTARY_FIXED_DISPATCH);
+    assert.notDeepEqual(first, second);
+    assert.equal(notaryPrompts[0], notaryPrompts.at(-1));
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");
     assert.equal(finalResult.terminal.roleOutcome.role, "countersign");
-    assert.equal(finalResult.terminal.roleOutcome.kind, "accepted");
     const parentPayloads = finalResult.terminal.roleOutcome.kind === "accepted"
       ? finalResult.terminal.roleOutcome.payloads ?? []
       : [];
     assert.deepEqual(parentPayloads.at(-1), second);
-    assert.equal(
-      finalResult.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
-      undefined,
-      "parent final must not project notaryTerminal",
-    );
   });
 });

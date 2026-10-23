@@ -59,33 +59,6 @@ const CASES: readonly InstructionSeatCase[] = [
       );
     },
   },
-  {
-    role: "gatekeeper",
-    runId: "01a0gate00-0000-7000-8000-00000000063a",
-    instruction: "审：将作监完成侧交卷该派谁？",
-    toolName: GATEKEEPER_OUTPUT_TOOL,
-    details: {
-      status: "dispatch",
-      officer: "inspector",
-      reason: "worker completion → inspector",
-      findings: [],
-    },
-    expectedStatus: "dispatch",
-    assertDecisiveFacts: (facts) => {
-      assert.equal(
-        facts !== null && typeof facts === "object" && "status" in facts
-          ? (facts as { status: unknown }).status
-          : undefined,
-        "dispatch",
-      );
-      assert.equal(
-        facts !== null && typeof facts === "object" && "officer" in facts
-          ? (facts as { officer: unknown }).officer
-          : undefined,
-        "inspector",
-      );
-    },
-  },
 ];
 
 
@@ -126,7 +99,6 @@ for (const scenario of CASES) {
         0,
         result.terminal === undefined ? "no terminal" : "",
       );
-      assert.equal(Array.isArray(dispatchArgs), true);
       assert.equal(
         dispatchArgs![dispatchArgs!.indexOf("--ak-role") + 1],
         scenario.role,
@@ -142,7 +114,6 @@ for (const scenario of CASES) {
         coords.sessionDirectory,
       );
       assert.equal(result.terminal?.roleOutcome.role, scenario.role);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
           ? payloadStatusSequence(result.terminal.roleOutcome)

@@ -33,6 +33,16 @@ import {
   sealAcceptedSubmissionForSpawn,
 } from "./submission-ledger-fixture.ts";
 
+/** Non-navigator probes must not leave a background lookup writing into a disposed temp home (#959). */
+export function roleRuntimeDependenciesWithoutNavigator(
+  root: string,
+  createDependencies = createRoleRuntimeDependencies,
+) {
+  const dependencies = createDependencies(root);
+  delete dependencies.createNavigatorAttendance;
+  return dependencies;
+}
+
 /** Capture prepareRoleEnvelope surfaces then dispose — shared public-entry probe. */
 export async function capturePreparedEnvelope(request: RoleTurnRequest): Promise<{
   readonly prompt: string;
@@ -44,7 +54,7 @@ export async function capturePreparedEnvelope(request: RoleTurnRequest): Promise
 }> {
   const prepared = await prepareRoleEnvelope({
     request: { ...request, host: request.host ?? "codex" },
-    dependencies: createRoleRuntimeDependencies(packageRoot),
+    dependencies: roleRuntimeDependenciesWithoutNavigator(packageRoot),
     socketPath: `/tmp/ak-capture-${randomUUID()}.sock`,
     sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
     principalAuthority: piDurablePrincipalAuthority,
@@ -95,7 +105,7 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
     async executeTurn(request) {
       const prepared = await prepareRoleEnvelope({
         request: { ...request, host: "codex" },
-        dependencies: createRoleRuntimeDependencies(input.packageRoot),
+        dependencies: roleRuntimeDependenciesWithoutNavigator(input.packageRoot),
         socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,
         listTerminatingToolOnMcp: false,
         sessionFile: input.principalAuthority.decode(request.principal).sessionFile,

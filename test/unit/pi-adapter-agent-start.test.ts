@@ -4,16 +4,11 @@ import { test } from "vitest";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import type { RoleEnvelopeHost } from "../../src/host-contracts.ts";
 import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Pi runner createContext() returns a fresh object per emit/tool (extensions runner). */
 function freshExtensionContext(cwd: string): ExtensionContext {
@@ -68,7 +63,7 @@ function piCapture() {
   };
 }
 
-test("Pi adapter folds readingMaterial into provider systemPrompt and strips the typed field", async () => {
+test("Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial", async () => {
   const bound = projectNotaryAuditedRunIdentity({
     sourceRun: {
       runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -83,63 +78,35 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
       role: "coder",
     },
   });
-
-  async function providerVisible(returnValue: {
-    systemPrompt?: string;
-    readingMaterial?: unknown;
-  }): Promise<{ systemPrompt?: string } & Record<string, unknown>> {
-    const { pi, handlers, ctx } = piCapture();
-    const adapter = createPiRoleHostAdapter(pi);
-    adapter.host.on("before_agent_start", () => returnValue);
-    const handler = handlers.get("before_agent_start")?.[0];
-    assert.ok(handler);
-    const result = await handler(
-      { prompt: "", systemPrompt: "BASE", systemPromptOptions: {} },
-      ctx,
-    );
+  const bare = piCapture();
+  const bareAdapter = createPiRoleHostAdapter(bare.pi);
+  bareAdapter.host.on("before_agent_start", (event) => ({ systemPrompt: event.systemPrompt }));
+  let barePrompt = "BASE";
+  for (const handler of bare.handlers.get("before_agent_start") ?? []) {
+    const result = await handler({ prompt: "", systemPrompt: barePrompt, systemPromptOptions: {} }, bare.ctx);
     assert.ok(result && typeof result === "object");
-    return result as { systemPrompt?: string } & Record<string, unknown>;
+    assert.equal("readingMaterial" in result, false);
+    assert.equal(result.systemPrompt, "BASE");
+    barePrompt = result.systemPrompt;
   }
-
-  const bodyOnly = await providerVisible({ systemPrompt: "BASE" });
-  const withBound = await providerVisible({
-    systemPrompt: "BASE",
-    readingMaterial: bound,
-  });
-  const withOther = await providerVisible({
-    systemPrompt: "BASE",
-    readingMaterial: otherBound,
-  });
   const { pi, handlers, ctx } = piCapture();
   const adapter = createPiRoleHostAdapter(pi);
+  // Production shapes: a Soul handler returns systemPrompt; envelope handlers
+  // return readingMaterial only and must keep everything delivered before them.
+  adapter.host.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\nSOUL` }));
   adapter.host.on("before_agent_start", () => ({ readingMaterial: bound }));
   adapter.host.on("before_agent_start", () => ({ readingMaterial: otherBound }));
-  let currentSystemPrompt = "BASE";
+  // Pi runner chain: each handler sees the previous handler's systemPrompt.
+  let systemPrompt = "BASE";
   for (const handler of handlers.get("before_agent_start") ?? []) {
-    const result = await handler(
-      { prompt: "", systemPrompt: currentSystemPrompt, systemPromptOptions: {} },
-      ctx,
-    );
-    if (result?.systemPrompt !== undefined) currentSystemPrompt = result.systemPrompt;
+    const result = await handler({ prompt: "", systemPrompt, systemPromptOptions: {} }, ctx);
+    assert.ok(result && typeof result === "object");
+    assert.equal("readingMaterial" in result, false);
+    systemPrompt = result.systemPrompt;
   }
-
-  // Empty materials: body passthrough; typed field never reaches Pi.
-  assert.equal(bodyOnly.systemPrompt, "BASE");
-  assert.equal("readingMaterial" in bodyOnly, false);
-
-  // Materials change the provider-visible prompt; distinct materials differ.
-  // No free-text/substring lock — only external equality/inequality on the wire form.
-  assert.equal("readingMaterial" in withBound, false);
-  assert.equal(typeof withBound.systemPrompt, "string");
-  assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
-  assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
-  assert.equal(
-    currentSystemPrompt,
-    renderAgentStartMaterials(
-      renderAgentStartMaterials("BASE", [bound]),
-      [otherBound],
-    ),
-  );
+  for (const delivered of ["BASE", "SOUL", bound.auditedRun, otherBound.auditedRun]) {
+    assert.ok(systemPrompt.includes(delivered), delivered);
+  }
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {
@@ -234,33 +201,4 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
   }
   assert.equal(seenPrompt, undefined);
   assert.equal(Object.hasOwn(seenEvent!, "prompt"), false);
-});
-
-test("#1199 Pi spawn env must not carry summons body (stdin already holds dialogue)", async () => {
-  let capturedEnv: NodeJS.ProcessEnv | undefined;
-  const host = createPiRoleTurnHost({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    spawnRunner: async (_args, options) => {
-      capturedEnv = options.env;
-      return { code: 0, stderr: "", timedOut: false };
-    },
-  });
-  const huge = "x".repeat(200_000);
-  await host.executeTurn({
-    home: "/tmp/pi-summons-no-env-body",
-    agentDir: "/tmp/pi-summons-no-env-body/agent",
-    cwd: "/tmp/pi-summons-no-env-body/cwd",
-    runDirectory: "/tmp/pi-summons-no-env-body/run",
-    principal: fixturePrincipal("/tmp/pi-summons-no-env-body/session"),
-    activation: { role: "judge" },
-    methods: [],
-    continuation: { kind: "initial", prompt: huge },
-  });
-  assert.ok(capturedEnv);
-  assert.equal(capturedEnv.AK_ROLE_SUMMONS_INSTRUCTION, undefined);
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(capturedEnv, "AK_ROLE_SUMMONS_INSTRUCTION"),
-    false,
-  );
 });

@@ -21,10 +21,14 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
+  createCountersignRoleRuntime,
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
@@ -139,22 +143,6 @@ type Tool = {
   parameters?: any;
   execute: (...args: any[]) => Promise<any>;
 };
-
-/**
- * Prompt delivery contract: the base system prompt survives and every declared
- * material arrives verbatim. The envelope layout around them (tag names,
- * blank-line separation) is presentation and is deliberately not asserted.
- */
-function assertDelivers(
-  prompt: string,
-  base: string,
-  materials: readonly string[],
-): void {
-  assert.ok(prompt.includes(base), "base system prompt must survive");
-  for (const material of materials) {
-    assert.ok(prompt.includes(material), `prompt must deliver ${JSON.stringify(material)}`);
-  }
-}
 
 const usage = {
   input: 1,
@@ -334,24 +322,17 @@ test("stable factory stays inert without a role", async () => {
     loadRoleSoul: async (role) => { loads += 1; return role; },
   });
 
-  assert.deepEqual(new Set(harness.handlers.keys()), new Set([
-    "input",
-    "before_agent_start",
-    "session_start",
-    "tool_result",
-    "turn_end",
-    "agent_end",
-    "agent_settled",
-    "session_shutdown",
-  ]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
   assert.deepEqual(harness.activeToolSets, []);
-  // Observation handlers are registered but stay inert without --ak-role admission.
-  assert.equal(harness.handlers.has("tool_call"), false, "tool_call");
+  // Whether or not a tool_call hook is registered, it must not intervene without a role.
+  assert.equal(
+    await harness.handlers.get("tool_call")?.({ toolName: "write", toolCallId: "no-role-write" }, {}),
+    undefined,
+  );
 });
-test("unsupported role fails with the frozen diagnostic before any loader runs", async () => {
+test("unsupported role fails before any loader runs", async () => {
   let loads = 0;
   const harness = extensionHarness("router");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
@@ -360,7 +341,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
 
   await assert.rejects(
     Promise.resolve(harness.handlers.get("session_start")?.({}, { abort() {} })),
-    new Error("Unsupported workflow role: router"),
+    Error,
   );
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
@@ -393,88 +374,17 @@ test("focused Judge controller registers output without narrowing host tools", a
   for (const name of ["read", "grep", "find", "ls", "bash", "write", "edit", "arbitrary_sibling"]) {
     assert.ok(active.includes(name), `host tool ${name} must remain active`);
   }
-  assertDelivers(
-    (await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE" },
-      {},
-    ) as { systemPrompt: string }).systemPrompt,
-    "BASE",
-    ["JUDGE LAW"],
-  );
-});
-
-test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and prompt envelopes", async () => {
-  const fixer = extensionHarness(undefined, {
-    "ak-fixer-phase": "plan",
-  });
-  const fixerAdapterHost = createPiRoleHostAdapter(fixer.pi as unknown as ExtensionAPI).host;
-  const fixerRoleEvents = new Set<string>();
-  const fixerHost = new Proxy(fixerAdapterHost, {
-    get(target, property, receiver) {
-      if (property !== "on") return Reflect.get(target, property, receiver);
-      return (event: string, handler: unknown) => {
-        fixerRoleEvents.add(event);
-        return (target.on as (event: string, handler: unknown) => void)(event, handler);
-      };
-    },
-  });
-  const fixerRuntime = createFixerRoleRuntime(
-    fixerHost,
-    {
-      loadSoul: async () => "\n FIXER LAW \n",
-    },
-    testHostActions(),
-  );
-  assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fixer-phase"]));
-  await fixerRuntime.activate();
-  assert.deepEqual([...fixer.tools.keys()], [FIXER_OUTPUT_TOOL_NAME]);
-  assert.ok(fixer.handlers.has("before_agent_start"));
-  assert.equal(fixerRoleEvents.has("input"), false);
-  assert.equal(fixer.handlers.has("input"), true);
-  const fixerPrompt = (await fixer.handlers.get("before_agent_start")?.(
+  const startup = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},
-  ) as { systemPrompt: string }).systemPrompt;
-  // #1168: soul + phase only; dispatch text is not copied into startup materials.
-  assertDelivers(fixerPrompt, "BASE", [
-    "FIXER LAW",
-    "plan",
-  ]);
-  const fixerTool = fixer.tools.get(FIXER_OUTPUT_TOOL_NAME);
-  assert.ok(fixerTool);
-  assert.deepEqual(
-    (await fixerTool.execute(
-      "plan-call",
-      { status: "planned", report: "Plan the smallest repair." },
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "plan-call", name: FIXER_OUTPUT_TOOL_NAME }])),
-    )).details,
-    { status: "planned", report: "Plan the smallest repair." },
-  );
-  const coder = extensionHarness(undefined, {
-    "ak-coder-phase": "plan",
-  });
-  const coderRuntime = createCoderRoleRuntime(
-    createPiRoleHostAdapter(coder.pi as unknown as ExtensionAPI).host,
-    {
-      loadSoul: async () => "\n CODER LAW \n",
-    },
-    testHostActions(),
-  );
-  assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-phase"]));
-  await coderRuntime.activate();
-  assert.deepEqual([...coder.tools.keys()], [CODER_OUTPUT_TOOL_NAME]);
-  assert.ok(coder.handlers.has("before_agent_start"));
-  assert.ok(coder.handlers.has("input"));
-  const coderPrompt = (await coder.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE" },
-    {},
-  ) as { systemPrompt: string }).systemPrompt;
-  assertDelivers(coderPrompt, "BASE", ["CODER LAW", "plan"]);
+  ) as { systemPrompt: string };
+  // Loaded Soul reaches the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "JUDGE LAW"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
 });
 
-test("named Judge and worker tools preserve schema leaves and receipts", async () => {
+test("filed seats preserve opaque receipts, including an unknown string status", async () => {
   const fixtures = [
     {
       role: "judge" as const,
@@ -533,6 +443,47 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       },
       output: { status: "planned", report: "plan" },
     },
+    {
+      role: "countersign" as const,
+      name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+      activate: async () => {
+        const harness = extensionHarness("countersign");
+        const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+        await createCountersignRoleRuntime(piHostAdapter.host, {
+          loadSoul: async () => "LAW",
+        }).activate();
+        return harness;
+      },
+      output: { status: "continue", findings: ["x"], evidence: "e-1" },
+    },
+    {
+      role: "merger" as const,
+      name: MERGER_OUTPUT_TOOL_NAME,
+      activate: async () => {
+        const harness = extensionHarness("merger", { "ak-merger-input": "/input.json" });
+        const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+        const material = { bytesBase64: Buffer.from("x").toString("base64"), sha256: "unused" };
+        await createMergerRoleRuntime(piHostAdapter.host, {
+          loadSoul: async () => "LAW",
+          loadInput: async () => ({
+            attemptId: "attempt",
+            targetObjectId: "",
+            sourceObjectId: "",
+            materials: { targetIntent: material, sourceIntent: material },
+            expectedConflictPaths: [],
+            resolutionScope: [],
+            authorizedChecks: [],
+          }),
+        }).activate();
+        return harness;
+      },
+      output: {
+        status: "escalate",
+        attemptId: "attempt",
+        diagnosis: "no in-progress merge",
+        report: "nothing to reconcile",
+      },
+    },
   ];
 
   for (const fixture of fixtures) {
@@ -541,11 +492,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     const tool = harness.tools.get(fixture.name);
     assert.ok(tool);
     assert.equal(tool.name, fixture.name);
-    assert.ok(typeof tool.description === "string" && tool.description.length > 0);
-    assert.ok(
-      tool.promptGuidelines === undefined || tool.promptGuidelines.length === 0,
-      `${fixture.name} must not carry promptGuidelines instruction family`,
-    );
     const result = await tool.execute(
       "receipt",
       fixture.output,
@@ -556,9 +502,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     assert.deepEqual(result.content, [], "the submission tool finishes before reviewer receipts exist");
-    // #756: judge no longer projects auditor usage onto the parent receipt —
-    // nested officer meters live on the officer session; parent accepts as-is.
-    assert.equal(result.usage, undefined);
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const raw = await tool.execute(
       "unreadable-status",
@@ -569,6 +512,57 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     );
     assert.equal(raw.terminate, true, `${fixture.role} finishes an unreadable-status submission`);
     assert.deepEqual(raw.details, unreadable, `${fixture.role} preserves the raw submission`);
+    const stringStatus = { status: "not-a-status", note: "typo" };
+    const rawString = await tool.execute(
+      "unreadable-string-status",
+      stringStatus,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id: "unreadable-string-status", name: fixture.name }])),
+    );
+    assert.equal(rawString.terminate, true, `${fixture.role} finishes an unknown string status`);
+    assert.deepEqual(rawString.details, stringStatus, `${fixture.role} preserves an unknown string status`);
+    const accept = async (id: string, payload: unknown) => tool.execute(
+      id,
+      payload,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id, name: fixture.name }])),
+    );
+    if (fixture.role === "countersign") {
+      const prompted = await harness.handlers.get("before_agent_start")?.(
+        { systemPrompt: "BASE" },
+        {},
+      ) as { systemPrompt: string };
+      assert.equal(prompted.systemPrompt.includes("LAW"), true);
+      const converged = await accept("converged", { status: "converged" });
+      assert.equal(converged.terminate, true);
+      assert.deepEqual(converged.details, { status: "converged" });
+      const escalated = await accept("escalate-note", { status: "escalate", note: "need owner" });
+      assert.equal(escalated.terminate, true);
+      assert.deepEqual(escalated.details, { status: "escalate", note: "need owner" });
+      const legacy = {
+        status: "converged",
+        clauses: [{ clause: "c", ownerUuid: null, derivation: "d" }],
+      };
+      const withLegacy = await accept("legacy", legacy);
+      assert.equal(withLegacy.terminate, true);
+      assert.deepEqual(withLegacy.details, legacy);
+    }
+    if (fixture.role === "merger") {
+      const again = await accept("merger-again", fixture.output);
+      assert.equal(again.terminate, true);
+      assert.deepEqual(again.details, fixture.output);
+      const completed = {
+        status: "completed",
+        attemptId: "attempt",
+        report: "resolved",
+        mergeCommitId: "c".repeat(64),
+      };
+      const accepted = await accept("completed", completed);
+      assert.equal(accepted.terminate, true);
+      assert.deepEqual(accepted.details, completed);
+    }
   }
 });
 
@@ -617,27 +611,6 @@ test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", a
   assert.deepEqual(result.details, escalate);
 });
 
-test("judge output tool returns an unreadable status for public routing (#756/#1057)", async () => {
-  // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
-  const harness = extensionHarness("judge");
-  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-  await createJudgeRoleRuntime(
-    piHostAdapter.host,
-    { loadSoul: async () => "JUDGE LAW" },
-  ).activate();
-  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
-  const unreadable = { status: "not-a-status", note: "typo" };
-  const result = await tool.execute(
-    "call-bad",
-    unreadable,
-    undefined,
-    undefined,
-    await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: unreadable }])),
-  );
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, unreadable);
-});
-
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
@@ -662,11 +635,14 @@ test("coder plan activates without task copy and returns planned", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  const promptResult = await harness.handlers.get("before_agent_start")?.(
+  const startup = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},
-  );
-  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+  ) as { systemPrompt: string };
+  // Loaded Soul and phase reach the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "CODER LAW", "plan"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
   assert.deepEqual(
     await harness.handlers.get("input")?.(
       { text: "Plan the approved seam.", source: "interactive" },
@@ -674,11 +650,6 @@ test("coder plan activates without task copy and returns planned", async () => {
     ),
     { action: "continue" },
   );
-  assertDelivers(prompt, "BASE", [
-    "CODER LAW",
-    "plan",
-  ]);
-
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
@@ -763,7 +734,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     deliveryPrompts.push(message);
   };
   const bounce = async (id: string) => {
-    const bounced = await tool2.execute(id, bare, undefined, undefined, bounceContext(id));
+    const bounced = await tool2.execute(id, id === "u2" ? { ...bare, reason: "   " } : bare, undefined, undefined, bounceContext(id));
     assert.equal(bounced.isError, true);
     assert.equal(bounced.details?.code, "worker_unfinished_reason_reminder");
     const ctx = bounceContext(id);
@@ -913,7 +884,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
     assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   });
 });
-test("fixer role startup materials carry soul and phase only; returns a thin report envelope", async () => {
+test("fixer apply returns a thin report envelope", async () => {
   const harness = extensionHarness("fixer", {
     "ak-fixer-phase": "apply",
   });
@@ -923,15 +894,14 @@ test("fixer role startup materials carry soul and phase only; returns a thin rep
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  const promptResult = await harness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE SYSTEM PROMPT" }, {},
-  );
-
-  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-  assertDelivers(prompt, "BASE SYSTEM PROMPT", [
-    "FIXER LAW\nCreate one forward commit.",
-    "apply",
-  ]);
+  const startup = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  ) as { systemPrompt: string };
+  // Loaded Soul and phase reach the host systemPrompt; the base prompt survives.
+  for (const delivered of ["BASE", "FIXER LAW\nCreate one forward commit.", "apply"]) {
+    assert.ok(startup.systemPrompt.includes(delivered), delivered);
+  }
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);

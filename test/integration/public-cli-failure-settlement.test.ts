@@ -46,6 +46,11 @@ test("malformed CLI structure and empty --project= reject structurally before ad
       label: "empty --project=",
       args: () => ["judge", "--model", "test/caller-seat:high", "--project=", "task"],
     },
+    {
+      label: "repeated non-repeatable option",
+      args: (project: string) => ["judge", "--model", "test/caller-seat:high",
+        "--project", project, "--project", project, "task"],
+    },
   ] as const;
   for (const row of rows) {
     await withTempHome(async (home) => {
@@ -93,7 +98,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     let config = { seats: {} };
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
     await savePublicCliConfig(config, home);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     let dispatchedPrompt: string | undefined;
     const domainProse =
       "Adjudicate missing issue #999999 and absent PR https://example.invalid/x/y/pull/404 with no local authority.";
@@ -145,8 +150,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     );
     assert.equal(result.exitCode, 0);
     assert.equal(dispatchedPrompt, domainProse);
-    assert.equal(stdout.length, 1);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.runId, "run-domain-001");
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
@@ -187,16 +190,12 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       );
       const flood = realisticJsonlFloodStderr();
       // A bare nonzero exit names no cause; the real diagnostic is kept whole.
-      const { terminal } = await assertPublicFailureSettlement({
+      await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
         diagnosticEquals: flood,
       });
-      assert.equal(terminal.roleOutcome.kind, "failure");
-      if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.diagnostic, flood);
-      }
     }
 
     // Counterexample 2: oversized diagnostic is kept whole on durable + presentation.
@@ -229,20 +228,12 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       );
       // A bare nonzero exit keeps the real stderr diagnostic whole and claims
       // no cause of its own.
-      const { terminal, errorRef } = await assertPublicFailureSettlement({
+      await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
         diagnosticEquals: stderrText,
       });
-      const body = terminalBodyAt(errorRef!.path, "error") as {
-        diagnostic: string;
-      };
-      assert.equal(body.diagnostic, stderrText);
-      assert.equal(terminal.roleOutcome.kind, "failure");
-      if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.diagnostic, stderrText);
-      }
     }
   });
 });
@@ -251,7 +242,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "needs owner decision"],
       {
         packageRoot,
@@ -307,8 +298,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(stdout.length, 1);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
@@ -375,19 +364,12 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
       },
     );
 
-    const { terminal } = await assertPublicFailureSettlement({
+    await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       diagnosticEquals: "undefined",
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      // Presence of thrown undefined must not wash into activation or null-exit output.
-      assert.equal(terminal.roleOutcome.cause, undefined);
-      assert.notEqual(terminal.roleOutcome.cause, "activation");
-      assert.notEqual(terminal.roleOutcome.cause, "output");
-    }
   });
 });
 test("timeout controlled failure settles with typed timeout cause and Error Artifact", async () => {
@@ -427,9 +409,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
       expectedCause: "timeout",
     });
     // Typed timeout identity — not package presentation prose.
-    assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "timeout");
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
@@ -437,7 +417,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
       cause: string;
       details?: { timedOut?: boolean };
     };
-    assert.equal(errorBody.cause, "timeout");
     assert.equal(errorBody.details?.timedOut, true);
     // Empty session on this real failure: missing attendance stays unavailable.
     assert.equal(terminal.navigator.disposition, "unavailable");
@@ -592,7 +571,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
       diagnosticEquals: "This operation was aborted",
       identityName: "AbortError",
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
     // Host failure stays failure; both original params ride on submissions (#953).
     assert.equal(
@@ -601,7 +579,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
       true,
     );
     assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
-    assert.equal(result.exitCode, 1);
   });
 });
 

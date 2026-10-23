@@ -846,17 +846,6 @@ function rejectUnlessTicketNumber(raw: string, message: string): number {
   return parsed;
 }
 
-/** Positive ticket number for analyst query-scope face (and shared integer parse). */
-export function parsePositiveTicketNumber(
-  raw: string,
-  flag: string,
-): number {
-  return rejectUnlessTicketNumber(
-    raw,
-    `${flag} must be a positive integer, got ${raw}`,
-  );
-}
-
 /**
  * One token scan for public argv.
  * Callers assign values; `--` still ends flag parsing.
@@ -2065,23 +2054,6 @@ export async function materializeCountersignInvocation(
     options.model,
   );
 }
-
-export type AdmitFixerInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  phase: FixerPhase;
-  instruction: string;
-  attachmentPaths: readonly string[];
-  /** Optional caller --prerequisites path as-is (#1168). */
-  prerequisitesPath?: string;
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto the state.jsonl invocation row. */
-  model?: InvocationEffectiveModel;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
 
 function parsePositivePrOption(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");

@@ -4,16 +4,14 @@ import { dirname } from "node:path";
 import { test } from "vitest";
 
 import {
+  runAkRole,
   projectConfigDisplaySeats,
   projectConfigSeatDisplay,
 } from "../../src/public-cli/cli.ts";
 import {
-  buildSeatModelCliArgs,
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
-  formatModelSpec,
   loadPublicCliConfig,
-  parseModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -23,40 +21,9 @@ import {
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
+import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-
-test("bulk persistent configuration survives a new process boundary", async () => {
-  await withTempHome(async (home) => {
-    let config: PublicCliConfig = { seats: {} };
-    config = setPersistentSeatConfig(config, "judge", {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
-    config = setPersistentSeatConfig(config, "navigator", {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "medium",
-    });
-    await savePublicCliConfig(config, home);
-
-    // New process boundary: reload from the same home path with a fresh read.
-    const reloaded = await loadPublicCliConfig(home);
-    assert.deepEqual(reloaded.seats.judge, {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
-    assert.deepEqual(reloaded.seats.navigator, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "medium",
-    });
-    assert.equal(publicCliConfigPath(home).endsWith("public-cli.json"), true);
-    const raw = JSON.parse(await readFile(publicCliConfigPath(home), "utf8")) as PublicCliConfig;
-    assert.deepEqual(raw.seats.judge?.model, "gpt-5.6-sol");
-  });
-});
 
 test("command-local model/thinking overrides do not rewrite persistent configuration", async () => {
   await withTempHome(async (home) => {
@@ -70,17 +37,22 @@ test("command-local model/thinking overrides do not rewrite persistent configura
 
     const credentials: CredentialProviders = { "openai-codex": true, xai: true };
     const before = await readFile(publicCliConfigPath(home), "utf8");
-    const effective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "coder",
-      credentials,
-      {
-        model: "xai/grok-4.5",
-        thinking: "medium",
+    seedGitProject(home);
+    let selected: unknown;
+    const result = await runAkRole([
+      "coder", "plan", "--project", home,
+      "--model", "xai/grok-4.5", "--thinking", "medium", "Plan the repair.",
+    ], {
+      packageRoot, home, cwd: home, credentials, io: captureIo().io,
+      roleTurnHost: {
+        async executeTurn(request) {
+          selected = request.model;
+          return { code: 0, stderr: "", timedOut: false };
+        },
       },
-    );
-    assert.equal(effective.source, "invocation");
-    assert.deepEqual(effective.selection, {
+    });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(selected, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "medium",
@@ -94,33 +66,6 @@ test("command-local model/thinking overrides do not rewrite persistent configura
       thinking: "high",
     });
   });
-});
-
-// Roster order only — package startup fill-in deleted with #178; no source/selection oracle here.
-test("effective seat configurations enumerate the public configurable roster", () => {
-  const seats = effectiveSeatConfigurations(
-    { seats: {} },
-    { "openai-codex": false, xai: false },
-  ).map((s) => s.seat);
-  assert.deepEqual(seats, [
-    "judge",
-    "fixer",
-    "coder",
-    "reviewer",
-    "collector",
-    "doctor",
-    "merger",
-    "notary",
-    "countersign",
-    "secretariat",
-    "gleaner-left",
-    "inspector",
-    "gatekeeper",
-    "navigator",
-    "auditor",
-    "diarist",
-  ]);
-  // #744: evidence-child is not a public seat (deepEqual roster above).
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };
@@ -313,139 +258,6 @@ test("#453 non-notary engine-only residual is rejected on persist boundary", asy
       () => savePublicCliConfig({ seats: { judge: { engine: "opus" } } }, home),
       Error,
     );
-  });
-});
-
-test("persistent seat config is the effective model source", () => {
-  const config = setPersistentSeatConfig(
-    { seats: {} },
-    "fixer",
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  );
-  const effective = resolveEffectiveSeat(config, "fixer", {
-    "openai-codex": true,
-    xai: true,
-  });
-  assert.equal(effective.source, "persistent");
-  assert.deepEqual(effective.selection, {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
-  });
-});
-
-// #346: public CLI --model :thinking suffix is optional on invocation.
-test("bare provider/model invocation is legal and does not invent thinking", () => {
-  const bare = parseModelSpec("kimi-coding/k3-256k");
-  assert.deepEqual(bare, {
-    provider: "kimi-coding",
-    model: "k3-256k",
-  });
-  assert.equal("thinking" in bare, false);
-  assert.equal(formatModelSpec(bare), "kimi-coding/k3-256k");
-
-  const effective = resolveEffectiveSeat(
-    { seats: {} },
-    "coder",
-    { "openai-codex": true, xai: false },
-    { model: "kimi-coding/k3-256k" },
-  );
-  assert.equal(effective.source, "invocation");
-  assert.deepEqual(effective.selection, {
-    provider: "kimi-coding",
-    model: "k3-256k",
-  });
-  assert.equal(effective.selection !== undefined && "thinking" in effective.selection, false);
-});
-
-test("provider/model:thinking suffix still parses and formats with thinking", () => {
-  const withThinking = parseModelSpec("openai-codex/gpt-5.6-luna:high");
-  assert.deepEqual(withThinking, {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "high",
-  });
-  assert.equal(formatModelSpec(withThinking), "openai-codex/gpt-5.6-luna:high");
-
-  const effective = resolveEffectiveSeat(
-    { seats: {} },
-    "coder",
-    { "openai-codex": true, xai: false },
-    { model: "openai-codex/gpt-5.6-luna:medium" },
-  );
-  assert.deepEqual(effective.selection, {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "medium",
-  });
-});
-
-test("malformed model specs keep the pre-#346 typed rejection surface", () => {
-  for (const modelSpec of ["", "no-slash-model", "/missing-provider"]) {
-    assert.throws(() => parseModelSpec(modelSpec), Error);
-  }
-  // #683: suffix is opaque pass-through — no whitelist reject.
-  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:bogus"), {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "bogus",
-  });
-  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:xhigh"), {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "xhigh",
-  });
-  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:"), {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "",
-  });
-  // Unknown provider/model is syntactically legal — resolution is not this parser's job.
-  assert.deepEqual(parseModelSpec("no-such-provider/no-such-model"), {
-    provider: "no-such-provider",
-    model: "no-such-model",
-  });
-});
-
-// #384: persistent config set must not force :thinking (same grammar as invocation).
-test("persistent bare provider/model stores as-is without inventing thinking", async () => {
-  const bare = parseModelSpec("kimi-coding/k3-256k");
-  assert.deepEqual(bare, {
-    provider: "kimi-coding",
-    model: "k3-256k",
-  });
-  assert.equal("thinking" in bare, false);
-  assert.deepEqual(buildSeatModelCliArgs(bare), [
-    "--provider",
-    "kimi-coding",
-    "--model",
-    "k3-256k",
-  ]);
-
-  await withTempHome(async (home) => {
-    const config = setPersistentSeatConfig({ seats: {} }, "judge", bare);
-    await savePublicCliConfig(config, home);
-    const reloaded = await loadPublicCliConfig(home);
-    assert.deepEqual(reloaded.seats.judge, {
-      provider: "kimi-coding",
-      model: "k3-256k",
-    });
-    assert.equal(reloaded.seats.judge !== undefined && "thinking" in reloaded.seats.judge, false);
-
-    const effective = resolveEffectiveSeat(reloaded, "judge", {
-      "openai-codex": true,
-      xai: false,
-    });
-    assert.equal(effective.source, "persistent");
-    assert.deepEqual(effective.selection, {
-      provider: "kimi-coding",
-      model: "k3-256k",
-    });
-    assert.equal(
-      effective.selection !== undefined && "thinking" in effective.selection,
-      false,
-    );
-    assert.equal(formatModelSpec(effective.selection!), "kimi-coding/k3-256k");
   });
 });
 

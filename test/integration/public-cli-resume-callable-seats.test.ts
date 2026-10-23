@@ -250,14 +250,12 @@ for (const spec of SEAT_SPECS) {
         roleTurnHost: spec.role === "doctor" ? withPassingReviewHost(host) : host,
       });
 
-      assert.ok(resumeSessionFile, stderr.join(""));
       // Exact principal reopen — same session, never directory-latest.
       assert.equal(resumeSessionFile, sessionFile);
       assert.deepEqual([...openedPrincipals], [sessionFile]);
       assert.equal(resumePrompt, "调用者原话");
 
       assert.equal(resumed.exitCode, 0, stderr.join(""));
-      assert.ok(resumed.terminal);
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.roleOutcome.role, spec.role);
       assert.equal(resumed.terminal!.runId, runId);

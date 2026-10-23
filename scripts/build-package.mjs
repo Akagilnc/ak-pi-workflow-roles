@@ -30,7 +30,6 @@ const entries = [
   "role-run-placement",
   // Static import of role-run-placement (safe-positive ticket invariant).
   "run-ticket-number",
-  "canonical-json",
   "compliance-transport",
   "countersign-contracts",
   "secretariat-contracts",

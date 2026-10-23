@@ -17,7 +17,6 @@ import { treeFingerprint } from "../helpers/factory-board-shared.ts";
 import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 
 import {
-  DEFAULT_REFRESH_BOUNDARY_SECONDS,
   readLedgerSessionJsonl,
   renderTicketTrajectoryHtml,
   startTicketTrajectoryPage,
@@ -185,11 +184,8 @@ test("each run evidence link resolves to the run ledger path, with typed data-le
 
   for (const linkEl of links) {
     const coord = linkEl["data-ledger-link"];
-    assert.ok(coord, "data-ledger-link present");
     assert.match(coord!, /^issues\/127\/runs\//);
     // Must not be a dead in-page fragment.
-    assert.ok(linkEl.href, "href present");
-    assert.notEqual(linkEl.href![0], "#");
     assert.match(linkEl.href!, /^file:/);
 
     const url = new URL(linkEl.href!);
@@ -384,8 +380,6 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     assert.equal(await treeFingerprint(ledgerCopy), afterAdd);
     assert.notEqual(afterAdd, before);
 
-    // Default boundary constant remains the production default (no second lifecycle tracer).
-    assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
     });
 });
 

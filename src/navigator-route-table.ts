@@ -17,8 +17,6 @@ import type { ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 import type { CoderOutput } from "./package-contracts/worker-output.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 
-export const NAVIGATOR_ADVICE_MAX_CHARS = 20;
-
 const DISPOSE_BY_VERDICT = "按判词处置";
 const ESCALATE_TO_OWNER = "呈陛下裁决";
 const DISPATCH_WORKER = "派将作监开工";

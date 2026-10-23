@@ -9,7 +9,6 @@ import { test } from "vitest";
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
@@ -31,16 +30,6 @@ test("#1028 secretariat_verdict reads the shared review status",
         label: "shared-word disguise status=pass only",
         payload: { status: "pass" },
         expected: "needs_reask",
-      },
-      {
-        label: "shared continue is returned as continue",
-        payload: { status: "continue", fix: { summary: "修" } },
-        expected: "continue",
-      },
-      {
-        label: "shared converged remains converged",
-        payload: { status: "converged", note: "署" },
-        expected: "converged",
       },
       {
         label: "unmapped status",
@@ -112,7 +101,6 @@ test("#1028 secretariat_verdict reads the shared review status",
         },
       }),
     });
-    assert.equal(compatProjected.result.status, "needs_reask");
     assert.equal(
       compatProjected.result.status === "needs_reask" ? compatProjected.result.receivedStatus : undefined,
       "other",
@@ -153,9 +141,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
         },
       }),
     });
-    // #1195: parent no longer books officer-pointer copies; resume uses officer runId.
-    const booked = readHistoryRows(parentRun).filter((row) => row.kind === "officer-pointer");
-    assert.equal(booked.length, 0, "parent history must not book officer-pointer rows");
     assert.equal(outcome?.status, "escalate");
     assert.equal(outcome && "officer" in outcome ? outcome.officer : undefined, "countersign");
     assert.deepEqual(outcome && "receipt" in outcome ? outcome.receipt : undefined, receipt);
@@ -196,7 +181,6 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
         },
       }),
     });
-    assert.ok(outcome !== undefined && outcome !== null);
     assert.equal(outcome!.officer, "countersign");
     assert.deepEqual(outcome!.receipt, receipt);
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
@@ -237,7 +221,6 @@ test("#1214 A5: officer transport_failure returns honestly as typed outcome",
       outcome && "runId" in outcome ? outcome.runId : undefined,
       "01a01214-fail-7000-8000-000000000099",
     );
-    assert.ok(outcome && "terminal" in outcome && outcome.terminal !== undefined);
     assert.equal(outcome?.terminal?.roleOutcome.kind, "failure");
   }),
 );

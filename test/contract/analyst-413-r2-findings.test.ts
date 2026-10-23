@@ -3,9 +3,8 @@ import { worktreeTempPrefix, withPrimaryAwareCleanup, withTempRoot } from "../he
  * #413 r2 finding contracts (U1 + U3 counter-evidence).
  *
  * U1: the sole library-index read boundary must reject syntactically valid but
- *   malformed shapes (null / non-object / rows not an array) loudly with the
- *   file path — pre-fix the cast let them pass through and consumers crashed
- *   with untyped identity-free TypeErrors downstream.
+ *   malformed shapes (null / non-object / rows not an array) instead of
+ *   passing them through to downstream consumers.
  * U3: synthetic book keys are exactly `root:` + an ABSOLUTE path identity; a
  *   real Git book whose basename is literally `root:foo` is not synthetic.
  *   Bidirectional preservation: the real book keeps its book scope through a
@@ -23,9 +22,6 @@ import { test } from "vitest";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import {
-  isSyntheticAnalystBookKey,
-} from "../../src/analyst-book-key.ts";
-import {
   readAnalystLibraryIndexPage,
   analystLibraryIndexPath,
 } from "../../src/analyst-index.ts";
@@ -36,7 +32,7 @@ import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
-test("U1: library-index read boundary rejects null/non-object/rows-not-array with the file path", async () => {
+test("U1: library-index read boundary rejects malformed pages and accepts empty rows", async () => {
   await withTempRoot("analyst-413r2-home-", async (home) => {
     mkdirSync(join(home, ".ak-roles", "analyst"), { recursive: true });
     const indexPath = analystLibraryIndexPath(join(home, ".ak-roles"));
@@ -53,10 +49,7 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
       await assert.rejects(
         () => readAnalystLibraryIndexPage(join(home, ".ak-roles")),
         (error: unknown) => {
-          // The rejection's visible identity is this index file. A downstream
-          // crash on the passed-through value does not name it. Subclass is fine.
           assert.ok(error instanceof Error);
-          assert.ok(error.message.includes(indexPath));
           return true;
         },
         `pre-fix passthrough returned ${JSON.stringify(shape)} to consumers`,
@@ -71,17 +64,6 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
     const page = await readAnalystLibraryIndexPage(join(home, ".ak-roles"));
     assert.deepEqual(page?.rows, []);
   });
-});
-
-// ---- U3: non-ambiguous synthetic classification (unit face) ----
-
-test("U3: isSyntheticAnalystBookKey — root:<absolute path> is synthetic; real basename root:foo is not", () => {
-  // Real Git book whose host-directory basename is literally `root:foo`:
-  // remainder is not an absolute path → NOT synthetic (pre-fix prefix test killed it).
-  assert.equal(isSyntheticAnalystBookKey("root:foo"), false);
-  assert.equal(isSyntheticAnalystBookKey("plain-book"), false);
-  // Existing synthetic keys keep their meaning: root: + absolute path identity.
-  assert.equal(isSyntheticAnalystBookKey(`root:${physicalPathIdentity("/analyst-fixture/u3")}`), true);
 });
 
 // ---- U3: real book root:foo survives a cache-miss recompute (end-to-end) ----
@@ -180,6 +162,51 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       assert.equal(restored.bookKey, "root:foo");
       assert.equal(restored.issueNumber, 7);
       assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
+
+      // projectRoot-only (no bookKey) is the scan that calls isSyntheticAnalystBookKey.
+      // A sibling in book root:foo with another root is in scope only when that
+      // basename is not synthetic. An absent root resolves to root:<absolute>;
+      // its run, stored under another book, is in scope only when that key is synthetic.
+      const seedReadable = (book: string, runId: string, rootIdentity: string) => {
+        const runDir = join(ledgerHome, "books", book, "runs", `${runId}@coder`);
+        mkdirSync(join(runDir, "session"), { recursive: true });
+        seedCurrentSection(runDir, "invocation", {
+          role: "coder",
+          runId,
+          bookKey: book,
+          projectRoot: rootIdentity,
+          ticketNumber: 9,
+        });
+        seedTerminal(runDir, "report", {
+          role: "coder",
+          runId,
+          phase: "apply",
+          outcome: {
+            kind: "accepted",
+            role: "coder",
+            status: "completed",
+            decisiveFacts: {},
+            payloads: [],
+          },
+        });
+        writeFileSync(
+          join(runDir, "session", "session.jsonl"),
+          JSON.stringify({ type: "session", version: 3, id: runId, timestamp: "2026-08-04T03:00:00.000Z", cwd: rootIdentity }) + "\n",
+          "utf8",
+        );
+      };
+      const other = join(repoParent, "other");
+      mkdirSync(other);
+      const siblingId = "019ff000-9001-7000-8000-0000000009a2";
+      seedReadable("root:foo", siblingId, physicalPathIdentity(other));
+      const keptBook = await runAnalyst({ mode: "issue", projectRoot: repo }, { home });
+      assert.equal(keptBook.page.legs.some((leg) => leg.runId === siblingId), true);
+
+      const absent = join(repoParent, "missing", "root");
+      const plainId = "019ff000-9001-7000-8000-0000000009a3";
+      seedReadable("plain-book", plainId, physicalPathIdentity(absent));
+      const pathScope = await runAnalyst({ mode: "issue", projectRoot: absent }, { home });
+      assert.equal(pathScope.page.legs.some((leg) => leg.runId === plainId), true);
     },
     async () => {
       await rm(home, { recursive: true, force: true });

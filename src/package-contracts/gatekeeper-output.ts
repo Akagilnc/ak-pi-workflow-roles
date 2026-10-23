@@ -40,16 +40,6 @@ function asStringArray(value: unknown): readonly string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-/**
- * Project one explicit Gatekeeper decision.
- * No throw on shape — ADR 0055 / 仓内 CLAUDE.md 开篇: already-submitted params are retained as-is;
- * public-terminal projects non-usable releases via typed failure cause.
- */
-/** #836: no field drop — original object is the receipt. */
-export function projectLawfulGatekeeperOutput(value: unknown): GatekeeperDirectOutput | undefined {
-  return isRecord(value) ? (value as GatekeeperDirectOutput) : undefined;
-}
-
 /** #836: no status allowlist rejection — pass object through. */
 export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDirectOutput {
   if (!isRecord(value)) throw new Error("Gatekeeper output is not an object");

@@ -16,7 +16,6 @@ import { test } from "vitest";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -131,41 +130,6 @@ function scriptedCountersignSession(details: unknown, stem?: string) {
   }));
 }
 
-test("countersign admission binds the countersign role without inventing a ticket", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const admitted = await admitPublicRole("countersign", {
-      instruction: "裁：本票是否足以开工。",
-      attachmentPaths: [],
-    }, {
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
-    });
-
-    assert.deepEqual(
-      admitted.role, "countersign");
-    assert.equal(admitted.instructionEmpty, false);
-
-    const turn = buildInstructionSeatTurnRequest(admitted, {
-      packageRoot,
-      home,
-      agentDir: join(home, ".pi"),
-      continuation: { kind: "initial", prompt: "裁：本票是否足以开工。" },
-    });
-    assert.equal(turn.activation.role, "countersign");
-    // Unbound admission: no ticket on activation (legal).
-    assert.equal(
-      "ticketNumber" in turn.activation ? turn.activation.ticketNumber : undefined,
-      undefined,
-    );
-  });
-});
-
 test("countersign admission ignores attachment frontmatter", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -197,9 +161,6 @@ test("countersign admission ignores attachment frontmatter", async () => {
       undefined,
     );
 
-    // #632: private countersign ticket transport flag is gone (was write-only).
-    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
-    assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 
 });
@@ -327,7 +288,6 @@ test("ak-role resume continues countersign on the exact session", async () => {
       },
     );
     assert.equal(first.exitCode, 1);
-    assert.equal(first.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       first.terminal?.roleOutcome.kind === "failure"
         ? first.terminal.roleOutcome.cause
@@ -366,13 +326,11 @@ test("ak-role resume continues countersign on the exact session", async () => {
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
-    assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumeArgs!.includes("再裁一次"), false);
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
@@ -525,7 +483,6 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       }),
     });
     assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "failure"
         ? resumed.terminal.roleOutcome.cause

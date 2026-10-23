@@ -7,7 +7,6 @@ import { test } from "vitest";
 
 import {
   installProcessCancelHandlers,
-  processCancelDiagnostic,
   processCancelSignalName,
 } from "../../src/public-cli/process-cancel.ts";
 
@@ -21,7 +20,6 @@ test("installProcessCancelHandlers aborts once with the first catchable signal n
     assert.equal(handle.signal.aborted, true);
     assert.equal(handle.receivedSignal(), "SIGTERM");
     assert.equal(processCancelSignalName(handle.signal), "SIGTERM");
-    assert.equal(processCancelDiagnostic("SIGTERM"), "ak-role terminated by SIGTERM");
     // Second signal does not overwrite the first.
     fake.emit("SIGINT");
     assert.equal(handle.receivedSignal(), "SIGTERM");

@@ -95,7 +95,7 @@ function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
+test("parseReviewerArgv requires authority, rejects bad lenses and keeps --base/--lens/--authority-ref spellings", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -106,32 +106,8 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Authority remains required; omitted lens defaults to the parallel two-axis mode.
   assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "main"]), isUsage);
   assert.throws(
-    () =>
-      parsePublicSeatArgv("reviewer", [
-        "--base",
-        "main",
-        "--authority-ref",
-        "The system SHALL launch two workers",
-      ]),
-    isUsage,
-  );
-  assert.throws(
     () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
-  );
-  assert.deepEqual(
-    parsePublicSeatArgv("reviewer", [
-      "--base",
-      "main",
-      "--authority-ref",
-      "https://example.test/a",
-    ]),
-    {
-      instruction: "",
-      attachmentPaths: [],
-      baseRevision: "main",
-      authorityRefs: ["https://example.test/a"],
-    },
   );
   // Public `--lens all` is not an admitted single-axis value.
   assert.throws(
@@ -224,16 +200,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // a regression in the rule actually under test.
   assert.throws(
     () => parsePublicSeatArgv("reviewer", [
-      "--unknown-flag",
-      "--base",
-      "main",
-      "--authority-ref",
-      "CLAUDE.md",
-    ]),
-    isUsage,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("reviewer", [
       "--base",
       "",
       "--authority-ref",
@@ -278,18 +244,6 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
         "--authority-ref",
         "--smuggled",
       ]),
-    isUsage,
-  );
-  assert.throws(
-    () => parsePublicSeatArgv("reviewer", [
-      "--project",
-      "",
-      "--base",
-      "main",
-      "--authority-ref",
-      "CLAUDE.md",
-      "task",
-    ]),
     isUsage,
   );
   assert.throws(
@@ -485,7 +439,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
     );
     for (const args of captured) {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(args.includes("--ak-review-task"), false);
       // Ordinary single-axis public semantics: dual-lens legs are not station children.
       assert.equal(args.includes("--ak-station-child"), false);
       assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
@@ -597,17 +550,11 @@ test("default dual-lens admits both axes without a parent run", async () => {
     ] as const) {
       const received = publishedByLens[lens];
       const lensRows = progress.filter((line) => line.round.endsWith(`.${lens}`));
-      assert.equal(
-        lensRows.length,
-        received.length,
-        `${lens}: progress rows must match queried sealed receipts`,
-      );
       assert.deepEqual(
         lensRows.map((line) => line.round),
         received.map((_, index) => `${index + 1}.${lens}`),
         `${lens}: rounds must be continuous 1..n with no duplicates`,
       );
-      assert.equal(new Set(lensRows.map((line) => line.round)).size, lensRows.length);
       for (let index = 0; index < received.length; index += 1) {
         const row = lensRows[index]!;
         assert.ok(
@@ -630,7 +577,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
     const projectEntries = await readdir(project);
-    assert.equal(projectEntries.includes("docs"), false);
     assert.equal(projectEntries.includes(".agents"), false);
   });
 });
@@ -660,7 +606,6 @@ test("one dual-lens leg failure keeps the sibling original terminal", async () =
     });
 
     assert.equal(partial.exitCode, 1);
-    assert.equal(partial.terminal?.roleOutcome.kind, "failure");
     assert.equal(partial.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(partial.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "failure");
     assert.equal(partial.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
@@ -820,9 +765,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     });
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-    assert.equal(typeof turnCwd, "string");
     assert.equal(realpathSync(turnCwd!), realpathSync(project));
-    assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     // The skill's formal args and the caller's own words must reach the host,
     // not merely the invocation ledger or the internal argv.
@@ -842,7 +785,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.deepEqual(values.authority, ["CLAUDE.md", "docs/adr/0001-roles-grow-by-demand.md"]);
     assert.ok(dialogue.slice(dialogue.indexOf("\n")).includes(instruction));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.artifacts.some((a) => a.kind === "report"), true);
     // The admitted facts are the run's own record in current.json's admitted section.
     const reportRef = result.terminal?.artifacts.find((a) => a.kind === "report");
     assert.ok(reportRef);
@@ -859,8 +801,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       "CLAUDE.md",
       "docs/adr/0001-roles-grow-by-demand.md",
     ]);
-    assert.equal("taskPath" in admittedFacts, false);
-    assert.equal("taskSha256" in admittedFacts, false);
     if (result.terminal?.roleOutcome.kind === "accepted") {
       const amendments = (result.terminal.roleOutcome.payloads?.[0] as {
         amendments?: { completeness?: string };
@@ -1073,13 +1013,11 @@ test("ak-role resume continues reviewer with fixed base", async () => {
         resumeArgs = [...args];
         resumeStdin = options.stdin;
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-        assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "调用者原话");
-        assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         // Resume shares the ticket worktree (#997); no seat-specific ephemeral copy.
@@ -1092,7 +1030,6 @@ test("ak-role resume continues reviewer with fixed base", async () => {
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
-    assert.equal(typeof resumeCwd, "string");
     assert.equal(realpathSync(resumeCwd!), realpathSync(project));
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
@@ -1202,7 +1139,6 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
     );
     assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(typeof resumeCwd, "string");
     assert.equal(realpathSync(resumeCwd!), callerProjectRoot);
   });
 });

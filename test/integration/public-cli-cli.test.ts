@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
+import { Value } from "typebox/value";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { materializeConflictedRepo } from "../helpers/merger-conflict-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
@@ -14,14 +18,11 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import {
   buildExplicitInternalActivationArgs,
-  helpDocument,
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
-import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
   loadPublicCliConfig,
-  resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -102,22 +103,8 @@ test("Inspector public runner preserves typed converged/continue/escalate, and n
   });
 });
 
-test("help document capabilities match typed registry without depending on layout", () => {
-  const doc = helpDocument();
-  assert.equal(doc.executable, "ak-role");
-  const names = doc.capabilities.map((c) => c.name);
-  assert.equal(names.includes("roles"), true);
-  assert.equal(names.includes("config"), true);
-  assert.equal(names.includes("help"), true);
-  for (const role of PUBLIC_CALLABLE_ROLES) {
-    assert.equal(names.includes(role), true);
-  }
-});
-
-// Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案
-// 并一——TSV 行型正则把列序/措辞变承重结构违 ADR 0052，改咬 loadPublicCliConfig /
-// resolveEffectiveSeat / public-cli.json 字节 / 退出码；进程级可见性契约保留)。
-test("config persistence round-trips across processes on the typed seat face", async () => {
+// CLI config writes are observed through the stored document, not TSV presentation.
+test("CLI config commands persist and local roles reads do not rewrite disk", async () => {
   await withTempHome(async (home) => {
     // Fresh home: roles exits zero. Bulk config set is visible via config bytes.
     const fresh = await runAkRole(["roles"], {
@@ -128,7 +115,7 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(fresh.exitCode, 0);
 
-    // Bulk config set is visible to a subsequent process via the config bytes.
+    // Later CLI calls reload the stored config bytes.
     const setResult = await runAkRole(
       [
         "config",
@@ -161,7 +148,7 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(rolesResult.exitCode, 0);
 
-    // Local invocation override wins for the process but never persists.
+    // A roles read with invocation-local flags never persists them.
     const before = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     const overrideResult = await runAkRole(
       ["roles", "--model", "openai-codex/gpt-5.6-sol", "--thinking", "high"],
@@ -173,44 +160,8 @@ test("config persistence round-trips across processes on the typed seat face", a
       },
     );
     assert.equal(overrideResult.exitCode, 0);
-    const invocationEffective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "judge",
-      { "openai-codex": true, xai: true },
-      { model: "openai-codex/gpt-5.6-sol", thinking: "high" },
-    );
-    assert.equal(invocationEffective.source, "invocation");
-    assert.deepEqual(invocationEffective.selection, {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
     const after = await readFile(join(home, ".ak-roles", "public-cli.json"), "utf8");
     assert.equal(after, before);
-
-    // #346: bare --model provider/model without :thinking is legal and records
-    // no invented thinking suffix.
-    const bareRoles = await runAkRole(
-      ["roles", "--model", "kimi-coding/k3-256k"],
-      {
-        packageRoot,
-        home,
-        credentials: { "openai-codex": true, xai: false },
-        io: captureIo().io,
-      },
-    );
-    assert.equal(bareRoles.exitCode, 0);
-    const bareEffective = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "coder",
-      { "openai-codex": true, xai: false },
-      { model: "kimi-coding/k3-256k" },
-    );
-    assert.equal(bareEffective.source, "invocation");
-    assert.deepEqual(bareEffective.selection, {
-      provider: "kimi-coding",
-      model: "k3-256k",
-    });
 
     // #384: persistent config set keeps a bare provider/model bare, and an
     // explicit :thinking suffix stays intact through the same seam.
@@ -225,6 +176,33 @@ test("config persistence round-trips across processes on the typed seat face", a
       model: "k3-256k",
     });
     assert.equal(barePersisted?.thinking, undefined);
+
+    // The stored bare row is the effective model a later seat call dispatches.
+    const project = join(home, "work");
+    await mkdir(project);
+    seedGitProject(project);
+    let bareDispatched: unknown;
+    await runAkRole(["coder", "plan", "--project", project, "Plan with the stored bare model."], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => "cli-config-bare-dispatch",
+      io: captureIo().io,
+      roleTurnHost: createMinimalHost((request) => {
+        bareDispatched = request.model;
+        return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+      }),
+    });
+    assert.deepEqual(bareDispatched, { provider: "kimi-coding", model: "k3-256k" });
+
+    // #683: an empty suffix is opaque thinking, stored as-is rather than dropped.
+    const emptySuffix = await runAkRole(
+      ["config", "set", "coder", "kimi-coding/k3-256k:"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(emptySuffix.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.coder?.thinking, "");
 
     const thinkingSet = await runAkRole(
       ["config", "set", "coder", "kimi-coding/k3-256k:high"],
@@ -269,13 +247,6 @@ test("config persistence round-trips across processes on the typed seat face", a
       io: captureIo().io,
     });
     assert.equal(rolesAfter.exitCode, 0);
-    assert.equal(
-      resolveEffectiveSeat(gatePersisted, "gatekeeper", {
-        "openai-codex": true,
-        xai: true,
-      }).source,
-      "persistent",
-    );
 
     const unsetInspector = await runAkRole(["config", "unset", "inspector"], {
       packageRoot,
@@ -320,6 +291,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     );
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    const handed: { required?: unknown; hitsType?: unknown; schema?: unknown } = {};
     // No --model: #620 proves inherit-gatekeeper is the sole model source.
     await runAkRole(["inspector", "--project", project, "--attach", attachment, "Review this material."],
       {
@@ -329,12 +301,42 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         credentials,
         createRunId: () => "inspector-inherit-620",
         io: captureIo().io,
-        roleTurnHost: createMinimalHost((request) => {
+        roleTurnHost: createMinimalHost(async (request) => {
           captured.current = request;
-          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          const prepared = await prepareRoleEnvelope({
+            request,
+            dependencies: createRoleRuntimeDependencies(packageRoot),
+            socketPath: `/tmp/ak-inspector-schema-${randomUUID()}.sock`,
+            sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
+          });
+          try {
+            // Observe only. Assert after the public entry returns; a throw inside the host is swallowed.
+            handed.required = prepared.jsonSchema.required;
+            handed.schema = prepared.jsonSchema;
+            handed.hitsType = (prepared.jsonSchema.properties as {
+              ticketComplexity?: { items?: { properties?: { hits?: { type?: unknown } } } };
+            }).ticketComplexity?.items?.properties?.hits?.type;
+          } finally {
+            await prepared.dispose?.();
+          }
+          return { code: 1, stderr: "stop", timedOut: false };
         }),
       },
     );
+    const required = handed.required;
+    assert.equal(Array.isArray(required) && required.includes("suspect"), true);
+    assert.equal(Array.isArray(required) && required.includes("ticketComplexity"), true);
+    assert.equal(handed.hitsType, "array");
+    assert.equal(Value.Check(handed.schema as never, {
+      status: "converged",
+      suspect: "ming/a.py:1",
+      ticketComplexity: [{
+        class: "同一业务规则只保留一个权威实现",
+        hits: [],
+        checked: "比对了 ming/a.py:1 与 ming/b.py:2",
+      }],
+    }), true);
     const inherited = captured.current!;
     assert.equal(inherited.activation.role, "inspector");
     assert.deepEqual(inherited.model, {

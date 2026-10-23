@@ -117,7 +117,6 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     const logPath=join(runDir,"log.jsonl");
     const retained=readRunLogRows(runDir,"dispatch-exception")
       .map((row)=>row.payload as {version?:number;attempt?:number;recordedAt?:string;error?:string});
-    assert.equal(retained.length,3);
     assert.deepEqual(retained.map((r)=>r.attempt),[0,1,2]);
     assert.ok(retained.every((r)=>r.version===1&&typeof r.recordedAt==="string"));
     for(const [i,cause] of causes.entries()) assert.ok(retained[i]!.error?.includes(cause));
@@ -126,7 +125,6 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     const lines=(await readFile(sessionFile,"utf8")).trim().split("\n").filter(Boolean);
     const pointers=lines.map((l)=>JSON.parse(l) as PointerEntry)
       .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType===DISPATCH_ERROR_RETENTION_ENTRY_TYPE);
-    assert.equal(pointers.length,3);
     assert.deepEqual(pointers.map((p)=>p.data?.attempt),[0,1,2]);
     for(const p of pointers){
       assert.equal(p.data?.file,logPath);

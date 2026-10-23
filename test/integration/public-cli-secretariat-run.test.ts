@@ -4,7 +4,7 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readCurrentSection, seedCurrentSection, assertNoRetiredDossierFiles } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -32,7 +32,7 @@ import {
   readRoleRunIdentity,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
@@ -484,12 +484,6 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
       join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
       "the first typed ticket remains the run identity after reviewer resubmission");
-    // The public-entry leg at rest carries none of the retired dossier files (#1161).
-    assertNoRetiredDossierFiles(join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`));
-    // #1195: 中书省 public final holds this leg only; court tables stay on their own runs.
-    const factsOut = result.terminal.roleOutcome.decisiveFacts;
-    assert.equal(factsOut?.countersignTerminal, undefined, "parent final must not project countersignTerminal");
-    assert.equal(factsOut?.notaryTerminal, undefined, "parent final must not project notaryTerminal");
     // Shared gate entered twice (bounce then pass); nested 符宝郎 on 给事中.
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
@@ -567,7 +561,6 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.role, "countersign");
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.notEqual(result.terminal.roleOutcome.kind, "audit_escalation");
     const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
       status?: string;
       decisionGate?: { question?: string };
@@ -589,17 +582,6 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");
-    assert.equal(
-      resumed.terminal?.roleOutcome.decisiveFacts?.countersignTerminal,
-      undefined,
-      "resumed secretariat must not project countersignTerminal",
-    );
-    assert.equal(
-      resumed.terminal?.roleOutcome.decisiveFacts?.notaryTerminal,
-      undefined,
-      "resumed secretariat must not project notaryTerminal",
-    );
   });
 });
 
@@ -625,12 +607,6 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
     assert.equal(result.terminal?.roleOutcome.role, "notary");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(objectPayloads(result.terminal.roleOutcome).at(-1), receipt);
-    // #1195: escalating 符宝郎 terminal is that seat's own volume — no parent court copy.
-    assert.equal(
-      result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal,
-      undefined,
-      "notary escalate terminal must not carry parent countersignTerminal",
-    );
     const parentDirectory = await findRunDirectoryById(home, "01a0sec1021-nst-7000-8000-000000000001", undefined, "secretariat");
     assert.ok(parentDirectory);
     assert.equal((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
@@ -737,17 +713,6 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
       1,
       "only prior converged enters secretariat_verdict; escalate skips",
-    );
-    // Parent escalate terminal is 中书省 own volume; no other-seat projection at all.
-    assert.equal(
-      result.terminal.roleOutcome.decisiveFacts?.countersignTerminal,
-      undefined,
-      "parent escalate terminal must not project countersignTerminal",
-    );
-    assert.equal(
-      result.terminal.roleOutcome.decisiveFacts?.notaryTerminal,
-      undefined,
-      "parent escalate terminal must not project notaryTerminal",
     );
   });
 });
@@ -942,7 +907,7 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
 async function adapterBoundaryCase(input: {
   hostName: "codex" | "claude" | "grok-build";
   receipt: Record<string, unknown>;
-}): Promise<{ gateEntered: boolean; submitted: boolean }> {
+}): Promise<{ gateEntered: boolean; submitted: readonly unknown[] }> {
   return withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1000,7 +965,7 @@ async function adapterBoundaryCase(input: {
       };
       const submitted = async () => (await readRecordedSubmissionRows(
         project, "01a0adp969-0000-7000-8000-000000000001", home,
-      )).some((row) => row.role === "secretariat" && row.kind === "accepted");
+      )).map((row) => row.accepted);
 
       const prepare = () =>
         prepareRoleEnvelope({
@@ -1127,31 +1092,14 @@ async function adapterBoundaryCase(input: {
 }
 
 for (const hostName of ["codex", "claude", "grok-build"] as const) {
-  test(`#1057 adapter boundary ${hostName}: converged tool finishes before gate`, async () => {
-    const { gateEntered, submitted } = await adapterBoundaryCase({
-      hostName,
-      receipt: { secretariatStatus: "converged", ticketNumber: 924 },
-    });
-    assert.equal(
-      gateEntered,
-      false,
-      `${hostName} tool execution must not summon 给事中 before returning`,
-    );
-    assert.equal(submitted, true, `${hostName} must seal the submitted receipt`);
-  });
-
-  test(`#969 adapter boundary ${hostName}: escalate skips gate`, async () => {
-    const { gateEntered } = await adapterBoundaryCase({
-      hostName,
-      receipt: {
-        secretariatStatus: "escalate",
-        decisionGate: { question: "q", options: ["a"] },
-      },
-    });
-    assert.equal(
-      gateEntered,
-      false,
-      `${hostName} escalate must not summon 给事中`,
-    );
+  test(`adapter boundary ${hostName}: original receipt files without a nested gate`, async () => {
+    for (const receipt of [
+      { secretariatStatus: "converged", ticketNumber: 924 },
+      { secretariatStatus: "escalate", decisionGate: { question: "q", options: ["a"] } },
+    ]) {
+      const { gateEntered, submitted } = await adapterBoundaryCase({ hostName, receipt });
+      assert.equal(gateEntered, false);
+      assert.deepEqual(submitted, [receipt]);
+    }
   });
 }

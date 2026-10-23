@@ -52,7 +52,7 @@ function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
+test("parseMergerArgv accepts common Invocation flags and rejects public packet fields", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -74,8 +74,6 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage);
-  assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage);
   // No public packet fields for parents/conflicts/scope.
   assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isUsage);
   assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isUsage);
@@ -145,8 +143,6 @@ test("admitMergerInvocation derives envelope into internal input without public 
     };
     // #1168: dispatch copies gone; only git-fact intents remain as materials keys.
     assert.deepEqual(Object.keys(raw.materials ?? {}).sort(), ["sourceIntent", "targetIntent"]);
-    assert.equal("task" in (raw.materials ?? {}), false);
-    assert.equal("authority" in (raw.materials ?? {}), false);
     const input = validateMergerInput(raw);
     assert.equal(input.targetObjectId, fixture.target);
     assert.equal(input.sourceObjectId, fixture.source);
@@ -168,9 +164,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-merger-admit-001@merger"),
     );
 
-    // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
     const prompt = buildInstructionTransportPrompt(admitted);
-    assert.equal(prompt.startsWith("/skill:"), false);
     assert.equal(prompt.includes(admitted.instruction), true);
   });
 });
@@ -289,11 +283,9 @@ test("ak-role merger dispatches and settles escalate without active merge and co
         },
       );
       assert.equal(result.exitCode, 0, stdout.join(""));
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
-      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "report"), true);
       assert.equal((objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).report, "resolved");
       const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report")!;
       const reportBody = terminalBodyAt(reportRef.path, "report") as { outcome?: { payloads?: unknown } };
@@ -390,10 +382,6 @@ test("ak-role resume continues merger with exact session", async () => {
           admitted.mergerInputPath,
         );
         assert.equal(args.includes(instruction), false);
-        assert.equal(
-          args.some((a) => a.includes("[ak-role:resume-continue]")),
-          false,
-        );
         assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "");
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const receipt = {

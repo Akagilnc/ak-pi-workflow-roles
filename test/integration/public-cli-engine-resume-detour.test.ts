@@ -41,7 +41,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import {
@@ -322,7 +322,6 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
         }),
       });
 
-      assert.ok(captured.length >= 2, `${seat}: auto-resume must re-dispatch at least once`);
       assert.equal(captured[0], ENGINE, `${seat}: initial request must carry engine`);
       assert.equal(captured[1], ENGINE, `${seat}: auto-resume request must carry engine`);
       assert.ok(

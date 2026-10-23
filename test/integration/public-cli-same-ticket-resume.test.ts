@@ -16,7 +16,6 @@
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { readAnalystGateCyclesFromOfficers } from "../../src/analyst-gate-cycles-read.ts";
 import {
   historyPayloads,
   statePayloads,
@@ -55,7 +54,7 @@ import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   CANONICAL_SOURCE_ROLE,
@@ -266,7 +265,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     },
   );
   assert.equal(first.exitCode, 0, "first sealed notary must accept");
-  assert.equal(first.terminal?.roleOutcome.kind, "accepted");
   assert.deepEqual(
     first.terminal?.roleOutcome.kind === "accepted"
       ? payloadStatusSequence(first.terminal.roleOutcome)
@@ -448,7 +446,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     "bare resume must keep the same-parent source-run",
   );
   assert.equal(resumed.exitCode, 0, "open-court resume that seals must accept");
-  assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
   assert.deepEqual(
     resumed.terminal?.roleOutcome.kind === "accepted"
       ? payloadStatusSequence(resumed.terminal.roleOutcome)
@@ -474,7 +471,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     "sealed bare resume must reach the host",
   );
   assert.equal(bareAfterSeal.exitCode, 0);
-  assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
   assert.deepEqual(
     bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
       ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
@@ -657,10 +653,6 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       [external],
       "same-ticket attach keeps the caller path",
     );
-    await assert.rejects(
-      () => readdir(join(runDirectory, "attachments")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
 
     // External original may change or vanish; package does not keep a copy (#1165).
     await writeFile(external, "external-changed-after-admit\n", "utf8");
@@ -693,10 +685,6 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     assert.equal(resumed.exitCode, 0, "open-court resume must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
-    await assert.rejects(
-      () => readdir(join(runDirectory, "attachments")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
     assert.equal(
       await readCurrentCourt(runDirectory),
       undefined,
@@ -1021,7 +1009,6 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
   assert.equal(seen[2]!.kind, "resume", "ordinary same-parent re-summons still auto-resumes");
   assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest same-parent leg");
   assert.equal(seen[2]!.runDirectory, freshRunDirectory);
-  assert.notEqual(seen[2]!.runId, firstRunId);
 });
 
 test("#993 public new ordinary seat: explicit new is distinct from an existing child run", async ({ home }) => {
@@ -1049,7 +1036,6 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
   });
   assert.equal(priorChild.exitCode, 0);
   assert.equal(priorChild.terminal?.roleOutcome.kind, "accepted");
-  assert.ok(priorChild.terminal);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.kind, "initial");
   const priorChildRunId = seen[0]!.runId;
@@ -1066,12 +1052,10 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
   });
   assert.equal(freshChild.exitCode, 0);
   assert.equal(freshChild.terminal?.roleOutcome.kind, "accepted");
-  assert.ok(freshChild.terminal);
   assert.equal(seen.length, 2);
   assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
   assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
   assert.equal(freshChild.terminal.runId, seen[1]!.runId);
-  assert.notEqual(freshChild.terminal.runId, priorChild.terminal.runId);
 });
 
 test("#993 public coder: post-submission Inspector bounce resumes same run, then pass settles", async ({ home }) => {
@@ -1171,10 +1155,6 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     (await readdir(join(coderRunDirectory, "receipts"))).sort(),
     ["1.json", "2.json"],
   );
-  // #1195: parent no longer books officer-pointer rows; analyst gate-cycles from
-  // this parent are lawful zero. Gate still summoned inspector (asserted above).
-  const rounds = await readAnalystGateCyclesFromOfficers(coderRunDirectory);
-  assert.deepEqual(rounds, []);
   // The terminal as the analyst reads it carries the submitted payloads, taken from history.
   const read = readRunTerminal(coderRunDirectory);
   assert.equal(read.status, "present");
@@ -1428,7 +1408,6 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
-    assert.ok(subject !== undefined, "run must sit under a ticket/unbound subject");
     const progressRows = readTicketProgressLines(subject!);
     assert.ok(
       progressRows.some((row) => row.seat === "notary" && row.status === "converged"),

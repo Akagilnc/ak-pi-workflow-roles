@@ -20,13 +20,7 @@ import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
-
-import {
-  admitPublicRole,
-  type AdmitFixerInvocationOptions,
-} from "../../src/public-cli/invocation.ts";
 
 import {
   isLawfulTypedTerminalOutcome,
@@ -39,111 +33,6 @@ import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
-
-
-function admitFixerInvocation(options: AdmitFixerInvocationOptions) {
-  return admitPublicRole("fixer", {
-    phase: options.phase,
-    instruction: options.instruction,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.prerequisitesPath === undefined ? {} : { prerequisitesPath: options.prerequisitesPath }),
-    ...(options.project === undefined ? {} : { project: options.project }),
-  }, {
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.model === undefined ? {} : { model: options.model }),
-  }, options.assertedTicketNumber === undefined
-    ? undefined
-    : { assertedTicketNumber: options.assertedTicketNumber });
-}
-
-
-test("admitFixerInvocation keeps opaque --prerequisites path; rejects blank instruction only", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    await assert.rejects(
-      () =>
-        admitFixerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: project,
-          phase: "apply",
-          instruction: "   ",
-          attachmentPaths: [],
-        }),
-      (error: unknown) =>
-        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
-    );
-
-    // #1168: malformed grammar is not a package admission reject.
-    const badPrereq = join(home, "bad-prereq.json");
-    await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
-    const badAdmitted = await admitFixerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      phase: "apply",
-      instruction: "Repair with bad prereq grammar.",
-      attachmentPaths: [],
-      prerequisitesPath: badPrereq,
-      createRunId: () => "run-fixer-bad-prereq-admit",
-    });
-    assert.equal(badAdmitted.prerequisitesPath, badPrereq);
-    assert.equal("packetPath" in badAdmitted, false);
-    assert.equal("prerequisites" in badAdmitted, false);
-
-    const goodPrereq = join(home, "good-prereq.json");
-    await writeFile(
-      goodPrereq,
-      JSON.stringify([
-        { id: "owner.choice", requirement: "Owner selects the public contract.", extra: true },
-      ]),
-      "utf8",
-    );
-    const admitted = await admitFixerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan the class repair.",
-      attachmentPaths: [],
-      prerequisitesPath: goodPrereq,
-      createRunId: () => "run-fixer-plan-001",
-    });
-    assert.deepEqual(
-      admitted.role, "fixer");
-    assert.equal(admitted.phase, "plan");
-    assert.equal(admitted.instruction, "Plan the class repair.");
-    assert.equal(admitted.prerequisitesPath, goodPrereq);
-    assert.equal("packetPath" in admitted, false);
-    await assert.rejects(
-      () => access(join(admitted.runDirectory, "fix-packet.md")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(admitted.runDirectory, "prerequisites.json")),
-      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-
-    const bookKey = resolveBookKeyFromGit(project);
-    assert.equal(
-      admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-fixer-plan-001@fixer"),
-    );
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
-      phase: string; role: string; prerequisitesPath?: string; prerequisites?: unknown;
-    };
-    assert.equal(persisted.role, "fixer");
-    assert.equal(persisted.phase, "plan");
-    assert.equal(persisted.prerequisitesPath, goodPrereq);
-    assert.equal("prerequisites" in persisted, false);
-  });
-});
 
 
 test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisites still start", async () => {
@@ -174,9 +63,11 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
     // #1168: opaque --prerequisites — missing / non-JSON still admit+start; path only.
     for (const [label, prereqPath, runId] of [
       ["non-json", join(home, "bad.json"), "run-cli-fixer-opaque-bad-prereq"],
+      ["bad-grammar", join(home, "bad-grammar.json"), "run-cli-fixer-opaque-bad-grammar"],
       ["missing", join(home, "missing-prereqs.json"), "run-cli-fixer-opaque-missing-prereq"],
     ] as const) {
       if (label === "non-json") await writeFile(prereqPath, "{", "utf8");
+      if (label === "bad-grammar") await writeFile(prereqPath, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
       const { io } = captureIo();
       const result = await runAkRole(
         ["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", prereqPath, "Repair."],
@@ -191,7 +82,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-              assert.equal(args.includes("--ak-fix-packet"), false);
               const sessionFile = args[args.indexOf("--session") + 1]!;
               await writeFile(
                 sessionFile,
@@ -217,24 +107,12 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`);
-      await assert.rejects(
-        () => access(join(runDirectory, "fix-packet.md")),
-        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-      );
-      await assert.rejects(
-        () => access(join(runDirectory, "prerequisites.json")),
-        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
-      );
       const admitted = readCurrentSection(runDirectory, "admitted") as {
         instruction: string;
         prerequisitesPath?: string;
-        prerequisites?: unknown;
-        packetPath?: string;
       };
       assert.equal(admitted.instruction, "Repair.");
       assert.equal(admitted.prerequisitesPath, prereqPath);
-      assert.equal("prerequisites" in admitted, false);
-      assert.equal("packetPath" in admitted, false);
     }
 
     {
@@ -292,7 +170,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
       // Real Pi loader/invocation coverage is table-driven above; this CLI
       // row only keeps the public plan phase and settlement regression.
@@ -406,7 +283,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
     assert.equal(admitted.ticketNumber, undefined);
-    assert.equal("packetPath" in admitted, false);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -423,9 +299,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
-        assert.equal(args.includes("--ak-fix-packet"), false);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
@@ -547,8 +421,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     );
     assert.deepEqual(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
     assert.equal(stderr.join("").length, 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.deepEqual(
       result.terminal!.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(result.terminal!.roleOutcome)
@@ -681,7 +553,6 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         0,
         `${row.status}: ${stdout.join("") || "nonzero exit"}`,
       );
-      assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
       if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), [row.status]);

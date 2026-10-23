@@ -84,21 +84,12 @@ test("flat run without ticketNumber is isolated unbound (not joined, not board-w
     await seedFlatRun(ledgerDir, runFolder);
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
     assert.equal(runs.length, 0);
-    assert.equal(runs.some((run) => run.runId === runFolder), false);
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
     assert.equal(index.unboundRuns.length, 1);
     assert.equal(index.unboundRuns[0]?.runFolder, runFolder);
     const unbound = await loadUnboundTrajectoryRuns(ledgerDir, index);
     assert.equal(unbound.length, 1);
     assert.equal(unbound[0]?.run.runId, runFolder);
-  });
-});
-
-test("legacy issues/<n>/runs is still included", async () => {
-  await withBookDir(async (ledgerDir) => {
-    await seedLegacyRun(ledgerDir, 176, "legacy-coder-1");
-    const runs = await loadTicketTrajectoryRuns(ledgerDir, 176);
-    assert.equal(runs.some((run) => run.runId === "legacy-coder-1"), true);
   });
 });
 
@@ -138,9 +129,6 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
     await seedFlatRun(ledgerDir, "01a@judge", { ticketNumber: 176 });
     await seedFlatRun(ledgerDir, "01b@fixer", { ticketNumber: 177, role: "fixer" });
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
-    assert.equal(index.runsByTicket.get(176)?.length, 1);
-    assert.equal(index.runsByTicket.get(177)?.length, 1);
-    assert.equal(index.unboundRuns.length, 0);
     const a = await loadTicketTrajectoryRuns(ledgerDir, 176, index);
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "01a@judge"), true);

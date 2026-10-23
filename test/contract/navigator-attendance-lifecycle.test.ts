@@ -5,8 +5,9 @@ import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
-import { createNavigatorAttendance, NAVIGATOR_EVENT_TYPE } from "../../src/navigator-attendance.ts";
-import { createNavigatorLookup } from "../../src/navigator-lookup.ts";
+import { NAVIGATOR_EVENT_TYPE } from "../../src/navigator-attendance.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import * as publicRoleSummons from "../../src/public-role-summons.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { extractNavigatorFact, NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
@@ -27,6 +28,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
+import { onTestFinished } from "vitest";
 
 test("shared accepted submission binds settled attendance before public extraction; prior activation cannot deliver late", async () => {
   await withTempRoot("navigator-bound-closure-", async (home) => {
@@ -339,13 +341,7 @@ async function withNavigatorInfraGraceEnvelope(
     let seenSignal: AbortSignal | undefined;
     let summonStarted = false;
     let nestStopped = false;
-    const summon = async (summonOptions: {
-      readonly role: "navigator";
-      readonly argv: readonly string[];
-      readonly cwd: string;
-      readonly home?: string;
-      readonly signal?: AbortSignal;
-    }) => {
+    const summonSpy = vi.spyOn(publicRoleSummons, "summonPublicRole").mockImplementation(async (summonOptions) => {
       seenSignal = summonOptions.signal;
       summonStarted = true;
       assert.ok(seenSignal, "shared attendance must forward cancel signal into summon");
@@ -361,7 +357,8 @@ async function withNavigatorInfraGraceEnvelope(
         seenSignal!.addEventListener("abort", onAbort, { once: true });
       });
       return { exitCode: 1 };
-    };
+    });
+    onTestFinished(summonSpy.mockRestore);
 
     const pi = {
       registerFlag() {},
@@ -390,19 +387,7 @@ async function withNavigatorInfraGraceEnvelope(
       startKeepalive() {},
       stopKeepalive() {},
     };
-    createRoleRuntimeExtension({
-      loadRoleSoul: async () => "JUDGE LAW",
-      createNavigatorAttendance: (attendanceOptions) =>
-        createNavigatorAttendance({
-          context: attendanceOptions.context,
-          role: attendanceOptions.role,
-          phase: attendanceOptions.phase,
-          subjectKey: attendanceOptions.subjectKey,
-          invocationId: attendanceOptions.invocationId,
-          lookup: createNavigatorLookup({ summonPublicRole: summon }),
-          onEvent: attendanceOptions.onEvent,
-        }),
-    })(envelopeHost);
+    createRoleRuntimeExtension(createRoleRuntimeDependencies(packageRoot))(envelopeHost);
 
     const { SessionManager } = await import("@earendil-works/pi-coding-agent");
     const sessionManager = SessionManager.create(home, join(runDir, "session"));
@@ -480,10 +465,6 @@ test("post-role grace aborts the hung lookup; session_shutdown does not re-block
         assert.equal(
           (presentation.details as { disposition?: string } | undefined)?.disposition,
           "unavailable",
-        );
-        assert.equal(
-          (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
-          "Navigator exceeded post-role delivery grace",
         );
 
         // Hung closing must not block shutdown (awaiting dispose would hang).

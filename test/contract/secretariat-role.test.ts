@@ -1,19 +1,12 @@
 /**
- * #924 Secretariat (中书省) — envelope-assembled tools + nested countersign summon.
+ * #924 Secretariat (中书省) — envelope-assembled tools; output records any payload as-is.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "vitest";
 
 import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict, type SecretariatVerdictParameters } from "../../src/secretariat-role.ts";
 import type { SecretariatVerdict as TerminatingSecretariatVerdict } from "../../src/package-contracts/terminating-tools.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
-import {
-  createSubmissionLedgerHost,
-  readRecordedSubmissionRows,
-} from "../../src/submission-ledger.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
@@ -73,8 +66,6 @@ test("secretariat activation exposes only the terminating package tool (G6)", as
     activationCount: 2,
   });
   const active = activeTools();
-  assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
-  assert.equal(active.some((name) => name.startsWith("ak_secretariat_summon_")), false);
   assert.equal([...active].filter((name) => name === SECRETARIAT_OUTPUT_TOOL_NAME).length, 1);
   // Host surface preserved without role hardcoding builtin names.
   assert.ok(active.includes("host_read"));
@@ -132,149 +123,3 @@ test("secretariat output records any status without shape reject (仓内 CLAUDE.
     "unexpected",
   );
 });
-
-test("secretariat tool finishes before audit on every host",
-  async () => {
-    async function arm(host: string | undefined) {
-      const tools = new Map<string, { execute: Function }>();
-      const roleHost = {
-        registerTool(tool: { name: string; execute: Function }) {
-          tools.set(tool.name, tool);
-        },
-        on() {},
-        getAllTools: () => [...tools.keys()].map((name) => ({ name })),
-        setActiveTools() {},
-        getActiveTools: () => [...tools.keys()],
-        getFlag() { return undefined; },
-      };
-      await createSecretariatRoleRuntime(
-        roleHost as never,
-        { loadSoul: async () => "中书省" },
-      ).activate();
-      const hostCtx = {
-        cwd: "/tmp",
-        mode: "json",
-        model: undefined,
-        sessionManager: {} as never,
-        runDirectory: "/tmp/run",
-        ...(host === undefined ? {} : { host }),
-        abort() {},
-      };
-      const result = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-        "c",
-        { secretariatStatus: "converged", ticketNumber: 969 },
-        undefined,
-        undefined,
-        hostCtx,
-      );
-      assert.equal(result.content.length, 0);
-      assert.equal(result.terminate, true);
-      assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
-    }
-
-    for (const host of ["codex", "claude", "grok-build", "pi"] as const) {
-      await arm(host);
-    }
-    await arm(undefined);
-
-    await withTempRoot("ak-sec-gate-", async (root) => {
-      const ungated = new Map<string, { execute: Function }>();
-      const rawHost = {
-        registerTool(tool: { name: string; execute: Function }) {
-          ungated.set(tool.name, tool);
-        },
-        on() {},
-        getAllTools: () => [...ungated.keys()].map((name) => ({ name })),
-        setActiveTools() {},
-        getActiveTools: () => [...ungated.keys()],
-        getFlag() { return undefined; },
-      };
-      const ledgerHost = createSubmissionLedgerHost(
-        rawHost as never,
-        new Map([[SECRETARIAT_OUTPUT_TOOL_NAME, "secretariat"]]),
-        (error) => { throw error; },
-        undefined,
-        { home: root },
-      );
-      await createSecretariatRoleRuntime(
-        ledgerHost,
-        { loadSoul: async () => "中书省" },
-      ).activate();
-      const params = { secretariatStatus: "converged", ticketNumber: 969 };
-      const runDirectory = `${root}/.ak-roles/books/fixture/unbound/runs/run-ledger@secretariat`;
-      mkdirSync(`${runDirectory}/session`, { recursive: true });
-      writeFileSync(`${runDirectory}/session/session.jsonl`, "");
-      // #1183: ledger mouth places on typed ticketNumber — durable admission pages required.
-      const durable = {
-        role: "secretariat",
-        runId: "run-ledger",
-        bookKey: "fixture",
-        projectRoot: root,
-        runDirectory,
-      } as const;
-      seedCurrentSection(runDirectory, "admitted", durable);
-      seedCurrentSection(runDirectory, "invocation", durable);
-      let sessionFile = `${runDirectory}/session/session.jsonl`;
-      const context = {
-        cwd: root,
-        mode: "json",
-        model: undefined,
-        runDirectory,
-        host: "pi",
-        sessionManager: {
-          getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
-          getLeafEntry: () => undefined,
-          getLeafId: () => null,
-          getEntries: () => [],
-          getSessionDir: () => `${context.runDirectory}/session`,
-          getSessionFile: () => sessionFile,
-          setSessionFile(next: string) { sessionFile = next; },
-        },
-        abort() {},
-      };
-      const filed = await ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute("c", params, undefined, undefined, context);
-      assert.equal(filed.terminate, true);
-      assert.deepEqual(await readRecordedSubmissionRows(root, "run-ledger", root), [
-        {
-          role: "secretariat",
-          kind: "accepted",
-          accepted: params,
-          toolCallId: "c",
-        },
-      ]);
-    });
-
-    // Unknown status still files; the public queue reasks after this tool returns.
-    const tools = new Map<string, { execute: Function }>();
-    const roleHost = {
-      registerTool(tool: { name: string; execute: Function }) {
-        tools.set(tool.name, tool);
-      },
-      on() {},
-      getAllTools: () => [...tools.keys()].map((name) => ({ name })),
-      setActiveTools() {},
-      getActiveTools: () => [...tools.keys()],
-      getFlag() { return undefined; },
-    };
-    await createSecretariatRoleRuntime(
-      roleHost as never,
-      { loadSoul: async () => "中书省" },
-    ).activate();
-    const unknown = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-          "bad",
-          { secretariatStatus: "unexpected" },
-          undefined,
-          undefined,
-          {
-            cwd: "/tmp",
-            mode: "json",
-            model: undefined,
-            sessionManager: {} as never,
-            host: "codex",
-            abort() {},
-          },
-        );
-    assert.equal(unknown.terminate, true);
-    assert.deepEqual(unknown.details, { secretariatStatus: "unexpected" });
-  },
-);

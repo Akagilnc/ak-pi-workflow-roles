@@ -23,11 +23,9 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
-  NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { receiptAttemptPointer } from "../../src/receipt-delivery-policy.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
@@ -204,25 +202,6 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     assert.equal(projected.terminal, undefined);
     assert.equal(existsSync(bookPath), false, "rejected locators must not admit a run");
 
-    // Unit seam: same failures surface as NotarySourceRunError before CLI wrap.
-    await assert.rejects(
-      () =>
-        resolveNotarySourceRunLocator({
-          projectRoot: project,
-          sourceRun: join(project, "missing@judge"),
-          home,
-        }),
-      (error: unknown) => error instanceof NotarySourceRunError,
-    );
-    await assert.rejects(
-      () =>
-        resolveNotarySourceRunLocator({
-          projectRoot: project,
-          sourceRun: projection,
-          home,
-        }),
-      (error: unknown) => error instanceof NotarySourceRunError,
-    );
   });
 });
 
@@ -258,11 +237,6 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       runDirectory,
     });
 
-    await assert.rejects(
-      () => readRoleRunState(runDirectory, piDurablePrincipalAuthority),
-      TypeError,
-    );
-
     const bookPath = join(home, ".ak-roles", "books", bookKey);
     const before = await treeFingerprint(bookPath);
     const { io } = captureIo();
@@ -283,15 +257,6 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     assert.equal(rejectedPath.terminal, undefined);
     assert.equal(await treeFingerprint(bookPath), before, "invalid retained identity must not admit a run");
 
-    await assert.rejects(
-      () =>
-        resolveNotarySourceRunLocator({
-          projectRoot: project,
-          sourceRun: bare,
-          home,
-        }),
-      (error: unknown) => error instanceof NotarySourceRunError,
-    );
   });
 });
 

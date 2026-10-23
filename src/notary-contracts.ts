@@ -3,7 +3,7 @@
  * Lawful explicit releases: converged | continue | escalate.
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, notaryReviewSubmissionSchema } from "./review-submission.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
@@ -25,9 +25,6 @@ export const NOTARY_TICKET_FLAG = {
   },
 } as const;
 
-/** #1195: generation-required clauses; package still records missing tables as-is. */
-export const notaryOutputSchema = notaryReviewSubmissionSchema;
-
 export type NotarySourceRunLocator = {
   readonly runDirectory: string;
   readonly runId: string;
@@ -43,28 +40,6 @@ export type NotaryOutput =
       readonly reason?: unknown;
       readonly findings?: unknown;
     };
-
-/**
- * Recognize one lawful explicit Notary release (converged | continue | escalate).
- * #753: no field rewrite — submitted params retained as-is (no disposition forge,
- * no findings array rewrite). Recognition only for recording/settlement callers.
- */
-export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefined {
-  // #836: no field drop
-  return (isRecord(value))
-    ? (value as NotaryOutput)
-    : undefined;
-}
-
-/** Retain submitted Notary params as-is for the failure channel (no shape rewrite). */
-export function retainNotarySubmission(value: unknown): unknown {
-  if (value === undefined) return { missing: "arguments" as const };
-  try {
-    return structuredClone(value);
-  } catch {
-    return value;
-  }
-}
 
 /**
  * Settlement/recording path: only lawful recorded converged/continue/escalate.

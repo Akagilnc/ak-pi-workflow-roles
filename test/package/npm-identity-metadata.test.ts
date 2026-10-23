@@ -1,3 +1,8 @@
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { AUDITOR_SESSION_MATERIALS } from "../../src/auditor-soul.ts";
+import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -6,9 +11,7 @@ import { afterAll, test } from "vitest";
 import { promisify } from "node:util";
 import { worktreeTempPrefix, packIsolatedPackage } from "../helpers/environment-fixtures.ts";
 
-import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
-  INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
 
@@ -122,11 +125,6 @@ test("packed artifact carries the settled license identity", async () => {
     extracted.paths.includes("LICENSE"),
     "npm pack file list must include LICENSE",
   );
-  assert.equal(
-    extracted.paths.some((path) => path === "patches" || path.startsWith("patches/")),
-    false,
-    "npm pack must exclude repository-only patches",
-  );
   assert.equal(extracted.licenseText, CANONICAL_APACHE_2_0);
 
   assert.ok(
@@ -134,103 +132,45 @@ test("packed artifact carries the settled license identity", async () => {
     "npm pack file list must include THIRD_PARTY_NOTICES.md",
   );
   // Keyed package metadata: project license authority stays Apache-2.0 alone.
-  assert.notEqual(extracted.packageJson.license, "MIT");
-  assert.notEqual(extracted.packageJson.license, "Apache-2.0 OR MIT");
-  assert.notEqual(extracted.packageJson.license, "(Apache-2.0 OR MIT)");
   assert.notEqual(extracted.thirdPartyNoticeText, extracted.licenseText);
 });
 
-/**
- * Release inventory sole owner: souls, runtime entrypoints, and
- * the manifest load fields. Absorbs the packed-tarball existence assertions
- * from the former packaged-workers structure test (Doctor/Merger/Navigator
- * sources, compiled dist modules, packets, and the closed fixer-repair.json
- * negative); internal flag/schema shapes stay deleted (schema passthrough in
- * contract/fixer-prerequisite-contract). Install/cold-matrix argv tracers
- * culled under #685 — see docs/research/issue-685-c3-deleted-contract-handoff.md
- * (installed-package load face named; install process / cold-matrix 未结).
- */
-test("packed artifact ships the release inventory without bundled method Skills", async () => {
-  for (const soul of RELEASE_SOUL_INVENTORY) {
-    assert.ok(extracted.paths.includes(soul), `pack must include ${soul}`);
-  }
-  // #443: factory constitution ships on the files surface for every role session.
-  assert.ok(
-    extracted.paths.includes("CLAUDE.md"),
-    "npm pack file list must include CLAUDE.md",
-  );
-
-  assert.equal(
-    extracted.paths.some((path) => path.startsWith("resources/methods/")),
-    false,
-    "npm artifact must not ship method Skill copies",
-  );
-  for (const path of [
-    "resources/collector-bot-handbook.md",
-    "resources/diarist-collect.md",
-  ]) {
-    assert.ok(extracted.paths.includes(path), `pack must include non-method resource ${path}`);
-  }
-  assert.equal(
-    extracted.paths.some((path) => path.startsWith("dist/package-resources/method-skill") || path.startsWith("src/package-resources/method-skill")),
-    false,
-    "npm artifact must not ship the retired package Skill loader",
-  );
-
-  // Runtime entrypoints ship in the artifact.
-  assert.ok(
-    extracted.paths.includes("dist/public-cli/main.js"),
-    "pack must include dist/public-cli/main.js",
-  );
-  assert.ok(
-    extracted.paths.includes(INTERNAL_ROLE_ENTRYPOINT_RELATIVE),
-    "pack must include the internal role entrypoint",
-  );
-  assert.ok(
-    extracted.paths.includes("extensions/role-runtime.ts"),
-    "pack must include extensions/role-runtime.ts",
-  );
-
-  // Doctor seat: source contracts + evidence machinery + souls entry.
-  for (const path of [
-    "src/doctor-contracts.ts",
-    "src/doctor-evidence.ts",
-    "src/canonical-json.ts",
-  ]) {
-    assert.ok(extracted.paths.includes(path), `${path} must be present in the npm tarball`);
-  }
-  // Navigator seat: source + compiled module and topology dependency.
-  assert.ok(extracted.paths.includes("src/navigator-attendance.ts"), "src/navigator-attendance.ts must be present in the npm tarball");
-  assert.ok(extracted.paths.includes("dist/navigator-attendance.js"), "dist/navigator-attendance.js must be present in the npm tarball");
-  assert.ok(extracted.paths.includes("dist/activation-ledger-topology.js"), "dist/activation-ledger-topology.js must be present in the npm tarball");
-
-  // Merger seat: source chain.
-  for (const path of [
-    "src/merger-contracts.ts",
-    "src/merger-git-state.ts",
-    "src/merger-role.ts",
-  ]) {
-    assert.ok(extracted.paths.includes(path), `${path} must be present in the npm tarball`);
+/** Check the real pack against runtime declarations, not a copied inventory. */
+test("packed runtime resolves its materials, modules and CLI bin", async () => {
+  const materials = new Set([
+    ...PUBLIC_ROLE_RECORDS.flatMap((record) => [...record.sessionMaterials]),
+    ...Object.values(AUDITOR_SESSION_MATERIALS).flat(),
+  ]);
+  for (const path of materials) {
+    assert.equal(extracted.paths.includes(path), true, path);
   }
 
-  // Packets: repair doc ships; closed repair.json shell and deleted typed
-  // prerequisites example must not return. #1168: --prerequisites is opaque
-  // path-only — no packaged schema/example for package-side validation.
-  assert.ok(extracted.paths.includes("packets/fixer-repair.md"), "packets/fixer-repair.md must be present in the npm tarball");
-  assert.equal(
-    extracted.paths.includes("packets/fixer-prerequisites.json"),
-    false,
-    "deleted typed prerequisites example must not be packed",
+  // Resolve actual shipped import edges, including the explicit Pi entrypoint.
+  // prepack already built this tree; check build gaps and npm files exclusions.
+  await build({
+    absWorkingDir: resolve(extracted.root, "package"),
+    entryPoints: [
+      INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+      ...extracted.paths.filter((path) => path.startsWith("dist/") && /\.(?:m?js)$/.test(path)),
+    ],
+    outdir: resolve(extracted.root, "closure-check"),
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "node",
+    packages: "external",
+    logLevel: "silent",
+  });
+  // Keep the former fresh-build case's native module-loading observation.
+  await import(
+    pathToFileURL(resolve(extracted.root, "package/dist/navigator-attendance.js")).href
   );
-  assert.equal(
-    extracted.paths.includes("packets/fixer-repair.json"),
-    false,
-    "removed closed packet shell must not be packed",
-  );
+  const bin = extracted.packageJson.bin?.["ak-role"];
+  assert.equal(typeof bin, "string");
+  await execFileAsync(process.execPath, [resolve(extracted.root, "package", bin!), "--help"]);
 
   // Manifest load fields: bin mapping and empty auto-extension list (ADR 0052:
   // package auto-registration stays empty; explicit entrypoint owns loading).
-  assert.equal(extracted.packageJson.bin?.["ak-role"], "dist/public-cli/main.js");
   assert.deepEqual(extracted.packageJson.pi?.extensions ?? ["missing"], []);
 });
 

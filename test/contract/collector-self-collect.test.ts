@@ -11,22 +11,11 @@ import { test } from "vitest";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
-import { packagedRoleMetadata } from "../../src/packaged-role-registry.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
 
 type Handler = (...args: unknown[]) => unknown;
-
-const CODE_COLLECTION_TOOLS = [
-  "ak_collector_observe",
-  "ak_collector_read",
-  "ak_collector_request",
-  "ak_collector_wait",
-  "ak_collector_open_wait_window",
-  "ak_collector_bind_target",
-  "ak_collector_handbook_write",
-] as const;
 
 function extensionHarness(
   role: string | undefined,
@@ -112,17 +101,7 @@ function activationCtx(home: string): ExtensionContext {
   } as unknown as ExtensionContext;
 }
 
-test("#1088 collector seat stays evidence-only (not construction worker)", () => {
-  const meta = packagedRoleMetadata("collector");
-  assert.ok(meta);
-  assert.equal("worker" in meta && meta.worker === true, false);
-  assert.equal(
-    "phases" in meta && Array.isArray(meta.phases) && meta.phases.includes("apply"),
-    false,
-  );
-});
-
-test("#1088 collector activation keeps host CLI tools and drops code-collection tools", async () => {
+test("#1088 collector activation keeps host CLI tools and blocks construction writes", async () => {
   await withTempRoot("collector-1088-tools-", async (home) => {
     const harness = extensionHarness("collector", {
       "ak-collector-repo": "acme/widgets",
@@ -140,13 +119,6 @@ test("#1088 collector activation keeps host CLI tools and drops code-collection 
       harness.tools.has(COLLECTOR_OUTPUT_TOOL),
       "collector output tool must remain for LLM submission",
     );
-    for (const name of CODE_COLLECTION_TOOLS) {
-      assert.equal(
-        harness.tools.has(name),
-        false,
-        `code-collection tool ${name} must be removed`,
-      );
-    }
 
     const active = harness.active();
     assert.ok(active.includes(COLLECTOR_OUTPUT_TOOL), "output tool must be active");

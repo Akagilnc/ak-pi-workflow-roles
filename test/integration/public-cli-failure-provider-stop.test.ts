@@ -1,4 +1,3 @@
-import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop binding. The host's own report is the terminal.
@@ -65,10 +64,9 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
           }),
     });
     // The cause is the host CLI's own report for this call, presented as given.
-    const { terminal } = await assertPublicFailureSettlement({
+    await assertPublicFailureSettlement({
       result, stdout, stderr, expectedCause: "provider",
     });
-    assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
 // Per seat, with a full engine-detour transcript left behind either way: the
@@ -183,14 +181,13 @@ test("every seat presents the host's own report; a transcript record never decid
           },
         }),
       });
-      const { terminal } = await assertPublicFailureSettlement({
+      await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
         ...(row.cause === undefined ? {} : { expectedCause: row.cause }),
         ...(row.diagnostic === undefined ? {} : { diagnosticEquals: row.diagnostic }),
       });
-      assert.equal(terminal.roleOutcome.kind, "failure", row.label);
     });
   }
 });
@@ -297,24 +294,13 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
       },
     );
     // Soft detour is not infra; later knownFailure remains the settlement principal.
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
+    await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       expectedCause: "provider",
       diagnosticEquals: secondaryDiagnostic,
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.diagnostic, secondaryDiagnostic);
-    }
-    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      cause: string;
-      diagnostic: string;
-    };
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.diagnostic, secondaryDiagnostic);
   });
 });
 

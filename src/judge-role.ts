@@ -1,5 +1,5 @@
 import { type RoleHost } from "./host-contracts.ts";
-import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema, type ReviewQueueWord } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, type ReviewQueueWord } from "./review-submission.ts";
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
@@ -110,8 +110,6 @@ export async function runJudgeGates(input: {
 // content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
 // or nested presence. `status` alone is the machine discriminator the
 // queue reads to pick converged/continue/escalate (below).
-// The shared open schema preserves role-specific prose without adding another contract.
-export const judgeVerdictSchema = reviewSubmissionSchema;
 
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;

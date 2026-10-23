@@ -2,13 +2,11 @@
  * Public Auditor (审刑院) terminating receipt contracts (#675 / #754).
  * Lawful explicit releases: converged | continue | escalate.
  */
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../review-submission.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
 
 import { isRecord } from "../unknown-value.ts";
 
 export const AUDITOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
-
-export const auditorOutputSchema = reviewSubmissionSchema;
 
 export type AuditorOutput =
   | { readonly status: "converged" }

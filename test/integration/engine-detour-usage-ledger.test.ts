@@ -518,7 +518,6 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       if (row.label === "failure-empty") {
         assert.equal(usage.calls[0]?.code, 0);
         assert.equal(usage.calls[0]?.stdoutByteLength, 0);
-        assert.equal("stdoutByteLength" in (usage.calls[0] ?? {}), true);
       }
       if (row.label === "accepted-once" || row.label === "no-receipt-once") {
         assert.equal(usage.calls[0]?.code, 0);
@@ -994,7 +993,6 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         await chmod(blockedSession, 0o644).catch(() => undefined);
       }
 
-      assert.ok(result, `${row.label}: engine failure returns a tool result`);
       assert.equal(
         result.isError,
         true,

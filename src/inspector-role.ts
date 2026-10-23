@@ -15,9 +15,7 @@ export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
 /** 台院事后察举交卷形状。 */
-export const inspectorOutputSchema = inspectorSubmissionSchema;
-
-export type InspectorOutputParameters = Static<typeof inspectorOutputSchema>;
+export type InspectorOutputParameters = Static<typeof inspectorSubmissionSchema>;
 
 export type InspectorRuntimeDependencies = {
   loadSoul(): Promise<string>;
