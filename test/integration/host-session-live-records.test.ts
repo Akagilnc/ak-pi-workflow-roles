@@ -185,13 +185,14 @@ process.stdout.write(JSON.stringify({
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // A directory where the run's log.jsonl belongs makes every Sitian append fail.
-    await mkdir(join(ledger.runDirectory, "log.jsonl"));
+    const logPath = join(ledger.runDirectory, "log.jsonl");
 
-    let reported = false;
+    let phase: "pointer" | "warning" = "pointer";
+    let warningDeclared = false;
+    let separated = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
-      reported = true;
+      if (phase === "warning") warningDeclared = true;
       return true;
     }) as typeof process.stderr.write;
 
@@ -212,7 +213,21 @@ process.stdout.write(JSON.stringify({
           prompt: "probe",
           jsonSchema: { type: "object" },
           terminatingToolName: "ak_judge_output",
-          async ingestStructuredOutput() {},
+          async ingestStructuredOutput() {
+            if (separated) return;
+            separated = true;
+            const text = await readFile(logPath, "utf8");
+            const sawPointer = text.split("\n").some((line) => {
+              if (line.length === 0) return false;
+              const row = JSON.parse(line) as { payload?: { type?: unknown } };
+              return row.payload?.type === "native-session-pointer";
+            });
+            assert.equal(sawPointer, true);
+            assert.equal(warningDeclared, false);
+            phase = "warning";
+            await rm(logPath);
+            await mkdir(logPath);
+          },
           async closeRound() { return { accepted: true as const }; },
         }),
       });
@@ -221,8 +236,9 @@ process.stdout.write(JSON.stringify({
       // Under ADR 0086, sitian write failure does NOT abort the turn!
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-
-      assert.equal(reported, true);
+      assert.equal(warningDeclared, true);
+      phase = "pointer";
+      await rm(logPath, { recursive: true, force: true });
 
       const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });

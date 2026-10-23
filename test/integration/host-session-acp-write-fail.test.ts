@@ -4,7 +4,7 @@
  * declare to stderr once and do not alter the turn outcome.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -37,13 +37,13 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // A directory where the run's log.jsonl belongs makes every Sitian append fail.
-    await mkdir(join(ledger.runDirectory, "log.jsonl"));
+    const logPath = join(ledger.runDirectory, "log.jsonl");
 
-    let reported = false;
+    let phase: "pointer" | "warning" = "pointer";
+    let warningDeclared = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
-      reported = true;
+      if (phase === "warning") warningDeclared = true;
       return true;
     }) as typeof process.stderr.write;
 
@@ -53,6 +53,17 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
           if (method === "initialize") return { protocolVersion: 1 };
           if (method === "session/new") return { sessionId: "acp-sess" };
           if (method === "session/prompt") {
+            const text = await readFile(logPath, "utf8");
+            const sawPointer = text.split("\n").some((line) => {
+              if (line.length === 0) return false;
+              const row = JSON.parse(line) as { payload?: { type?: unknown } };
+              return row.payload?.type === "native-session-pointer";
+            });
+            assert.equal(sawPointer, true);
+            assert.equal(warningDeclared, false);
+            phase = "warning";
+            await rm(logPath);
+            await mkdir(logPath);
             return { stopReason: "end_turn" };
           }
           if (method === "session/close") return {};
@@ -88,8 +99,7 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       // Under ADR 0086, sitian write failure does not abort the turn!
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-
-      assert.equal(reported, true);
+      assert.equal(warningDeclared, true);
     } finally {
       process.stderr.write = origStderrWrite;
     }
