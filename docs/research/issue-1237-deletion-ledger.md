@@ -1,4 +1,4 @@
-# #1237 删除与改弱逐条账（R16，R15-A/B）
+# #1237 删除与改弱逐条账（R17，R16-D）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 1032 行 = 整文件 18 + 整案 115 + 断言 899。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，插在 where 顺序里。R15-B 行的「同文件:n」指本行基线位置的文件在当前工作树的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。
+本表 1036 行 = 整文件 18 + 整案 115 + 断言 903。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。
 
 ## 处置口径
 
@@ -30,7 +30,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：492
+- a/D：496
 - a/M：198
 - a/S：134
 - b：61
@@ -695,8 +695,12 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 996 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:311` | terminal diagnostic | a/D；R15-B，同文件:298 传精确 diagnosticEquals，kit:102。 |
 | 997 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:317` | errorBody cause | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:122。 |
 | 998 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:318` | errorBody diagnostic | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:123。 |
+| 1034 | assert | `test/integration/public-cli-failure-real-entry.test.ts:295` | assert.equal(result.terminal!.roleOutcome.kind, "failure") | a/D；R16-D，test/helpers/failure-settlement-kit.ts:93 已检查同次 result 的 kind；调用在 test/integration/public-cli-failure-real-entry.test.ts:286。 |
+| 1035 | assert | `test/integration/public-cli-failure-real-entry.test.ts:297` | assert.equal(result.terminal!.roleOutcome.cause, "provider") | a/D；R16-D，test/helpers/failure-settlement-kit.ts:100 已按调用输入 expectedCause 检查同次 cause。 |
+| 1036 | assert | `test/integration/public-cli-failure-real-entry.test.ts:298` | assert.equal(result.terminal!.roleOutcome.diagnostic, hostDiagnostic) | a/D；R16-D，test/helpers/failure-settlement-kit.ts:102 已按 diagnosticEquals 检查同次 diagnostic。 |
 | 490 | assert | `test/integration/public-cli-failure-real-entry.test.ts:307` | assert.equal(stderr.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 491 | assert | `test/integration/public-cli-failure-real-entry.test.ts:308` | assert.equal(stderr[0]?.includes(hostStderr), true); | 改好 test/integration/public-cli-failure-real-entry.test.ts:296；变异：隔离副本 /tmp/r10a-mut 将 presentFailureTerminal 的 hostStderr 附带改为 false；HEAD 红 production knownFailure channel reaches settlement as provider with typed identity |
+| 1037 | assert | `test/integration/public-cli-failure-real-entry.test.ts:315` | assert.equal(errorBody.diagnostic, hostDiagnostic) | a/D；R16-D，test/helpers/failure-settlement-kit.ts:102、123 联合蕴含同一 error artifact 的 diagnostic；两次读取之间无生产调用或阶段转换。 |
 | 999 | assert | `test/integration/public-cli-failure-real-entry.test.ts:417` | terminal kind | a/D；R15-B，同文件:411 调用 failure-settlement-kit.ts:93。 |
 | 492 | assert | `test/integration/public-cli-failure-real-entry.test.ts:419` | assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential"); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
 | 1000 | assert | `test/integration/public-cli-failure-real-entry.test.ts:420` | diagnostic 类型 | a/D；R15-B，同文件:411 精确 hostStderr，kit:102。 |

@@ -294,10 +294,7 @@ test("production knownFailure channel reaches settlement as provider with typed 
     });
     // Opaque host stderr is attached to the CLI stderr as a whole, not merely non-empty.
     assert.equal(stderr.join("").includes(hostStderr), true);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind !== "failure") return;
-    assert.equal(result.terminal!.roleOutcome.cause, "provider");
-    assert.equal(result.terminal!.roleOutcome.diagnostic, hostDiagnostic);
     const facts = result.terminal!.roleOutcome.decisiveFacts;
     assert.equal(facts.errorName, "ProviderUnavailableError");
     assert.equal(facts.errorCode, "PROVIDER_UNAVAILABLE");
@@ -308,11 +305,9 @@ test("production knownFailure channel reaches settlement as provider with typed 
     assert.equal(packageFact.signal, "SIGTERM");
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
     const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      diagnostic?: string;
       stderr?: string;
       packageFact?: { exitCode?: number; timedOut?: boolean; signal?: string };
     };
-    assert.equal(errorBody.diagnostic, hostDiagnostic);
     assert.equal(errorBody.stderr, hostStderr);
     assert.equal(errorBody.packageFact?.exitCode, 17);
     assert.equal(errorBody.packageFact?.timedOut, true);

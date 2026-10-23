@@ -2,7 +2,7 @@
 
 基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）；第七版依大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/2.json` 的 R6-A/R6-B 续修（见文末「第七轮」）；第八版是对现存全部测试文件的整卷复扫（见文末「第八轮」），每行末尾的「第八轮整卷复扫」即本轮结论。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
-当前结算以文末「第十六轮」及逐条账 R16 为准；前十五轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
+当前结算以文末「第十七轮」及逐条账 R17 为准；前十六轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
 
 ## 方法与边界
 
@@ -398,7 +398,7 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 
 实际命令：`rg -n 'assert\\.' test`；`python3 /tmp/r16-scan.py > /tmp/r16-pairs.txt`，复扫同命令输出到 `/tmp/r16-pairs-after.txt`；累计删并文件范围 `git diff --name-status 7997ffb2 --`，本轮范围 `git diff --name-status 2f128022 --`。扫描器只复用账本 assert_calls 枚举候选，不作自由文本的生产判定。
 
-下表是本轮逐文件表，覆盖上文旧轮次的留/改结论。命中以行为定位（表内保留历史坐标，基线原句与位置以逐条账为准），承接是修后行号；失败助手完整路径为 `test/helpers/failure-settlement-kit.ts:89–128`。基线每条另入逐条账 #851–#1033，非基线的 R13 回补也在本表列出。
+下表是本轮逐文件表，覆盖上文旧轮次的留/改结论。命中以行为定位（表内保留历史坐标，基线原句与位置以逐条账为准），承接是本轮提交 `5ee5b065` 的修后行号；失败助手完整路径为 `test/helpers/failure-settlement-kit.ts:89–128`。基线每条另入逐条账 #851–#1033，非基线的 R13 回补也在本表列出。
 
 | 文件 | 本轮命中（历史坐标） | 处置／修后承接 |
 | --- | --- | --- |
@@ -442,3 +442,33 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - 机械基线账：1032 = 文件 18 + 案 115 + 断言 899；a/D 492、a/M 198、a/S 134、b 61、改好 35、a/T 34、a/退役 25、仍在 22、a/C 20、c/null 11。提交前按工作树版 diff 核对，提交后再用未改的 `python3 docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
 - `git diff HEAD` 自审：新增生产函数 0、新增测试函数 0，diffItems=[]；没有未跟踪仓内文件。只删蕴含检查及其专属局部变量/导入，所有强值守护、调用、不同失败输入仍在。无生产文件改动、无新通用件、无安装/真实席位配置写入。
 - 最小必要成本：删除测试冗余，复用全部既有案；变异只用已有入口，不新造证明性测试。超过 400 行的主要是纯删除与逐条入账文档，不新增施工机制。
+
+## 第十七轮（R16-D）
+
+起点 `5ee5b065`。依据本轮大理寺 continue 回执：同次 result 已由 `assertPublicFailureSettlement` 检查，调用处仍重复 kind、cause、terminal diagnostic、error artifact diagnostic。漏扫原因是没有把 helper 输入的 result 与调用处 `result.terminal!` 作为同一个对象逐项对照；不能只追踪 helper 解构返回的 terminal。
+
+实际扫类与复扫命令：`rg -n 'assertPublicFailureSettlement' test`，再以 `rg -n -A 38 'await assertPublicFailureSettlement\(' test/integration/public-cli-failure-{real-entry,artifacts,provider-stop,settlement}.test.ts` 打开全部 17 个调用点，逐项比对 `test/helpers/failure-settlement-kit.ts:78–132`。同时追踪输入 result、返回 terminal 和 errorRef 三种访问方式；没有新增扫描机制入仓。
+
+| 文件／调用（起点行号） | 复核及修后结论 |
+| --- | --- |
+| `test/integration/public-cli-failure-real-entry.test.ts:286` | 已修：删除 :297、299、300、315 四断言及只服务 errorBody.diagnostic 的可选类型字段。承接分别为 kit:93、100、102、102+123。修后 :297 缩窄控制流仍在；stderr、decisiveFacts、packageFact、artifact 的其他字段与 attempt-history 均保留。 |
+| `test/integration/public-cli-failure-real-entry.test.ts:355` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-real-entry.test.ts:411` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-real-entry.test.ts:488` | 无：errorBody.details/packageFact 不是 helper 检查的字段。 |
+| `test/integration/public-cli-failure-real-entry.test.ts:522` | 无：details 缺省和 packageFact 的 timeout/exitCode 独立。 |
+| `test/integration/public-cli-failure-real-entry.test.ts:584` | 无：decisiveFacts 独立；未传 diagnosticEquals，诊断类型/非空不由 helper 的值比较蕴含。 |
+| `test/integration/public-cli-failure-artifacts.test.ts:229` | 无：保留的 decisiveFacts.errorCode 不是 artifact identity；类型缩窄不删。 |
+| `test/integration/public-cli-failure-artifacts.test.ts:359` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-provider-stop.test.ts:68` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-provider-stop.test.ts:185` | 无：各输入调用后没有重复断言，不能跨输入合并。 |
+| `test/integration/public-cli-failure-provider-stop.test.ts:298` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-settlement.test.ts:194` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-settlement.test.ts:232` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-settlement.test.ts:336` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-settlement.test.ts:369` | 无：调用后没有重复断言。 |
+| `test/integration/public-cli-failure-settlement.test.ts:407` | 无：未传 diagnosticEquals；诊断类型/非空、details.timedOut 与 navigator 为独立观察。 |
+| `test/integration/public-cli-failure-settlement.test.ts:569` | 无：payloads/submissions 不由 helper 检查，缩窄控制流保留。 |
+
+本轮逐文件增量：测试文件仅上表 real-entry 改动；`docs/research/issue-1237-deletion-ledger.md` 新增 #1034–#1037 并把 R16 的行号显式锚定 `5ee5b065`；本文件补本节。没有重开已解决的 runId 账，也没有修改 pointer/warning/copy 案。
+
+验证：修前 real-entry 8/8，1718.135791 ms；修后执行 `node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/public-cli-failure-real-entry.test.ts test/integration/public-cli-failure-artifacts.test.ts test/integration/public-cli-failure-provider-stop.test.ts test/integration/public-cli-failure-settlement.test.ts`，30/30，2678.882709 ms。`npx tsc --noEmit` exit 0；账本工作树核算 COUNT/MATCH 1036（18 文件、115 案、903 断言；a/D 496，其余桶不变）。提交后仍用未改的计数脚本核 HEAD。未跑全量；无新增测试/helper/生产机制，新增函数逐项表为空，四条旧断言与专属类型字段均已删除。
