@@ -67,7 +67,7 @@ async function withEnvelopeHome<T>(
 }
 
 test("shared envelope registers engine detour when request.engine is set", async () => {
-  await withEnvelopeHome(async ({ socketPath, request }) => {
+  await withEnvelopeHome(async ({ home, socketPath, request }) => {
     const previous = process.env[AK_ROLE_ENGINE_ENV];
     delete process.env[AK_ROLE_ENGINE_ENV];
     try {
@@ -105,6 +105,32 @@ test("shared envelope registers engine detour when request.engine is set", async
         await prepared.dispose?.();
       }
       assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
+      const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+      process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+      const auditorRun = ledgerProbeRun(home, "auditor-soul@auditor");
+      await mkdir(join(auditorRun, "session"), { recursive: true });
+      try {
+        const auditor = await prepareRoleEnvelope({
+          request: {
+            ...request(),
+            principal: fixturePrincipal(join(auditorRun, "session")),
+            activation: { role: "auditor" },
+            runDirectory: auditorRun,
+          },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath: join(home, "auditor.sock"),
+          principalAuthority: piDurablePrincipalAuthority,
+        });
+        try {
+          const auditorSoul = await readFile(join(packageRoot, "souls/judge-auditor.md"), "utf8");
+          assert.equal(auditor.systemPrompt.body.includes(auditorSoul.trim()), true);
+        } finally {
+          await auditor.dispose?.();
+        }
+      } finally {
+        if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+        else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
+      }
     } finally {
       if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
       else process.env[AK_ROLE_ENGINE_ENV] = previous;

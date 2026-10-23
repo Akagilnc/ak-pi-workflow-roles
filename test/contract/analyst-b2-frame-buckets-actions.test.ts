@@ -205,6 +205,11 @@ test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (un
     assert.equal(clipped.wallMs, 10_000);
     assert.equal(clipped.toolBucketMs, 10_000);
     assert.equal(clipped.modelBucketMs, 0);
+    assert.equal(clipped.toolBucketMs + clipped.modelBucketMs, clipped.wallMs);
+    assert.equal(clipped.actions.length, 1);
+    assert.equal(clipped.actions[0]?.kind, "tool");
     assert.equal(clipped.actions[0]?.durationMs, 10_000);
+    assert.equal(clipped.actions[0]?.startedAt, "2026-08-01T00:00:10.000Z");
+    assert.equal(clipped.actions[0]?.endedAt, "2026-08-01T00:00:20.000Z");
   });
 });

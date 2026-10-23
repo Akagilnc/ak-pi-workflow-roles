@@ -4,6 +4,7 @@ import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { Value } from "typebox/value";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -293,7 +294,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     );
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
-    const handed: { required?: unknown; hitsType?: unknown } = {};
+    const handed: { required?: unknown; hitsType?: unknown; schema?: unknown } = {};
     // No --model: #620 proves inherit-gatekeeper is the sole model source.
     await runAkRole(["inspector", "--project", project, "--attach", attachment, "Review this material."],
       {
@@ -315,6 +316,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
           try {
             // Observe only. Assert after the public entry returns; a throw inside the host is swallowed.
             handed.required = prepared.jsonSchema.required;
+            handed.schema = prepared.jsonSchema;
             handed.hitsType = (prepared.jsonSchema.properties as {
               ticketComplexity?: { items?: { properties?: { hits?: { type?: unknown } } } };
             }).ticketComplexity?.items?.properties?.hits?.type;
@@ -329,6 +331,15 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     assert.equal(Array.isArray(required) && required.includes("suspect"), true);
     assert.equal(Array.isArray(required) && required.includes("ticketComplexity"), true);
     assert.equal(handed.hitsType, "array");
+    assert.equal(Value.Check(handed.schema as never, {
+      status: "converged",
+      suspect: "ming/a.py:1",
+      ticketComplexity: [{
+        class: "同一业务规则只保留一个权威实现",
+        hits: [],
+        checked: "比对了 ming/a.py:1 与 ming/b.py:2",
+      }],
+    }), true);
     const inherited = captured.current!;
     assert.equal(inherited.activation.role, "inspector");
     assert.deepEqual(inherited.model, {

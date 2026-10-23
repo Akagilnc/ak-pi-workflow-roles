@@ -78,6 +78,17 @@ test("Pi adapter folds consecutive startup callbacks into provider systemPrompt 
       role: "coder",
     },
   });
+  const bare = piCapture();
+  const bareAdapter = createPiRoleHostAdapter(bare.pi);
+  bareAdapter.host.on("before_agent_start", (event) => ({ systemPrompt: event.systemPrompt }));
+  let barePrompt = "BASE";
+  for (const handler of bare.handlers.get("before_agent_start") ?? []) {
+    const result = await handler({ prompt: "", systemPrompt: barePrompt, systemPromptOptions: {} }, bare.ctx);
+    assert.ok(result && typeof result === "object");
+    assert.equal("readingMaterial" in result, false);
+    assert.equal(result.systemPrompt, "BASE");
+    barePrompt = result.systemPrompt;
+  }
   const { pi, handlers, ctx } = piCapture();
   const adapter = createPiRoleHostAdapter(pi);
   // Production shapes: a Soul handler returns systemPrompt; envelope handlers

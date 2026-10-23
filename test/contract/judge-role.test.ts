@@ -455,7 +455,7 @@ test("filed seats preserve opaque receipts, including an unknown string status",
         }).activate();
         return harness;
       },
-      output: { status: "continue", findings: ["x"] },
+      output: { status: "continue", findings: ["x"], evidence: "e-1" },
     },
     {
       role: "merger" as const,
@@ -523,6 +523,48 @@ test("filed seats preserve opaque receipts, including an unknown string status",
     );
     assert.equal(rawString.terminate, true, `${fixture.role} finishes an unknown string status`);
     assert.deepEqual(rawString.details, stringStatus, `${fixture.role} preserves an unknown string status`);
+    const accept = async (id: string, payload: unknown) => tool.execute(
+      id,
+      payload,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id, name: fixture.name }])),
+    );
+    if (fixture.role === "countersign") {
+      const prompted = await harness.handlers.get("before_agent_start")?.(
+        { systemPrompt: "BASE" },
+        {},
+      ) as { systemPrompt: string };
+      assert.equal(prompted.systemPrompt.includes("LAW"), true);
+      const converged = await accept("converged", { status: "converged" });
+      assert.equal(converged.terminate, true);
+      assert.deepEqual(converged.details, { status: "converged" });
+      const escalated = await accept("escalate-note", { status: "escalate", note: "need owner" });
+      assert.equal(escalated.terminate, true);
+      assert.deepEqual(escalated.details, { status: "escalate", note: "need owner" });
+      const legacy = {
+        status: "converged",
+        clauses: [{ clause: "c", ownerUuid: null, derivation: "d" }],
+      };
+      const withLegacy = await accept("legacy", legacy);
+      assert.equal(withLegacy.terminate, true);
+      assert.deepEqual(withLegacy.details, legacy);
+    }
+    if (fixture.role === "merger") {
+      const again = await accept("merger-again", fixture.output);
+      assert.equal(again.terminate, true);
+      assert.deepEqual(again.details, fixture.output);
+      const completed = {
+        status: "completed",
+        attemptId: "attempt",
+        report: "resolved",
+        mergeCommitId: "c".repeat(64),
+      };
+      const accepted = await accept("completed", completed);
+      assert.equal(accepted.terminate, true);
+      assert.equal((accepted.details as { status?: unknown }).status, "completed");
+      assert.deepEqual(accepted.details, completed);
+    }
   }
 });
 
