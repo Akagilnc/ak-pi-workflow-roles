@@ -34,7 +34,7 @@ const fixerOutputObject = Type.Object({
   diffItems: diffItemsField,
   testEvidence: Type.Unknown({
     description:
-      "测试证据条；diff 含测试改动时提交；机器不核验。可写 contract（测试改动所证明的契约）、minimumNecessaryCost（测试改动的一行最小必要成本）、measuredDuration（聚焦验证实测时长）。",
+      "仅 diff 含测试改动时填测试证据条；没有就填 null。机器不核验。可写 contract（测试改动所证明的契约）、minimumNecessaryCost（测试改动的一行最小必要成本）、measuredDuration（聚焦验证实测时长）。",
   }),
 });
 

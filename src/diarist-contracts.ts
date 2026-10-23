@@ -31,10 +31,10 @@ export type DiaristOutput =
       readonly ticketNumber?: number | null;
       /**
        * Dialogue bounds: one entry per session volume, each with one or more ranges.
-       * Empty / absent = lawful empty selection (no dialogue this turn).
+       * Empty / null / absent = lawful empty selection (no dialogue this turn).
        * Malformed endpoints → accept hook reasks (`reask-not-explode`).
        */
-      readonly sessions?: readonly TicketProvenanceSession[];
+      readonly sessions?: readonly TicketProvenanceSession[] | null;
       /** Per-ticket dialogue bounds for a single multi-ticket summons (#1107). */
       readonly ticketSessions?: readonly {
         readonly ticketNumber: number;
@@ -65,13 +65,13 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
 
 /**
  * Project sessions from a completed diarist payload.
- * Absent key → empty (lawful). Present but unusable → undefined (caller reasks).
+ * Null / absent key → empty (lawful). Non-null but unusable → undefined (caller reasks).
  */
 export function projectDiaristSessions(
   value: unknown,
 ): readonly TicketProvenanceSession[] | undefined {
   const raw = (value as { sessions?: unknown } | null)?.sessions;
-  if (raw === undefined) return [];
+  if (raw == null) return [];
   return projectTicketProvenanceSessions(raw);
 }
 
@@ -115,15 +115,17 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
       ticketNumber: Type.Optional(
         Type.Unknown({
           description:
-            "本庭对象票号（正整数）或 null/省略＝真无票；下游走 typed 键；认不出用 status=escalate，不洗成无录。机械层不重判。",
+            "仅有本庭对象时填票号（正整数）；没有就填 null＝真无票；下游走 typed 键；认不出用 status=escalate，不洗成无录。机械层不重判。",
         }),
       ),
       reason: Type.Unknown({
-        description: "status 为 escalate 时：上呈的原因",
+        description: "仅 status 为 escalate 时填上呈的原因；没有就填 null",
       }),
-      sessions: Type.Optional(Type.Unknown({ description: DIARIST_SESSIONS_DESCRIPTION })),
+      sessions: Type.Optional(Type.Unknown({
+        description: `仅单票庭时填对话边界；没有就填 null。${DIARIST_SESSIONS_DESCRIPTION}`,
+      })),
       ticketSessions: Type.Unknown({
-        description: `多票庭逐票对话边界；每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。与单票 sessions 二选一。`,
+        description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。`,
       }),
     }),
   ),

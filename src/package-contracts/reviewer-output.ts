@@ -8,7 +8,7 @@ import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 
 const REVIEWER_AMENDMENTS_DESCRIPTION =
-  "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略（completeness / correctness）。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。" as const;
+  "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；各轴（completeness / correctness）仅有已产出报告时填报告；没有就填 null。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。" as const;
 // #1134: `status` alone is the trajectory field (#917 §6 two normal lens verdicts →
 // completed; hard-stop / usage error → refused); its words ride the description.
 // amendments/diagnostic are LLM/human-read narrative content returned as
