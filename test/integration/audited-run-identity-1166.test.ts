@@ -586,7 +586,6 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");
     assert.equal(finalResult.terminal.roleOutcome.role, "countersign");
-    assert.equal(finalResult.terminal.roleOutcome.kind, "accepted");
     const parentPayloads = finalResult.terminal.roleOutcome.kind === "accepted"
       ? finalResult.terminal.roleOutcome.payloads ?? []
       : [];

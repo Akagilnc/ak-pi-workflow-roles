@@ -612,7 +612,6 @@ test("one dual-lens leg failure keeps the sibling original terminal", async () =
     });
 
     assert.equal(partial.exitCode, 1);
-    assert.equal(partial.terminal?.roleOutcome.kind, "failure");
     assert.equal(partial.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(partial.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "failure");
     assert.equal(partial.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);

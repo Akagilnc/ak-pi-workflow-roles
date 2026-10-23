@@ -492,7 +492,6 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
   }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
     assertEscalationPresented(observed, "auditor", { status: "escalate", mark: 4 });
     const oldAuditorRunId = observed.first.terminal?.runId;
-    assert.equal(typeof oldAuditorRunId, "string");
     // New parent seal B while old auditor is still escalated.
     const second = await observed.resumeRun(observed.parentRunId, "new review");
     assert.equal(second.exitCode, 0);

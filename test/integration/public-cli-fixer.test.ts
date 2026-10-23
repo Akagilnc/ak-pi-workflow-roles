@@ -426,7 +426,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     assert.deepEqual(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
     assert.equal(stderr.join("").length, 0);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.deepEqual(
       result.terminal!.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(result.terminal!.roleOutcome)

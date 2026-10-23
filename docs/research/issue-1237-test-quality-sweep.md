@@ -2,7 +2,7 @@
 
 基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）；第七版依大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/2.json` 的 R6-A/R6-B 续修（见文末「第七轮」）；第八版是对现存全部测试文件的整卷复扫（见文末「第八轮」），每行末尾的「第八轮整卷复扫」即本轮结论。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
-当前结算以文末「第十七轮」及逐条账 R17 为准；前十六轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
+当前结算以文末「第十七轮复审修理（R17-A）」及逐条账 R17-A 为准；此前各轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
 
 ## 方法与边界
 
@@ -472,3 +472,87 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 本轮逐文件增量：测试文件仅上表 real-entry 改动；`docs/research/issue-1237-deletion-ledger.md` 新增 #1034–#1037 并把 R16 的行号显式锚定 `5ee5b065`；本文件补本节。没有重开已解决的 runId 账，也没有修改 pointer/warning/copy 案。
 
 验证：修前 real-entry 8/8，1718.135791 ms；修后执行 `node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/public-cli-failure-real-entry.test.ts test/integration/public-cli-failure-artifacts.test.ts test/integration/public-cli-failure-provider-stop.test.ts test/integration/public-cli-failure-settlement.test.ts`，30/30，2678.882709 ms。`npx tsc --noEmit` exit 0；账本工作树核算 COUNT/MATCH 1036（18 文件、115 案、903 断言；a/D 496，其余桶不变）。提交后仍用未改的计数脚本核 HEAD。未跑全量；无新增测试/helper/生产机制，新增函数逐项表为空，四条旧断言与专属类型字段均已删除。
+
+## 第十七轮复审修理（R17-A）
+
+起点 `9bd67a849ef6004524d9d0412dc5b260cd3bf4da`。依据大理寺 `01a16776-ad9c-7cd8-89ec-4449a93eb38f@judge/receipts/2.json`，符宝郎 `01a16782-cd82-77f5-8a51-72d631eb9f2d@notary/receipts/2.json`、审刑院 `01a16784-f637-7e7e-ae7b-4b6517d372a0@auditor/receipts/2.json` 已署。只处理同值复查，R15-A 与 R16-D 不重开。
+
+### 扫类、复扫与取舍
+
+错误形状：同次调用、同一对象（包括别名和 helper 参数）的一个值，已由精确值或更强谓词检查，随后又换断言函数、合取/条件表达式或 helper 调用重查。根因是只按断言函数和实参字面配对，没有贯通谓词、参数替换及别名。
+
+全 `test/` 共 153 个 TS/JS 源文件，使用现有账本 `assert_calls` 取候选，不新增仓内扫描机制。实际命令：
+
+- `rg -n 'assert\.(ok|equal|strictEqual|deepEqual|deepStrictEqual)|function assert|const assert[A-Z]' test`
+- `rg -n '(function|const) assert[A-Z]' test` 与 `rg -n '\bassert[A-Z]\w*\(' test`：24 个声明，加成员回调 `assertDecisiveFacts`、转发回调 `assertIn`；打开函数与调用点比较实际参数，不把不同输入相并。
+- `python3 /tmp/r18-predicate-scan.py`：复用账本提取器，把 equal/ok/布尔合取归一为候选谓词，初扫 204 对、复扫 196 对；每对再看调用、作用域与状态。保留的候选均属不同输入、不同对象或状态/时点变化，不把候选数量冒充待修数量。
+- 对三元断言补查条件判别值及局部别名：初扫 16 对（其中一处被两个强断言覆盖），复扫 0 对；另手工展开 `parentPayloads` 别名。非目标分支的 `undefined`/空数组不能等于所断言的非空精确值，才删除独立判别值检查。
+- `git diff --name-status 9bd67a84` 与 `git diff -U0 7997ffb2 -- test`：修改前后逐文件、逐基线断言核；29 个删去的调用都在基线，账新增 #1038–#1066，无新增或改弱断言。本轮差异 18 文件；累计基线差异为 125 文件（相较此前增加 public-cli-doctor），历史修改不冒记本轮。
+
+选条原则：`gleaner-left` 留 :81 的 equal（实际值/期望值报错比 ok 的布尔失败清楚），删 :82 的 ok；其余留覆盖更多字段的精确断言或已复用的 helper。host helper 还服务 claude 输入，不能为了保留另两处的重复检查而删掉 helper 的共同检查；这两处原有 exitCode 断言仍携带各自 stdout/stderr。所有删除后的状态一并经过 tsc 与原入口案。
+
+### 逐文件删并表
+
+删除坐标全部是 `7997ffb2` 基线；保留坐标是本轮修后文件。每条的完整蕴含说明见账 #1038–#1066。
+
+| 文件 | 删除基线行 | 保留断言／复扫结论 |
+| --- | --- | --- |
+| `test/contract/gatekeeper-pass-envelope.test.ts` | 115 | :104 receivedStatus 精确 other 蕴含 needs_reask。 |
+| `test/integration/analyst-c3-model-groups.test.ts` | 149、156、166、213、214 | :119–127、143–145、185、189 的逐组精确值；同步删无消费者 denSum。原始组的空组排除与两项求和已由完整组数＋手算逐组值蕴含。aliased 是另一次调用，只承接其 grok/sol 两个未改 legCount 的展开值，不借原始组结果。 |
+| `test/integration/audited-run-identity-1166.test.ts` | 702 | :589–592，parentPayloads 条件别名的末项精确 second 对象。 |
+| `test/integration/public-cli-countersign-run.test.ts` | 330、375、528 | :291、335、487；分别是各自调用的 cause/status 强检查，不跨 resume 相并。 |
+| `test/integration/public-cli-doctor.test.ts` | 462 | :462 refused 状态数组。 |
+| `test/integration/public-cli-escalation-resume.test.ts` | 497 | :243、493 的 helper 已守同一 runId 的 string＋非空；后续 resume 是另一次调用，未删。 |
+| `test/integration/public-cli-fixer.test.ts` | 554 | :429 refused 状态数组。 |
+| `test/integration/public-cli-gleaner-left-run.test.ts` | 85、216、259 | :81、202、244；equal 取代 ok 同值复查，两个调用分别保留 cause/status 强检查。 |
+| `test/integration/public-cli-host-axis.test.ts` | 835、919 | :801 共同 hostFailure 检查，经 :842、924 的实际参数作用于各自 result；第三个 claude 调用 :965 保留。 |
+| `test/integration/public-cli-instruction-seat.test.ts` | 148 | :121 非空状态数组；assertDecisiveFacts 对首对象 status 的观察不等于过滤后的状态序列，保留。 |
+| `test/integration/public-cli-navigator-attendance.test.ts` | 244 | :237 条件分支内诊断精确值。 |
+| `test/integration/public-cli-report-ticket.test.ts` | 548 | :83–84、548 的 helper 先等同路径再检查存在；mid-turn 与 settle 两阶段、内存 admitted 与磁盘 current 观察仍各自保留。 |
+| `test/integration/public-cli-resume-416.test.ts` | 135、224 | :133、222，分别为 accepted 分支 note 精确值与 failure 合取。 |
+| `test/integration/public-cli-resume.test.ts` | 1543、1812 | :1549、1813，kind 与 diagnostic 的合取；artifact 对照 :1825 保留。 |
+| `test/integration/public-cli-reviewer.test.ts` | 669 | :618 父结果 failure 分支精确 payloads 值；不同子腿的 outcome 不动。 |
+| `test/integration/public-cli-same-ticket-resume.test.ts` | 277、459、485 | :276、457、482，各调用自己的非空状态序列，未跨时间点借用。 |
+| `docs/research/issue-1237-deletion-ledger.md` | 无测试断言 | 已修：按基线补 29 行，每行指向保留检查；R16 历史坐标仍锚定 5ee5b065。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 无测试断言 | 已修：本节是本轮逐文件表与复扫结算，不复写旧轮事实。 |
+
+### helper 全树复核表
+
+以下为本轮保留位置；每个声明均核过实际调用，不用函数名命中代替参数审查。
+
+| 声明 | 复扫结论 |
+| --- | --- |
+| `test/package/published-dist-import-closure.test.ts:53` assertRelativeImportClosure | 无：调用后不重查 files，build 是实际动作。 |
+| `test/unit/activation-envelope-module.test.ts:25` assertRetryingJsonlWriter | 无：调用者不重查 chunks/calls/schema。 |
+| `test/helpers/run-dossier-fixture.ts:203` assertRunDirectoryHoldsOnlyDossier | 无：允许目录集合与调用处字段/交付内容不同。 |
+| `test/helpers/test-agent-dir-guard.ts:46` assertWritableTestAgentDir | 无：安全前置，不是重复结果断言；各非法输入不同。 |
+| `test/helpers/failure-settlement-kit.ts:78` assertPublicFailureSettlement | 无：沿上一节 17 调用点重新对照；原 R16-D 四条未恢复，其他字段/输入独立。 |
+| `test/contract/durable-session-write-failure.test.ts:88` assertDurableFlushFailure | 无：两个 closeRound 调用不同，调用处不重查返回对象。 |
+| `test/contract/analyst-b2-frame-buckets-actions.test.ts:132` assertRunMetrics | 无：prd/overlap 为不同 run，后段写入新源卷后重跑，不能借前次值。 |
+| `test/contract/analyst-gate-cycles.test.ts:568` assertAuditorRolesUnreadable | 无：每次更换失败源卷再 runAnalyst，不同输入保留。 |
+| `test/integration/analyst-c3-model-groups.test.ts:118` assertGroupEqual | 已修：上表五条；原始组与 alias 调用不混同。 |
+| `test/integration/public-cli-report-ticket.test.ts:75` assertCurrentLocationPaths | 已修：调用处重复存在性；不同阶段和不同 current section 的字段值保留。 |
+| `test/integration/public-cli-report-ticket.test.ts:355` assertProvenanceRow | 无：调用处未重查同一 provenance row。 |
+| `test/integration/public-cli-report-ticket.test.ts:1543` assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory | 无：各调用是不同 reask 输入；函数内互斥分支不相并。 |
+| `test/integration/public-cli-resume.test.ts:230` assertCleanupDiagnosticNoted | 无：各失败/恢复阶段不同，调用处不重查同一 diagnostic。 |
+| `test/integration/public-cli-resume.test.ts:1806` assertThisCallDispatchedFailure | 已修：kind 独立检查由同一 outcome 的合取承接；各次调用的 diagnostic 具体值仍独立。 |
+| `test/integration/public-cli-resume.test.ts:1831` assertPreHostResumeDiagnostic | 无：prehost 与 dispatched 不是同一结果；调用处 hostFailure/旧终局/源卷保全为独立字段。 |
+| `test/integration/public-cli-seat-self-ticket.test.ts:145` assertDurableTicket | 无：磁盘 admitted/invocation 与内存 result.admitted 是不同观察对象。 |
+| `test/integration/public-cli-seat-self-ticket.test.ts:155` assertDurableUnbound | 无：同上，各输入的 unbound 状态不混并。 |
+| `test/integration/public-cli-escalation-resume.test.ts:228` assertEscalationPresented | 已修：oldAuditorRunId 别名类型复查；恢复后终局不是 first。 |
+| `test/integration/public-cli-engine-axis.test.ts:64` assertNoEngineFlagsInArgv | 无：七处调用后查 invocation/env，是不同输出面。 |
+| `test/integration/public-cli-host-axis.test.ts:441` assertSetModelBeforePrompt | 无：三处不同 frames；调用处 assert.ok(promptFrame) 保留类型缩窄，不把 resume/拒绝分支相并。 |
+| `test/integration/public-cli-host-axis.test.ts:794` assertPlannedReceipt | 已修：两个调用处 hostFailure 复查；claude 调用需要共同检查。 |
+| `test/integration/public-cli-1169-relocate-resume-no-unbound-paths.test.ts:75` assertNoUnboundPrefix | 无：初次/恢复/inspector 各自不同捕获对象。 |
+| `test/integration/analyst-public-cli.test.ts:66` assertSnapshotsEqual | 无：三个入口失败各自取前后快照，调用处不重查同一快照字段。 |
+| `test/integration/headless-codex-host.test.ts:34` assertStrictObjectNodes | 无：helper 检查 required 覆盖实际 properties，调用处检查明确字段集合，不是相同命题；初始/resume 也为不同调用。 |
+
+边界复核：oauth tick/stop-start、factory-board 切排序/筛选、trajectory 推时钟、engine-resume-detour 的两次 config 调用、reviewer 不同坏输入、worker gate 改 git 状态、host-session pointer/warning/copy 三阶段都保留。failure-provider-stop 的 timeout/nonzero 与 engine-detour 的各输入分支互斥，不互相承接。辅助正则不能证明对象身份，未按候选批量删行。
+
+### 自验与自审
+
+- 修前按发现面分三组跑原入口案：89/89（6827.486375 ms）、60/60（4085.229542 ms）、3/3（1741.27425 ms）。没有把修前绿灯冒作修后结果。
+- 修后：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test $(git diff --name-only -- test)`，16 文件，152/152，11230.446125 ms。该动态命令指提交前工作树；提交后复现须从本轮起点取文件列表。
+- 修后 `npx tsc --noEmit` exit 0，`git diff --check` 无输出；工作树账核算 COUNT/MATCH 1065 = 18 文件 + 115 案 + 932 断言，a/D 525，其他桶不变。提交后用未改的 `python3 -I docs/research/issue-1237-deletion-ledger.py` 再核 HEAD。
+- 没有新增函数/测试，diffItems=[]。所有测试仍走原入口、保留原强 oracle 与状态变化；本轮是删重而非生产行为修复，不新增证明性测试、不改生产逻辑作验收机制。测试 diff 只有删除（29 断言及专属变量/注释），未删整案或输入。
+- 没跑全量；没改生产、helper 接口、runner、Soul、配置或治理文件。官方 Node assert 文档用于核对 equal 与 ok 的诊断区别，没有引入依赖。

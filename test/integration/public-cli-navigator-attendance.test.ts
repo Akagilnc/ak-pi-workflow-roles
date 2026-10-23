@@ -234,7 +234,6 @@ for (const scenario of CASES) {
       );
       if (scenario.parentFails === true) {
         assert.equal(result.exitCode, 1);
-        assert.equal(result.terminal?.roleOutcome.kind, "failure");
         assert.equal(result.terminal?.roleOutcome.kind === "failure" ? result.terminal.roleOutcome.diagnostic : undefined, "PARENT HOST BOOM");
         assert.notEqual(result.terminal?.navigator.disposition, "advice");
         return;

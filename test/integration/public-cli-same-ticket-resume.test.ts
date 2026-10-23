@@ -273,7 +273,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       },
     );
     assert.equal(first.exitCode, 0, "first sealed notary must accept");
-    assert.equal(first.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       first.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(first.terminal.roleOutcome)
@@ -455,7 +454,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "bare resume must keep the same-parent source-run",
     );
     assert.equal(resumed.exitCode, 0, "open-court resume that seals must accept");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
@@ -481,7 +479,6 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "sealed bare resume must reach the host",
     );
     assert.equal(bareAfterSeal.exitCode, 0);
-    assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)

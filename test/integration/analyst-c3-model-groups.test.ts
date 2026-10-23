@@ -145,16 +145,6 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
       assertGroupEqual(page.groups[i]!, EXPECTED_RAW[i]!);
     }
 
-    // No invented empty-string group.
-    assert.equal(
-      page.groups.some((g) => g.rawGroupKey === "" || g.displayName === ""),
-      false,
-    );
-
-    // Denominators must sum to model-bearing legs (no double-count / no drop).
-    const denSum = page.groups.reduce((n, g) => n + g.legCount, 0);
-    assert.equal(denSum, page.legCount);
-
     // 3008: usable session/terminal but no model identity → typed vacancy.
     assert.equal(page.unreadableCount, 1);
     assert.equal(page.unreadable.length, 1);
@@ -162,16 +152,6 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
     assert.equal(absent.runId, C3_NO_MODEL_RUN_ID);
     assert.deepEqual(absent.missingSources, ["session-model"]);
     assert.ok(absent.reason.trim().length > 0);
-    // Vacancy must not inflate any group numerator/denominator.
-    assert.equal(
-      page.groups.reduce(
-        (n, g) => n + g.acceptedCount + g.successCount + g.noReceiptCount,
-        0,
-      ),
-      // accepted: grok3 + sol1 + mixed1 + luna1 = 6; success: 2+0+1+1=4; noReceipt: 1
-      6 + 4 + 1,
-    );
-
     const aliased = await runAnalyst({
       mode: "model-groups",
       projectRoots: [C3_SCOPE],
@@ -210,8 +190,6 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
       { ...sol, displayName: "sol-low" },
       EXPECTED_RAW.find((g) => g.rawGroupKey === "sol-low")!,
     );
-    assert.equal(grok.legCount, 4);
-    assert.equal(sol.legCount, 1);
     // Two rows share display "Grok" but remain distinct raw identities.
     const grokDisplayRows = aliasedPage.groups.filter((g) => g.displayName === "Grok");
     assert.deepEqual(

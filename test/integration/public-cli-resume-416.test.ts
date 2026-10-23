@@ -130,7 +130,6 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
       })});
     assert.equal(calls,1,"sealed bare resume must reach the host");
     assert.equal(resumed.exitCode,0);
-    assert.equal(resumed.terminal?.roleOutcome.kind,"accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind==="accepted"
         ?(objectPayloads(resumed.terminal.roleOutcome)[0] ?? {}).note
@@ -219,7 +218,6 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
     };
     assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
-    assert.equal(res.terminal?.roleOutcome.kind,"failure");
     assert.equal(recorded.runId,runId);
     assert.equal(
       res.terminal?.roleOutcome.kind==="failure"

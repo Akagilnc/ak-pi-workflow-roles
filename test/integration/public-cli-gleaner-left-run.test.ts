@@ -79,7 +79,6 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
       continuation: { kind: "initial", prompt: "" },
     });
     assert.equal(turn.activation.role, "gleaner-left");
-    assert.ok(turn.activation.role === "gleaner-left");
     assert.equal(turn.activation.baseRevision, "HEAD");
   });
 });
@@ -200,7 +199,6 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
       },
     );
     assert.equal(first.exitCode, 1);
-    assert.equal(first.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       first.terminal?.roleOutcome.kind === "failure"
         ? first.terminal.roleOutcome.cause
@@ -243,7 +241,6 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "gleaner-left");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumed.terminal?.roleOutcome.role, "gleaner-left");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)

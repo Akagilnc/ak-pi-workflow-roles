@@ -101,7 +101,6 @@ test("#1028 secretariat_verdict reads the shared review status",
         },
       }),
     });
-    assert.equal(compatProjected.result.status, "needs_reask");
     assert.equal(
       compatProjected.result.status === "needs_reask" ? compatProjected.result.receivedStatus : undefined,
       "other",

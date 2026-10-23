@@ -118,7 +118,6 @@ for (const scenario of CASES) {
         coords.sessionDirectory,
       );
       assert.equal(result.terminal?.roleOutcome.role, scenario.role);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
           ? payloadStatusSequence(result.terminal.roleOutcome)

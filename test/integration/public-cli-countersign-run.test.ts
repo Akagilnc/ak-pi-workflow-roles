@@ -288,7 +288,6 @@ test("ak-role resume continues countersign on the exact session", async () => {
       },
     );
     assert.equal(first.exitCode, 1);
-    assert.equal(first.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       first.terminal?.roleOutcome.kind === "failure"
         ? first.terminal.roleOutcome.cause
@@ -333,7 +332,6 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(resumeArgs!.includes("再裁一次"), false);
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
@@ -486,7 +484,6 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       }),
     });
     assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "failure"
         ? resumed.terminal.roleOutcome.cause

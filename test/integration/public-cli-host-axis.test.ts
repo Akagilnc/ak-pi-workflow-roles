@@ -829,7 +829,6 @@ test("#822 coder apply non-pi hosts: prompt carries the assignment; planned rece
       const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), io: grokIo.io, cwd: project, createRunId: () => "run-822-coder-grok" },
       );
-      assert.equal(result.hostFailure, undefined, grokIo.stderr.join(""));
       assert.equal(result.exitCode, 0, `${grokIo.stdout.join("")}\n${grokIo.stderr.join("")}`);
 
       const frames = await readAcpFrames(framesPath);
@@ -912,7 +911,6 @@ test("#822 coder apply non-pi hosts: prompt carries the assignment; planned rece
       const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), io: hermesIo.io, cwd: project, createRunId: () => "run-822-coder-hermes" },
       );
-      assert.equal(result.hostFailure, undefined, hermesIo.stderr.join(""));
       assert.equal(result.exitCode, 0, `${hermesIo.stdout.join("")}\n${hermesIo.stderr.join("")}`);
 
       const frames = await readAcpFrames(framesPath);

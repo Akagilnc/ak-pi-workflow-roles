@@ -544,7 +544,6 @@ for (const caseRow of [
       assert.deepEqual(afterReport, { unbound: false, ticket: true });
       assert.equal(existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")), false);
       const placement = ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer");
-      assert.equal(existsSync(placement), true);
       // #1183: settle (incl. no_receipt) keeps current location paths on the ticket leaf.
       assertCurrentLocationPaths(placement, `${caseRow.name} after settle`);
       if (caseRow.expectKind === "no_receipt") {
