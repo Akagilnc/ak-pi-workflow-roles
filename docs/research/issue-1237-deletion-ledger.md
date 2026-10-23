@@ -12,7 +12,7 @@
 4. 断言：基线里从 `assert.` / `assert(` / `await assert` 起，按括号深度收到语句结束（引号内括号不计）。该语句任一基线行被删，计一条，同一语句不重复。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 833 行 = 整文件 18 + 整案 115 + 断言 700。
+本表 832 行 = 整文件 18 + 整案 115 + 断言 699。原 #724（baseline `test/unit/pi-adapter-agent-start.test.ts:100`）退出 where 列：同文 `assert.ok(result && typeof result === "object")` 插入后，`git diff -U0` 不再把该基线行计为删除。在役守卫未删。# 不重排。
 
 ## 处置口径
 
@@ -37,7 +37,7 @@
 - a/退役：25
 - c/null：8
 - 改好：32
-- 仍在：23
+- 仍在：22
 
 R12-A：组级变异不算该行证明。原先无该值的，补进现有案并改判改好；其余 (b) 每行写打中该值的变异。计数不包含本轮补回的断言。
 
@@ -768,7 +768,6 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 721 | assert | `test/unit/navigator-route-table.test.ts:9` | assert.ok( advice.trim() !== "" && Array.from(advice).length <= NAVIGATOR_ADVICE_MAX_CHARS, `${role}/${status}`, ); | a/T；依据 sweep:34；静态建议字数/非空。lookup 行为在 public-cli-navigator-lookup.test.ts:74，不承接文案质量 |
 | 722 | case | `test/unit/navigator-route-table.test.ts:6` | every table row is one short non-empty line | a/T；依据 sweep:34；静态建议字数/非空。lookup 行为在 public-cli-navigator-lookup.test.ts:74，不承接文案质量 |
 | 723 | assert | `test/unit/pi-adapter-agent-start.test.ts:95` | assert.ok(handler); | a/D；依据 sweep:36；折叠行为在同文件 :66，第二轮变异见 sweep:201 |
-| 724 | assert | `test/unit/pi-adapter-agent-start.test.ts:100` | assert.ok(result && typeof result === "object"); | 仍在 test/unit/pi-adapter-agent-start.test.ts:92 |
 | 725 | assert | `test/unit/pi-adapter-agent-start.test.ts:127` | assert.equal(bodyOnly.systemPrompt, "BASE"); | 改好 test/unit/pi-adapter-agent-start.test.ts:89；变异：readingMaterial 缺席时给 systemPrompt 加后缀 X；报红「Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial」。 |
 | 726 | assert | `test/unit/pi-adapter-agent-start.test.ts:128` | assert.equal("readingMaterial" in bodyOnly, false); | b test/unit/pi-adapter-agent-start.test.ts:88；变异：readingMaterial 缺席时仍返回 readingMaterial: leaked；报红「Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial」。 |
 | 727 | assert | `test/unit/pi-adapter-agent-start.test.ts:132` | assert.equal("readingMaterial" in withBound, false); | b test/unit/pi-adapter-agent-start.test.ts:104；变异：readingMaterial 在场时 fold 返回值保留该字段；报红「Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial」。 |
