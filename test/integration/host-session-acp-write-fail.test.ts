@@ -1,10 +1,10 @@
 /**
  * ADR 0086: ACP host-session write failure writes to stderr without aborting the turn.
- * A file blocking the record directory proves pointer or dossier sitian write failures
- * declare to stderr once and do not alter the turn outcome.
+ * A blocked log proves pointer, copy, and warning write failures are declared
+ * independently without altering the turn outcome.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -39,11 +39,12 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
     await writeFile(sessionFile, "{}\n", "utf8");
     const logPath = join(ledger.runDirectory, "log.jsonl");
 
-    let phase: "pointer" | "warning" = "pointer";
-    let warningDeclared = false;
+    await mkdir(logPath);
+    let declared = false;
+    let pointerDeclared = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
-      if (phase === "warning") warningDeclared = true;
+      declared = true;
       return true;
     }) as typeof process.stderr.write;
 
@@ -53,17 +54,9 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
           if (method === "initialize") return { protocolVersion: 1 };
           if (method === "session/new") return { sessionId: "acp-sess" };
           if (method === "session/prompt") {
-            const text = await readFile(logPath, "utf8");
-            const sawPointer = text.split("\n").some((line) => {
-              if (line.length === 0) return false;
-              const row = JSON.parse(line) as { payload?: { type?: unknown } };
-              return row.payload?.type === "native-session-pointer";
-            });
-            assert.equal(sawPointer, true);
-            assert.equal(warningDeclared, false);
-            phase = "warning";
-            await rm(logPath);
-            await mkdir(logPath);
+            // The pointer is written before prompting; the dossier is recorded after exit.
+            pointerDeclared = declared;
+            declared = false;
             return { stopReason: "end_turn" };
           }
           if (method === "session/close") return {};
@@ -96,10 +89,25 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       });
 
       const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
-      // Under ADR 0086, sitian write failure does not abort the turn!
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-      assert.equal(warningDeclared, true);
+      assert.equal(pointerDeclared, true, "pointer");
+      assert.equal(declared, true, "warning");
+
+      const native = join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), "acp-sess");
+      await mkdir(native, { recursive: true });
+      await writeFile(join(native, "chat_history.jsonl"), "native chat\n");
+      await writeFile(join(native, "usage.json"), "{}\n");
+      declared = false;
+      pointerDeclared = false;
+      const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+      assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
+      assert.equal(copied.code, 0);
+      assert.equal(pointerDeclared, true, "pointer");
+      assert.equal(declared, true, "copy");
+      const landing = join(sessionDir, "grok-build");
+      assert.equal(await readFile(join(landing, "chat_history.jsonl"), "utf8"), "native chat\n");
+      assert.equal(await readFile(join(landing, "usage.json"), "utf8"), "{}\n");
     } finally {
       process.stderr.write = origStderrWrite;
     }

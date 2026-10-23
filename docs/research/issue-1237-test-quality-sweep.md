@@ -93,8 +93,8 @@
 | `test/integration/headless-codex-host.test.ts` | S | 改：删退役 dossier 文件哨兵及孤儿调用；保executeTurn 驱动本机假 CLI 的协议、schema 调用输入、thread 绑定/恢复与失败；不调用真实 Codex。第八轮整卷复扫：未命中。 |
 | `test/integration/host-retry-verdict-relay.test.ts` | B | 留：headless 与 ACP 是不同外部宿主协议；验证 opaque retry 的真实 stdin 输入，不是同 helper 重测。第八轮整卷复扫：未命中。 |
 | `test/integration/host-session-acp-grok-usage-compact.test.ts` | S | 改：删退役 dossier 文件哨兵；保假 ACP host 的实际 session 文件复制、usage 及缺文件/失败路径。第七轮（R6-A）：再删 copy record payload 的 `"ordinal" in … === false`（#1161 `d361c716` 后 landing 不再产出 ordinal，host-session 路径零产出）。第八轮整卷复扫：未命中。第十二轮账：a/S 1。无未证 null。 |
-| `test/integration/host-session-acp-write-fail.test.ts` | T | 改：stderr 分块计数改观察已报告；保记录失败不打断宿主 turn 的返回值。第八轮整卷复扫：未命中。第十二轮账：a/C 1。无未证 null。第十五轮（R13-A）：块数锁未恢复；指针写成功后 warning 写失败的申报在同案 :102，改好。 |
-| `test/integration/host-session-live-records.test.ts` | T/S | 改：删 stderr 分块计数及退役 dossier 哨兵；保本机假 headless native dossier 到 session 副本、指针与失败保真。第七轮（R6-A）：再删 copy record payload 的 `"ordinal" in … === false`（同上）。第八轮整卷复扫：未命中。第十二轮账：a/S 1、a/C 2。无未证 null。第十五轮（R13-A）：两处块数锁未恢复；指针写成功后 warning 写失败的申报在同案 :239，改好。 |
+| `test/integration/host-session-acp-write-fail.test.ts` | T | 改：stderr 分块计数改观察已报告；保记录失败不打断宿主 turn 的返回值。第八轮整卷复扫：未命中。第十二轮账：a/C 1。无未证 null。第十五轮旧腿（R13-A）：当时只阻断 warning 的修法已由 R14-A 封驳。第十五轮新腿：同案 :94–107 保 pointer、warning、copy 三阶段写失败；log 全程阻断，以真实 session/prompt 分隔观察；三种 catch 分阶段变异各红，详见 deletion-ledger 末 P/C/W。 |
+| `test/integration/host-session-live-records.test.ts` | T/S | 改：删 stderr 分块计数及退役 dossier 哨兵；保本机假 headless native dossier 到 session 副本、指针与失败保真。第七轮（R6-A）：再删 copy record payload 的 `"ordinal" in … === false`（同上）。第八轮整卷复扫：未命中。第十二轮账：a/S 1、a/C 2。无未证 null。第十五轮旧腿（R13-A）：当时仅 warning 受阻的修法已由 R14-A 封驳。第十五轮新腿：同案 :230–245 保 pointer、warning、copy 写失败，仍保覆盖原件及缺源留好副本；三种 catch 分阶段变异各红，详见 deletion-ledger 末 P/C/W。 |
 | `test/integration/merger-git-state.test.ts` | B | 留：真实本机 Git merge 状态、无 merge、unborn、损坏身份，不用虚构中间对象。第八轮整卷复扫：未命中。 |
 | `test/integration/merger-role.test.ts` | B | 改（第十轮改类别）：第八轮标 D 不成立。删去的 escalate / completed 原样收不是与中书省「records any status」的重复结论；已并入 `test/contract/judge-role.test.ts:388`，执行校书郎自己的注册。无 Git 激活、空冲突材料、工具面留，同席内部没有另一条成立的重复第十二轮账：b 7。第十四轮（R12-A）：第二次 escalate 与 completed 原样收补进 :388，改好 5；escalate 不查 Git 仍为 b 2。无未证 null。 |
 | `test/integration/package-home-cli-seam.test.ts` | B | 留：真实 CLI 子进程的 HOME/profile 隔离及缺 profile 时 help/需 home 命令分界。第八轮整卷复扫：未命中。 |
@@ -358,3 +358,13 @@ R12-A：(b) 不再用组级变异免证。每行写打中该值的变异命令�
 ### 第十五轮（大理寺 01a163ff receipts/10.json R13）
 
 R13-A：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支的输出或失败。ACP 与 headless 的 warning 申报改成分阶段观察，不恢复块数锁。空白 merger attemptId 记 c/null：公开入口只写 placed.runId。R13-B：计数按每次 assert 调用，含同行与内层调用；`python3 -I docs/research/issue-1237-deletion-ledger.py` 为 COUNT 849、MATCH 849。
+
+### 第十五轮新腿（大理寺 01a163ff receipts/11.json R14-A/B）
+
+R14-A：根因是旧腿为分开 warning 观察撤掉了 pointer、copy 失败输入。现在两个既有案的 log.jsonl 始终为目录；真实 session/prompt（ACP）、ingestStructuredOutput（headless）回调只分隔并重置申报观察，不移走阻断。首轮无原件守 warning，次轮有原件守 copy，各轮 pointer 也独立观察；headless 的后续覆盖与缺源保好副本保留。与 7997ffb2 的逐条 diff 已核：原必要失败输入全部保留，未恢复条数锁；没有新案、新生产函数或钩子。
+
+R14-B：逐条账的 32 条“助手无入口”套话按真实调用链重判。failure-settlement-kit 的 14 行有 runAkRole 入口，不再按夹具布局豁免；12 行引现有交付／退出码／诊断／navigator／artifacts／cause 守护和逐项变异，失败 Terminal.runId 类型与非空两行（#182/#183）实测变异仍绿，依本轮只改账处方记 c/null。根目录 cleanup 测试的 18 行含六条内层断言，都写明只测自造 body/cleanup，且是该已删测试不在 glob；夹具本身仍由 withTempRoot 等调用，不再误写夹具无使用方。详情及命令、红案名见 `issue-1237-deletion-ledger.md` 末 R14-A/B 取证。
+
+交卷前自审：`git diff HEAD` 四文件逐一打开，`diffItems=[]`（无新增测试函数或生产函数）。两案沿 executeTurn 真入口，阶段只观察 stderr 是否发生，断言在返回后；不锁块数、措辞或提示词；退役 warning-only 观察与切换阻断逻辑已删。逐条对照 `git diff 7997ffb2 -- test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts`，未撤另一阶段的失败输入。
+
+聚焦验证：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts test/integration/public-cli-failure-settlement.test.ts`：12 pass / 0 fail，2011.798042 ms。`npx tsc --noEmit` exit 0；`python3 -I docs/research/issue-1237-deletion-ledger.py`：COUNT 849、MATCH 849，c/null 13；`git diff --check` exit 0。没有跑全量，没有改生产、配置或席位表。最小必要成本是复用两案与其回调增加阶段布尔观察、ACP 同夹具再走一次有原件路径，无新增测试机制。

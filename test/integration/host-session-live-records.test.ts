@@ -187,12 +187,12 @@ process.stdout.write(JSON.stringify({
     await writeFile(sessionFile, "{}\n", "utf8");
     const logPath = join(ledger.runDirectory, "log.jsonl");
 
-    let phase: "pointer" | "warning" = "pointer";
-    let warningDeclared = false;
-    let separated = false;
+    await mkdir(logPath);
+    let declared = false;
+    let pointerDeclared = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
-      if (phase === "warning") warningDeclared = true;
+      declared = true;
       return true;
     }) as typeof process.stderr.write;
 
@@ -214,19 +214,10 @@ process.stdout.write(JSON.stringify({
           jsonSchema: { type: "object" },
           terminatingToolName: "ak_judge_output",
           async ingestStructuredOutput() {
-            if (separated) return;
-            separated = true;
-            const text = await readFile(logPath, "utf8");
-            const sawPointer = text.split("\n").some((line) => {
-              if (line.length === 0) return false;
-              const row = JSON.parse(line) as { payload?: { type?: unknown } };
-              return row.payload?.type === "native-session-pointer";
-            });
-            assert.equal(sawPointer, true);
-            assert.equal(warningDeclared, false);
-            phase = "warning";
-            await rm(logPath);
-            await mkdir(logPath);
+            // Both allocated and host-reported pointers precede receipt ingestion.
+            // Reset only the observation, never the log obstruction or copy input.
+            pointerDeclared = declared;
+            declared = false;
           },
           async closeRound() { return { accepted: true as const }; },
         }),
@@ -236,15 +227,18 @@ process.stdout.write(JSON.stringify({
       // Under ADR 0086, sitian write failure does NOT abort the turn!
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-      assert.equal(warningDeclared, true);
-      phase = "pointer";
-      await rm(logPath, { recursive: true, force: true });
+      assert.equal(pointerDeclared, true, "pointer");
+      assert.equal(declared, true, "warning");
 
       const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });
       await writeFile(native, "native session", "utf8");
+      declared = false;
+      pointerDeclared = false;
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
+      assert.equal(pointerDeclared, true, "pointer");
+      assert.equal(declared, true, "copy");
       const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude"));
       // Only the single unnumbered original; no failed-ordinal marker from the earlier failed copy.
       assert.deepEqual(dossiers, ["claude.jsonl"]);

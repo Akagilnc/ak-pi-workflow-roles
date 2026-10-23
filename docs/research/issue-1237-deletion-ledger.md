@@ -1,8 +1,8 @@
-# #1237 删除与改弱逐条账（R13）
+# #1237 删除与改弱逐条账（R14-A/B）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
-R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支的输出或失败。没有的写一句话。有的写打中该行为的变异和报红测试名，或改好位置，或 `c/null`。指针写成功、只让后段 warning 写失败的申报观察在现有 ACP 与 headless 案。条数锁没有恢复。
+R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支的输出或失败。没有的写一句话。有的写打中该行为的变异和报红测试名，或改好位置，或 `c/null`。该轮仅阻断 warning 的修法已由 R14-A 判为返工；本轮在现有 ACP 与 headless 案保持 log.jsonl 阻断，沿真实回调分隔 pointer 与出口申报，并分别保留原件缺失（warning）、原件存在（copy）输入。条数锁没有恢复。
 
 ## 计数命令
 
@@ -22,7 +22,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 - (a) 已裁坏形状：`a/M` 镜像，`a/T` 文案或正则，`a/S` 无生产者哨兵，`a/D` 同一入口、同一输入类的重复结论，`a/C` 分块计数，`a/退役` 生产符号或夹具已删。引此前判词。不恢复。
 - (b) 在役分支，承接位置已有该断言所守的值：写 `path:line`，并写打中该值的变异命令与报红的测试名。一条变异不能代替未写明的邻行。
-- (c) 在役分支且原先无承接：补进现有案并附本轮隔离变异；或写 `c/null`，只在公开入口产不出该输入时。本账 `c/null` 是 `readNotaryTicketFlag` 那 8 行，加上公开入口产不出空白 attemptId 的 merger-contract 三行（文件、案、空白拒绝断言）。
+- (c) 在役分支且原先无承接：补进现有案并附本轮隔离变异；或写 `c/null`，只在公开入口产不出该输入时。本账此前 `c/null` 是 `readNotaryTicketFlag` 那 8 行，加上公开入口产不出空白 attemptId 的 merger-contract 三行（文件、案、空白拒绝断言）。R14-B 另准只改账、无守护则记 c/null：#182/#183 是可达的失败 Terminal.runId 输出缺口，不是不可达输入；本轮没有改该家族测试。
 - 改好：本轮补回位置，附隔离变异。
 - 仍在：同一文件里断言原文还在，或只是案名改写。不是承接声称。
 
@@ -31,15 +31,15 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 处置计数：
 
 - a/D：309
-- a/M：205
+- a/M：198
 - a/S：134
-- b：50
+- b：59
 - 改好：35
 - a/T：34
 - a/退役：25
-- a/C：24
+- a/C：20
 - 仍在：22
-- c/null：11
+- c/null：13
 
 R12-A：组级变异不算该行证明。原先无该值的，补进现有案并改判改好；其余 (b) 每行写打中该值的变异。计数不包含本轮补回的断言。
 
@@ -57,7 +57,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 8 | file | `test/integration/engine-material.test.ts` | (deleted file) | a/退役；依据 本轮台院 I11-A ③；sweep:89；listEngineMaterialNames 已不在 src。缺 notes 的观察在 engine-axis.test.ts:82 与 engine-startup-material.test.ts:86。语法拒收是 unit 文件，不是本文件 |
 | 9 | file | `test/integration/factory-board-true-home.test.ts` | (deleted file) | a/D；依据 sweep:90；依赖本机旧卷、缺卷 skip，oracle 复用生产判定。fixer accepted 事实在 factory-board.test.ts:1663，不是缺口 R13-A 没有：只在属主机器缺卷时 skip，或只复算生产助手的同一结果，不检查 CI 能产的在役输出或失败行为。 |
 | 10 | file | `test/integration/public-cli-argv-parsers.test.ts` | (deleted file) | a/D；依据 sweep:104；grammar 迁到 unit/public-cli-argv-parsers.test.ts；与公开入口同规则者由表点名的案接住 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
-| 11 | file | `test/primary-aware-cleanup.test.ts` | (deleted file) | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
+| 11 | file | `test/primary-aware-cleanup.test.ts` | (deleted file) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
 | 12 | file | `test/unit/canonical-json.test.ts` | (deleted file) | a/退役；依据 sweep:26；ADR 0030 已撤格式契约，canonicalJson 在 src 零命中，无消费调用，不制造 consumer |
 | 13 | file | `test/unit/engine-material.test.ts` | (deleted file) | b test/integration/public-cli-engine-axis.test.ts:375；变异：isEngineNameSyntax 去掉 name === '.'；报红「public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects」。 |
 | 14 | file | `test/unit/judge-recording-anti-forge.test.ts` | (deleted file) | a/S；依据 sweep:32；无生产调用的 on-demand helper，不声称证明录音真伪 |
@@ -228,21 +228,21 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 171 | case | `test/contract/submission-ledger.test.ts:435` | every packaged role records original payload through the production ledger host (#836) | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
 | 172 | case | `test/contract/submission-ledger.test.ts:559` | legacy records with priorEventId are readable and new records omit priorEventId | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 priorEventId 无生产者，哨兵不恢复 |
 | 173 | assert | `test/contract/ticket-trajectory.test.ts:392` | assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30); | a/M；依据 sweep:70；refresh 阈值常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
-| 174 | assert | `test/helpers/failure-settlement-kit.ts:93` | assert.equal(input.result.exitCode, 1); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 175 | assert | `test/helpers/failure-settlement-kit.ts:95` | assert.equal(input.stderr.length, 1, "exactly one stderr diagnostic emission"); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 176 | assert | `test/helpers/failure-settlement-kit.ts:96` | assert.ok((input.stderr[0] ?? "").length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁。同义非空已并入 kit:96 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 177 | assert | `test/helpers/failure-settlement-kit.ts:105` | assert.equal(typeof terminal.roleOutcome.diagnostic, "string"); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 178 | assert | `test/helpers/failure-settlement-kit.ts:106` | assert.ok(terminal.roleOutcome.diagnostic.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 179 | assert | `test/helpers/failure-settlement-kit.ts:116` | assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 180 | assert | `test/helpers/failure-settlement-kit.ts:117` | assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 181 | assert | `test/helpers/failure-settlement-kit.ts:118` | assert.ok(terminal.navigator); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 182 | assert | `test/helpers/failure-settlement-kit.ts:119` | assert.equal(typeof terminal.runId, "string"); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 183 | assert | `test/helpers/failure-settlement-kit.ts:120` | assert.ok(terminal.runId !== undefined && terminal.runId.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 184 | assert | `test/helpers/failure-settlement-kit.ts:121` | assert.ok(Array.isArray(terminal.artifacts)); | a/M；依据 sweep:237；helper 内部布局（navigator/runId/artifacts 形状）。交付与 failure kind 仍由同 helper 断言 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 185 | assert | `test/helpers/failure-settlement-kit.ts:122` | assert.ok(terminal.artifacts.length >= 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
+| 174 | assert | `test/helpers/failure-settlement-kit.ts:93` | assert.equal(input.result.exitCode, 1); | b test/helpers/failure-settlement-kit.ts:89；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，检查真实 exitCode=1，不是 helper 布局。变异 exit（本账末）：exitCodeForTerminalOutcome 恒返 0；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 175 | assert | `test/helpers/failure-settlement-kit.ts:95` | assert.equal(input.stderr.length, 1, "exactly one stderr diagnostic emission"); | a/C；仅删 stderr 分块恰为 1 的锁，不删失败交付。R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement → test/helpers/failure-settlement-kit.ts:96 守整段 stderr 非空。变异 stderr（本账末）：presentFailureTerminal 的 failure 分支不写 stderr；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 176 | assert | `test/helpers/failure-settlement-kit.ts:96` | assert.ok((input.stderr[0] ?? "").length > 0); | b test/helpers/failure-settlement-kit.ts:96；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，首块非空已改为整段交付非空，并非计数。变异 stderr（本账末）：failure 分支不写 stderr；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 177 | assert | `test/helpers/failure-settlement-kit.ts:105` | assert.equal(typeof terminal.roleOutcome.diagnostic, "string"); | b test/helpers/failure-settlement-kit.ts:102；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，诊断与真实输入值等同；另有同文件 :436 类型断言。变异 diagnostic-type（本账末）：返回 diagnostic=undefined；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 178 | assert | `test/helpers/failure-settlement-kit.ts:106` | assert.ok(terminal.roleOutcome.diagnostic.length > 0); | b test/helpers/failure-settlement-kit.ts:102；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，非空诊断输入原样返回；另有同文件 :437 非空断言。变异 diagnostic-empty（本账末）：返回 diagnostic=""；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 179 | assert | `test/helpers/failure-settlement-kit.ts:116` | assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false); | b test/helpers/failure-settlement-kit.ts:89；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 failure 非 lawful 的结论由 exitCode=1 接住。变异 lawful（本账末）：isLawfulTypedTerminalOutcome 把 failure 当 lawful；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 180 | assert | `test/helpers/failure-settlement-kit.ts:117` | assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1); | b test/helpers/failure-settlement-kit.ts:89；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，公共返回值检查同一失败退出码。变异 exit（本账末）：exitCodeForTerminalOutcome 恒返 0；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 181 | assert | `test/helpers/failure-settlement-kit.ts:118` | assert.ok(terminal.navigator); | b test/integration/public-cli-failure-settlement.test.ts:446；R13-A 有：该文件 timeout 案经 runAkRole → :426 assertPublicFailureSettlement → :446 断言真实 navigator.disposition。变异 navigator-value（本账末）：settleFailureTerminalResult 返回 no-advice；报红「timeout controlled failure settles with typed timeout cause and Error Artifact」。 |
+| 182 | assert | `test/helpers/failure-settlement-kit.ts:119` | assert.equal(typeof terminal.runId, "string"); | c/null；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，原断言检查可达失败 Terminal.runId 的字符串类型。已核的顶层 runId 断言为 accepted/no_receipt，reviewer 的子腿 runId 也不承接此失败顶层输出。变异 runId-type（本账末）：仅失败返回 runId=undefined，该失败家族 9/9 仍绿；没有已证守护。本轮依 R14-B 只改账，不把缺口称作 helper 布局。 |
+| 183 | assert | `test/helpers/failure-settlement-kit.ts:120` | assert.ok(terminal.runId !== undefined && terminal.runId.length > 0); | c/null；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，原断言检查可达失败 Terminal.runId 非空，不是 stderr 分块计数。变异 runId-empty（本账末）：仅失败返回 runId=""，该失败家族 9/9 仍绿；accepted/no_receipt 的非空检查不承接此分支。本轮依 R14-B 只改账。 |
+| 184 | assert | `test/helpers/failure-settlement-kit.ts:121` | assert.ok(Array.isArray(terminal.artifacts)); | b test/helpers/failure-settlement-kit.ts:95、:113；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 artifacts 用于交付、查找并打开错误原卷，不是 helper 布局。变异 artifacts-shape（本账末）：仅失败返回 artifacts={}，交付受损由 :95 报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 185 | assert | `test/helpers/failure-settlement-kit.ts:122` | assert.ok(terminal.artifacts.length >= 1); | b test/helpers/failure-settlement-kit.ts:114；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 artifacts 须带可打开的 error ref，不是分块计数。变异 artifacts-empty（本账末）：仅失败返回 artifacts=[]；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 186 | assert | `test/helpers/failure-settlement-kit.ts:143` | assert.equal("judgeStatus" in errorBody, false); | a/S；依据 sweep:306；judgeStatus 无生产者 |
-| 187 | assert | `test/helpers/failure-settlement-kit.ts:145` | assert.notEqual(errorBody.cause, "unrecognized"); | a/D；依据 test/helpers/failure-settlement-kit.ts:100；cause 等值由同 helper expectedCause 断言接住，不恢复 notEqual 哨兵 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 188 | assert | `test/helpers/failure-settlement-kit.ts:146` | assert.notEqual(terminal.roleOutcome.cause, "unrecognized"); | a/D；依据 test/helpers/failure-settlement-kit.ts:100；cause 等值由同 helper expectedCause 断言接住，不恢复 notEqual 哨兵 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
+| 187 | assert | `test/helpers/failure-settlement-kit.ts:145` | assert.notEqual(errorBody.cause, "unrecognized"); | a/D；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement → test/helpers/failure-settlement-kit.ts:122，原卷 cause 与 expectedCause 等值已排除伪造分类；不是没有生产入口。变异 artifact-cause（本账末）：publishFailureTerminal 写 cause=unrecognized；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
+| 188 | assert | `test/helpers/failure-settlement-kit.ts:146` | assert.notEqual(terminal.roleOutcome.cause, "unrecognized"); | a/D；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement → test/helpers/failure-settlement-kit.ts:100，返回 cause 与 expectedCause 等值已排除伪造分类；不是没有生产入口。变异 outcome-cause（本账末）：失败 roleOutcome.cause=unrecognized；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 189 | assert | `test/helpers/run-dossier-fixture.ts:190` | assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`); | a/S；依据 sweep:306；退役 dossier 文件名哨兵 |
 | 190 | assert | `test/helpers/run-dossier-fixture.ts:196` | assert.equal( /-\d+(\.jsonl/\.failed)?$/\.copying(\./$)/\.previous(\./$)/-(headless/acp)-session\.json$/^host-session$/^submission-ledger$/^attempt-history$/^auditor-roles$/.test(e | a/S；依据 sweep:306；退役 dossier 文件名哨兵 |
 | 191 | assert | `test/integration/analyst-c4-ticket-scope.test.ts:74` | assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false); | a/D；依据 sweep:78；精确集合 deepEqual 之后的 includes===false，同一结论重复 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
@@ -364,10 +364,10 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 307 | case | `test/integration/gate-officer-resume-accounting.test.ts:209` | #879/#1208 notary each turn receives fixed dispatch — not history array or parent body | a/D；依据 sweep:92；盲审与投影由同文件 :291 与 #821 案接住。第二轮变异见 sweep:197 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
 | 308 | case | `test/integration/gate-officer-resume-accounting.test.ts:413` | #1092/#1208 station-child notary: no case-dossier pointer material; dialogue = fixed dispatch | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 case-dossier 无生产者，哨兵不恢复 |
 | 309 | assert | `test/integration/host-session-acp-grok-usage-compact.test.ts:150` | assert.equal("ordinal" in (copyRec.payload as object), false); | a/S；依据 sweep:306；landing payload 不再产出 ordinal |
-| 310 | assert | `test/integration/host-session-acp-write-fail.test.ts:93` | assert.equal(stderrChunks.length, 2); | 改好 test/integration/host-session-acp-write-fail.test.ts:102；R13-A 有：行为=ACP 指针写成功之后 warning 写失败必须申报。变异：sitianReportSafe 在 payload.type 为 native-session-warning 时直接 return；报红「ACP host-session write failure writes to stderr without aborting the turn (ADR 0086)」。 |
+| 310 | assert | `test/integration/host-session-acp-write-fail.test.ts:93` | assert.equal(stderrChunks.length, 2); | 改好 test/integration/host-session-acp-write-fail.test.ts:94–107；R13-A 有：executeTurn → session/prompt 分隔 pointer 与出口。pointer、warning、copy 写失败输入均保留，分别引本账末 P/W/C 变异；三变均报红该 ACP 现案，恢复绿，不恢复块数锁。 |
 | 311 | assert | `test/integration/host-session-live-records.test.ts:160` | assert.equal("ordinal" in (copyRec.payload as object), false); | a/S；依据 sweep:306；landing payload 不再产出 ordinal |
-| 312 | assert | `test/integration/host-session-live-records.test.ts:229` | assert.equal(stderrChunks.length, 3); | 改好 test/integration/host-session-live-records.test.ts:239；R13-A 有：行为=headless 指针写成功之后 warning 写失败必须申报。变异：sitianReportSafe 在 payload.type 为 native-session-warning 时直接 return；报红「headless sitian write failure writes to stderr without aborting the turn (ADR 0086)」。 |
-| 313 | assert | `test/integration/host-session-live-records.test.ts:241` | assert.equal(stderrChunks.length, 6); | 改好 test/integration/host-session-live-records.test.ts:239；R13-A 有：行为=headless 指针写成功之后 warning 写失败必须申报。变异：sitianReportSafe 在 payload.type 为 native-session-warning 时直接 return；报红「headless sitian write failure writes to stderr without aborting the turn (ADR 0086)」。 |
+| 312 | assert | `test/integration/host-session-live-records.test.ts:229` | assert.equal(stderrChunks.length, 3); | 改好 test/integration/host-session-live-records.test.ts:230–231；R13-A 有：首次 executeTurn，log 阻断且原件缺失；ingestStructuredOutput 分隔 pointer 与 warning。分别引本账末 P/W 变异，两变均报红该 headless 现案，恢复绿，不恢复块数锁。 |
+| 313 | assert | `test/integration/host-session-live-records.test.ts:241` | assert.equal(stderrChunks.length, 6); | 改好 test/integration/host-session-live-records.test.ts:240–245；R13-A 有：第二次 executeTurn，log 继续阻断且原件已创建；ingestStructuredOutput 分隔 pointer 与 copy，仍检查落地原字节。分别引本账末 P/C 变异，两变均报红该 headless 现案，恢复绿，不恢复块数锁。 |
 | 314 | assert | `test/integration/merger-role.test.ts:56` | assert.equal(result.terminate, true); assert.deepEqual(result.details, args); | b test/contract/judge-role.test.ts:503；变异：status 为 escalate 且含 attemptId 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 842 | assert | `test/integration/merger-role.test.ts:56` | assert.deepEqual(result.details, args) | a/D；R13-A 有：行为=回执 details 等于提交的 parameters。变异：registerFiledSubmissionTool 的 details 恒为 {}；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 315 | assert | `test/integration/merger-role.test.ts:60` | assert.equal(again.terminate, true); assert.deepEqual(again.details, args); | 改好 test/contract/judge-role.test.ts:555；变异：toolCallId 为 merger-again 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
@@ -740,23 +740,23 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 681 | assert | `test/package/npm-identity-metadata.test.ts:226` | assert.equal( extracted.paths.includes("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed", ); | a/M；依据 sweep:159；source/Soul/module/packet 手工清单。安装者契约留在许可证/peer/bin --help，不恢复清单 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 682 | assert | `test/package/npm-identity-metadata.test.ts:234` | assert.equal(extracted.packageJson.bin?.["ak-role"], "dist/public-cli/main.js"); | a/M；依据 sweep:159；manifest bin 字符串自比。行为是同文件真实 --help，不恢复清单等值 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 683 | case | `test/package/npm-identity-metadata.test.ts:154` | packed artifact ships the release inventory without bundled method Skills | a/M；依据 sweep:159；source/Soul/module/packet 手工清单。安装者契约留在许可证/peer/bin --help，不恢复清单 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
-| 684 | assert | `test/primary-aware-cleanup.test.ts:8` | await assert.rejects( () => withPrimaryAwareCleanup( async () => "ok", async () => { throw cleanup; }, ), (error: unknown) => error === cleanup, ); | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 685 | assert | `test/primary-aware-cleanup.test.ts:23` | await assert.rejects( () => withPrimaryAwareCleanup( async () => { throw primary; }, async () => { throw cleanup; }, ), (error: unknown) => { assert.ok(error instanceof AggregateEr | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 844 | assert | `test/primary-aware-cleanup.test.ts:34` | assert.ok(error instanceof AggregateError) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 845 | assert | `test/primary-aware-cleanup.test.ts:35` | assert.equal(error.errors[0], primary) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 846 | assert | `test/primary-aware-cleanup.test.ts:36` | assert.equal(error.errors[1], cleanup) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 847 | assert | `test/primary-aware-cleanup.test.ts:37` | assert.equal(error.cause, primary) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 686 | assert | `test/primary-aware-cleanup.test.ts:54` | assert.equal(value, 42); | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 687 | assert | `test/primary-aware-cleanup.test.ts:55` | assert.deepEqual(steps, ["body", "cleanup"]); | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 688 | assert | `test/primary-aware-cleanup.test.ts:60` | await assert.rejects( () => withPrimaryAwareCleanup( async () => { throw primary; }, async () => {}, ), (error: unknown) => error === primary, ); | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 689 | assert | `test/primary-aware-cleanup.test.ts:75` | await assert.rejects( () => withPrimaryAwareCleanup( async () => "ok", async () => { throw first; }, async () => { throw second; }, ), (error: unknown) => { assert.ok(error instanc | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 848 | assert | `test/primary-aware-cleanup.test.ts:87` | assert.ok(error instanceof AggregateError) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 849 | assert | `test/primary-aware-cleanup.test.ts:88` | assert.deepEqual(error.errors, [first, second]) | a/M；R13-A 没有：夹具 withPrimaryAwareCleanup 不在测试 glob、没有生产入口，内层断言不检查在役分支的输出或失败行为。 |
-| 690 | case | `test/primary-aware-cleanup.test.ts:6` | cleanup failure alone fails the test | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 691 | case | `test/primary-aware-cleanup.test.ts:20` | primary failure wins while cleanup failure remains aggregated | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 692 | case | `test/primary-aware-cleanup.test.ts:43` | successful body returns value when cleanup succeeds | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 693 | case | `test/primary-aware-cleanup.test.ts:58` | primary failure propagates when cleanup succeeds | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
-| 694 | case | `test/primary-aware-cleanup.test.ts:72` | multiple cleanup failures aggregate when body succeeds | a/M；依据 sweep:161；大理寺 01a163ff receipts/2.json R6-B；只测测试夹具，无生产入口，且不在测试 glob 内，从未执行 R13-A 没有：夹具或不在测试 glob 的助手，没有生产入口，不检查在役分支的输出或失败行为。 |
+| 684 | assert | `test/primary-aware-cleanup.test.ts:8` | await assert.rejects( () => withPrimaryAwareCleanup( async () => "ok", async () => { throw cleanup; }, ), (error: unknown) => error === cleanup, ); | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 685 | assert | `test/primary-aware-cleanup.test.ts:23` | await assert.rejects( () => withPrimaryAwareCleanup( async () => { throw primary; }, async () => { throw cleanup; }, ), (error: unknown) => { assert.ok(error instanceof AggregateEr | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 844 | assert | `test/primary-aware-cleanup.test.ts:34` | assert.ok(error instanceof AggregateError) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 845 | assert | `test/primary-aware-cleanup.test.ts:35` | assert.equal(error.errors[0], primary) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 846 | assert | `test/primary-aware-cleanup.test.ts:36` | assert.equal(error.errors[1], cleanup) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 847 | assert | `test/primary-aware-cleanup.test.ts:37` | assert.equal(error.cause, primary) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 686 | assert | `test/primary-aware-cleanup.test.ts:54` | assert.equal(value, 42); | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 687 | assert | `test/primary-aware-cleanup.test.ts:55` | assert.deepEqual(steps, ["body", "cleanup"]); | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 688 | assert | `test/primary-aware-cleanup.test.ts:60` | await assert.rejects( () => withPrimaryAwareCleanup( async () => { throw primary; }, async () => {}, ), (error: unknown) => error === primary, ); | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 689 | assert | `test/primary-aware-cleanup.test.ts:75` | await assert.rejects( () => withPrimaryAwareCleanup( async () => "ok", async () => { throw first; }, async () => { throw second; }, ), (error: unknown) => { assert.ok(error instanc | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 848 | assert | `test/primary-aware-cleanup.test.ts:87` | assert.ok(error instanceof AggregateError) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 849 | assert | `test/primary-aware-cleanup.test.ts:88` | assert.deepEqual(error.errors, [first, second]) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 690 | case | `test/primary-aware-cleanup.test.ts:6` | cleanup failure alone fails the test | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 691 | case | `test/primary-aware-cleanup.test.ts:20` | primary failure wins while cleanup failure remains aggregated | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 692 | case | `test/primary-aware-cleanup.test.ts:43` | successful body returns value when cleanup succeeds | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 693 | case | `test/primary-aware-cleanup.test.ts:58` | primary failure propagates when cleanup succeeds | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
+| 694 | case | `test/primary-aware-cleanup.test.ts:72` | multiple cleanup failures aggregate when body succeeds | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
 | 695 | assert | `test/unit/activation-envelope-module.test.ts:28` | assert.equal(isAbsolute(ledgerHome), true); | a/D；依据 sweep:25；绝对路径 === resolve(home, .ak-roles) 与 package-home-seam.test.ts:19 同结论 R13-A 没有：纯路径运算的绝对路径等值，不检查在役分支的失败行为。 |
 | 696 | assert | `test/unit/activation-envelope-module.test.ts:29` | assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles")); | a/D；依据 sweep:25；绝对路径 === resolve(home, .ak-roles) 与 package-home-seam.test.ts:19 同结论 R13-A 没有：纯路径运算的绝对路径等值，不检查在役分支的失败行为。 |
 | 697 | case | `test/unit/activation-envelope-module.test.ts:14` | resolved ledger home rejects relative process home (pure path math) | a/D；依据 sweep:25；绝对路径 === resolve(home, .ak-roles) 与 package-home-seam.test.ts:19 同结论 R13-A 没有：纯路径运算的绝对路径等值，不检查在役分支的失败行为。 |
@@ -896,3 +896,60 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 831 | case | `test/unit/public-cli-ticket-argv.test.ts:15` | parsePositiveTicketNumber rejects non-positive and leading junk | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 parsePositiveTicketNumber 无生产者，哨兵不恢复 |
 | 832 | case | `test/unit/public-cli-ticket-argv.test.ts:33` | parseNotaryArgv keeps required --source-run | a/D；依据 sweep:40；公开 notary source-run 由 audited-run-identity-1166.test.ts:372 与 public-cli-notary.test.ts:266 接住 R13-A 没有：只锁解析出的 sourceRun / query / ticket 常量；公开 source-run 由 public-cli-notary.test.ts:266 守住，本条不另检查失败行为。 |
 | 833 | case | `test/unit/public-cli-ticket-argv.test.ts:42` | parseAnalystArgv still binds --ticket (query scope, not seat binding) | a/D；依据 sweep:40；analyst --ticket 由 analyst-public-cli.test.ts:116 接住 R13-A 没有：只锁解析出的 sourceRun / query / ticket 常量；公开 source-run 由 public-cli-notary.test.ts:266 守住，本条不另检查失败行为。 |
+
+## R14-A/B 本轮取证（第十五轮新腿）
+
+依据：大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/11.json`，符宝郎 `01a16409…@notary/receipts/10.json`、审刑院 `01a16411…@auditor/receipts/9.json` 署。起点 `c6d68773`。以下变异仅在 `git archive` 隔离副本逐一安装、逐一恢复；共享生产树未改。没有新测试文件、测试函数、生产钩子或计数／文案断言。
+
+### 三阶段申报
+
+执行命令（每个变异单独运行；恢复原文件后再运行一次）：
+
+```sh
+node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts
+```
+
+变异位置统一为 `src/host-session-record.ts` 的 `sitianReportSafe` catch，在 `declareHostSessionFailure(error)` 之前插入下列一行；TYPE 每次只取一个值，不改 sitian 写入或其他阶段：
+
+```ts
+if ((input.payload as { type?: string } | undefined)?.type === "native-session-TYPE") return;
+```
+
+| 证据 | TYPE | c6d68773 修前实跑 | 本轮修后实跑 | 报红现有测试 |
+| --- | --- | --- | --- | --- |
+| P | pointer | exit 0，3 pass / 0 fail（失守） | exit 1，1 pass / 2 fail | ACP host-session write failure writes to stderr without aborting the turn (ADR 0086)；headless sitian write failure writes to stderr without aborting the turn (ADR 0086) |
+| C | copy | exit 0，3 pass / 0 fail（失守） | exit 1，1 pass / 2 fail | 同上两案，均在 copy 申报观察报红 |
+| W | warning | exit 1，1 pass / 2 fail | exit 1，1 pass / 2 fail | 同上两案，均在 warning 申报观察报红 |
+| 恢复 | 不插入 | — | exit 0，3 pass / 0 fail | 无 |
+
+`7997ffb2` 对照：ACP 从入口起 log.jsonl 就是目录，原件不存在，原断言是 pointer + warning 合并计数；headless 首轮同样阻断，随后创建原件且继续阻断，原断言是 pointer + copy 合并计数。本轮保持这些输入，headless 后续覆盖原件和缺源保留好副本也未撤。仅将申报观察在真实 `session/prompt` / `ingestStructuredOutput` 回调处分段，外部断言仍在 executeTurn 返回后；ACP 同一夹具再创建 grok 两个原件，补足 copy 阶段并读回落地原字节。成功 pointer 的现成守护仍在 headless 同文件首案及 host-session-acp-grok-usage-compact，不靠本轮恢复计数。
+
+### 助手调用链重判
+
+复查命令：`rg -n '夹具或不在测试 glob|withPrimaryAwareCleanup|无生产入口|没有生产入口' docs/research/issue-1237-deletion-ledger.md`。原 26 条通用豁免 + 6 条内层豁免全部沿调用方开卷：14 条来自 `failure-settlement-kit` 的公开结果检查，18 条（含文件、整案、内外断言）来自已删根目录测试。另一个命中 #6 的 package-entrypoint-fixtures 已退役且 src/test/scripts 零引用，不是公开结果豁免。各行均已写实际入口；不再以助手所在目录或是否独立被 runner 发现来推定有无生产行为。
+
+下列变异逐一改隔离副本，统一命令：
+
+```sh
+node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/public-cli-failure-settlement.test.ts
+```
+
+J＝现有 `JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded`；T＝现有 `timeout controlled failure settles with typed timeout cause and Error Artifact`。下表是实跑摘抄，不是新增机械测试。settlement.ts 的返回字段变异只改 `settleFailureTerminalResult`，不改 accepted/no_receipt。
+
+| 变异 | 隔离替换 | 实跑结果及真实观察 |
+| --- | --- | --- |
+| exit | terminal.ts 的 `return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1` → `return 0` | exit 1，4 pass / 5 fail；J 在 kit:89（0 ≠ 1）红 |
+| lawful | terminal.ts 的 isLawfulTypedTerminalOutcome 另认 `outcome.kind === "failure"` | exit 1，3 pass / 6 fail；J 在 kit:89 红 |
+| stderr | settlement.ts 的 presentFailureTerminal failure 分支在写 stderr 前 return | exit 1，4 pass / 5 fail；J 在 kit:96（交付缺失）红 |
+| diagnostic-type | 失败 roleOutcome.diagnostic → `undefined as unknown as string` | exit 1，4 pass / 5 fail；J 在 kit:102（不等于输入诊断）红 |
+| diagnostic-empty | 失败 roleOutcome.diagnostic → `""` | exit 1，4 pass / 5 fail；J 在 kit:102 红 |
+| navigator-value | 失败返回 navigator → `{ disposition: "no-advice" as const }` | exit 1，8 pass / 1 fail；T 在 settlement.test.ts:446 红 |
+| artifacts-shape | 失败返回 artifacts → `{} as never` | exit 1，4 pass / 5 fail；真实交付无法消费，J 在 kit:95 红（不是声称走到 Array.isArray） |
+| artifacts-empty | 失败返回 artifacts → `[]` | exit 1，4 pass / 5 fail；J 在 kit:114（缺 error ref）红 |
+| artifact-cause | publishFailureTerminal 的 error 原卷写入覆盖 `cause: "unrecognized"` | exit 1，4 pass / 5 fail；J 在 kit:122 红 |
+| outcome-cause | 失败 roleOutcome 覆盖 `cause: "unrecognized" as never` | exit 1，4 pass / 5 fail；J 在 kit:100 红 |
+| runId-type | 仅失败返回 runId → `undefined as never` | exit 0，9 pass / 0 fail；#182 如实记 c/null |
+| runId-empty | 仅失败返回 runId → `""` | exit 0，9 pass / 0 fail；#183 如实记 c/null |
+| 恢复 | 恢复两个生产文件 | exit 0，9 pass / 0 fail |
+
+runId 缺口不是伪造内部输入：可由 runAkRole 的真实失败输出产生。全仓搜索 `terminal.*runId` 并打开 main-flow、1132、escalation-resume、engine-detour、failure-real-entry、failure-settlement、resume 等命中，已核的顶层 runId 断言落在 accepted/no_receipt；reviewer 的失败案检查 reviewerChildren 子腿 runId，不是失败 Terminal.runId。未找到已证守护，不冒称全套测试都已跑过。R14-B 只准改账，故没有为这两条改测试。
