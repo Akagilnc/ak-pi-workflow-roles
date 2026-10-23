@@ -1,4 +1,4 @@
-# #1237 删除与改弱逐条账（R18-A，起点 a835809e）
+# #1237 删除与改弱逐条账（R18-B，起点 959d69a2）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 1067 行 = 整文件 18 + 整案 115 + 断言 934。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068；承接位置指第十八轮修后文件，删除位置仍是 `7997ffb2`。
+本表 1071 行 = 整文件 18 + 整案 115 + 断言 938。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068，承接位置锚定 `959d69a2`；R18-B 新增 #1069–#1072，承接位置指本轮修后文件。#1067 曾引用的中间 ok 已由 #1069 的精确 code/cause 接替，拒收能力不变。删除位置仍是 `7997ffb2`。
 
 ## 处置口径
 
@@ -30,7 +30,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：527
+- a/D：531
 - a/M：198
 - a/S：134
 - b：61
@@ -147,6 +147,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 841 | assert | `test/contract/doctor-role.test.ts:39` | assert.equal(prompt.systemPrompt.includes(soul), true) | a/T；R13-A 有：行为=激活提示包含 doctor soul。变异：doctor_soul 段不插入 activation.soul；报红「Doctor activation delivers its Soul and exposes only evidence and output tools」，expected true actual false。 |
 | 84 | case | `test/contract/doctor-role.test.ts:39` | Doctor activation exposes only paged session evidence and output tools | a/T；依据 sweep:52；诊断句式锁。工具能力面在 test/contract/doctor-role.test.ts:58，不恢复句子 R13-A 没有：只锁句子或措辞，不检查在役分支的输出值或失败行为。 |
 | 1067 | assert | `test/contract/durable-session-write-failure.test.ts:95` | assert.equal("failure" in closed, true, "typed infrastructure failure required") | a/D；R18-A，承接 test/contract/durable-session-write-failure.test.ts:95–96；同一谓词条件取 failure，假分支 undefined 被 assert.ok(failure !== undefined) 拒收；无 await 或状态变化。 |
+| 1069 | assert | `test/contract/durable-session-write-failure.test.ts:97` | assert.ok(failure !== undefined) | a/D；R18-B，承接 test/contract/durable-session-write-failure.test.ts:96、97；可选链 code 精确 durable-session-write-failed、cause 精确 output 各自拒收缺失 failure，原条件绑定不变。 |
 | 1038 | assert | `test/contract/gatekeeper-pass-envelope.test.ts:115` | needs_reask status | a/D；R17-A，承接 test/contract/gatekeeper-pass-envelope.test.ts:104；三元分支取 receivedStatus 精确 other，非 needs_reask 返回 undefined 必败。 |
 | 85 | assert | `test/contract/gatekeeper-pass-envelope.test.ts:158` | assert.equal(booked.length, 0, "parent history must not book officer-pointer rows"); | a/S；依据 sweep:55；退役 officer-pointer 零行哨兵 |
 | 86 | assert | `test/contract/gatekeeper-projection.test.ts:15` | assert.deepEqual(projectLawfulGatekeeperOutput(input), input); | a/退役；依据 sweep:56；孤立投影函数已删。公开收卷在 public-cli-seat-pipeline.test.ts:35，原 params 落账在 submission-ledger.test.ts:174 |
@@ -230,6 +231,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 163 | assert | `test/contract/sitian-facade-contracts.test.ts:45` | assert.ok(runSummaryPtr.recordFile.includes("settlement-summary")); | a/M；依据 sweep:68；路径子串内布局锁。append/read 门面的写出读回仍留 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 859 | assert | `test/contract/submission-ledger.test.ts:167` | accepted 不等于 details | a/D；R15-B，同文件:166 精确 params。 |
 | 164 | assert | `test/contract/submission-ledger.test.ts:283` | assert.ok(!kinds.includes("outcome") // (await ledgerRecords(f.root)).every((r) => r.kind !== "outcome" // (r.payload as { code?: string }).code !== "non-sole-round")); | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：只锁对象存在、字段是否在或路径形状，不检查在役分支的输出值或失败行为。 |
+| 1070 | assert | `test/contract/submission-ledger.test.ts:383` | assert.ok(projected, label) | a/D；R18-B，承接 test/contract/submission-ledger.test.ts:381；projected?.accepted 与该次非空 params 对象 deepEqual，缺失时 undefined 必败。 |
 | 165 | assert | `test/contract/submission-ledger.test.ts:466` | assert.deepEqual(accepted.details, row.details, row.role); | a/D；R13-A 有：行为=回执 details 等于提交的 parameters。变异：registerFiledSubmissionTool 的 details 恒为 {}；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 166 | assert | `test/contract/submission-ledger.test.ts:467` | assert.equal(accepted.terminate, true, row.role); | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
 | 167 | assert | `test/contract/submission-ledger.test.ts:472` | assert.deepEqual( rows, [{ role: row.role, kind: "accepted", accepted: row.details, toolCallId: `${row.role}-output` }], row.role, ); | a/D；R13-A 有：行为=回执 details 等于提交的 parameters。变异：registerFiledSubmissionTool 的 details 恒为 {}；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
@@ -665,6 +667,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 463 | assert | `test/integration/public-cli-diarist-run.test.ts:1003` | assert.equal(existsSync(join(paths.volumeDir, "起居录.md")), false); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
 | 464 | assert | `test/integration/public-cli-diarist-run.test.ts:1188` | assert.equal(volume.lines.every((line) => !("line" in line)), true); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
 | 465 | assert | `test/integration/public-cli-diarist-run.test.ts:1447` | assert.deepEqual( await findPlacedMigratingRun( booksDirectory, "demo-book", boundLeaf, `unbound/runs/${boundLeaf}`, ), { runDirectory: boundTarget, disposition: "placed" }, "downs | a/D；依据 sweep:114；同案 relocate 结果仍在 test/integration/public-cli-diarist-run.test.ts:1424。案内注释已撤平行 helper 探针，不把 helper 返回对象另写成承接 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
+| 1071 | assert | `test/integration/public-cli-diarist-run.test.ts:1844` | assert.ok(diary, "true-unbound diary rows land in history.jsonl") | a/D；R18-B，承接 test/integration/public-cli-diarist-run.test.ts:1830；diary?.payload?.lines?.[0]?.speaker 精确 owner 拒收缺失 diary，不由允许 undefined 的 sessionParent 承接。 |
 | 466 | assert | `test/integration/public-cli-diarist-run.test.ts:1856` | assert.equal(existsSync(join(sample.volumeDir, "起居录.md")), false); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
 | 1048 | assert | `test/integration/public-cli-doctor.test.ts:462` | refused accepted kind | a/D；R17-A，承接 test/integration/public-cli-doctor.test.ts:462；同次 accepted 分支状态数组精确 refused，空数组必败。 |
 | 467 | assert | `test/integration/public-cli-engine-axis.test.ts:98` | assert.equal(reloaded.seats.judge?.engine, "opus"); | a/D；依据 sweep:116；重复 resolver/roundtrip/unset。逐席 dispatch 在 test/integration/public-cli-engine-axis.test.ts:801，opaque round-trip 在 :1128，语法拒收在 :82（R9-A） R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
@@ -701,6 +704,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 487 | assert | `test/integration/public-cli-failure-artifacts.test.ts:453` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 488 | assert | `test/integration/public-cli-failure-artifacts.test.ts:454` | assert.ok(stderr.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 489 | assert | `test/integration/public-cli-failure-artifacts.test.ts:643` | assert.equal(stdout.length, 1, "exactly one Terminal emission"); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 1072 | assert | `test/integration/public-cli-failure-artifacts.test.ts:824` | assert.ok(history, "attempt history custom entry must remain") | a/D；R18-B，承接 test/integration/public-cli-failure-artifacts.test.ts:799–801；同一 history 的可选链 sequence=1、role=judge、runId=该次 runId 各自拒收缺失对象，不跨调用或阶段。 |
 | 992 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:72` | terminal kind | a/D；R15-B，同文件:68 调用 failure-settlement-kit.ts:93。 |
 | 993 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:194` | terminal kind | a/D；R15-B，同文件:185 调用 failure-settlement-kit.ts:93。 |
 | 994 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:308` | terminal kind | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:93。 |

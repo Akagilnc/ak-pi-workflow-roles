@@ -93,7 +93,6 @@ function assertDurableFlushFailure(closed: {
   assert.equal(closed.accepted, false, "flush failure must not report accepted");
   assert.equal("retry" in closed && closed.retry !== undefined, false, "infrastructure outranks correctable retry");
   const failure = "failure" in closed ? closed.failure : undefined;
-  assert.ok(failure !== undefined);
   assert.equal(failure?.identity?.code, "durable-session-write-failed");
   assert.equal(failure?.cause, "output");
   assert.ok(failure?.diagnostic, "infrastructure failure carries a diagnostic");

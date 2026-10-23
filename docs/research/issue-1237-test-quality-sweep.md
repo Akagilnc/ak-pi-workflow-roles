@@ -2,7 +2,7 @@
 
 基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）；第七版依大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/2.json` 的 R6-A/R6-B 续修（见文末「第七轮」）；第八版是对现存全部测试文件的整卷复扫（见文末「第八轮」），每行末尾的「第八轮整卷复扫」即本轮结论。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
-当前结算以文末「第十八轮（R18-A）」及逐条账 R18-A 为准；此前各轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
+当前结算以文末「R18-B 复审修理」及逐条账 R18-B 为准；此前各轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
 
 ## 方法与边界
 
@@ -595,3 +595,42 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - 修后 `npx tsc --noEmit` exit 0。原入口、输入、拒收断言及具体结构化值检查不变；这次纯删重，不改生产作变异，也不新增证明性测试。
 - 工作树账 COUNT/MATCH 1067 = 文件 18 + 案 115 + 断言 934；a/D 527，其余桶不变。提交后再用原命令 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
 - `git diff HEAD` 自审：测试仅删两行，新增生产函数/测试函数/helper 均无，diffItems=[]；无死变量，两个前置断言已退役。没改生产、runner、Soul、配置或治理文件；没跑全量、没派角色、没 amend/rewrite/push。
+
+## R18-B 复审修理
+
+起点 `959d69a2c5e2b0d544c454660af01b53d111f9ff`；依据调用方本轮原样递交的 R18-B 判词。开工实查 HEAD 与工作树：符合起点且干净。R18-A 两条删除不恢复；其拒收能力由更强的精确字段检查继续承接，不把中间 ok 当作豁免。
+
+错误形状：同次、同对象的存在性断言，被后面可选链字段的非 undefined 精确期望蕴含，中间无 await 或状态变化。根因是前轮检查止于中间存在性 guard，没有继续追问这个 guard 是否也已被更强 oracle 覆盖。
+
+### 扫类与复扫
+
+全 `test/` 153 个 TS/JS 源文件，用现成账本 `assert_calls` 加内联 Python 提取 ok/非空/notEqual 的存在性候选，向后比对同对象的 optional-chain equal/deepEqual；遇下一案或 await 截止，人工核对期望值、对象身份及类型用途。初扫 **7 对蕴含关系、4 条 guard**，修后同命令 `OPTIONAL ORACLE CANDIDATES 0`；另补多层 optional/non-null 链前缀归一，`NORMALIZED CHAIN CANDIDATES 0`。扫描不入仓、不自动改行。
+
+| 起点 guard | 起点强 oracle（逐对） | 处置与修后坐标 |
+| --- | --- | --- |
+| `test/contract/durable-session-write-failure.test.ts:96` | :97 code 精确值 | 已修；保留 :96。 |
+| `test/contract/durable-session-write-failure.test.ts:96` | :98 cause=output | 已修；保留 :97。 |
+| `test/contract/submission-ledger.test.ts:381` | :382 accepted deepEqual 本次非空 params | 已修；保留 :381。 |
+| `test/integration/public-cli-diarist-run.test.ts:1829` | :1831 speaker=owner | 已修；保留 :1830。:1830 原 sessionParent=undefined 不是承接。 |
+| `test/integration/public-cli-failure-artifacts.test.ts:799` | :800 sequence=1 | 已修；保留 :799。 |
+| `test/integration/public-cli-failure-artifacts.test.ts:799` | :801 role=judge | 已修；保留 :800。 |
+| `test/integration/public-cli-failure-artifacts.test.ts:799` | :802 runId=该次 runId | 已修；保留 :801。 |
+
+边界：`public-cli-coder.test.ts:95–96` 的 summaryProperty 用于直接属性访问，缩窄保留；不把可能抛 TypeError 当成精确 oracle。另搜 `assert.equal/strictEqual(... !== undefined/null, ...)` 的布尔写法：scopeRootIdentity 存在性后无精确字段检查，其余为不可混同的复合缺席检查。`analyst-c3-model-groups.test.ts:165–169` 的 aliasedPage 总和保留，该次调用没逐项锁定 mixed/luna 的 legCount；不能借 raw 调用承接。所有条件绑定、独立精确值、输入与阶段不变。
+
+### 本轮逐文件表与基线核对
+
+`git diff --name-status 959d69a2` 共六文件。删前逐条打开 `7997ffb2` 原始 assert，删后累计 diff 再核；新增 #1069–#1072，不重排旧号。
+
+| 文件 | 处置 |
+| --- | --- |
+| `test/contract/durable-session-write-failure.test.ts` | 基线 :97，删一行；条件绑定保留，code/cause 继续拒收 undefined。 |
+| `test/contract/submission-ledger.test.ts` | 基线 :383，删一行；非空 params 精确对象检查保留。 |
+| `test/integration/public-cli-diarist-run.test.ts` | 基线 :1844，删一行；speaker 精确值和独立 sessionParent 检查保留。 |
+| `test/integration/public-cli-failure-artifacts.test.ts` | 基线 :824，删一行；attempt-history 三个精确字段全部保留。 |
+| `docs/research/issue-1237-deletion-ledger.md` | 补四条及修后承接；R18-A 的历史 ok 坐标锚定 959d69a2，并注明后继强 oracle。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 本节记七对关系、四条删除、边界与实测，不改写旧轮结果。 |
+
+自验：修前四文件 39/39，2234.9205 ms；修后 `npx tsc --noEmit` exit 0；`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/contract/durable-session-write-failure.test.ts test/contract/submission-ledger.test.ts test/integration/public-cli-diarist-run.test.ts test/integration/public-cli-failure-artifacts.test.ts` 为 39/39、0 fail，2119.318666 ms。日志含既有故障注入 EISDIR、临时夹具未提交 HEAD 与 malformed progress 的诊断；均非本次断言失败，修前亦有。
+
+工作树计数 COUNT/MATCH 1071 = 18 文件 + 115 案 + 938 断言，a/D 531，其余桶不变；提交后用原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。自审测试 diff 仅四行删除，diffItems=[]；没有新增测试、helper、生产或扫描机制，没有死变量；原入口与强结果检查不变。未跑全量、未派角色、未 amend/rewrite/push。

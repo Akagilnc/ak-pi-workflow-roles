@@ -1826,7 +1826,6 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
       .split("\n")
       .map((row) => JSON.parse(row));
     const diary = historyRows.find((row) => row?.kind === "ticket-provenance");
-    assert.ok(diary, "true-unbound diary rows land in history.jsonl");
     assert.equal(diary?.sessionParent, undefined);
     assert.equal(diary?.payload?.lines?.[0]?.speaker, "owner");
 

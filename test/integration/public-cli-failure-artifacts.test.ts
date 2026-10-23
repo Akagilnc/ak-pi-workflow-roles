@@ -796,7 +796,6 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
     const history = historyEntries.find(
       (entry) => entry.customType === "ak_attempt_history",
     );
-    assert.ok(history, "attempt history custom entry must remain");
     assert.equal(history?.data?.sequence, 1);
     assert.equal(history?.data?.role, "judge");
     assert.equal(history?.data?.runId, runId);

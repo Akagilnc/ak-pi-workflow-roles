@@ -378,7 +378,6 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
     const projected = rows.find(
       (row) => row.kind === "correctable-rejection" && row.toolCallId === label,
     );
-    assert.ok(projected, label);
     assert.deepEqual(projected?.accepted, params, label);
   });
 });
