@@ -11,6 +11,7 @@
  * therefore the new run's initial, not a resume argv.
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { test } from "vitest";
@@ -20,7 +21,8 @@ import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { acquireRunWriterLease } from "../../src/public-cli/run-lifecycle.ts";
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
-import { listBookRunDirectories, parseRunLeaf } from "../../src/role-run-placement.ts";
+import { isUnboundRunDirectory, listBookRunDirectories, parseRunLeaf } from "../../src/role-run-placement.ts";
+import { updateSectionSync } from "../../src/run-dossier.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -467,6 +469,54 @@ test("#1253 a held writer lock does not mint", async () => {
       assert.equal((await readHostLog(logPath)).some((row) => row.kind === "initial"), false);
     } finally {
       await lease.release();
+    }
+
+    // Same exclusion after resume relocates an unbound run onto a later-bound source ticket.
+    const unboundSource = await seedCanonicalSourceRun(home, project, {
+      runId: "01a12530-0000-7000-8000-000000000253",
+    });
+    await configureSeat(home, "notary", "claude");
+    await writeFile(logPath, "");
+    await setControl(controlPath, [
+      { binary: "claude", receipt: { status: "converged" }, sessionId: "sess-unbound-lock" },
+    ], { sticky: true });
+    const bornIo = captureIo();
+    const bornUnbound = await runAkRole(
+      ["notary", "--source-run", unboundSource],
+      callEnv(home, project, bornIo),
+    );
+    assert.equal(bornUnbound.exitCode, 0, explain(bornIo, await readHostLog(logPath)));
+    const beforeSummon = await roleRuns(home, project, "notary");
+    const heldDirectory = beforeSummon.find((dir) => isUnboundRunDirectory(dir));
+    assert.equal(typeof heldDirectory, "string");
+    const heldRunId = runIdOf(heldDirectory!);
+    updateSectionSync(unboundSource, "admitted", (page) => ({ ...page, ticketNumber: TICKET }));
+    const movedLease = await acquireRunWriterLease(heldDirectory!);
+    try {
+      await writeFile(logPath, "");
+      await configureSeat(home, "notary", "codex");
+      await setControl(controlPath, [
+        { binary: "codex", receipt: { status: "converged" }, threadId: "thread-moved-lock" },
+      ]);
+      const blocked = captureIo();
+      const result = await runAkRole(
+        ["notary", "--source-run", unboundSource],
+        callEnv(home, project, blocked),
+      );
+      const log = await readHostLog(logPath);
+      const after = await roleRuns(home, project, "notary");
+      const live = after.find((dir) => runIdOf(dir) === heldRunId);
+      assert.notEqual(result.exitCode, 0, explain(blocked, log));
+      assert.equal(existsSync(heldDirectory!), false);
+      assert.equal(after.length, beforeSummon.length);
+      assert.equal(live === undefined, false);
+      assert.equal(isUnboundRunDirectory(live!), false);
+      assert.equal(durableErrorCode(live!), "session-id-missing");
+      assert.equal(log.some((row) => row.kind === "initial"), false);
+    } finally {
+      const live = (await roleRuns(home, project, "notary")).find((dir) => runIdOf(dir) === heldRunId);
+      if (live !== undefined) movedLease.relocate(live);
+      await movedLease.release();
     }
   });
 }, 120_000);
