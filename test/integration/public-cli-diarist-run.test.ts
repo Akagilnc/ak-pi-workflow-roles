@@ -1187,7 +1187,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       (record as { payload?: { type?: string } }).payload?.type === "ticket-provenance-append"
     ) as { payload: { lines: Array<{ raw?: string; text?: string }> } };
     const rawIndex = appended.payload.lines.findIndex((entry) => entry.raw === fixture.unparsableRaw);
-    assert.ok(rawIndex > 0 && rawIndex < appended.payload.lines.length - 1);
     assert.equal(typeof appended.payload.lines[rawIndex - 1]?.text, "string");
     assert.equal(typeof appended.payload.lines[rawIndex + 1]?.text, "string");
 

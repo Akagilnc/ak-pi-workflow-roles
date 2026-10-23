@@ -1,4 +1,4 @@
-# #1237 删除与改弱逐条账（R19-A，起点 4c03245f）
+# #1237 删除与改弱逐条账（R19-A 续修，起点 fa4bff02）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 1135 行 = 整文件 18 + 整案 115 + 断言 1002。R19-A 新增 #1073–#1136：实际删 63 条，另有外层 assert.throws 因跨度计数记为「仍在」一条。R19-A 承接坐标为本轮修后位置；旧轮坐标保留原轮语义，不重新解释为本轮位置。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068，承接位置锚定 `959d69a2`；R18-B 新增 #1069–#1072，承接位置指本轮修后文件。#1067 曾引用的中间 ok 已由 #1069 的精确 code/cause 接替，拒收能力不变。删除位置仍是 `7997ffb2`。
+本表 1139 行 = 整文件 18 + 整案 115 + 断言 1006。R19-A 首交 #1073–#1136：实际删 63 条，另有外层 assert.throws 因跨度计数记为「仍在」一条；这批承接坐标锚定 `fa4bff02`。续修新增 #1137–#1140，补删四条，承接坐标为本次修后位置。R19-A 累计实删 67 条。旧轮坐标保留原轮语义，不重新解释为本轮位置。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068，承接位置锚定 `959d69a2`；R18-B 新增 #1069–#1072，承接位置指本轮修后文件。#1067 曾引用的中间 ok 已由 #1069 的精确 code/cause 接替，拒收能力不变。删除位置仍是 `7997ffb2`。
 
 ## 处置口径
 
@@ -30,7 +30,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：594
+- a/D：598
 - a/M：198
 - a/S：134
 - b：61
@@ -469,6 +469,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 286 | assert | `test/integration/factory-board-true-home.test.ts:287` | assert.equal(tActive["data-last-activity-mtime-ms"], visibleAct["data-last-activity-mtime-ms"]); | a/D；R13-A 有：行为=看板页渲染该删除断言所查的属性。变异：renderFactoryBoardHtml 直接 return ""；报红 test/integration/factory-board.test.ts 里断言该属性的案（已实测 family parent row aggregates structural counts and expands child trajectories，同文件另有 27 个渲染案报红）。 |
 | 287 | assert | `test/integration/factory-board-true-home.test.ts:288` | assert.equal(tActive["data-leg-age-ms"], visibleAge["data-leg-age-ms"]); | a/D；R13-A 有：行为=看板页渲染该删除断言所查的属性。变异：renderFactoryBoardHtml 直接 return ""；报红 test/integration/factory-board.test.ts 里断言该属性的案（已实测 family parent row aggregates structural counts and expands child trajectories，同文件另有 27 个渲染案报红）。 |
 | 288 | case | `test/integration/factory-board-true-home.test.ts:27` | S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation | a/D；依据 sweep:90；依赖本机旧卷、缺卷 skip，oracle 复用生产判定。fixer accepted 事实在 factory-board.test.ts:1663，不是缺口 R13-A 没有：只在属主机器缺卷时 skip，或只复算生产助手的同一结果，不检查 CI 能产的在役输出或失败行为。 |
+| 1137 | assert | `test/integration/factory-board.test.ts:269` | runs.some(plan-court runId) | a/D；R19-A 续修 I19-A；承接 `test/integration/factory-board.test.ts:270–271`，同谓词 find 的两个精确字段拒收缺项；judge station 独立检查保留。单删 tsc 0。 |
 | 1083 | assert | `test/integration/factory-board.test.ts:752` | byNum.get("11") 存在 | a/D；R19-A；承接 `test/integration/factory-board.test.ts:754`，同一 Map 元素的精确父字段拒收缺项；单删 tsc 0。 |
 | 1084 | assert | `test/integration/factory-board.test.ts:753` | byNum.get("12") 存在 | a/D；R19-A；承接 `test/integration/factory-board.test.ts:755`，同一 Map 元素的精确父字段拒收缺项；单删 tsc 0。 |
 | 289 | assert | `test/integration/factory-board.test.ts:1004` | assert.equal( elementsWith(html, "data-threshold-flying-ms")[0]?.["data-threshold-flying-ms"], String(UNACCEPTED_FLYING_MS), ); | a/M；依据 sweep:91；阈值/refresh 常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
@@ -691,6 +692,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 462 | case | `test/integration/public-cli-countersign-run.test.ts:134` | countersign admission binds the countersign role without inventing a ticket | a/D；依据 sweep:113；直调 admitPublicRole 与同文件公开入口案同结论。公开 --ticket 拒收在 test/integration/public-cli-countersign-run.test.ts:168，不是本条的结构承接 R13-A 没有：只锁 admitted.role 常量；公开入口案已守 countersign 身份，本条不另检查失败行为。 |
 | 463 | assert | `test/integration/public-cli-diarist-run.test.ts:1003` | assert.equal(existsSync(join(paths.volumeDir, "起居录.md")), false); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
 | 464 | assert | `test/integration/public-cli-diarist-run.test.ts:1188` | assert.equal(volume.lines.every((line) => !("line" in line)), true); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
+| 1138 | assert | `test/integration/public-cli-diarist-run.test.ts:1195` | rawIndex > 0 且小于 lines.length-1 | a/D；R19-A 续修 I19-A；承接 `test/integration/public-cli-diarist-run.test.ts:1190–1191`，落卷 JSON 数组的前后邻居 text 联合拒收未找到、首项及末项；不以 as 为值域证明。单删 tsc 0。 |
 | 465 | assert | `test/integration/public-cli-diarist-run.test.ts:1447` | assert.deepEqual( await findPlacedMigratingRun( booksDirectory, "demo-book", boundLeaf, `unbound/runs/${boundLeaf}`, ), { runDirectory: boundTarget, disposition: "placed" }, "downs | a/D；依据 sweep:114；同案 relocate 结果仍在 test/integration/public-cli-diarist-run.test.ts:1424。案内注释已撤平行 helper 探针，不把 helper 返回对象另写成承接 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
 | 1071 | assert | `test/integration/public-cli-diarist-run.test.ts:1844` | assert.ok(diary, "true-unbound diary rows land in history.jsonl") | a/D；R18-B，承接 test/integration/public-cli-diarist-run.test.ts:1830；diary?.payload?.lines?.[0]?.speaker 精确 owner 拒收缺失 diary，不由允许 undefined 的 sessionParent 承接。 |
 | 466 | assert | `test/integration/public-cli-diarist-run.test.ts:1856` | assert.equal(existsSync(join(sample.volumeDir, "起居录.md")), false); | a/S；依据 sweep:114；退役文件/line 字段哨兵。不可解析原字节落卷的正向断言留 |
@@ -719,6 +721,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 1107 | assert | `test/integration/public-cli-engine-axis.test.ts:1095` | capturedEnv !== undefined | a/D；R19-A；承接 `test/integration/public-cli-engine-axis.test.ts:926`，可选链字段精确值拒收缺值；单删 tsc 0。 |
 | 479 | assert | `test/integration/public-cli-engine-axis.test.ts:1187` | assert.equal(loaded.seats.navigator?.engine, "opus"); | a/D；依据 sweep:116；重复 resolver/roundtrip/unset。逐席 dispatch 在 test/integration/public-cli-engine-axis.test.ts:801，opaque round-trip 在 :1128，语法拒收在 :82（R9-A） R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 480 | case | `test/integration/public-cli-engine-axis.test.ts:86` | persistent judge engine round-trips; syntax-illegal engine rejected at parse/validate | a/D；R13-A 有：行为=引擎名 . / .. / NUL 在公开入口被拒。变异：isEngineNameSyntax 去掉 name === "." || name === ".."；报红「public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects」。 |
+| 1139 | assert | `test/integration/public-cli-engine-resume-detour.test.ts:324` | captured.length >= 2 | a/D；R19-A 续修 I19-A；承接 `test/integration/public-cli-engine-resume-detour.test.ts:324–325`，本地 push 数组的索引 0、1 均须为非空 ENGINE；长度不足二必败。单删 tsc 0。 |
 | 481 | assert | `test/integration/public-cli-engine-startup-material.test.ts:104` | assert.deepEqual(engines[0], { kind: "engine-session-material", name: ENGINE, model: ENGINE_MODEL, handbook, dispatchHandbook: dispatch, }); | b test/integration/public-cli-engine-startup-material.test.ts:104；变异：engineSessionMaterialFromOptions 把 handbook 写成空串；报红「#1167 public fixer: prompt dispatch-only; startup materials by engine shape」。 |
 | 482 | assert | `test/integration/public-cli-engine-startup-material.test.ts:242` | assert.deepEqual(engines[0], { kind: "engine-session-material", name: ENGINE, model: ENGINE_MODEL, handbook, dispatchHandbook: dispatch, }); | b test/integration/public-cli-engine-startup-material.test.ts:237；变异：engineSessionMaterialFromOptions 把 handbook 写成空串；报红「#1167 gate-summoned review seat: same startup delivery as worker seats」。 |
 | 982 | assert | `test/integration/public-cli-escalation-resume.test.ts:439` | role 非 judge | a/D；R15-B，同文件:416 精确 auditor。 |
@@ -894,6 +897,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 583 | assert | `test/integration/public-cli-notary.test.ts:289` | await assert.rejects( () => resolveNotarySourceRunLocator({ projectRoot: project, sourceRun: bare, home, }), (error: unknown) => error instanceof NotarySourceRunError, ); | a/D；依据 sweep:136；底层 locator/run-state 与公开负向案重复。公开 source-run 在同文件 :168、:266 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 584 | assert | `test/integration/public-cli-report-ticket.test.ts:268` | assert.equal("runDirectory" in reported, false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
 | 1058 | assert | `test/integration/public-cli-report-ticket.test.ts:548` | existsSync placement true | a/D；R17-A，承接 test/integration/public-cli-report-ticket.test.ts:83–84、548；同次 helper 先检查 record.runDirectory=placement 再检查该路径存在；mid-turn 与 settle 两时点检查不动。 |
+| 1140 | assert | `test/integration/public-cli-report-ticket.test.ts:571` | progress.length >= 1 | a/D；R19-A 续修 I19-A；承接 `test/integration/public-cli-report-ticket.test.ts:573–578`，本地 filter 数组末项 .session/.receipt 的真实属性消费及路径检查拒收空数组；不以 ! 本身为承接。单删 tsc 0。 |
 | 585 | assert | `test/integration/public-cli-report-ticket.test.ts:733` | assert.ok(transportPrompt.includes("--attach"), "transport carries file flags"); | 改好 test/integration/public-cli-report-ticket.test.ts:732；变异：隔离副本把 appendCallerFileFlagPaths 的 '--attach ${path}' 改成只拼路径；红 #1171 submit with ticketNumber and no report tool |
 | 586 | assert | `test/integration/public-cli-report-ticket.test.ts:744` | assert.equal(Object.hasOwn(fixerLines[0]!, "model"), false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
 | 587 | assert | `test/integration/public-cli-report-ticket.test.ts:745` | assert.equal(Object.hasOwn(fixerLines[0]!, "host"), false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |

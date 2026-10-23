@@ -566,7 +566,6 @@ for (const caseRow of [
           const ticketSubject = join(home, ".ak-roles", "books", bookKey, String(TICKET));
           const progress = readTicketProgressLines(ticketSubject)
             .filter((line) => line.seat === "fixer");
-          assert.ok(progress.length >= 1, `${caseRow.name}: ticket progress row`);
           const landing = resolveHostDossierLandingPath({
             host: caseRow.hostName,
             sessionDirectory: sessionDirectoryOf(placement),

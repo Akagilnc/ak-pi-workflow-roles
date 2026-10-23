@@ -265,7 +265,6 @@ test("family parent row aggregates structural counts and expands child trajector
 
     // S1 seam reused: #127 fixture stations present inside the board page
     const runs = elementsWith(html, "data-run-id");
-    assert.ok(runs.some((r) => r["data-run-id"] === "plan-court-001@ak-roles-127"));
     assert.ok(runs.some((r) => r["data-station"] === "judge"));
     const planCourt = runs.find((r) => r["data-run-id"] === "plan-court-001@ak-roles-127");
     assert.equal(planCourt?.["data-has-result"], "true");

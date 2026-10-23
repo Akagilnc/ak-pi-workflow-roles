@@ -712,3 +712,35 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 - 测试变更净删 95 行、63 个断言，不新增测试或 helper，不改任何生产函数。`git diff HEAD` 逐函数自审：新增生产函数／测试函数均无，diffItems=[]；原入口、输入、后续强断言与失败路径不变，无死变量与替代分支残留。纯删重并非生产行为修复，恢复旧 A 仍应绿，不虚报红绿变异证据。
 - 原脚本按「断言跨度内有删除行」计数，因此 activation-envelope 外层 :121 的 assert.throws 随内层 :126 删除一并进入机械清单，但调用本身没删。新增 64 条 = 63 条 a/D + 1 条「仍在」，非实际删 64 条。工作树变体仅将 diff 的 BASE..HEAD 改为 BASE..工作树，输出 `COUNT 1135 / MATCH 1135`，分项 18 文件 + 115 案 + 1002 断言；a/D 594、仍在 23，其余桶不变。提交后由未改动的原脚本核 HEAD。
 - 本席仍为复审修理轮，非判官 converged／PR 已开的最终待合并 HEAD；按测试分级只跑触及面，不跑全量。旧卷 643/643 不冒作本轮结果。未派角色、未改席位或宿主配置、未改 Soul／宪法、未 amend/rewrite/push。
+
+### R19-A 续修 I19-A（起点 fa4bff02）
+
+依据调用方原样交来的 `status=continue`、finding `I19-A`，起点 `fa4bff02515512d9500cc24a0c4b5c1a1b81b2c0`，开工实查工作树干净。首交 63 条删除认可，但「未再选出」不能当作类已修净：四处承接关系漏判，现补删。此前对 rawIndex 只看单条邻居检查、没有接受两条联合蕴含，是错误判断；B 可以是联合检查或实际属性消费，不限定为单条同形断言。此续修仅删判词四条，不添加任何替代检查。
+
+沿同类再次定位，命令原样为 `rg -n 'assert\.(ok|equal|notEqual).*([.]length|[.]some|[.]find)' test --glob '*.ts' --glob '*.js'`，修前 366 行、修后同命令 362 行。浏览定位结果后重点打开 some/find、邻居索引、末项属性消费及固定索引的上下文与来源；四处均在结果中。该命令不覆盖所有多行或别名表达式，数字不是语义穷尽证明，也不把只浏览定位行冒作逐项证明。复用了既有临时单删探测脚本，四候选分别在 HEAD 副本单删再恢复，结果 `DONE 4 PASS 4`；基线 tsc 也通过，没有新建扫描机制或仓内脚本。
+
+来源与边界复核：
+
+- factory-board 的 some 与 find 是同一个 runs、同一个 runId 谓词；找不到时两项字段精确值必失败。中间 judge station 断言属独立事实，保留。
+- diarist 的 lines 追到 `test/helpers/ticket-provenance-fixture.ts:50–60` 的 readTicketProvenanceRecords → readSitianRecords → `src/sitian-reader.ts:34` JSON.parse。原数组的 findIndex 返回 -1/0 时前邻居 text 检查失败，末项时后邻居检查失败；两条联合承接完整范围。不是从 as 类型推定运行时来源。
+- report-ticket 的 progress 是本地 filter 结果；空数组时末项的 .session 真实读取必失败，后续 .receipt 与路径检查也保留。landing 只作同步计算，不跨 await；`!` 仅类型标记，不是拒收者。
+- engine-resume 的 captured 初始化为 []，在同一 host 回调 push request.engine；索引 0、1 均须等于非空 ENGINE，完整承接至少二项，后续 every 仍保留。
+
+额外打开的保留反例（坐标均为 fa4bff02）：`public-cli-engine-resume-detour.test.ts:333` 的 autoResumePrompts 非空不能被 every 蕴含；`public-cli-reviewer.test.ts:1112` 的至少两 provider 不能被后续 for 循环蕴含；`ticket-trajectory.test.ts:125` 的至少四 station 不能被逐现有元素循环蕴含；`engine-detour-usage-ledger.test.ts:736` 的至少两 scope 不能由 every 或另一 usage 对象推出；`public-cli-report-ticket.test.ts:1050` 的至少两 prompt 不能由两个可能同为 undefined 的字段相等推出；`factory-board.test.ts:1446` 检查真实 sort control 存在，不能由自建 select 的脚本执行替代。这些不按本类删除。
+
+本次 `git diff --name-status fa4bff02515512d9500cc24a0c4b5c1a1b81b2c0` 六文件逐项表；不是把整票改动冒称为四行纯删。此前 R19-A 首交的 B 坐标固定在 fa4bff02，不随本次删行漂移。
+
+| 文件 | 起点命中与修后承接／结果 |
+| --- | --- |
+| `test/integration/factory-board.test.ts` | 已修；A :268 删除，B :270–271；基线7997ffb2 :269，账 #1137。 |
+| `test/integration/public-cli-diarist-run.test.ts` | 已修；A :1190 删除，B :1190–1191；基线 :1195，账 #1138。 |
+| `test/integration/public-cli-engine-resume-detour.test.ts` | 已修；A :324 删除，B :324–325；基线 :324，账 #1139。 |
+| `test/integration/public-cli-report-ticket.test.ts` | 已修；A :569 删除，B :573–578；基线 :571，账 #1140。 |
+| `docs/research/issue-1237-deletion-ledger.md` | 已修；新增四条 a/D、逐条 B 坐标；1139 行，18 文件＋115 案＋1006 断言，a/D 598、仍在23。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 已修；本节承认首交漏判，补联合蕴含、来源、逐文件表及本次验证；历史实测不重写。 |
+
+验证与自审：
+
+- 修前 `npx tsc --noEmit` 通过；四项单删各自 tsc 0。聚焦命令 `node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/factory-board.test.ts test/integration/public-cli-diarist-run.test.ts test/integration/public-cli-report-ticket.test.ts test/integration/public-cli-engine-resume-detour.test.ts`，修前 82/82、0 fail、6238.228625 ms；修后同命令 82/82、0 fail、6306.83575 ms（`/tmp/r19-cont-before.log`、`/tmp/r19-cont-after.log`）。修后 tsc 通过；不虚报生产变异或全量。
+- 累计 R19-A 实删 67 条；机械账比首交多四条，工作树口径 COUNT/MATCH 1139。提交后用未改动的 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
+- `git diff HEAD` 自审：测试侧只有四行删除，新增生产函数、测试函数、helper 均无，diffItems=[]；输入、承接者、judge station 独立检查与失败路径全部保留。未增加扫描机制、证明测试、新断言或配置改动；不 amend/rewrite/push、不派角色，交卷由调用方续送复审。
