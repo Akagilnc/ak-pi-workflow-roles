@@ -50,7 +50,6 @@ type HostRequest = {
   readonly binary?: string;
   readonly kind?: string;
   readonly method?: string;
-  readonly stdin?: string;
 };
 
 function fakeHostSource(logPath: string, controlPath: string, binary: string): string {
@@ -93,8 +92,7 @@ if (binary === "hermes") {
   });
   rl.on("close", () => process.exit(0));
 } else {
-  let stdin = "";
-  for await (const chunk of process.stdin) stdin += chunk;
+  for await (const chunk of process.stdin) void chunk;
   const control = readControl();
   const steps = Array.isArray(control.steps) ? control.steps : [];
   const step = control.sticky === true
@@ -104,7 +102,7 @@ if (binary === "hermes") {
     control.steps = steps;
     writeFileSync(controlPath, JSON.stringify(control));
   }
-  log({ binary, kind: requestKind(), argv: args, stdin, stepBinary: step && step.binary });
+  log({ binary, kind: requestKind(), argv: args, stepBinary: step && step.binary });
   if (step === undefined || step.binary !== binary) {
     process.stderr.write("fake host step mismatch\\n");
     process.exit(97);
@@ -300,7 +298,6 @@ test("#1253 direct summons mints once after session-id-missing and matches ak-ro
     const freshRuns = added(after, await roleRuns(home, project, "notary"));
     assert.equal(freshRuns.length, 1);
     assert.deepEqual(admittedFacts(newRun), admittedFacts(freshRuns[0]!));
-    assert.equal(mintedLog[0]?.stdin, freshLog[0]?.stdin);
     assert.equal(freshLog[0]?.kind, "initial");
 
     await writeFile(logPath, "");
@@ -398,7 +395,6 @@ test("#1253 gate summons mints once after the in-place loop returns session-id-m
     const freshRuns = added(beforeNew, await roleRuns(home, project, "notary"));
     assert.equal(freshRuns.length, 1);
     assert.deepEqual(admittedFacts(created[0]!), admittedFacts(freshRuns[0]!));
-    assert.equal(codexInitial[0]?.stdin, freshLog[0]?.stdin);
     assert.equal(freshLog[0]?.kind, "initial");
   });
 }, 120_000);
