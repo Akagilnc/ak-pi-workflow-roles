@@ -274,6 +274,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly taskNotificationAttachmentId: string;
   readonly slashUserId: string;
   readonly slashUserText: string;
+  readonly arrayPromptId: string;
+  readonly arrayPromptText: string;
   readonly duplicateId: string;
   readonly taskNotificationEnqueueId: string;
   readonly taskNotificationText: string;
@@ -325,6 +327,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const slashUserId = "af7cc718-ef33-4aab-83c7-bf94a0e8c8ce";
   const slashUserText =
     "<command-message>anti-ai-writing-kit</command-message>\n<command-name>/anti-ai-writing-kit</command-name>\n<command-args>去一下ai味道。</command-args>";
+  const arrayPromptId = "aff5b99c-ad35-4521-95f5-35cfad02b554";
+  const arrayPromptText = "小学那页的输入就是这图片。别的我啥也没说 只打了个裸的 /eli5:eli5";
   const duplicateId = "msg-dup-1";
   const taskNotificationEnqueueId = "queue-task-notif-1";
   // Live re-render: enqueue status/summary may differ from later materialization text.
@@ -840,6 +844,38 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         ],
       },
     }),
+    // Content-block prompt: text block is the speech; image bytes are not.
+    JSON.stringify({
+      type: "attachment",
+      uuid: arrayPromptId,
+      attachment: {
+        type: "queued_command",
+        prompt: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              data: "image-bytes-not-speech",
+            },
+          },
+          { type: "text", text: arrayPromptText },
+        ],
+        source_uuid: "array-prompt-source",
+        commandMode: "prompt",
+        origin: { kind: "human" },
+      },
+    }),
+    // Missing origin, text extracted from a block: fixed prefix still excludes.
+    JSON.stringify({
+      type: "attachment",
+      uuid: "array-task-prefix",
+      attachment: {
+        type: "queued_command",
+        prompt: [{ type: "text", text: taskNotificationText }],
+        commandMode: "task-notification",
+      },
+    }),
     // Missing-origin human queued_command (no origin object) is owner and keeps its uuid.
     JSON.stringify({
       type: "attachment",
@@ -925,6 +961,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     taskNotificationAttachmentId,
     slashUserId,
     slashUserText,
+    arrayPromptId,
+    arrayPromptText,
     duplicateId,
     taskNotificationEnqueueId,
     taskNotificationText,
@@ -1220,6 +1258,9 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       ),
       false,
     );
+    assert.equal(byId.get(fixture.arrayPromptId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.arrayPromptId)?.text, fixture.arrayPromptText);
+    assert.equal(byId.get("array-task-prefix"), undefined);
     assert.equal(byId.get(fixture.missingOriginHumanId)?.speaker, "owner");
     assert.equal(
       byId.get(fixture.missingOriginHumanId)?.text,

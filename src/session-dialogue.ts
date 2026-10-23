@@ -138,13 +138,13 @@ function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
  */
 function fromQueuedCommandAttachment(row: Record<string, unknown>): DialogueEvent[] {
   if (!isRecord(row.attachment) || row.attachment.type !== "queued_command") return [];
-  const prompt = row.attachment.prompt;
-  if (typeof prompt !== "string" || prompt === "") return [];
   const kind = materializationOriginKind(row.attachment);
   if (isNonOwnerOriginKind(kind)) return [];
-  if (kind === undefined && hasFixedOpenTagPrefix(prompt, TASK_NOTIFICATION_OPEN_TAG)) return [];
+  const text = textParts(row.attachment.prompt).join("");
+  if (text === "") return [];
+  if (kind === undefined && hasFixedOpenTagPrefix(text, TASK_NOTIFICATION_OPEN_TAG)) return [];
   const id = nativeEventId(row);
-  return [{ speaker: "owner", text: prompt, ...(id === undefined ? {} : { id }) }];
+  return [{ speaker: "owner", text, ...(id === undefined ? {} : { id }) }];
 }
 
 /**
