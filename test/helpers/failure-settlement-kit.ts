@@ -111,7 +111,6 @@ export async function assertPublicFailureSettlement(input: {
   // Durability via the typed artifact ref: it names the run's current.json, whose
   // terminal section is the failure the caller was handed.
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
-  assert.ok(errorRef, "failure Terminal must carry error artifact ref");
   const errorBody = terminalBodyAt(errorRef!.path, "error") as {
     kind: string;
     cause?: string;

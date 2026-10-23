@@ -273,7 +273,6 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
       },
     );
     assert.equal(result.exitCode, 0, stdout.join("") || stderr.join("") || "alternate host failed");
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
@@ -409,7 +408,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "coder plan failed");
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-coder-phase"), true);
       assert.equal(
         captured![captured!.indexOf("--ak-coder-phase") + 1],
@@ -686,7 +684,6 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
         0,
         stderr.join("") || stdout.join("") || "bare model dispatch failed",
       );
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--provider") + 1], "kimi-coding");
       assert.equal(captured![captured!.indexOf("--model") + 1], "k3-256k");
       assert.equal(captured!.includes("--thinking"), false);
@@ -751,7 +748,6 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           }),
         },
       );
-      assert.equal(Array.isArray(captured), true, stderr.join("") || "suffix dispatch missing args");
       assert.equal(captured![captured!.indexOf("--provider") + 1], "openai-codex");
       assert.equal(captured![captured!.indexOf("--model") + 1], "gpt-5.6-luna");
       assert.equal(captured!.includes("--thinking"), true);
@@ -916,7 +912,6 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
           }),
         },
       );
-      assert.ok(captured !== undefined, `${spec} must reach pi dispatch`);
       const thinking = spec.slice(spec.lastIndexOf(":") + 1);
       assert.equal(captured!.includes("--thinking"), true, `${spec} must forward --thinking`);
       assert.equal(captured![captured!.indexOf("--thinking") + 1], thinking);

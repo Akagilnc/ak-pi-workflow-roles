@@ -255,7 +255,6 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     assert.ok(inspector !== undefined, "gate must summon inspector");
 
     const fixerCaptures = captures.filter((c) => c.role === "fixer");
-    assert.ok(fixerCaptures.length >= 2, "need fixer initial + resume captures");
     assertNoUnboundPrefix(
       "fixer-initial",
       fixerCaptures[0]!.prompt,

@@ -173,7 +173,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
       // Real Pi loader/invocation coverage is table-driven above; this CLI
       // row only keeps the public plan phase and settlement regression.
@@ -425,7 +424,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     );
     assert.deepEqual(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
     assert.equal(stderr.join("").length, 0);
-    assert.ok(result.terminal);
     assert.deepEqual(
       result.terminal!.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(result.terminal!.roleOutcome)
@@ -558,7 +556,6 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         0,
         `${row.status}: ${stdout.join("") || "nonzero exit"}`,
       );
-      assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
       if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), [row.status]);

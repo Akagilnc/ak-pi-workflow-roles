@@ -123,7 +123,6 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
       (error: unknown) => {
         assert.ok(error instanceof ActivationGitRepositoryRequiredError);
         assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
-        assert.ok(error.cause !== undefined);
         const cause = error.cause as { status?: unknown };
         assert.equal(typeof cause.status, "number");
         assert.notEqual(cause.status, 0);

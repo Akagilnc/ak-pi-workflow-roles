@@ -992,7 +992,6 @@ test("tool path: engine failure + sitian write failure returns both causes witho
         await chmod(blockedSession, 0o644).catch(() => undefined);
       }
 
-      assert.ok(result, `${row.label}: engine failure returns a tool result`);
       assert.equal(
         result.isError,
         true,

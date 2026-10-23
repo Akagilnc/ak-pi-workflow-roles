@@ -406,7 +406,6 @@ test("a Judge turn that sealed no receipt reports the host CLI's own nonzero exi
     );
 
     assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind !== "failure") return;
     // A bare nonzero exit names no cause, and the diagnostic is the host's own
@@ -415,7 +414,6 @@ test("a Judge turn that sealed no receipt reports the host CLI's own nonzero exi
     assert.equal(result.terminal!.roleOutcome.cause, undefined);
     assert.equal(result.terminal!.roleOutcome.diagnostic, "VARIABLE DECOY service tier switched successfully\n");
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
-    assert.ok(errorRef);
     const durable = terminalBodyAt(errorRef!.path, "error") as {
       diagnostic?: string;
       identity?: { name?: string; code?: string | number };

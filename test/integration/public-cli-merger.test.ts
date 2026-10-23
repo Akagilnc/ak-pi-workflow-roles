@@ -286,11 +286,9 @@ test("ak-role merger dispatches and settles escalate without active merge and co
         },
       );
       assert.equal(result.exitCode, 0, stdout.join(""));
-      assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
-      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "report"), true);
       assert.equal((objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).report, "resolved");
       const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report")!;
       const reportBody = terminalBodyAt(reportRef.path, "report") as { outcome?: { payloads?: unknown } };

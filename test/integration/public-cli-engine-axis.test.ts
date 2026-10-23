@@ -138,11 +138,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         2,
         `structural reject: ${stderr.join("")}`,
       );
-      assert.equal(
-        Array.isArray(capturedArgs),
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
-      );
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: selected engine lands on the identity page.
       const invocation = readJudgeInvocation(home, bookKey, "engine-persist-001");
@@ -270,11 +265,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         result.exitCode,
         2,
         `free name must not structural-reject: ${stderr.join("")}`,
-      );
-      assert.equal(
-        Array.isArray(capturedArgs),
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
@@ -428,11 +418,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         result.exitCode,
         2,
         `reviewer --engine must not structural-reject: ${stderr.join("")}`,
-      );
-      assert.equal(
-        Array.isArray(capturedArgs),
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
@@ -602,11 +587,6 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         2,
         `fixer set-engine path must not structural-reject: ${stderr.join("")}`,
       );
-      assert.equal(
-        Array.isArray(capturedArgs),
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
@@ -651,11 +631,6 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         result.exitCode,
         2,
         `fixer --engine must not structural-reject: ${stderr.join("")}`,
-      );
-      assert.equal(
-        Array.isArray(capturedArgs),
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
@@ -710,11 +685,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
         result.exitCode,
         2,
         `structural reject: ${stderr.join("")}`,
-      );
-      assert.equal(
-        capturedEnv !== undefined && capturedArgs !== undefined,
-        true,
-        `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
       // Registration gate signal must be absent (AC4 family: no detour without engine).
       const ambient = capturedEnv![AK_ROLE_ENGINE_ENV];
@@ -892,11 +862,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               `${role} --engine structural reject: ${stderr.join("")}`,
             );
             assert.equal(
-              capturedEnv !== undefined,
-              true,
-              `${role} --engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
-            );
-            assert.equal(
               capturedEnv?.[AK_ROLE_ENGINE_ENV],
               "table-engine",
               `${role} --engine childEnv[AK_ROLE_ENGINE]`,
@@ -957,11 +922,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               result.exitCode,
               2,
               `${role} set-engine path structural reject: ${stderr.join("")}`,
-            );
-            assert.equal(
-              capturedEnv !== undefined,
-              true,
-              `${role} set-engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
             );
             assert.equal(
               capturedEnv?.[AK_ROLE_ENGINE_ENV],

@@ -183,11 +183,8 @@ test("each run evidence link resolves to the run ledger path, with typed data-le
 
   for (const linkEl of links) {
     const coord = linkEl["data-ledger-link"];
-    assert.ok(coord, "data-ledger-link present");
     assert.match(coord!, /^issues\/127\/runs\//);
     // Must not be a dead in-page fragment.
-    assert.ok(linkEl.href, "href present");
-    assert.notEqual(linkEl.href![0], "#");
     assert.match(linkEl.href!, /^file:/);
 
     const url = new URL(linkEl.href!);

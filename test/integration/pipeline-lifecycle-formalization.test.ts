@@ -91,7 +91,6 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     assert.ok(receivedRequest?.runDirectory, "typed request must carry the AK-issued run directory");
 
     // ⑤: AK still owns settlement — a typed judge terminal is produced.
-    assert.ok(result.terminal, "judge run must settle a typed terminal");
     assert.equal(result.terminal!.roleOutcome.role, "judge");
 
     // ②: AK-owned current.json runState ledger reaches terminal regardless of the substituted host.
@@ -99,7 +98,6 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
     const runDirs = await readdir(runsRoot);
     const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
-    assert.ok(judgeRun, `expected judge run under ${runsRoot}, got ${runDirs.join(", ")}`);
     const runDirectory = join(runsRoot, judgeRun!);
     const runState = readCurrentSection(runDirectory, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");

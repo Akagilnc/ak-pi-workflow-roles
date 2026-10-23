@@ -653,7 +653,6 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     // that report even though a submission was sealed. The sealed receipt is not
     // lost: it stays on the run-scoped submissions (owner 4743ade7).
     assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
       assert.equal(result.terminal!.roleOutcome.cause, undefined);

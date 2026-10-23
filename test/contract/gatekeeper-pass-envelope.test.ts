@@ -181,7 +181,6 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
         },
       }),
     });
-    assert.ok(outcome !== undefined && outcome !== null);
     assert.equal(outcome!.officer, "countersign");
     assert.deepEqual(outcome!.receipt, receipt);
     assert.equal(outcome!.runId, "01a0cs969-pass-7000-8000-000000000042");
@@ -222,7 +221,6 @@ test("#1214 A5: officer transport_failure returns honestly as typed outcome",
       outcome && "runId" in outcome ? outcome.runId : undefined,
       "01a01214-fail-7000-8000-000000000099",
     );
-    assert.ok(outcome && "terminal" in outcome && outcome.terminal !== undefined);
     assert.equal(outcome?.terminal?.roleOutcome.kind, "failure");
   }),
 );

@@ -1213,7 +1213,6 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     assert.equal(second.exitCode, 0, `${second.terminal?.roleOutcome.kind}`);
     const withB = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     const rowB = withB.find((line) => line.session.includes(runB));
-    assert.ok(rowB !== undefined);
     assert.equal(rowB!.head, headB);
   });
 });

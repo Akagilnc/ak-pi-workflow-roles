@@ -278,7 +278,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     );
 
     assert.equal(result.exitCode, 0, stderr.join(""));
-    assert.equal(Array.isArray(capturedArgs), true);
     assert.equal(capturedArgs![0], "--no-extensions");
     assert.equal(capturedArgs!.includes("--ak-role"), true);
     assert.equal(capturedArgs!.includes("judge"), true);

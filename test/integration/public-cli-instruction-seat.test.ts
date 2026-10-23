@@ -102,7 +102,6 @@ for (const scenario of CASES) {
         0,
         result.terminal === undefined ? "no terminal" : "",
       );
-      assert.equal(Array.isArray(dispatchArgs), true);
       assert.equal(
         dispatchArgs![dispatchArgs!.indexOf("--ak-role") + 1],
         scenario.role,

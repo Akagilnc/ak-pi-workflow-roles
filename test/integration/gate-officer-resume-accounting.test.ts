@@ -284,7 +284,6 @@ test("#879 repeated notary summons retain their own terminal payloads", async ()
       assert.notEqual(prompts[i + 1], readableGateItem(body));
       assert.equal(prompts[i + 1], prompts[0]);
       const terminal = projected.summoned?.terminal;
-      assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
       assert.equal(terminal!.roleOutcome.kind, "accepted");
       if (terminal!.roleOutcome.kind === "accepted") {
         assert.ok((terminal!.roleOutcome.payloads?.length ?? 0) >= 1);
@@ -350,7 +349,6 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-2" },
     );
-    assert.ok(settled !== undefined, "court-2 must settle");
     assert.equal(settled!.roleOutcome.kind, "accepted");
     if (settled!.roleOutcome.kind === "accepted") {
       assert.deepEqual(settled!.roleOutcome.payloads, [second]);

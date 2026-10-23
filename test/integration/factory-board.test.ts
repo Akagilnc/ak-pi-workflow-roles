@@ -751,8 +751,6 @@ test("nested A→B→C is one rooted whole-family with each ticket rendered once
     const byNum = new Map(articles.map((t) => [t["data-ticket"], t]));
     assert.equal(articles.length, 3, "exactly one article each for A/B/C");
     assert.ok(byNum.get("10"), "A present once");
-    assert.ok(byNum.get("11"), "B present once");
-    assert.ok(byNum.get("12"), "C present once");
     assert.equal(byNum.get("11")?.["data-parent-issue"], "10");
     assert.equal(byNum.get("12")?.["data-parent-issue"], "11");
 

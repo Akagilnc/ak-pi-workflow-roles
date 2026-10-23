@@ -150,7 +150,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     );
     assert.equal(result.exitCode, 0);
     assert.equal(dispatchedPrompt, domainProse);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.runId, "run-domain-001");
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
@@ -299,7 +298,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);

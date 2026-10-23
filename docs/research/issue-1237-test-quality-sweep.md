@@ -634,3 +634,81 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 自验：修前四文件 39/39，2234.9205 ms；修后 `npx tsc --noEmit` exit 0；`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/contract/durable-session-write-failure.test.ts test/contract/submission-ledger.test.ts test/integration/public-cli-diarist-run.test.ts test/integration/public-cli-failure-artifacts.test.ts` 为 39/39、0 fail，2119.318666 ms。日志含既有故障注入 EISDIR、临时夹具未提交 HEAD 与 malformed progress 的诊断；均非本次断言失败，修前亦有。
 
 工作树计数 COUNT/MATCH 1071 = 18 文件 + 115 案 + 938 断言，a/D 531，其余桶不变；提交后用原 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核 HEAD。自审测试 diff 仅四行删除，diffItems=[]；没有新增测试、helper、生产或扫描机制，没有死变量；原入口与强结果检查不变。未跑全量、未派角色、未 amend/rewrite/push。
+
+## R19-A 复审修理（P3）
+
+起点 `4c03245ff0688ddc22d255b6b0200cbfa6d4bf55`。核对本票第五卷 judge/notary/auditor 回执，目录为 `~/.ak-roles/books/ak-pi-workflow-roles/1237/runs/` 下 `01a16776-ad9c-7cd8-89ec-4449a93eb38f@judge/receipts/5.json`、`01a16782-cd82-77f5-8a51-72d631eb9f2d@notary/receipts/5.json`、`01a16784-f637-7e7e-ae7b-4b6517d372a0@auditor/receipts/5.json`。31 处是实证下限，不是白名单或穷尽证明。
+
+错误形状：同案弱检查 A 已被后续强检查 B 必然蕴含，A→B 之间无 await、分支边界或状态变化，A 也不承担必要类型缩窄。根因是此前只查相邻同谓词或某种 optional-chain 写法，漏看直接访问、别名读卷、捕获数组、长度与更强索引关系。修法只删 A；不改 B、输入、生产代码或边界。
+
+### 扫类、单删核验与复扫边界
+
+复用仓内 `docs/research/issue-1237-deletion-ledger.py` 的 `assert_calls`，不新增仓内扫描器。全 `test/` 153 个 TS/JS 源文件盘点 4734 个断言调用，再作宽候选配对、弱断言上下文及 helper／捕获来源复核。临时命令：`python3 /tmp/r19-inventory.py`、`python3 /tmp/r19-candidates.py`、`python3 /tmp/r19-probe.py`；材料在本席工具卷与 `/tmp/r19-{all-asserts,weak-context,helper-context,capture-origins,final-b}.txt`。临时文件只作本次调查，不成为仓库运行前提。
+
+- 主轮单删探测 370 候选：240 次 tsc 0、130 次报错；补查 15 候选为 14 次通过／1 次报错（与主轮有重复），末三条全部通过，analyst-entry 的长度检查另作单删通过。**最终选定 63 条均有单删 tsc 0**。探测在临时 HEAD 副本逐条删、逐条恢复，未覆盖工作树；最初副本缺 scripts 链接的基线失败不计为 guard 证据，补全后重跑基线与探测。
+- tsc 通过不等于可删。逐条核过 A 的拒收集合、同一对象／别名来源、B 的实际消费者与中间边界，再打开 `7997ffb2` 原始断言对照；不增加 `!`、`as`、可选链或补断言以求通过。
+- 31 条判词样本全部删除；向外扩展 32 条，共 63 条、30 个测试侧文件。额外含 14 条捕获数组检查、别名路径读卷、some/find、长度与顺序关系；具体承接 B 逐条记于删除账 #1073–#1136。
+- 修后以同一盘点／候选逻辑重扫：153 文件、4671 断言，差额恰为 63；弱检查上下文 856 条、配对候选 324 条。重看已修改文件、剩余候选的反例与 helper 来源，未再选出满足本轮定义的 A。**候选数量与本次未再选出不构成语义穷尽证明**；配对器不能判定任意别名、路径、跨函数值域或隐含边界，不能拿它的零增量代替人工蕴含判断。
+
+### 保留检查的独立作用（坐标为起点）
+
+| 保留位置 | 不能按本类删除的原因 |
+| --- | --- |
+| `test/helpers/failure-settlement-kit.ts:92` | terminal 必要缩窄；单删 TS18048。只删 :114 的 errorRef 检查，不删此 guard。 |
+| `test/integration/analyst-entry.test.ts:786` | roundTimeline 缩窄，单删 TS18048；后续循环不是替代类型证明。 |
+| `test/integration/pipeline-lifecycle-formalization.test.ts:111` | artifact 缩窄，单删 TS18048；与 :102 的 judgeRun! 路径消费不同。 |
+| `test/integration/engine-detour-usage-ledger.test.ts:1012` | typeof string 不能由后续 length>0 蕴含，非空数组可通过长度；即使单删 tsc 0 仍保留。 |
+| `test/integration/public-cli-diarist-run.test.ts:1204` | 非空字符串检查不被 includes 蕴含：空串也被任意字符串 includes。 |
+| `test/integration/public-cli-diarist-run.test.ts:1988` | diagnostic 的 as string 来值可能实际为数组，后续 length>0 不拒收非空数组；不能照搬捕获 argv 的受限来源。 |
+| `test/integration/public-cli-reviewer.test.ts:1043` | Array.isArray 后续经过状态改写／await，再用 resumeArgs；不得跨边界相并。 |
+| `test/integration/factory-board.test.ts:753` | Map 中 A 的存在不能从 B/C 的父编号字段推出，父引用不证明目标节点存在。 |
+| `test/integration/activation-envelope-contract.test.ts:124` | instanceof 身份不被 code 或 cause.status 蕴含；外层 throws 与身份检查全部保留。 |
+
+捕获数组的删除只适用于赋值为 `[...args]`、初值 undefined 的来源；`assertNoEngineFlagsInArgv` 在 `public-cli-engine-axis.test.ts:65` 直接调用 argv.some，未捕获会失败。`capturedEnv && capturedArgs` 合取由同一同步段内 :690 的 env 读取和 :696 的 argv 消费共同承接。路径别名的承接先经过 join、basename 或 .path 直接读取；不把单独的 TS 非空断言当运行时验证。
+
+### 本轮逐文件表
+
+`git diff --name-status 4c03245ff0688ddc22d255b6b0200cbfa6d4bf55` 的 32 文件逐项核。下列数字为**起点 A→修后 B**，每对均属于该行文件；完整 B 的 path:line 和 `7997ffb2` 删除坐标在逐条账中。全部测试文件处置为「已修」：只删相应弱检查，B 与原入口仍在；两文档记录本轮，不复制测试或机制。
+
+| 文件 | 删除数；A→B／处置 |
+| --- | --- |
+| `test/contract/gatekeeper-pass-envelope.test.ts` | 2；184→184，225→224 |
+| `test/contract/ticket-trajectory.test.ts` | 3；186→186，189→188，190→188 |
+| `test/helpers/failure-settlement-kit.ts` | 1；114→120 |
+| `test/integration/activation-envelope-contract.test.ts` | 1；126→127；外层 :121 未删 |
+| `test/integration/analyst-entry.test.ts` | 1；887→887 |
+| `test/integration/engine-detour-usage-ledger.test.ts` | 1；995→995 |
+| `test/integration/factory-board.test.ts` | 2；754→754，755→755 |
+| `test/integration/gate-officer-resume-accounting.test.ts` | 2；287→287，353→352 |
+| `test/integration/pipeline-lifecycle-formalization.test.ts` | 2；94→94，102→103 |
+| `test/integration/public-cli-1132-delivery-request.test.ts` | 2；241→242，952→955 |
+| `test/integration/public-cli-1169-relocate-resume-no-unbound-paths.test.ts` | 1；258→265 |
+| `test/integration/public-cli-coder.test.ts` | 5；276→276，412→412，689→687，754→751，919→916 |
+| `test/integration/public-cli-countersign-run.test.ts` | 1；329→329 |
+| `test/integration/public-cli-doctor.test.ts` | 2；373→373，461→460 |
+| `test/integration/public-cli-engine-axis.test.ts` | 8；141→141，274→270，432→423，605→591，655→636，714→696，894→864，961→926 |
+| `test/integration/public-cli-failure-artifacts.test.ts` | 2；409→409，418→424 |
+| `test/integration/public-cli-failure-real-entry.test.ts` | 1；656→656 |
+| `test/integration/public-cli-failure-settlement.test.ts` | 2；153→153，302→301 |
+| `test/integration/public-cli-fixer.test.ts` | 3；176→176，428→427，561→559 |
+| `test/integration/public-cli-gleaner-left-run.test.ts` | 1；240→240 |
+| `test/integration/public-cli-host-axis.test.ts` | 1；454→454 |
+| `test/integration/public-cli-instruction-seat.test.ts` | 1；105→105 |
+| `test/integration/public-cli-judge.test.ts` | 1；281→281 |
+| `test/integration/public-cli-merger.test.ts` | 2；289→290，293→295 |
+| `test/integration/public-cli-report-ticket.test.ts` | 1；1216→1216 |
+| `test/integration/public-cli-resume-callable-seats.test.ts` | 1；262→262 |
+| `test/integration/public-cli-resume.test.ts` | 4；272→272，328→327，496→494，676→673 |
+| `test/integration/public-cli-reviewer.test.ts` | 4；774→774，795→796，1041→1039，1151→1148 |
+| `test/integration/public-cli-same-ticket-resume.test.ts` | 3；1065→1068，1082→1084，1451→1450 |
+| `test/integration/ticket-snapshot-family-edges.test.ts` | 2；211→211，218→217 |
+| `docs/research/issue-1237-deletion-ledger.md` | 已修；新增 64 行记录，其中 63 条 a/D、1 条外层「仍在」；保留旧轮编号与历史事实。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 已修；本节列扫描边界、保留反例、逐文件表与实测，不再以 31 或候选命中数宣称穷尽。 |
+
+### 自验、自审与账表差额
+
+- 分批修改前原测试入口通过：首批 140/140（13111.066208 ms）、扩展批 90/90（10215.74425 ms）、新增覆盖批 28/28（10202.077 ms，含 diarist-run 保留检查）、relocate-resume 1/1（1393.441833 ms）。批次有重叠，不累加冒报案数。
+- 最终测试侧变更后 `npx tsc --noEmit` exit 0；`git diff --check` exit 0。聚焦命令 `node --import tsx --import ./scripts/test-process-env-preload.mjs --test $(git diff --name-only -- test | grep '\.test\.ts$') test/integration/public-cli-failure-provider-stop.test.ts`：250/250、0 fail、21518.69825 ms（`/tmp/r19-after-tests.log`）。failure-settlement helper 的 17 个调用点覆盖在 failure-provider-stop、failure-real-entry、failure-settlement、failure-artifacts 四文件中。
+- 测试变更净删 95 行、63 个断言，不新增测试或 helper，不改任何生产函数。`git diff HEAD` 逐函数自审：新增生产函数／测试函数均无，diffItems=[]；原入口、输入、后续强断言与失败路径不变，无死变量与替代分支残留。纯删重并非生产行为修复，恢复旧 A 仍应绿，不虚报红绿变异证据。
+- 原脚本按「断言跨度内有删除行」计数，因此 activation-envelope 外层 :121 的 assert.throws 随内层 :126 删除一并进入机械清单，但调用本身没删。新增 64 条 = 63 条 a/D + 1 条「仍在」，非实际删 64 条。工作树变体仅将 diff 的 BASE..HEAD 改为 BASE..工作树，输出 `COUNT 1135 / MATCH 1135`，分项 18 文件 + 115 案 + 1002 断言；a/D 594、仍在 23，其余桶不变。提交后由未改动的原脚本核 HEAD。
+- 本席仍为复审修理轮，非判官 converged／PR 已开的最终待合并 HEAD；按测试分级只跑触及面，不跑全量。旧卷 643/643 不冒作本轮结果。未派角色、未改席位或宿主配置、未改 Soul／宪法、未 amend/rewrite/push。

@@ -1062,7 +1062,6 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     });
     assert.equal(priorChild.exitCode, 0);
     assert.equal(priorChild.terminal?.roleOutcome.kind, "accepted");
-    assert.ok(priorChild.terminal);
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     const priorChildRunId = seen[0]!.runId;
@@ -1079,7 +1078,6 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     });
     assert.equal(freshChild.exitCode, 0);
     assert.equal(freshChild.terminal?.roleOutcome.kind, "accepted");
-    assert.ok(freshChild.terminal);
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
     assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
@@ -1448,7 +1446,6 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
-    assert.ok(subject !== undefined, "run must sit under a ticket/unbound subject");
     const progressRows = readTicketProgressLines(subject!);
     assert.ok(
       progressRows.some((row) => row.seat === "notary" && row.status === "converged"),

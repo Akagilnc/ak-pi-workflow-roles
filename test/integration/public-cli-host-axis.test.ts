@@ -451,7 +451,6 @@ function assertSetModelBeforePrompt(
   });
   const promptIndex = methods.indexOf("session/prompt");
   const setModelIndex = methods.indexOf("session/set_model");
-  assert.ok(promptIndex > 0, "session/prompt must reach the host");
   assert.ok(setModelIndex >= 0 && setModelIndex < promptIndex, "set_model before prompt");
 }
 

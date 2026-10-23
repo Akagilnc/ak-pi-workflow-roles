@@ -237,7 +237,6 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "gleaner-left resume failed");
-    assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "gleaner-left");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumed.terminal?.roleOutcome.role, "gleaner-left");

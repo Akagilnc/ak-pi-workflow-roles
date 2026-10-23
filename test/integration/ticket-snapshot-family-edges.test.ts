@@ -208,14 +208,12 @@ test("fixture GitHub snapshot keeps #78 family parent and blocked_by edges", asy
     assert.ok(ticket.title.length > 0, `#${n} title non-empty`);
     assert.ok(ticket.state === "open" || ticket.state === "closed", `#${n} state`);
     // milestone is string | null — field must be present (null allowed)
-    assert.ok("milestone" in ticket, `#${n} milestone field`);
     assert.ok(
       ticket.milestone === null || typeof ticket.milestone === "string",
       `#${n} milestone shape`,
     );
     assert.ok(Array.isArray(ticket.blockedBy), `#${n} blockedBy array`);
     for (const edge of ticket.blockedBy) {
-      assert.equal(typeof edge.issueNumber, "number");
       assert.ok(Number.isInteger(edge.issueNumber) && edge.issueNumber > 0);
       assert.ok(edge.state === "open" || edge.state === "closed");
     }

@@ -238,7 +238,6 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       run.seatsDispatched.some((role) => role !== "judge"),
       `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
     );
-    assert.ok(run.runDirectory !== undefined);
     const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");
     // Structured ledger surface for this public催交 case (kinds/contents).
@@ -949,7 +948,6 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
       // state volume's control readers refuse with Error (readPageSync class).
       assert.equal(result.terminal.roleOutcome.decisiveFacts.errorName, "Error");
     }
-    assert.ok(runDirectory !== undefined);
     // Syntax damage fails closed for every control-plane page read, so
     // markRunTerminal cannot flip runState (best-effort note beside the failure
     // terminal — same persistence disposition as main). Do not pretend terminal.

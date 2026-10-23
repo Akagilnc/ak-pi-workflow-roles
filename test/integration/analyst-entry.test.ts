@@ -884,7 +884,6 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
     assert.equal(result.page.unreadableCount, EXPECTED_UNREADABLE.length + 1);
     assert.equal(result.page.unreadable.length, EXPECTED_UNREADABLE.length + 1);
     // Other readable fixture legs remain (B2/B3/B4 expansion); only a1 leaves legs.
-    assert.ok(result.page.legs.length >= 1);
     assert.ok(
       result.page.legs.some((leg) => leg.runId === LEG_E5_RUN),
       "B2 overlap e5 must remain when only coder a1 terminal is null",

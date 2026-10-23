@@ -370,7 +370,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       },
     );
     assert.equal(completed.exitCode, 0);
-    assert.ok(completed.terminal);
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(completed.terminal!.roleOutcome), ["completed"]);
@@ -458,7 +457,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       },
     );
     assert.equal(refused.exitCode, 0);
-    assert.ok(refused.terminal);
     assert.deepEqual(
       refused.terminal!.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(refused.terminal!.roleOutcome)

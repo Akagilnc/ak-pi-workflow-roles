@@ -326,7 +326,6 @@ test("ak-role resume continues countersign on the exact session", async () => {
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
-    assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumeArgs!.includes("再裁一次"), false);

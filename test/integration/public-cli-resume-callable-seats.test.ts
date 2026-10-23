@@ -259,7 +259,6 @@ for (const spec of SEAT_SPECS) {
       assert.equal(resumePrompt, "调用者原话");
 
       assert.equal(resumed.exitCode, 0, stderr.join(""));
-      assert.ok(resumed.terminal);
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.roleOutcome.role, spec.role);
       assert.equal(resumed.terminal!.runId, runId);

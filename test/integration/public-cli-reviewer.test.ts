@@ -771,7 +771,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     });
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-    assert.equal(typeof turnCwd, "string");
     assert.equal(realpathSync(turnCwd!), realpathSync(project));
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     // The skill's formal args and the caller's own words must reach the host,
@@ -792,7 +791,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     assert.deepEqual(values.authority, ["CLAUDE.md", "docs/adr/0001-roles-grow-by-demand.md"]);
     assert.ok(dialogue.slice(dialogue.indexOf("\n")).includes(instruction));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.artifacts.some((a) => a.kind === "report"), true);
     // The admitted facts are the run's own record in current.json's admitted section.
     const reportRef = result.terminal?.artifacts.find((a) => a.kind === "report");
     assert.ok(reportRef);
@@ -1038,7 +1036,6 @@ test("ak-role resume continues reviewer with fixed base", async () => {
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
-    assert.equal(typeof resumeCwd, "string");
     assert.equal(realpathSync(resumeCwd!), realpathSync(project));
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
@@ -1148,7 +1145,6 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
     );
     assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(typeof resumeCwd, "string");
     assert.equal(realpathSync(resumeCwd!), callerProjectRoot);
   });
 });

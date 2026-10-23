@@ -269,7 +269,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       );
 
       assert.equal(result.exitCode, 0);
-      assert.ok(result.terminal);
       assert.equal(result.terminal!.roleOutcome.kind, "accepted");
       assert.equal(typeof result.terminal!.runId, "string");
       // Publication is a package fault beside the accepted host terminal.
@@ -325,7 +324,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       });
       assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
       assert.equal(rebuilt.exitCode, 0);
-      assert.ok(rebuilt.terminal);
       assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
       if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
         assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
@@ -493,7 +491,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // and a lawful no_receipt stops the loop.
       assert.equal(dispatches(), 1);
       assert.equal(result.exitCode, 0);
-      assert.ok(result.terminal);
       assert.equal(result.terminal!.autoResumeCount, 0);
       assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
       await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
@@ -673,7 +670,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
 
     assert.ok(resumeArgs, stderr.join(""));
     assert.equal(resumed.exitCode, 0, stderr.join(""));
-    assert.ok(resumed.terminal);
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
 
