@@ -1195,3 +1195,5 @@ rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navi
 仅将原 runner import 保持原行，新增的 Vitest 能力放在另一条 import；这是导入布局整理，不退回 node:test、不改行为、不改核账脚本、不保留冲突偏好或兼容机制。上表修后坐标已随之同步。自审新增函数仍0；`git diff HEAD` 只有两处 import 整理与本账，没有新断言/旧断言删除。
 
 整理后重复同一 phase 变异与四文件聚焦，分别9败5过（专项8败2过、lifecycle 1败3过，3.71s）与26/26（2.26s），import-phase.json/.log、import-focused.log；生产已恢复，tsc exit0（import-tsc.log）。最终再跑相同三文件并行命令10遍，逐轮18/18、exit0，ENOTEMPTY/新增 home/新增 @navigator 均0；每轮墙钟4.37/3.30/4.23/3.34/3.28/3.71/3.32/3.49/3.01/3.07s。扫描范围与不限深度判据同上，完整基线与逐轮数据 import-load-summary.json，原始日志 import-load-{1..10}.log/.json。此前两组10遍为过程证据，不混为这次最终10遍。不 amend，追加独立提交后原入口再核最终 HEAD，实际结果记终局回执。
+
+追加提交 `5b006ef4` 后取树冲突消失，核账实际为 COUNT1143 / ledger1142、exit1（import-final-ledger.log）：增加的 case 是 integration 的既有 `test(scenario.name, async () => ...)` 声明行改为取 context，统计器按被修改的 case 起始行登记，并非删了一个案。采用更简单且与 lifecycle 一致的 API：从 Vitest 直接导入 onTestFinished，不从测试 context 解构，原 test 声明保留。没有改断言或统计规则，没有新增测试/函数；两种取法都是 Vitest 原件。再建独立提交，不 amend；该最终提交上的 phase 变异、四文件聚焦、三文件10轮并行、tsc、核账的命令与实测结果统一记终局回执及 `/tmp/1237-r24-evidence/receipt-*`。上文各组记录仍保留为对应提交的过程证据，不冒充最终提交结果。

@@ -32,7 +32,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
 
 type Case = {
   readonly name: string;
@@ -104,7 +104,7 @@ const CASES: readonly Case[] = [
 ];
 
 for (const scenario of CASES) {
-  test(scenario.name, async ({ onTestFinished }) => {
+  test(scenario.name, async () => {
     await withActivationHome({ prefix: "ak-nav-attendance-" }, async ({ home }) => {
       const { runAkRole } = await import("../../src/public-cli/cli.ts");
       await runAkRole(
