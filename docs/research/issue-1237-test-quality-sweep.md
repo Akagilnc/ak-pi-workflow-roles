@@ -6,7 +6,7 @@
 
 ## 方法与边界
 
-盘点基线全部 137 个 `*.test.ts`：unit 19、contract 27、integration 87、adjudication 1、package 2、根目录 1；累计处置为改 67、删 17、留 53（其中原 integration argv 文件迁移到 unit，旧路径计删，新路径不冒充基线文件）。原 105 个“留”文件已按案复核；本轮改表不再以整个文件有行为案为由豁免其中坏案。先逐文件核入口与断言，再打开候选上下文、生产调用点、承接测试及历史。类别仅采用票面五项：M＝内部结构（含镜像），T＝非契约文本，D＝重复结论，S＝失效行为，C＝单纯覆盖率；B 表示留下的行为测试，不是第六项判坏标准。混合文件的“改”包含删除其中坏案，保留其他行为。
+盘点基线全部 137 个 `*.test.ts`：unit 19、contract 27、integration 87、adjudication 1、package 2、根目录 1；累计处置为改 67、删 18、留 52（其中原 integration argv 文件迁移到 unit，旧路径计删，新路径不冒充基线文件）。原 105 个“留”文件已按案复核；本轮改表不再以整个文件有行为案为由豁免其中坏案。先逐文件核入口与断言，再打开候选上下文、生产调用点、承接测试及历史。类别仅采用票面五项：M＝内部结构（含镜像），T＝非契约文本，D＝重复结论，S＝失效行为，C＝单纯覆盖率；B 表示留下的行为测试，不是第六项判坏标准。混合文件的“改”包含删除其中坏案，保留其他行为。
 
 不以目录、ADR、负向案或暂停席身份豁免；也不把所有字符串一刀切：CLI argv、JSON 编码、URL/路径、SPDX、外部协议字段属于契约；调用者/上游提交的 opaque payload 原样穿透也属于契约。它们不同于断言包生成的提示词、建议文案或源码组织。计量冻结历史卷宗的结构化统计不是约束 LLM 新产出。
 
@@ -158,8 +158,8 @@
 | `test/integration/ticket-trajectory-binding.test.ts` | D | 改：删重复 legacy/计数，保真实 ledger index/render 消费 typed ticket、legacy、unbound 与 ambiguous run 路径。第八轮整卷复扫（D）：「flat run without ticketNumber」案 length===0 后紧跟同义 some===false，删后者第十二轮账：a/D 5、仍在 1。无未证 null。 |
 | `test/integration/worker-submission-gates.test.ts` | S | 本票误判为重复，第二轮改正：unfinished reason 不是重复结论，有承接 `test/contract/judge-role.test.ts:629`。独有空白输入仍走 runtime 收卷；删旧目录哨兵（S），保真实 Git 的 commit 提醒、unborn/失败、开放前缀及现役 hook 清理。第八轮整卷复扫：未命中。第十二轮账：a/S 1、b 9。无未证 null。 |
 | `test/adjudication/activation-bare-seam.test.ts` | B | 留：extension 激活入口的 git/durable principal 故障、原 cause、零加载及退出/abort 策略。第八轮整卷复扫：未命中。 |
-| `test/package/npm-identity-metadata.test.ts` | M/D/S | 改（第二十轮 R21-A 更正原整删）：一次真实 npm pack/解包，:136 既有 bin 案同时检查生产声明的材料路径与 esbuild 解析的真实模块依赖；bin --help、空自动注册、许可证/peer 保留。源码中有实际读者的 doctor/merger/navigator 依赖不能一概判删；无读者 canonical-json、fixer-repair.md 及退役名字哨兵不恢复。逐项重判唯一真源为删除账 #666–#683；本文件累计 a/D 3、a/M 3、a/S 4、b 1、改好 11。变异与反例见第二十轮。 |
-| `test/package/published-dist-import-closure.test.ts` | B | 留：实际 build 后用生态 esbuild 解析真实 import edges 并加载根模块；不是手抄模块全集。第八轮整卷复扫：未命中。 |
+| `test/package/npm-identity-metadata.test.ts` | M/D/S | 改（第二十轮 R21-A 更正原整删）：一次真实 npm pack/解包，:139 既有 bin 案检查生产声明的材料路径与 esbuild 解析的真实模块依赖；I22-A 续修再并入 :165–167 的真实模块加载，删除平行 fresh-build 前置；bin --help、空自动注册、许可证/peer 保留。源码中有实际读者的 doctor/merger/navigator 依赖不能一概判删；无读者 canonical-json、fixer-repair.md 及退役名字哨兵不恢复。逐项重判唯一真源为删除账 #666–#683；本文件累计 a/D 3、a/M 3、a/S 4、b 1、改好 11。变异与反例见第二十轮。 |
+| `test/package/published-dist-import-closure.test.ts` | D | 删并（I22-A）：npm-identity-metadata.test.ts:139 已沿真实 npm pack → prepack/build → 解包检查同一批 dist 依赖，独有原生模块加载移到 :165–167。删除独立 checkout/build、listJsFiles/walk、assertRelativeImportClosure 与旧案；构建缺边、无 dist、加载求值失败、npm 缺件四个变异分别报红，见账 #1141–#1143 与下文。 |
 | `test/primary-aware-cleanup.test.ts` | M | 删（第七轮 R6-B，原判留不成立）：只测测试夹具 `test/helpers/primary-aware-cleanup.ts`，无生产入口，且不在 package.json 任一测试 glob、`scripts/run-test-all.mjs` TIERS 或 CI 之内，从未执行；改不成真入口测试。承接者 null。夹具本身仍被 60 余个测试文件使用，不动。第十二轮账：a/M 12。无未证 null。 |
 
 ## 进口账（已冻结卷宗分析）
@@ -779,3 +779,30 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/in
 ### 交卷自审
 
 `git diff HEAD` 的四文件逐一打开。测试改名扩充而非另建平行案；diffItems 中 `packed runtime resolves its materials, modules and CLI bin` 对应起点文件 :134 的既有 bin 案，已并入。对照现有 `published-dist-import-closure.test.ts:69`：它不经 npm pack，不能检测 files 排除；复用 esbuild 而不复制 listJsFiles/assertRelativeImportClosure helper。无新增生产函数、测试 helper 或计数脚本函数。旧手抄表/无读者文件要求未复活。真实入口为 npm pack，断言面是产物路径字段与解析/执行结果；没有放松既有失败路径。本轮只作聚焦验证，不索取/运行全量：`npx vitest run test/package` 为 2 files / 4 tests passed，3.26s；`npx tsc --noEmit` exit 0；`git diff --check` 无输出。提交后仍须由调用方续送复审，不表示已合并收官。
+
+## I22-A 续修：闭包检查与昂贵前置归并（起点 889a200a）
+
+依据：调用者原样转来的 I22-A 判词。本轮续审处方明确纳入 published-dist-import-closure.test.ts；不将上轮遵守单文件范围本身记作违规。根因是只看「旧案抓不到新缺件」，漏看「新案已承接旧构建缺边」，未完成反向删并判断。
+
+修法：旧案原生动态 import 原样迁到现有解包夹具，目标改为包内 dist/navigator-attendance.js；保留所有材料、内部入口、dist 依赖与 bin 检查。删除旧文件91行及其 listJsFiles/walk、assertRelativeImportClosure、独立 checkout/build。没有新测试、新 helper、第二次 pack、缓存或共享状态协议。真实 npm pack 的 prepack 已执行 npm run build（生产 package.json 与 packIsolatedPackage 的既有链路；官方说明 https://docs.npmjs.com/cli/v11/using-npm/scripts）。
+
+核账连带修正：暂存该删除后，原核账算法因 main 曾迁移旧文件 imports，在重建本票树时触发 modify/delete。实测旧命令 exit 1；这是本次合法删除暴露的账工具缺口，不能删掉测试却让最终核账失败。账脚本复用 Git 私有索引，将合入后本票明确删除的路径也从 preintegration 树删除，再做原三方计算；不改真索引、不吞其余冲突、不建长期缓存，不手抄文件名单。统计边界与命令仍以账头为唯一真源；官方 git-update-index/GIT_INDEX_FILE 文档已查，仓内 rg 未找到可复用私有索引封装，直接用 Git 命令与 Python TemporaryDirectory，不另造通用件。
+
+扫类命令：`rg -n 'packIsolatedPackage|npm.*run.*build|assertRelativeImportClosure|listJsFiles|navigator-attendance\.js' test/package test/helpers/environment-fixtures.ts`。打开两份 package 测试、既有 materializePackageTree/packIsolatedPackage、package.json 的 build/prepack 与基线旧案；扫描后确认只有这两条链重叠。本轮为删并类，下表按 `git diff --name-status 889a200a` 逐文件记录；修后同命令重列、同搜索复扫，无第二套 package build/闭包链。
+
+| 文件 | 命中与处置 |
+| --- | --- |
+| test/package/npm-identity-metadata.test.ts | 已修；:150 的真实包闭包保留，:165 接入旧独有原生加载；不新增案。 |
+| test/package/published-dist-import-closure.test.ts | 已修；起点 :20 的枚举 helper、:51 的闭包 helper、:69 的独立构建案全部删除；原 :86–88 加载已迁移。 |
+| docs/research/issue-1237-deletion-ledger.py | 无重复测试；比对 git、两处 diff 与 merge-tree：仅为本次整文件删除修正账工具，私有索引代码无仓内现成封装，不复制构建/测试机制。 |
+| docs/research/issue-1237-deletion-ledger.md | 已修；账头说明删除的统计行为，新增 #1141–#1143，1142行=19文件+116案+1007断言，a/D599、改好48。 |
+| docs/research/issue-1237-test-quality-sweep.md | 已修；原「留」行改「删并」，总数相应变为改67/删18/留52；独有加载与旧闭包重叠不再混作两套前置的理由。 |
+
+变异均在真实 `npx vitest run test/package` 上各自运行，结果各为 1 failed / 2 passed、exit 1，最后逐字恢复 package.json/scripts/build-package.mjs（git diff 两文件为空）：
+
+- 构建结束后向 dist/activation-ledger-topology.js 加缺失相对导入：esbuild 对 missing-1237-i22.js 报 unresolved import（2.91s）。
+- 构建结束后向 dist/navigator-attendance.js 加求值 throw：闭包解析通过，新增的真实动态 import 报 1237-i22-native-load（2.77s），证明没有用静态解析冒充原生加载。
+- 构建结束后删除整个 dist：真实动态 import 报模块缺失（2.75s），承接旧 files.length>0 的必要失败输入，不恢复弱计数。
+- npm files 排除 souls/judge.md：材料路径断言报红（2.46s），未反向撤掉 R21-A 缺件守护。
+
+临时诊断脚本 `/tmp/1237-i22-mutations.py`、日志 `/tmp/1237-i22-evidence/` 不入仓库。首次合并聚焦 3/3 绿3.18s，前三项变异复原后 3/3 绿3.01s；最终聚焦、tsc、提交后原核账命令结果随本轮回执，不索全量。diffItems=[]：无新增测试/生产函数；修改的 git 函数复用原封装，只让既有调用可指定私有索引环境与 stdin。原材料与模块/进程断言不放松，旧整套前置已删除。原有 node-test-report.txt 不改不删；不 amend/rewrite/push，不派角色。

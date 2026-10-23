@@ -5,23 +5,36 @@ Count command (repo root):
   python3 docs/research/issue-1237-deletion-ledger.py
 Prints COUNT and checks the ledger where-column.
 """
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path.cwd()
 BASE = "7997ffb2"
 
-def git(*args: str) -> str:
-    return subprocess.check_output(["git", *args], cwd=ROOT, text=True, errors="replace")
+def git(*args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:
+    return subprocess.check_output(
+        ["git", *args], cwd=ROOT, text=True, errors="replace", env=env, input=input,
+    )
 
 # Exclude the main integration, retaining #1237 before it and all later repairs.
 # Git applies the integration..HEAD delta to the pre-integration ticket tree;
 # conflicts fail via check_output rather than silently dropping ticket changes.
 MAIN_MERGE = "c2c9175dacecc8121be7005eb55501e213f62787"
+# A later ticket deletion also wins over the old pre-integration version.
+# Use Git's private index, not the caller's index or a text-conflict preference.
+with tempfile.TemporaryDirectory(prefix="ak-1237-ledger-") as temporary:
+    env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+    git("read-tree", f"{MAIN_MERGE}^1", env=env)
+    git("update-index", "--force-remove", "-z", "--stdin", env=env, input=git(
+        "diff", "--diff-filter=D", "--name-only", "-z", MAIN_MERGE, "HEAD", "--", "test",
+    ))
+    preintegration_tree = git("write-tree", env=env).strip()
 ticket_tree = git(
     "merge-tree", "--write-tree", f"--merge-base={MAIN_MERGE}",
-    f"{MAIN_MERGE}^1", "HEAD",
+    preintegration_tree, "HEAD",
 ).strip()
 deleted_files = [p for p in git("diff", "--diff-filter=D", "--name-only", BASE, ticket_tree, "--", "test").split() if p]
 

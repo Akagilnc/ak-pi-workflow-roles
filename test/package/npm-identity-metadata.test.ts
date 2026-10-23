@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 import { AUDITOR_SESSION_MATERIALS } from "../../src/auditor-soul.ts";
@@ -145,7 +146,7 @@ test("packed runtime resolves its materials, modules and CLI bin", async () => {
   }
 
   // Resolve actual shipped import edges, including the explicit Pi entrypoint.
-  // Unlike the fresh-build closure test, this catches npm files exclusions.
+  // prepack already built this tree; check build gaps and npm files exclusions.
   await build({
     absWorkingDir: resolve(extracted.root, "package"),
     entryPoints: [
@@ -160,6 +161,10 @@ test("packed runtime resolves its materials, modules and CLI bin", async () => {
     packages: "external",
     logLevel: "silent",
   });
+  // Keep the former fresh-build case's native module-loading observation.
+  await import(
+    pathToFileURL(resolve(extracted.root, "package/dist/navigator-attendance.js")).href
+  );
   const bin = extracted.packageJson.bin?.["ak-role"];
   assert.equal(typeof bin, "string");
   await execFileAsync(process.execPath, [resolve(extracted.root, "package", bin!), "--help"]);

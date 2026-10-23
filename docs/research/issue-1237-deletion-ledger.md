@@ -1,6 +1,6 @@
-# #1237 删除与改弱逐条账（第二十轮 R21-A/B，起点 c2c9175d）
+# #1237 删除与改弱逐条账（I22-A 续修，起点 889a200a）
 
-范围：只统计 #1237。基线仍为 `7997ffb2`；终点为 Git 三方树 `git merge-tree --write-tree --merge-base=c2c9175d c2c9175d^1 HEAD`，即合入 main 前的本票树，加上 `c2c9175d..HEAD` 的后续修理。排除 `c2c9175d` 这一笔 main 合入及其冲突处理差异，不把 #1246/#1247/#1250 等他票的删除记入本账；不声称审核了该合入的解冲突。后续若再合入 main，须相应更新统计边界。原始 `7997ffb2..HEAD` 全树 diff 不再是本票计数。计数不包含本轮补回的断言。
+范围：只统计 #1237。基线仍为 `7997ffb2`；排除 `c2c9175d` 这一笔 main 合入及其冲突处理差异，保留 `c2c9175d..HEAD` 的后续修理。脚本先在 TemporaryDirectory 内的 Git 私有索引读取 `c2c9175d^1`，再用 `git diff --diff-filter=D --name-only -z c2c9175d HEAD -- test` 与 `git update-index --force-remove -z --stdin` 应用本票合入后明确发生的删除，write-tree 得 preintegration_tree；最后 `git merge-tree --write-tree --merge-base=c2c9175d <preintegration_tree> HEAD` 得统计终点。这样本票删除一个被 main 改过的文件不会被旧版本复活或卡在 modify/delete，其余冲突仍报错。不动调用者索引/工作树、不建提交、不维护文件排除清单；不把 #1246/#1247/#1250 等他票的删除记入本账，也不声称审核了该合入的解冲突。后续若再合入 main，须更新统计边界。原始 `7997ffb2..HEAD` 全树 diff 不是本票计数。计数不包含本轮补回的断言。
 
 R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支的输出或失败。没有的写一句话。有的写打中该行为的变异和报红测试名，或改好位置，或 `c/null`。该轮仅阻断 warning 的修法已由 R14-A 判为返工；本轮在现有 ACP 与 headless 案保持 log.jsonl 阻断，沿真实回调分隔 pointer 与出口申报，并分别保留原件缺失（warning）、原件存在（copy）输入。条数锁没有恢复。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 1139 行 = 整文件 18 + 整案 115 + 断言 1006。R19-A 首交 #1073–#1136：实际删 63 条，另有外层 assert.throws 因跨度计数记为「仍在」一条；这批承接坐标锚定 `fa4bff02`。续修新增 #1137–#1140，补删四条，承接坐标为本次修后位置。R19-A 累计实删 67 条。旧轮坐标保留原轮语义，不重新解释为本轮位置。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068，承接位置锚定 `959d69a2`；R18-B 新增 #1069–#1072，承接位置指本轮修后文件。#1067 曾引用的中间 ok 已由 #1069 的精确 code/cause 接替，拒收能力不变。删除位置仍是 `7997ffb2`。
+本表 1142 行 = 整文件 19 + 整案 116 + 断言 1007。I22-A 新增 #1141–#1143（旧独立构建案的文件、断言、案），承接坐标为本轮修后；此前 R21-A 的坐标锚定 889a200a。R19-A 首交 #1073–#1136：实际删 63 条，另有外层 assert.throws 因跨度计数记为「仍在」一条；这批承接坐标锚定 `fa4bff02`。续修新增 #1137–#1140，补删四条，承接坐标为本次修后位置。R19-A 累计实删 67 条。旧轮坐标保留原轮语义，不重新解释为本轮位置。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，第十七轮新增 #1034–#1037，均插在 where 顺序里。R15-B 行的「同文件:n」指本行基线文件在第十六轮提交 `5ee5b065` 的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。R16-D 四行直接引用未变的共享 helper。R17-A 复审修理新增 #1038–#1066，仍按基线 where 顺序插入；这些行的承接位置指 `a835809e`。第十八轮 R18-A 新增 #1067–#1068，承接位置锚定 `959d69a2`；R18-B 新增 #1069–#1072，承接位置指本轮修后文件。#1067 曾引用的中间 ok 已由 #1069 的精确 code/cause 接替，拒收能力不变。删除位置仍是 `7997ffb2`。
 
 ## 处置口径
 
@@ -30,11 +30,11 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：598
+- a/D：599
 - a/M：186
 - a/S：134
 - b：62
-- 改好：46
+- 改好：48
 - a/T：34
 - a/退役：25
 - a/C：20
@@ -57,6 +57,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 8 | file | `test/integration/engine-material.test.ts` | (deleted file) | a/退役；依据 本轮台院 I11-A ③；sweep:89；listEngineMaterialNames 已不在 src。缺 notes 的观察在 engine-axis.test.ts:82 与 engine-startup-material.test.ts:86。语法拒收是 unit 文件，不是本文件 |
 | 9 | file | `test/integration/factory-board-true-home.test.ts` | (deleted file) | a/D；依据 sweep:90；依赖本机旧卷、缺卷 skip，oracle 复用生产判定。fixer accepted 事实在 factory-board.test.ts:1663，不是缺口 R13-A 没有：只在属主机器缺卷时 skip，或只复算生产助手的同一结果，不检查 CI 能产的在役输出或失败行为。 |
 | 10 | file | `test/integration/public-cli-argv-parsers.test.ts` | (deleted file) | a/D；依据 sweep:104；grammar 迁到 unit/public-cli-argv-parsers.test.ts；与公开入口同规则者由表点名的案接住 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
+| 1141 | file | `test/package/published-dist-import-closure.test.ts` | (deleted file) | 改好；I22-A：独立 checkout/build/扫描链删并到 test/package/npm-identity-metadata.test.ts:139；真实 npm pack 已经 prepack/build。独有的 navigator-attendance 原生动态加载迁入 :165–167。构建后注入缺边与模块求值 throw 各自使承接案报红，见 sweep I22-A。 |
 | 11 | file | `test/primary-aware-cleanup.test.ts` | (deleted file) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
 | 12 | file | `test/unit/canonical-json.test.ts` | (deleted file) | a/退役；依据 sweep:26；ADR 0030 已撤格式契约，canonicalJson 在 src 零命中，无消费调用，不制造 consumer |
 | 13 | file | `test/unit/engine-material.test.ts` | (deleted file) | b test/integration/public-cli-engine-axis.test.ts:375；变异：isEngineNameSyntax 去掉 name === '.'；报红「public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects」。 |
@@ -1030,6 +1031,8 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 681 | assert | `test/package/npm-identity-metadata.test.ts:226` | assert.equal( extracted.paths.includes("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed", ); | a/M；R21-A 复核：旧闭合 packet shell 在 src/extensions/scripts 无引用，无运行时生产者/读者；维持删除，不为已撤名字恢复包清单负向断言。 |
 | 682 | assert | `test/package/npm-identity-metadata.test.ts:234` | assert.equal(extracted.packageJson.bin?.["ak-role"], "dist/public-cli/main.js"); | a/M；R21-A 复核：固定 manifest 路径字符串不是运行时文件缺失守卫，合法换名不应报红；真实 bin 可执行由 #671 的同文件 :164–166 守着。维持删除此字符串镜像，不恢复。 |
 | 683 | case | `test/package/npm-identity-metadata.test.ts:154` | packed artifact ships the release inventory without bundled method Skills | 改好；R21-A：合并进同文件 :136 既有 bin 案，仍复用一次真实 npm pack/解包。材料来自生产声明、模块来自包内 import edges，必需文件排除红、复原 3/3 绿；各子项分别见 #666–#682，未复活手抄清单或退役哨兵。 |
+| 1142 | assert | `test/package/published-dist-import-closure.test.ts:55` | assert.ok(files.length > 0, "dist emitted no JS/MJS entries"); | a/D；I22-A：非空文件集合是弱检查；承接 test/package/npm-identity-metadata.test.ts:165–167 原生加载已指名的实际模块，无 dist 模块必失败。不保留只为这条检查存在的 listJsFiles/walk。构建后删除整个 dist 的变异，在该原生 import 处 MODULE_NOT_FOUND 报红，见 sweep I22-A。 |
+| 1143 | case | `test/package/published-dist-import-closure.test.ts:70` | test( | 改好；I22-A：fresh-build published dist relative-import graph is closed 合入 test/package/npm-identity-metadata.test.ts:139。闭包检查 :150–163 沿 npm pack → prepack/build → 解包，原生加载 :165–167；构建缺边、模块求值失败、npm 缺件分别报红，不删除任何独有观察。 |
 | 684 | assert | `test/primary-aware-cleanup.test.ts:8` | await assert.rejects( () => withPrimaryAwareCleanup( async () => "ok", async () => { throw cleanup; }, ), (error: unknown) => error === cleanup, ); | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
 | 685 | assert | `test/primary-aware-cleanup.test.ts:23` | await assert.rejects( () => withPrimaryAwareCleanup( async () => { throw primary; }, async () => { throw cleanup; }, ), (error: unknown) => { assert.ok(error instanceof AggregateEr | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
 | 844 | assert | `test/primary-aware-cleanup.test.ts:34` | assert.ok(error instanceof AggregateError) | a/M；依据大理寺 01a163ff receipts/2.json R6-B。R13-A 没有：基线 test/primary-aware-cleanup.test.ts 直接调用 withPrimaryAwareCleanup，用自造 body/cleanup 检查该夹具的返回值或聚合错误；未走 runAkRole/生产输出。根目录该测试不在 package.json glob 或 scripts/run-test-all.mjs TIERS，现已删。不是夹具未被使用：test/helpers/primary-aware-cleanup.ts:64 的 withTempRoot 及多处测试仍调用它。 |
