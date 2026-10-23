@@ -1136,7 +1136,7 @@ git grep -n -E 'createNavigatorAttendance|createNavigatorLookup|navigator-attend
 rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navigator-lookup' test scripts extensions
 ```
 
-原始输出 `/tmp/1237-r24-evidence/class-before.txt`、`class-after.txt`。下表一命中一行，坐标为起点→修后；删除的行注明承接，不伪称还存在。修后命中均包含在对应行，没有新增未结命中。
+原始输出 `/tmp/1237-r24-evidence/class-before.txt`、最终复扫 `import-class-after.txt`（首提交前为 class-after.txt）。下表一命中一行，坐标为起点→修后；删除的行注明承接，不伪称还存在。修后命中均包含在对应行，没有新增未结命中。
 
 | 起点 path:line | 修后 | 结果 |
 | --- | --- | --- |
@@ -1146,11 +1146,11 @@ rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navi
 | test/contract/durable-session-write-failure.test.ts:37 | 37 | 不同类：向真实持久化消费者注入受控事件，守 flush failure，不测 lookup 装配。 |
 | test/contract/navigator-attendance-lifecycle.test.ts:8 | 8 | 已修：移除 attendance 构造器导入，只留事件常量。 |
 | test/contract/navigator-attendance-lifecycle.test.ts:9 | 删除 | 已修：移除 lookup 构造器导入，改用生产依赖表。 |
-| test/contract/navigator-attendance-lifecycle.test.ts:52 | 53 | 不同类：受控回调守 closure 绑定与旧激活迟到消息隔离，不装配真实 attendance/lookup。 |
-| test/contract/navigator-attendance-lifecycle.test.ts:168 | 169 | 不同类：工厂调用标记守 stationChild 是否创建依赖，不测构造器内部。 |
-| test/contract/navigator-attendance-lifecycle.test.ts:395 | 389 | 已修：runtime 直接用 createRoleRuntimeDependencies。 |
-| test/contract/navigator-attendance-lifecycle.test.ts:396 | 删除 | 已修：测试内 attendance 装配删除，由 :389 生产依赖表承接。 |
-| test/contract/navigator-attendance-lifecycle.test.ts:402 | 删除 | 已修：测试内 lookup 装配删除；:343 原生 spy 在 summons 边界保持原挂起/abort 输入。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:52 | 54 | 不同类：受控回调守 closure 绑定与旧激活迟到消息隔离，不装配真实 attendance/lookup。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:168 | 170 | 不同类：工厂调用标记守 stationChild 是否创建依赖，不测构造器内部。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:395 | 390 | 已修：runtime 直接用 createRoleRuntimeDependencies。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:396 | 删除 | 已修：测试内 attendance 装配删除，由 :390 生产依赖表承接。 |
+| test/contract/navigator-attendance-lifecycle.test.ts:402 | 删除 | 已修：测试内 lookup 装配删除；:344 原生 spy 在 summons 边界保持原挂起/abort 输入。 |
 | test/contract/navigator-attendance.test.ts:8 | 8 | 不同类：单模块输入测试的被测入口导入，不替换生产依赖表。 |
 | test/contract/navigator-attendance.test.ts:9 | 9 | 不同类：lookup 单模块入口与类型导入。 |
 | test/contract/navigator-attendance.test.ts:20 | 20 | 不同类：attendance 单模块案的内存 lookup 输入，不宣称穿过 runtime 装配。 |
@@ -1163,10 +1163,10 @@ rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navi
 | test/integration/public-cli-navigator-attendance.test.ts:14 | 删除 | 已修：删除测试 lookup 导入，观察迁到 public-role-summons。 |
 | test/integration/public-cli-navigator-attendance.test.ts:18 | 18 | 不同类：仅类型，新增句柄类型用于读取生产 isPreparing。 |
 | test/integration/public-cli-navigator-attendance.test.ts:24 | 删除 | 已修：删除测试 attendance 构造器导入。 |
-| test/integration/public-cli-navigator-attendance.test.ts:130 | 152 | 已修：包装只收集 onEvent，委托生产工厂。 |
-| test/integration/public-cli-navigator-attendance.test.ts:131 | 153 | 不同类：原生产函数的参数类型，未自行定义装配契约。 |
-| test/integration/public-cli-navigator-attendance.test.ts:137 | 155 | 已修：成功与 failingLookup 都调用 baseDeps.createNavigatorAttendance。 |
-| test/integration/public-cli-navigator-attendance.test.ts:139 | 删除 | 已修：移除手工 lookup；:128 原生 spy 委托真实 summon，仅失败案注入原文件系统故障。 |
+| test/integration/public-cli-navigator-attendance.test.ts:130 | 153 | 已修：包装只收集 onEvent，委托生产工厂。 |
+| test/integration/public-cli-navigator-attendance.test.ts:131 | 154 | 不同类：原生产函数的参数类型，未自行定义装配契约。 |
+| test/integration/public-cli-navigator-attendance.test.ts:137 | 156 | 已修：成功与 failingLookup 都调用 baseDeps.createNavigatorAttendance。 |
+| test/integration/public-cli-navigator-attendance.test.ts:139 | 删除 | 已修：移除手工 lookup；:129 原生 spy 委托真实 summon，仅失败案注入原文件系统故障。 |
 | test/package/npm-identity-metadata.test.ts:166 | 166 | 不同类：发布物原生动态加载，不自行构造 attendance。 |
 
 直接 navigator 公开入口 `test/integration/public-cli-navigator-lookup.test.ts` 全文另核：runAkRole → 真实 lookup 管线，无 attendance 替身。上述被排除的单模块案也纳入聚焦验证。
@@ -1184,6 +1184,14 @@ rg -n 'createNavigatorAttendance|createNavigatorLookup|navigator-attendance|navi
 - 修前生产 `src/role-runtime-dependencies.ts:54` 临时改 `phase: "plan"`，`npx vitest run --project integration test/integration/public-cli-navigator-attendance.test.ts --reporter=verbose` → 10 passed、exit0、2.04s（before-phase.log），复现漏报。
 - 修后同一生产变异，`npx vitest run test/integration/public-cli-navigator-attendance.test.ts test/contract/navigator-attendance-lifecycle.test.ts --reporter=verbose --reporter=json --outputFile.json=/tmp/1237-r24-evidence/final-phase.json` → 9 failed / 5 passed、exit1、3.21s。专项是8败2过（含 failingLookup 的 unavailable 断言报红）；lifecycle 是1败3过。这里不照抄判词旧测试的7败3过。
 - 复原生产源码，`npx vitest run test/contract/navigator-attendance-lifecycle.test.ts test/contract/navigator-attendance.test.ts test/integration/public-cli-navigator-attendance.test.ts test/integration/public-cli-navigator-lookup.test.ts --reporter=verbose` → 26/26、exit0、1.94s（final-focused.log）。`npx tsc --noEmit` exit0（final-tsc.log）。`git diff --exit-code -- src` exit0。
-- 最后一次测试代码变动后，`npx vitest run --project integration test/integration/public-cli-navigator-attendance.test.ts test/integration/role-envelope-engine-axis.test.ts test/integration/audited-run-identity-1166.test.ts --reporter=verbose --reporter=json --outputFile.json=/tmp/1237-r24-evidence/final-load-N.json` 连续10遍，每遍三文件并跑、18/18、exit0；墙钟依次3.22/2.72/3.15/2.97/3.17/2.94/3.45/2.72/3.37/2.96s。每遍 ENOTEMPTY=0、新 home=0、新 @navigator=0。范围严格是系统 TMPDIR、解析后的 /tmp、工作树三根下顶层 ak-* / .test-tmp-* home；所有后代不限深度递归，与运行前快照比对，每轮结束检查。非这些 home 的既存目录不在结论中；完整根、基线、逐轮结果见 final-load-summary.json。此前还有一组10遍均18/18（load-summary.json），最终验收只引用后组，不混算次数。
-- 自审：`git diff HEAD` 中新增测试函数0、生产函数0、helper 0，diffItems=[]；summon/createRunId/onEvent/Promise 回调只是搬移或修改，恢复直接用 Vitest 的 mockRestore，不新增包装函数。原输入、断言、失败路径未删弱；只删测试复制的生产装配与假 Soul loader。两处测试改动净减17行，未引入新机制。`git diff --check` 通过；原有未跟踪 node-test-report.txt 已打开，未改、未删、未提交。
+- 首提交前最后一次测试代码变动后，`npx vitest run --project integration test/integration/public-cli-navigator-attendance.test.ts test/integration/role-envelope-engine-axis.test.ts test/integration/audited-run-identity-1166.test.ts --reporter=verbose --reporter=json --outputFile.json=/tmp/1237-r24-evidence/final-load-N.json` 连续10遍，每遍三文件并跑、18/18、exit0；墙钟依次3.22/2.72/3.15/2.97/3.17/2.94/3.45/2.72/3.37/2.96s。每遍 ENOTEMPTY=0、新 home=0、新 @navigator=0。范围严格是系统 TMPDIR、解析后的 /tmp、工作树三根下顶层 ak-* / .test-tmp-* home；所有后代不限深度递归，与运行前快照比对，每轮结束检查。非这些 home 的既存目录不在结论中；完整根、基线、逐轮结果见 final-load-summary.json。此前还有一组10遍均18/18（load-summary.json），两组不混算；追加导入整理后的最终证据见下段。
+- 自审：`git diff HEAD` 中新增测试函数0、生产函数0、helper 0，diffItems=[]；summon/createRunId/onEvent/Promise 回调只是搬移或修改，恢复直接用 Vitest 的 mockRestore，不新增包装函数。原输入、断言、失败路径未删弱；只删测试复制的生产装配与假 Soul loader。首提交两处测试改动净减17行，追加导入整理后净减15行，未引入新机制。`git diff --check` 通过；原有未跟踪 node-test-report.txt 已打开，未改、未删、未提交。
 - 无新增删除断言、整案、整文件，删除账计数算法与 MAIN_MERGE 不改。独立新提交后运行 `python3 -I docs/research/issue-1237-deletion-ledger.py` 核真实 HEAD，实际结果入终局回执。不跑全量，不动真实席位/宿主配置，不 push、不派角色；本轮交修理回执待复审，不声称整票合并。
+
+### 首提交后核账冲突与追加导入整理
+
+`beb32297` 提交后原核账入口实际 exit1（final-ledger.log），不是 COUNT/MATCH 通过。打开原 `git merge-tree --write-tree --merge-base=c2c9175dacecc8121be7005eb55501e213f62787:test dc7c18023bde59b62d1d8dfb4eb6d04dc4eb56fd HEAD:test` 的冲突树，两个冲突都仅是 runner 导入：排除 main 的 Vitest 迁移时，旧树为 `import test from "node:test"`，本轮在同一行加入 vi/onTestFinished，Git 无法自动合并（ledger-conflict.txt、lifecycle-conflict.ts、integration-conflict.ts）。
+
+仅将原 runner import 保持原行，新增的 Vitest 能力放在另一条 import；这是导入布局整理，不退回 node:test、不改行为、不改核账脚本、不保留冲突偏好或兼容机制。上表修后坐标已随之同步。自审新增函数仍0；`git diff HEAD` 只有两处 import 整理与本账，没有新断言/旧断言删除。
+
+整理后重复同一 phase 变异与四文件聚焦，分别9败5过（专项8败2过、lifecycle 1败3过，3.71s）与26/26（2.26s），import-phase.json/.log、import-focused.log；生产已恢复，tsc exit0（import-tsc.log）。最终再跑相同三文件并行命令10遍，逐轮18/18、exit0，ENOTEMPTY/新增 home/新增 @navigator 均0；每轮墙钟4.37/3.30/4.23/3.34/3.28/3.71/3.32/3.49/3.01/3.07s。扫描范围与不限深度判据同上，完整基线与逐轮数据 import-load-summary.json，原始日志 import-load-{1..10}.log/.json。此前两组10遍为过程证据，不混为这次最终10遍。不 amend，追加独立提交后原入口再核最终 HEAD，实际结果记终局回执。

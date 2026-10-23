@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test, vi } from "vitest";
+import { test } from "vitest";
 import { randomUUID } from "node:crypto";
 
 import * as publicRoleSummons from "../../src/public-role-summons.ts";
@@ -32,6 +32,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { vi } from "vitest";
 
 type Case = {
   readonly name: string;

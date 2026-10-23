@@ -1,6 +1,6 @@
 // #1192: attendance is a table lookup — lifecycle, settle-by-status, grace and cancel.
 import assert from "node:assert/strict";
-import { onTestFinished, test, vi } from "vitest";
+import { test, vi } from "vitest";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
@@ -28,6 +28,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
+import { onTestFinished } from "vitest";
 
 test("shared accepted submission binds settled attendance before public extraction; prior activation cannot deliver late", async () => {
   await withTempRoot("navigator-bound-closure-", async (home) => {
