@@ -238,7 +238,6 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       run.seatsDispatched.some((role) => role !== "judge"),
       `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
     );
-    assert.notEqual(run.terminal?.roleOutcome.kind, "no_receipt");
     assert.ok(run.runDirectory !== undefined);
     const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
     assert.equal(runState.state, "terminal");

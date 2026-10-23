@@ -556,17 +556,11 @@ test("default dual-lens admits both axes without a parent run", async () => {
     ] as const) {
       const received = publishedByLens[lens];
       const lensRows = progress.filter((line) => line.round.endsWith(`.${lens}`));
-      assert.equal(
-        lensRows.length,
-        received.length,
-        `${lens}: progress rows must match queried sealed receipts`,
-      );
       assert.deepEqual(
         lensRows.map((line) => line.round),
         received.map((_, index) => `${index + 1}.${lens}`),
         `${lens}: rounds must be continuous 1..n with no duplicates`,
       );
-      assert.equal(new Set(lensRows.map((line) => line.round)).size, lensRows.length);
       for (let index = 0; index < received.length; index += 1) {
         const row = lensRows[index]!;
         assert.ok(

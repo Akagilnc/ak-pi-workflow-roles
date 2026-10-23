@@ -2,6 +2,8 @@
 
 基线：`7997ffb2`；首版：`c950d019`；第二版：`19b7dc7a`。第二版依台院 `01a1628d-443a-71f0-8de8-e9d1c5d92674@inspector/receipts/1.json` 与大理寺 `01a1628f-9dcb-765c-abc5-09b80ad9ed25@judge/receipts/1.json` 的 A/B/C、J1–J5 续修；第三版依大理寺同 run `receipts/2.json` 的 R2-A/R2-B/R2-C 续修（见文末「第三轮」）；第四版依同 run `receipts/3.json` 的 R3-A/R3-B 续修（见文末「第四轮」）；第五版依同 run `receipts/4.json` 的 R4-A/R4-B 续修（见文末「第五轮」）；第六版依同 run `receipts/5.json` 的 R5-A 续修（见文末「第六轮」）；第七版依大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/2.json` 的 R6-A/R6-B 续修（见文末「第七轮」）；第八版是对现存全部测试文件的整卷复扫（见文末「第八轮」），每行末尾的「第八轮整卷复扫」即本轮结论。本文是施工记录，不是新测试规范，不限制后续审核；本腿未派角色、未送审。
 
+当前结算以文末「第十六轮」及逐条账 R16 为准；前十五轮保留为历史取证，尤其第十五轮 runId 缺口判断已撤回。
+
 ## 方法与边界
 
 盘点基线全部 137 个 `*.test.ts`：unit 19、contract 27、integration 87、adjudication 1、package 2、根目录 1；累计处置为改 67、删 17、留 53（其中原 integration argv 文件迁移到 unit，旧路径计删，新路径不冒充基线文件）。原 105 个“留”文件已按案复核；本轮改表不再以整个文件有行为案为由豁免其中坏案。先逐文件核入口与断言，再打开候选上下文、生产调用点、承接测试及历史。类别仅采用票面五项：M＝内部结构（含镜像），T＝非契约文本，D＝重复结论，S＝失效行为，C＝单纯覆盖率；B 表示留下的行为测试，不是第六项判坏标准。混合文件的“改”包含删除其中坏案，保留其他行为。
@@ -363,8 +365,80 @@ R13-A：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支
 
 R14-A：根因是旧腿为分开 warning 观察撤掉了 pointer、copy 失败输入。现在两个既有案的 log.jsonl 始终为目录；真实 session/prompt（ACP）、ingestStructuredOutput（headless）回调只分隔并重置申报观察，不移走阻断。首轮无原件守 warning，次轮有原件守 copy，各轮 pointer 也独立观察；headless 的后续覆盖与缺源保好副本保留。与 7997ffb2 的逐条 diff 已核：原必要失败输入全部保留，未恢复条数锁；没有新案、新生产函数或钩子。
 
-R14-B：逐条账的 32 条“助手无入口”套话按真实调用链重判。failure-settlement-kit 的 14 行有 runAkRole 入口，不再按夹具布局豁免；12 行引现有交付／退出码／诊断／navigator／artifacts／cause 守护和逐项变异，失败 Terminal.runId 类型与非空两行（#182/#183）实测变异仍绿，依本轮只改账处方记 c/null。根目录 cleanup 测试的 18 行含六条内层断言，都写明只测自造 body/cleanup，且是该已删测试不在 glob；夹具本身仍由 withTempRoot 等调用，不再误写夹具无使用方。详情及命令、红案名见 `issue-1237-deletion-ledger.md` 末 R14-A/B 取证。
+R14-B（历史；runId 结论由第十六轮纠正）：逐条账的 32 条“助手无入口”套话按真实调用链重判。failure-settlement-kit 的 14 行有 runAkRole 入口，不再按夹具布局豁免；12 行引现有交付／退出码／诊断／navigator／artifacts／cause 守护和逐项变异，失败 Terminal.runId 类型与非空两行（#182/#183）实测变异仍绿，依本轮只改账处方记 c/null。根目录 cleanup 测试的 18 行含六条内层断言，都写明只测自造 body/cleanup，且是该已删测试不在 glob；夹具本身仍由 withTempRoot 等调用，不再误写夹具无使用方。详情及命令、红案名见 `issue-1237-deletion-ledger.md` 末 R14-A/B 取证。
 
 交卷前自审：`git diff HEAD` 四文件逐一打开，`diffItems=[]`（无新增测试函数或生产函数）。两案沿 executeTurn 真入口，阶段只观察 stderr 是否发生，断言在返回后；不锁块数、措辞或提示词；退役 warning-only 观察与切换阻断逻辑已删。逐条对照 `git diff 7997ffb2 -- test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts`，未撤另一阶段的失败输入。
 
 聚焦验证：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts test/integration/public-cli-failure-settlement.test.ts`：12 pass / 0 fail，2011.798042 ms。`npx tsc --noEmit` exit 0；`python3 -I docs/research/issue-1237-deletion-ledger.py`：COUNT 849、MATCH 849，c/null 13；`git diff --check` exit 0。没有跑全量，没有改生产、配置或席位表。最小必要成本是复用两案与其回调增加阶段布尔观察、ACP 同夹具再走一次有原件路径，无新增测试机制。
+
+## 第十六轮（R15-A / R15-B）
+
+起点 `2f128022`，累计对照仍为 `7997ffb2`。依据大理寺 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/12.json`、符宝郎 `01a16409-cdb9-72b9-adda-86a54a6faead@notary/receipts/11.json`、台院 `01a16411-35e9-738f-afd0-e94edebd41be@auditor/receipts/10.json`（均在本票起居录）。不新增测试、不恢复条数锁、不改生产或全局配置。
+
+### R15-A：纠正缺口账，不补并行守护
+
+#182/#183 改为 (b)：`test/integration/engine-detour-usage-ledger.test.ts:810` 的 `first.terminal?.runId === runId` 是公开 host code 1 失败案，不是 accepted/no_receipt。原失败家族取样未包含它，不能从局部变异仍绿推出全仓缺口。
+
+本轮在 `/tmp/r16-mutation` 用 `git archive 2f128022` 加本轮测试改动隔离复现，只将 `src/public-cli/settlement.ts:1717` 的失败返回 `{ roleOutcome, navigator, artifacts, runId: admitted.runId }` 改成 `runId: ""`。命令：
+
+```sh
+node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/engine-detour-usage-ledger.test.ts test/integration/public-cli-process-cancel.test.ts
+```
+
+变异 exit 1，6 案 3 红，2561.136125 ms；撤销 exit 0，6/6 绿，2699.102334 ms。红案为：
+- public entry: explicit resume is a new scope; reused toolCallId stays isolated; resumable redacts recordFile
+- public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name and stop host child
+- public entry: SIGTERM beside a thrown host report keeps that report
+
+其余 c/null 逐项复核见逐条账 #15、#131–#135、#137、#141–#142、#719–#720 及文末。没有再发现漏报的公开值相等承接。notary 的合法/缺省/bound 与注册归属不能套用非法值不可达，相关行已纠正说明；保留 R10-A 原裁未补状态，不借身份材料的其他字段冒称承接。当前 c/null 11、b 61。
+
+### R15-B：全 test 树按蕴含关系删并
+
+错误形状：同次调用、同一结果，已有精确值或整体 hand oracle，再检查其类型、存在、长度、成员、字段、派生和或排除不同值；也包括调用强断言助手后再逐字段重验同一结果。扫描从全部 test 文件的 assert 调用清单开始，不以判词样本为边界；再核循环输入、分支和前后调用。复扫使用同一组候选命令/清单，最终手工复核，候选扫描器只放临时目录，不成为测试或生产机制。
+
+实际命令：`rg -n 'assert\\.' test`；`python3 /tmp/r16-scan.py > /tmp/r16-pairs.txt`，复扫同命令输出到 `/tmp/r16-pairs-after.txt`；累计删并文件范围 `git diff --name-status 7997ffb2 --`，本轮范围 `git diff --name-status 2f128022 --`。扫描器只复用账本 assert_calls 枚举候选，不作自由文本的生产判定。
+
+下表是本轮逐文件表，覆盖上文旧轮次的留/改结论。命中以行为定位（表内保留历史坐标，基线原句与位置以逐条账为准），承接是修后行号；失败助手完整路径为 `test/helpers/failure-settlement-kit.ts:89–128`。基线每条另入逐条账 #851–#1033，非基线的 R13 回补也在本表列出。
+
+| 文件 | 本轮命中（历史坐标） | 处置／修后承接 |
+| --- | --- | --- |
+| `test/contract/analyst-b2-frame-buckets-actions.test.ts` | 桶和、duration 投影、overlap sum/toolBucket、bash 字段；:208 clipped 桶和 | 已修；:136–140 精确桶与 actions，:176–178 clipped 三值。保强 hand oracle。 |
+| `test/contract/judge-role.test.ts` | :565 completed.status（R13 回补） | 已修；:565 accepted.details 整体 deepEqual(completed)。 |
+| `test/contract/secretariat-role.test.ts` | :76 active.includes(output) | 已修；:69 精确过滤命中数 1，蕴含成员存在。 |
+| `test/contract/submission-ledger.test.ts` | :167 accepted 非 details；:542 recorded.length | 已修；:166 精确 params、:494 整体数组。 |
+| `test/integration/analyst-399-book-scope.test.ts` | :294–295 两个排除成员 | 已修；:293 精确 ticketIds。 |
+| `test/integration/analyst-c1-sweep-index.test.ts` | :182 row 存在；:209 重扫文件数 | 已修；:182 整体 row、:208 原文件数组。 |
+| `test/integration/analyst-c3-model-groups.test.ts` | :217 grokDisplayRows.length | 已修；:217 rawGroupKey 精确数组。 |
+| `test/integration/analyst-compute-if-missing.test.ts` | :485 issueNumber；:522 unscoped/scopedDisk 不等 | 已修；:476、485 与 disk 相等；:512、520 两者票号分别精确。 |
+| `test/integration/analyst-entry.test.ts` | B1 存在/投影、B3 存在/逐字段、B4 death/absent-tail、:886 重复排除 a1 | 已修；:789 B1、:814 B3 整体 oracle；:801–809 B4 按行 oracle；:869 排除 a1。分支 unreadable 的自由 reason 特征观察保留。 |
+| `test/integration/dossier-resolution.test.ts` | :51 a/b 目录非等 | 已修；:49–50 精确不同目录。 |
+| `test/integration/engine-detour-usage-ledger.test.ts` | :520 stdoutByteLength 属性存在 | 已修；:519 精确 0。runId 失败守护保留 :810。 |
+| `test/integration/factory-board.test.ts` | 时间/两轴非等、desc 非等、onBoard 成员、:1013 与 :1036 同值 | 已修；:1036 状态、:1121 时间、:1191–1202/:1286–1303 两轴精确值、:1637 排序、:2810/:2845 两次各自精确集合。独立 HTML 属性及跨 tick 观察保留。 |
+| `test/integration/gate-officer-resume-accounting.test.ts` | :95 rounds.length；host/model 排除父值 | 已修；:95、99 精确投影；:184、190 精确 host/model。 |
+| `test/integration/public-cli-1132-delivery-request.test.ts` | :241 kind 非 no_receipt | 已修；:232 精确 accepted。 |
+| `test/integration/public-cli-auto-resume-dispatch-throw.test.ts` | :123、132 长度 | 已修；:123、131 attempt 精确数组。 |
+| `test/integration/public-cli-coder.test.ts` | :113 summary | 已修；:108 accepted 整体相等。 |
+| `test/integration/public-cli-escalation-resume.test.ts` | :439 role 非 judge | 已修；:416 精确 auditor。 |
+| `test/integration/public-cli-failure-artifacts.test.ts` | helper 后 kind/cause/diagnostic、同路径 errorBody 重读、terminal 存在 | 已修；:229、359 调用原 failure-settlement-kit。独立 decisiveFacts errno 保留。 |
+| `test/integration/public-cli-failure-provider-stop.test.ts` | helper 后 kind/cause/diagnostic、同路径 artifact 重验 | 已修；:68、185、298 调用原 kit；删未用 import。不同座与失败输入保留。 |
+| `test/integration/public-cli-failure-real-entry.test.ts` | helper 后 kind/cause/diagnostic/identity | 已修；:411、584 调用原 kit；未指定精确诊断的类型/非空，以及 details/packageFact 独立字段保留。 |
+| `test/integration/public-cli-failure-settlement.test.ts` | helper 后 kind/cause/diagnostic/exitCode；undefined 后排除标签 | 已修；:194、232、369、407、569 调用原 kit；timeout 的 timedOut、navigator 和 submissions 保留。 |
+| `test/integration/public-cli-report-ticket.test.ts` | :1132 autoSummons 类型；:1134 传递等值 | 已修；:1127–1128 两值各自精确 firstInstruction。 |
+| `test/integration/public-cli-resume-416.test.ts` | :255 重复 calls=3 | 已修；:247 同次结果已有精确值；删失实“只呈一次”旧注释。 |
+| `test/integration/public-cli-resume-callable-seats.test.ts` | :256 sessionFile 存在 | 已修；:257 精确 sessionFile。 |
+| `test/integration/public-cli-reviewer.test.ts` | lensRows.length、round 唯一性 | 已修；:559 round 精确连续数组。 |
+| `test/integration/public-cli-same-ticket-resume.test.ts` | :1046、1100 传递非等 | 已修；:1035 精确 freshRunId；:1088–1089 新旧非等加 terminal 映射。 |
+| `test/integration/public-cli-secretariat-run.test.ts` | :570 kind 非 audit_escalation；:592 重复 role | 已修；:563 精确 accepted、:581 精确 role。 |
+| `docs/research/issue-1237-deletion-ledger.md` | #182/#183 错报及本轮删除未入账 | 已修；1032 行逐项与机械 where 序列相符。 |
+| `docs/research/issue-1237-test-quality-sweep.md` | 旧 runId 判断及逐文件增量未同步 | 已修；本节为当前结算，前文保留历史。 |
+
+复扫保留边界：oauth refresh/重启、navigator abort/dispose、各次 config/runAkRole/resume、看板 tick/DOM 事件前后是不同调用；B4 readable/unreadable、audited identity 已知/动态两路、engine failure/accepted 是不同分支；headless durable/presentation、notary identity/收卷是不同观察对象。`analyst-public-cli.test.ts:153–154` 的 oracle 由生产入口再算，不足以蕴含夹具 runId 存在，故留。ACP/headless 的 pointer、warning、copy 来自不同阶段/输入，整组不动；没有用重复之名回退第十五轮。
+
+### 自验与自审
+
+- 27 个触及测试文件：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test $(git diff --name-only -- test)`，251/251，17331.001083 ms。
+- 最后补删看板重复值与未用 import 后：`node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/integration/factory-board.test.ts test/integration/public-cli-failure-provider-stop.test.ts test/integration/host-session-acp-write-fail.test.ts test/integration/host-session-live-records.test.ts`，42/42，3378.769708 ms。
+- `npx tsc --noEmit` exit 0；`git diff --check` exit 0。未跑全量。
+- 机械基线账：1032 = 文件 18 + 案 115 + 断言 899；a/D 492、a/M 198、a/S 134、b 61、改好 35、a/T 34、a/退役 25、仍在 22、a/C 20、c/null 11。提交前按工作树版 diff 核对，提交后再用未改的 `python3 docs/research/issue-1237-deletion-ledger.py` 核 HEAD。
+- `git diff HEAD` 自审：新增生产函数 0、新增测试函数 0，diffItems=[]；没有未跟踪仓内文件。只删蕴含检查及其专属局部变量/导入，所有强值守护、调用、不同失败输入仍在。无生产文件改动、无新通用件、无安装/真实席位配置写入。
+- 最小必要成本：删除测试冗余，复用全部既有案；变异只用已有入口，不新造证明性测试。超过 400 行的主要是纯删除与逐条入账文档，不新增施工机制。

@@ -1,4 +1,4 @@
-# #1237 删除与改弱逐条账（R14-A/B）
+# #1237 删除与改弱逐条账（R16，R15-A/B）
 
 范围：`git diff 7997ffb2 HEAD -- test`。计数不包含本轮补回的断言。
 
@@ -14,7 +14,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 4. 断言：基线每一行里、引号和 `//` 注释之外的每个 `assert.` / `assert(` 调用各计一条，从该调用起按括号深度收到它自己的括号结束。同一行多个调用、写在别的调用里面的调用，都各计一条。字符串状态不跨行。该调用占到的任一基线行被删，就计这一条。
 5. 三者相加，不互相抵消。删文件同时计文件、其案、其断言。
 
-本表 849 行 = 整文件 18 + 整案 115 + 断言 716。原 #724 仍不在 where 列，在役守卫未删。# 不重排；本轮补进的 17 条断言从 #834 起，插在 where 顺序里。
+本表 1032 行 = 整文件 18 + 整案 115 + 断言 899。原 #724 仍不在 where 列，在役守卫未删。# 不重排；第十六轮新增 #851–#1033，插在 where 顺序里。R15-B 行的「同文件:n」指本行基线位置的文件在当前工作树的第 n 行，不是基线行；完整承接路径另见 sweep 第十六轮逐文件表。
 
 ## 处置口径
 
@@ -22,7 +22,7 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 - (a) 已裁坏形状：`a/M` 镜像，`a/T` 文案或正则，`a/S` 无生产者哨兵，`a/D` 同一入口、同一输入类的重复结论，`a/C` 分块计数，`a/退役` 生产符号或夹具已删。引此前判词。不恢复。
 - (b) 在役分支，承接位置已有该断言所守的值：写 `path:line`，并写打中该值的变异命令与报红的测试名。一条变异不能代替未写明的邻行。
-- (c) 在役分支且原先无承接：补进现有案并附本轮隔离变异；或写 `c/null`，只在公开入口产不出该输入时。本账此前 `c/null` 是 `readNotaryTicketFlag` 那 8 行，加上公开入口产不出空白 attemptId 的 merger-contract 三行（文件、案、空白拒绝断言）。R14-B 另准只改账、无守护则记 c/null：#182/#183 是可达的失败 Terminal.runId 输出缺口，不是不可达输入；本轮没有改该家族测试。
+- (c) 在役分支且原先无承接：补进现有案并附本轮隔离变异；或写 `c/null`，只在公开入口产不出该输入时。本账此前 `c/null` 是 `readNotaryTicketFlag` 那 8 行，加上公开入口产不出空白 attemptId 的 merger-contract 三行（文件、案、空白拒绝断言）。R14-B 曾把 #182/#183 记为输出缺口；R15-A 复核证实公开入口已有 runId 精确相等承接，现更正为 (b)，不是回归。没有为此新增或恢复测试。
 - 改好：本轮补回位置，附隔离变异。
 - 仍在：同一文件里断言原文还在，或只是案名改写。不是承接声称。
 
@@ -30,16 +30,16 @@ R13：`a/C` / `a/T` / `a/M` / `a/D` 每一行写了有没有检查在役分支�
 
 处置计数：
 
-- a/D：309
+- a/D：492
 - a/M：198
 - a/S：134
-- b：59
+- b：61
 - 改好：35
 - a/T：34
 - a/退役：25
 - a/C：20
 - 仍在：22
-- c/null：13
+- c/null：11
 
 R12-A：组级变异不算该行证明。原先无该值的，补进现有案并改判改好；其余 (b) 每行写打中该值的变异。计数不包含本轮补回的断言。
 
@@ -72,6 +72,8 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 22 | assert | `test/contract/analyst-413-r2-findings.test.ts:85` | assert.equal(isSyntheticAnalystBookKey(`root:${physicalPathIdentity("/analyst-fixture/u3")}`), true); | 改好 test/contract/analyst-413-r2-findings.test.ts:205（basename 非合成）与 :211（root:<absolute> 为合成）；变异：隔离副本 isSyntheticAnalystBookKey 改 return true，以及改 return false；HEAD 均红 U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute |
 | 23 | case | `test/contract/analyst-413-r2-findings.test.ts:40` | U1: library-index read boundary rejects null/non-object/rows-not-array with the file path | 仍在；案名改写后仍在 test/contract/analyst-413-r2-findings.test.ts:36；不是整案删除 |
 | 24 | case | `test/contract/analyst-413-r2-findings.test.ts:79` | U3: isSyntheticAnalystBookKey — root:<absolute path> is synthetic; real basename root:foo is not | 改好 test/contract/analyst-413-r2-findings.test.ts:205（basename 非合成）与 :211（root:<absolute> 为合成）；变异：隔离副本 isSyntheticAnalystBookKey 改 return true，以及改 return false；HEAD 均红 U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute |
+| 851 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:139` | tool+model=wall | a/D；R15-B，同文件:136–138 精确三桶值。 |
+| 852 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:145` | actions duration 投影 | a/D；R15-B，同文件:140 actions 整体相等。 |
 | 25 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:181` | assert.equal(metrics.wallMs, 10_000); | b test/contract/analyst-b2-frame-buckets-actions.test.ts:204；变异：computeAnalystB2RunMetrics 将 wallMs 写成 0；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
 | 26 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:182` | assert.equal(metrics.toolBucketMs, 10_000); | b test/contract/analyst-b2-frame-buckets-actions.test.ts:205；变异：computeAnalystB2RunMetrics 将 toolBucketMs 写成 0；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
 | 27 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:183` | assert.equal(metrics.modelBucketMs, 0); | b test/contract/analyst-b2-frame-buckets-actions.test.ts:206；变异：computeAnalystB2RunMetrics 将 modelBucketMs 写成 1；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
@@ -81,6 +83,11 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 31 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:191` | assert.equal(metrics.actions[0]!.durationMs, 10_000); | b test/contract/analyst-b2-frame-buckets-actions.test.ts:211；变异：toolAction 将 durationMs 写成 0；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
 | 32 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:192` | assert.equal(metrics.actions[0]!.startedAt, "2026-08-01T00:00:10.000Z"); | 改好 test/contract/analyst-b2-frame-buckets-actions.test.ts:212；变异：clipToolsToFrame 被裁剪时仍写 tool.startedAt；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
 | 33 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:193` | assert.equal(metrics.actions[0]!.endedAt, "2026-08-01T00:00:20.000Z"); | 改好 test/contract/analyst-b2-frame-buckets-actions.test.ts:213；变异：clipToolsToFrame 被裁剪时仍写 tool.endedAt；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
+| 853 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:218` | toolActionSum=55000 | a/D；R15-B，同文件:140、159 hand oracle。 |
+| 854 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:219` | overlap.toolBucketMs=40000 | a/D；R15-B，同文件:137、159 hand oracle。 |
+| 855 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:220` | toolActionSum>toolBucketMs | a/D；R15-B，同文件:137、140 精确值蕴含。 |
+| 856 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:229` | bash 存在且 kind=tool | a/D；R15-B，同文件:140 actions 整体相等。 |
+| 857 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:230` | bash.commandSummary | a/D；R15-B，同文件:140 actions 整体相等。 |
 | 34 | assert | `test/contract/analyst-b2-frame-buckets-actions.test.ts:231` | assert.notEqual(bash.commandSummary, "pnpm test:fast\nnode scripts/extra.js"); | a/D；依据 sweep:47；紧跟 equal 之后的同值 notEqual，重复结论 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 35 | case | `test/contract/analyst-b2-frame-buckets-actions.test.ts:157` | analyst B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall | b test/contract/analyst-b2-frame-buckets-actions.test.ts:154；变异：computeAnalystB2RunMetrics 不调用 clipToolsToFrame；报红「analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)」。 |
 | 36 | assert | `test/contract/collector-self-collect.test.ts:117` | assert.ok(meta); | a/M；依据 sweep:50；meta.worker/phases 查表。公开收卷在 public-cli-collector.test.ts:46 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
@@ -185,18 +192,19 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 128 | assert | `test/contract/notary-role.test.ts:47` | assert.deepEqual(projectLawfulNotaryOutput({ status: "maybe" }), { status: "maybe" }); | a/退役；依据 sweep:61；projectLawfulNotaryOutput / retainNotarySubmission 已不在 src。公开入口是另一契约，不引作本条承接 |
 | 129 | assert | `test/contract/notary-role.test.ts:48` | assert.equal(projectLawfulNotaryOutput(null), undefined); | a/退役；依据 sweep:61；projectLawfulNotaryOutput / retainNotarySubmission 已不在 src。公开入口是另一契约，不引作本条承接 |
 | 130 | assert | `test/contract/notary-role.test.ts:50` | assert.deepEqual(retainNotarySubmission(raw), raw); | a/退役；依据 sweep:61；projectLawfulNotaryOutput / retainNotarySubmission 已不在 src。公开入口是另一契约，不引作本条承接 |
-| 131 | assert | `test/contract/notary-role.test.ts:54` | assert.equal(readNotaryTicketFlag(undefined), undefined); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
+| 131 | assert | `test/contract/notary-role.test.ts:54` | assert.equal(readNotaryTicketFlag(undefined), undefined); | c/null；R10-A 既裁未补项。R16 复核：省略旗值可达，不再借非法值不可达作理由；公开 notary 案未观察读码返回的 undefined，未发现漏报承接。 |
 | 132 | assert | `test/contract/notary-role.test.ts:55` | assert.equal(readNotaryTicketFlag(""), undefined); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
-| 133 | assert | `test/contract/notary-role.test.ts:56` | assert.equal(readNotaryTicketFlag("582"), 582); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
+| 133 | assert | `test/contract/notary-role.test.ts:56` | assert.equal(readNotaryTicketFlag("582"), 582); | c/null；R10-A 既裁未补项。R16 复核：合法票值可达；src/role-runtime.ts:1545 读码供 notary.activate，但 test/integration/public-cli-notary.test.ts 的回执/读材不观察该返回票值，不能借别的字段称 b。 |
 | 134 | assert | `test/contract/notary-role.test.ts:57` | assert.throws(() => readNotaryTicketFlag("nope")); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
-| 135 | assert | `test/contract/notary-role.test.ts:64` | assert.deepEqual(bound, { sourceRunPath: LOCATOR.runDirectory, ticketNumber: 582, }); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
+| 135 | assert | `test/contract/notary-role.test.ts:64` | assert.deepEqual(bound, { sourceRunPath: LOCATOR.runDirectory, ticketNumber: 582, }); | c/null；R10-A 既裁未补项。R16 复核：src/role-runtime.ts:1129–1130 可写 bound；公开身份材料案不读取 notary-session-bound，未发现对这两个 bound 字段的既有承接。 |
 | 136 | assert | `test/contract/notary-role.test.ts:82` | assert.equal(h.flags.has("ak-notary-source-run"), true); | a/M；依据 sweep:61 与 sweep:30；flags.has / tools.has 是注册布局。公开 source-run 边界是另一契约，不引作本条承接 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
-| 137 | assert | `test/contract/notary-role.test.ts:83` | assert.equal(h.flags.has("ak-notary-ticket-number"), false); | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
+| 137 | assert | `test/contract/notary-role.test.ts:83` | assert.equal(h.flags.has("ak-notary-ticket-number"), false); | c/null；保留 R10-A 既裁状态。R16 复核该条实际观察 role 内旗注册归属，不是非法值拒收；公开收卷结果不承接内部 flags 布局，未发现漏报的同值守护。 |
 | 138 | assert | `test/contract/notary-role.test.ts:87` | assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME)); | a/M；依据 sweep:61 与 sweep:30；flags.has / tools.has 是注册布局。公开 source-run 边界是另一契约，不引作本条承接 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 139 | assert | `test/contract/notary-role.test.ts:90` | assert.match(start.systemPrompt, /<audited_seat_soul seat="judge">\nJUDGE LAW\n<\/audited_seat_soul>/); | a/T；依据 souls/quality-law.md:32；已裁坏形状，不恢复该锁 R13-A 没有：只锁句子或措辞，不检查在役分支的输出值或失败行为。 |
 | 140 | case | `test/contract/notary-role.test.ts:38` | projectLawfulNotaryOutput keeps original payload as-is (#836) | a/退役；依据 sweep:61；projectLawfulNotaryOutput / retainNotarySubmission 已不在 src。公开入口是另一契约，不引作本条承接 |
-| 141 | case | `test/contract/notary-role.test.ts:53` | projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; invalid throws | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
-| 142 | case | `test/contract/notary-role.test.ts:70` | Notary activate registers source-run flag + tool; ticket flag is envelope-owned | c/null；公开入口只写已校验正整数，产不出非法 ak-notary-ticket-number；仓内无现成扩展激活案能把非法值送进 readNotaryTicketFlag（sweep:61，R10-A 已裁） |
+| 141 | case | `test/contract/notary-role.test.ts:53` | projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; invalid throws | c/null；R10-A 既裁未补项。R16 分开复核：非法/空白值公开层不产出；缺省、合法与 bound 输出见 #131/#133/#135，不把整案都称作不可达。 |
+| 142 | case | `test/contract/notary-role.test.ts:70` | Notary activate registers source-run flag + tool; ticket flag is envelope-owned | c/null；保留 R10-A 既裁状态。R16 复核同 #137：旗注册布局案，不能拿现有公开收卷或身份材料案冒充整案承接。 |
+| 858 | assert | `test/contract/secretariat-role.test.ts:76` | active.includes(output tool) | a/D；R15-B，同文件:69 精确 filter 命中数 1，蕴含成员存在。 |
 | 143 | assert | `test/contract/secretariat-role.test.ts:77` | assert.equal(active.some((name) => name.startsWith("ak_secretariat_summon_")), false); | a/S；依据 sweep:64；旧召唤工具哨兵，无生产者 |
 | 144 | assert | `test/contract/secretariat-role.test.ts:170` | assert.equal(result.content.length, 0); | a/D；依据 sweep:64；伪多宿主同构循环。真实多宿主链由 public-cli-secretariat-run 既有表接住 R13-A 没有：只锁 content 长度；收卷由同文件 secretariat output records any status 的 terminate 与 details 守住。 |
 | 145 | assert | `test/contract/secretariat-role.test.ts:171` | assert.equal(result.terminate, true); | a/D；R13-A 有：行为=中书省收卷 terminate 为真。变异：registerFiledSubmissionTool 的 terminate 改为 false；报红「secretariat output records any status without shape reject (仓内 CLAUDE.md 开篇)」，expected true actual false。 |
@@ -218,10 +226,12 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 161 | assert | `test/contract/session-opening-materials.test.ts:11` | await assert.rejects( () => joinPackageMaterials(["souls/__no_such_opening_material__.md"]), (error: unknown) => error instanceof Error && "code" in error && (error as NodeJS.Errno | a/M；依据 sweep:67；直接读不存在文件，只重证 fs ENOENT。空 Soul 激活失败在 judge-role.test.ts:574，不是本条的承接 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 162 | case | `test/contract/session-opening-materials.test.ts:10` | missing injected material fails as native ENOENT, not a soft empty | a/M；依据 sweep:67；直接读不存在文件，只重证 fs ENOENT。空 Soul 激活失败在 judge-role.test.ts:574，不是本条的承接 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 163 | assert | `test/contract/sitian-facade-contracts.test.ts:45` | assert.ok(runSummaryPtr.recordFile.includes("settlement-summary")); | a/M；依据 sweep:68；路径子串内布局锁。append/read 门面的写出读回仍留 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
+| 859 | assert | `test/contract/submission-ledger.test.ts:167` | accepted 不等于 details | a/D；R15-B，同文件:166 精确 params。 |
 | 164 | assert | `test/contract/submission-ledger.test.ts:283` | assert.ok(!kinds.includes("outcome") // (await ledgerRecords(f.root)).every((r) => r.kind !== "outcome" // (r.payload as { code?: string }).code !== "non-sole-round")); | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：只锁对象存在、字段是否在或路径形状，不检查在役分支的输出值或失败行为。 |
 | 165 | assert | `test/contract/submission-ledger.test.ts:466` | assert.deepEqual(accepted.details, row.details, row.role); | a/D；R13-A 有：行为=回执 details 等于提交的 parameters。变异：registerFiledSubmissionTool 的 details 恒为 {}；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 166 | assert | `test/contract/submission-ledger.test.ts:467` | assert.equal(accepted.terminate, true, row.role); | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：同文件或公开入口已有断言守同一结构化值，本条是删去的平行观察，不另调用在役分支。 |
 | 167 | assert | `test/contract/submission-ledger.test.ts:472` | assert.deepEqual( rows, [{ role: row.role, kind: "accepted", accepted: row.details, toolCallId: `${row.role}-output` }], row.role, ); | a/D；R13-A 有：行为=回执 details 等于提交的 parameters。变异：registerFiledSubmissionTool 的 details 恒为 {}；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
+| 860 | assert | `test/contract/submission-ledger.test.ts:542` | recorded.length=2 | a/D；R15-B，同文件:494 整体相等。 |
 | 168 | assert | `test/contract/submission-ledger.test.ts:599` | assert.ok(firstCandidate); | a/D；依据 sweep:69；手列每角色同构循环。真实 ledger host 的原参数与多提交仍在同文件 :174 R13-A 没有：只锁对象存在、字段是否在或路径形状，不检查在役分支的输出值或失败行为。 |
 | 169 | assert | `test/contract/submission-ledger.test.ts:600` | assert.equal(firstCandidate.priorEventId, undefined); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 priorEventId 无生产者，哨兵不恢复 |
 | 170 | assert | `test/contract/submission-ledger.test.ts:601` | assert.equal("priorEventId" in firstCandidate, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
@@ -236,8 +246,8 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 179 | assert | `test/helpers/failure-settlement-kit.ts:116` | assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false); | b test/helpers/failure-settlement-kit.ts:89；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 failure 非 lawful 的结论由 exitCode=1 接住。变异 lawful（本账末）：isLawfulTypedTerminalOutcome 把 failure 当 lawful；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 180 | assert | `test/helpers/failure-settlement-kit.ts:117` | assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1); | b test/helpers/failure-settlement-kit.ts:89；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，公共返回值检查同一失败退出码。变异 exit（本账末）：exitCodeForTerminalOutcome 恒返 0；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 181 | assert | `test/helpers/failure-settlement-kit.ts:118` | assert.ok(terminal.navigator); | b test/integration/public-cli-failure-settlement.test.ts:446；R13-A 有：该文件 timeout 案经 runAkRole → :426 assertPublicFailureSettlement → :446 断言真实 navigator.disposition。变异 navigator-value（本账末）：settleFailureTerminalResult 返回 no-advice；报红「timeout controlled failure settles with typed timeout cause and Error Artifact」。 |
-| 182 | assert | `test/helpers/failure-settlement-kit.ts:119` | assert.equal(typeof terminal.runId, "string"); | c/null；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，原断言检查可达失败 Terminal.runId 的字符串类型。已核的顶层 runId 断言为 accepted/no_receipt，reviewer 的子腿 runId 也不承接此失败顶层输出。变异 runId-type（本账末）：仅失败返回 runId=undefined，该失败家族 9/9 仍绿；没有已证守护。本轮依 R14-B 只改账，不把缺口称作 helper 布局。 |
-| 183 | assert | `test/helpers/failure-settlement-kit.ts:120` | assert.ok(terminal.runId !== undefined && terminal.runId.length > 0); | c/null；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，原断言检查可达失败 Terminal.runId 非空，不是 stderr 分块计数。变异 runId-empty（本账末）：仅失败返回 runId=""，该失败家族 9/9 仍绿；accepted/no_receipt 的非空检查不承接此分支。本轮依 R14-B 只改账。 |
+| 182 | assert | `test/helpers/failure-settlement-kit.ts:119` | assert.equal(typeof terminal.runId, "string"); | b；test/integration/engine-detour-usage-ledger.test.ts:810，公开 host code 1 失败的 first.terminal?.runId 精确等于入口 runId。R16 空 runId 变异报红「public entry: explicit resume is a new scope; reused toolCallId stays isolated; resumable redacts recordFile」，撤销后 6/6 绿；命令与结果见 sweep 第十六轮。 |
+| 183 | assert | `test/helpers/failure-settlement-kit.ts:120` | assert.ok(terminal.runId !== undefined && terminal.runId.length > 0); | b；test/integration/engine-detour-usage-ledger.test.ts:810，精确非空入口 runId 蕴含非空。与 #182 同一空 runId 变异命中同一公开失败案；原失败家族取样不含现成守护，不能据此认定缺口。 |
 | 184 | assert | `test/helpers/failure-settlement-kit.ts:121` | assert.ok(Array.isArray(terminal.artifacts)); | b test/helpers/failure-settlement-kit.ts:95、:113；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 artifacts 用于交付、查找并打开错误原卷，不是 helper 布局。变异 artifacts-shape（本账末）：仅失败返回 artifacts={}，交付受损由 :95 报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 185 | assert | `test/helpers/failure-settlement-kit.ts:122` | assert.ok(terminal.artifacts.length >= 1); | b test/helpers/failure-settlement-kit.ts:114；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement，真实 artifacts 须带可打开的 error ref，不是分块计数。变异 artifacts-empty（本账末）：仅失败返回 artifacts=[]；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 186 | assert | `test/helpers/failure-settlement-kit.ts:143` | assert.equal("judgeStatus" in errorBody, false); | a/S；依据 sweep:306；judgeStatus 无生产者 |
@@ -245,12 +255,106 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 188 | assert | `test/helpers/failure-settlement-kit.ts:146` | assert.notEqual(terminal.roleOutcome.cause, "unrecognized"); | a/D；R13-A 有：test/integration/public-cli-failure-settlement.test.ts:168 runAkRole → :194 assertPublicFailureSettlement → test/helpers/failure-settlement-kit.ts:100，返回 cause 与 expectedCause 等值已排除伪造分类；不是没有生产入口。变异 outcome-cause（本账末）：失败 roleOutcome.cause=unrecognized；报红「JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded」。 |
 | 189 | assert | `test/helpers/run-dossier-fixture.ts:190` | assert.equal(existsSync(join(runDirectory, name)), false, `retired dossier file present: ${name}`); | a/S；依据 sweep:306；退役 dossier 文件名哨兵 |
 | 190 | assert | `test/helpers/run-dossier-fixture.ts:196` | assert.equal( /-\d+(\.jsonl/\.failed)?$/\.copying(\./$)/\.previous(\./$)/-(headless/acp)-session\.json$/^host-session$/^submission-ledger$/^attempt-history$/^auditor-roles$/.test(e | a/S；依据 sweep:306；退役 dossier 文件名哨兵 |
+| 861 | assert | `test/integration/analyst-399-book-scope.test.ts:294` | 排除无票 runId | a/D；R15-B，同文件:293 精确集合。 |
+| 862 | assert | `test/integration/analyst-399-book-scope.test.ts:295` | 排除另一票 runId | a/D；R15-B，同文件:293 精确集合。 |
+| 863 | assert | `test/integration/analyst-c1-sweep-index.test.ts:182` | row 存在 | a/D；R15-B，同文件:182 row 整体相等。 |
+| 864 | assert | `test/integration/analyst-c1-sweep-index.test.ts:209` | pageFilesAgain.length=3 | a/D；R15-B，同文件:208 精确原数组。 |
+| 865 | assert | `test/integration/analyst-c3-model-groups.test.ts:217` | grokDisplayRows.length=2 | a/D；R15-B，同文件:217 key 投影精确数组。 |
 | 191 | assert | `test/integration/analyst-c4-ticket-scope.test.ts:74` | assert.equal(actualRunIds.includes(RUN_NO_TICKET_PRIMARY), false); | a/D；依据 sweep:78；精确集合 deepEqual 之后的 includes===false，同一结论重复 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 192 | assert | `test/integration/analyst-c4-ticket-scope.test.ts:76` | assert.equal(actualRunIds.includes(RUN_DECOY_TICKET_PRIMARY), false); | a/D；依据 sweep:78；精确集合 deepEqual 之后的 includes===false，同一结论重复 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 193 | assert | `test/integration/analyst-c4-ticket-scope.test.ts:77` | assert.equal(actualRunIds.includes(RUN_NO_TICKET_ALIEN), false); | a/D；依据 sweep:78；精确集合 deepEqual 之后的 includes===false，同一结论重复 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 194 | assert | `test/integration/analyst-c4-ticket-scope.test.ts:96` | assert.equal(actualRunIds.includes(RUN_FALLBACK_OUT), false); | a/D；依据 sweep:78；精确集合 deepEqual 之后的 includes===false，同一结论重复 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
+| 866 | assert | `test/integration/analyst-compute-if-missing.test.ts:485` | again.page.issueNumber=ticket | a/D；R15-B，同文件:476、485 disk 精确票号与整体相等。 |
+| 867 | assert | `test/integration/analyst-compute-if-missing.test.ts:522` | unscoped.page 不等于 scopedDisk | a/D；R15-B，同文件:512、520 两者票号精确不同。 |
 | 195 | assert | `test/integration/analyst-entry.test.ts:775` | assert.equal( "version" in (first.page as unknown as Record<string, unknown>), false, "page admits no readerless version field", ); | a/S；依据 sweep:79；已退役 version 字段哨兵 |
 | 196 | assert | `test/integration/analyst-entry.test.ts:784` | assert.equal( "a2SeamProbe" in (first.page as unknown as Record<string, unknown>), false, "retired a2-seam-probe must not appear on the issue page", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
+| 868 | assert | `test/integration/analyst-entry.test.ts:793` | legWallClock 存在 | a/D；R15-B，同文件:789 B1 整体相等。 |
+| 869 | assert | `test/integration/analyst-entry.test.ts:798` | acceptanceSuccessRework 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 870 | assert | `test/integration/analyst-entry.test.ts:806` | medianWallMs | a/D；R15-B，同文件:789 B1 整体相等。 |
+| 871 | assert | `test/integration/analyst-entry.test.ts:807` | totalElapsedMs | a/D；R15-B，同文件:789 B1 整体相等。 |
+| 872 | assert | `test/integration/analyst-entry.test.ts:808` | ranking.length | a/D；R15-B，同文件:789 B1 整体相等。 |
+| 873 | assert | `test/integration/analyst-entry.test.ts:809` | ranking runId 集合 | a/D；R15-B，同文件:789 与保留的 page.legs hand oracle。 |
+| 874 | assert | `test/integration/analyst-entry.test.ts:839` | deathRow kind | a/D；R15-B，同文件:801–808 B4 各行 oracle。 |
+| 875 | assert | `test/integration/analyst-entry.test.ts:840` | deathRow.terminal | a/D；R15-B，同文件:801–808 B4 各行 oracle。 |
+| 876 | assert | `test/integration/analyst-entry.test.ts:842` | absentTail.kind | a/D；R15-B，同文件:801–808 B4 各行 oracle。 |
+| 877 | assert | `test/integration/analyst-entry.test.ts:844` | absentTail.runId | a/D；R15-B，同文件:801–808 B4 各行 oracle。 |
+| 878 | assert | `test/integration/analyst-entry.test.ts:845` | absentTail.firstFrameAt | a/D；R15-B，同文件:801–808 B4 各行 oracle。 |
+| 879 | assert | `test/integration/analyst-entry.test.ts:853` | planned 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 880 | assert | `test/integration/analyst-entry.test.ts:854` | planned.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 881 | assert | `test/integration/analyst-entry.test.ts:855` | planned.success | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 882 | assert | `test/integration/analyst-entry.test.ts:856` | planned.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 883 | assert | `test/integration/analyst-entry.test.ts:857` | planned.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 884 | assert | `test/integration/analyst-entry.test.ts:860` | partial 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 885 | assert | `test/integration/analyst-entry.test.ts:861` | partial.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 886 | assert | `test/integration/analyst-entry.test.ts:862` | partial.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 887 | assert | `test/integration/analyst-entry.test.ts:863` | partial.success | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 888 | assert | `test/integration/analyst-entry.test.ts:864` | partial.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 889 | assert | `test/integration/analyst-entry.test.ts:867` | refused 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 890 | assert | `test/integration/analyst-entry.test.ts:868` | refused.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 891 | assert | `test/integration/analyst-entry.test.ts:869` | refused.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 892 | assert | `test/integration/analyst-entry.test.ts:870` | refused.success | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 893 | assert | `test/integration/analyst-entry.test.ts:871` | refused.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 894 | assert | `test/integration/analyst-entry.test.ts:872` | refused.wallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 895 | assert | `test/integration/analyst-entry.test.ts:873` | refused.ordinalInLaneRole | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 896 | assert | `test/integration/analyst-entry.test.ts:874` | refused.rework | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 897 | assert | `test/integration/analyst-entry.test.ts:877` | overlap 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 898 | assert | `test/integration/analyst-entry.test.ts:878` | overlap.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 899 | assert | `test/integration/analyst-entry.test.ts:879` | overlap.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 900 | assert | `test/integration/analyst-entry.test.ts:880` | overlap.success | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 901 | assert | `test/integration/analyst-entry.test.ts:881` | overlap.wallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 902 | assert | `test/integration/analyst-entry.test.ts:882` | overlap.ordinalInLaneRole | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 903 | assert | `test/integration/analyst-entry.test.ts:883` | overlap.rework | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 904 | assert | `test/integration/analyst-entry.test.ts:886` | b4Death 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 905 | assert | `test/integration/analyst-entry.test.ts:887` | b4Death.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 906 | assert | `test/integration/analyst-entry.test.ts:888` | b4Death.noReceipt | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 907 | assert | `test/integration/analyst-entry.test.ts:889` | b4Death.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 908 | assert | `test/integration/analyst-entry.test.ts:890` | b4Death.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 909 | assert | `test/integration/analyst-entry.test.ts:891` | b4Death.wallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 910 | assert | `test/integration/analyst-entry.test.ts:892` | b4Death.ordinalInLaneRole | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 911 | assert | `test/integration/analyst-entry.test.ts:893` | b4Death.rework | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 912 | assert | `test/integration/analyst-entry.test.ts:898` | judge 三案存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 913 | assert | `test/integration/analyst-entry.test.ts:900` | judge leg.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 914 | assert | `test/integration/analyst-entry.test.ts:901` | judge leg.success | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 915 | assert | `test/integration/analyst-entry.test.ts:902` | judge leg.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 916 | assert | `test/integration/analyst-entry.test.ts:904` | judgeContinue.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 917 | assert | `test/integration/analyst-entry.test.ts:905` | judgeEscalate.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 918 | assert | `test/integration/analyst-entry.test.ts:908` | noReceipt 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 919 | assert | `test/integration/analyst-entry.test.ts:909` | noReceipt.noReceipt | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 920 | assert | `test/integration/analyst-entry.test.ts:910` | noReceipt.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 921 | assert | `test/integration/analyst-entry.test.ts:911` | noReceipt.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 922 | assert | `test/integration/analyst-entry.test.ts:915` | firstNoReceipt 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 923 | assert | `test/integration/analyst-entry.test.ts:916` | firstNoReceipt.book | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 924 | assert | `test/integration/analyst-entry.test.ts:917` | firstNoReceipt.noReceipt | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 925 | assert | `test/integration/analyst-entry.test.ts:918` | firstNoReceipt.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 926 | assert | `test/integration/analyst-entry.test.ts:919` | firstNoReceipt.successEligible | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 927 | assert | `test/integration/analyst-entry.test.ts:920` | firstNoReceipt.ordinalInLaneRole | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 928 | assert | `test/integration/analyst-entry.test.ts:921` | firstNoReceipt.rework | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 929 | assert | `test/integration/analyst-entry.test.ts:922` | firstNoReceipt.wallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 930 | assert | `test/integration/analyst-entry.test.ts:924` | coderStats 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 931 | assert | `test/integration/analyst-entry.test.ts:925` | coderStats.noReceiptCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 932 | assert | `test/integration/analyst-entry.test.ts:926` | coderStats.appearanceLaneCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 933 | assert | `test/integration/analyst-entry.test.ts:927` | coderStats.firstPassLaneCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 934 | assert | `test/integration/analyst-entry.test.ts:928` | coderStats.firstPassRate | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 935 | assert | `test/integration/analyst-entry.test.ts:929` | coderStats.successEligibleCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 936 | assert | `test/integration/analyst-entry.test.ts:930` | coderStats.successCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 937 | assert | `test/integration/analyst-entry.test.ts:931` | coderStats.successRate | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 938 | assert | `test/integration/analyst-entry.test.ts:932` | coderStats.convergenceRounds | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 939 | assert | `test/integration/analyst-entry.test.ts:934` | judgeStats 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 940 | assert | `test/integration/analyst-entry.test.ts:935` | judgeStats.acceptedCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 941 | assert | `test/integration/analyst-entry.test.ts:936` | judgeStats.successCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 942 | assert | `test/integration/analyst-entry.test.ts:937` | judgeStats.successRate | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 943 | assert | `test/integration/analyst-entry.test.ts:938` | judgeStats.convergenceRounds | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 944 | assert | `test/integration/analyst-entry.test.ts:942` | groupsLeg/missingGroups 存在 | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 945 | assert | `test/integration/analyst-entry.test.ts:943` | groupsLeg.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 946 | assert | `test/integration/analyst-entry.test.ts:944` | groupsLeg.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 947 | assert | `test/integration/analyst-entry.test.ts:945` | missingGroups.terminalLabel | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 948 | assert | `test/integration/analyst-entry.test.ts:946` | missingGroups.accepted | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 949 | assert | `test/integration/analyst-entry.test.ts:948` | reworkWallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 950 | assert | `test/integration/analyst-entry.test.ts:949` | totalWallMs | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 951 | assert | `test/integration/analyst-entry.test.ts:950` | reworkRatio | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 952 | assert | `test/integration/analyst-entry.test.ts:951` | reworkLegCount | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 953 | assert | `test/integration/analyst-entry.test.ts:953` | convergenceRoundsMedian | a/D；R15-B，同文件:814 B3 整体相等。 |
+| 954 | assert | `test/integration/analyst-entry.test.ts:1025` | 排除 LEG_A1_RUN | a/D；R15-B，同文件:869 同一结果重复排除。 |
 | 197 | assert | `test/integration/analyst-public-cli.test.ts:117` | assert.equal(typeof PUBLIC_ROLE_ARGV.analyst.parse, "function"); | a/M；依据 sweep:83；PUBLIC_ROLE_ARGV 查表。公开 ticket 在同文件 :116 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 198 | assert | `test/integration/analyst-public-cli.test.ts:120` | assert.equal(keys.includes("analyst"), true); | a/M；依据 sweep:83；PUBLIC_ROLE_ARGV 查表。公开 ticket 在同文件 :116 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 199 | assert | `test/integration/analyst-public-cli.test.ts:305` | assert.equal(parseAnalystArgv([]).query, "issue"); | a/D；依据 sweep:83；空 argv 为 issue 由同文件 :160 公开 bare call 接住 R13-A 没有：空 argv 的 query 常量；同文件公开 bare call 已守该值，本条不另调用分支。 |
@@ -287,9 +391,11 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 230 | case | `test/integration/countersign-notary-gate.test.ts:44` | countersign output finishes before Notary is summoned | 改好 test/contract/judge-role.test.ts:539；变异：status 为 converged 且无 clauses、无 evidence 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 231 | case | `test/integration/countersign-notary-gate.test.ts:57` | countersign escalate skips Notary gate and accepts as-is (#753) | 改好 test/contract/judge-role.test.ts:542；变异：status 为 escalate 且无 attemptId 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 232 | case | `test/integration/countersign-notary-gate.test.ts:70` | countersign unreadable status files before public queue reask (#1057) | b test/contract/judge-role.test.ts:388；变异：status 为 not-a-status 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
+| 955 | assert | `test/integration/dossier-resolution.test.ts:51` | a/b runDirectory 不等 | a/D；R15-B，同文件:49–50 各自精确不同目录。 |
 | 233 | assert | `test/integration/engine-detour-cancel-idle.test.ts:139` | assert.equal( settled, undefined, "silent detour must not be killed by a removed package-owned tool idle clock", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 idle 无生产者，哨兵不恢复 |
 | 234 | assert | `test/integration/engine-detour-cancel-idle.test.ts:147` | await assert.rejects(pending, (error: unknown) => error === reason); | 仍在 test/integration/engine-detour-cancel-idle.test.ts:47 |
 | 235 | case | `test/integration/engine-detour-cancel-idle.test.ts:110` | silent detour child is not cut by a package-owned tool idle backstop | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 idle 无生产者，哨兵不恢复 |
+| 956 | assert | `test/integration/engine-detour-usage-ledger.test.ts:520` | stdoutByteLength 属性存在 | a/D；R15-B，同文件:519 精确等于 0。 |
 | 236 | assert | `test/integration/engine-material.test.ts:19` | assert.deepEqual(listEngineMaterialNames(root), []); | a/退役；依据 本轮台院 I11-A ③；sweep:89；listEngineMaterialNames 已不在 src。缺 notes 的观察在 public-cli-engine-axis.test.ts:82，不把语法拒收算本条承接 |
 | 237 | assert | `test/integration/engine-material.test.ts:22` | assert.deepEqual(listEngineMaterialNames(root), ["only"]); | a/退役；依据 本轮台院 I11-A ③；sweep:89；listEngineMaterialNames 已不在 src。缺 notes 的观察在 public-cli-engine-axis.test.ts:82，不把语法拒收算本条承接 |
 | 238 | case | `test/integration/engine-material.test.ts:17` | packaged notes directory is discovery-only; missing notes is not an error | a/退役；依据 本轮台院 I11-A ③；sweep:89；listEngineMaterialNames 已不在 src。缺 notes 的观察在 engine-axis.test.ts:82 与 engine-startup-material.test.ts:86。语法拒收是 unit 文件，不是本文件 |
@@ -345,11 +451,33 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 288 | case | `test/integration/factory-board-true-home.test.ts:27` | S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation | a/D；依据 sweep:90；依赖本机旧卷、缺卷 skip，oracle 复用生产判定。fixer accepted 事实在 factory-board.test.ts:1663，不是缺口 R13-A 没有：只在属主机器缺卷时 skip，或只复算生产助手的同一结果，不检查 CI 能产的在役输出或失败行为。 |
 | 289 | assert | `test/integration/factory-board.test.ts:1004` | assert.equal( elementsWith(html, "data-threshold-flying-ms")[0]?.["data-threshold-flying-ms"], String(UNACCEPTED_FLYING_MS), ); | a/M；依据 sweep:91；阈值/refresh 常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 290 | assert | `test/integration/factory-board.test.ts:1008` | assert.equal( elementsWith(html, "data-threshold-watch-ms")[0]?.["data-threshold-watch-ms"], String(UNACCEPTED_WATCH_MS), ); | a/M；依据 sweep:91；阈值/refresh 常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
+| 1033 | assert | `test/integration/factory-board.test.ts:1021` | by(5) current-state=unaccepted-suspect | a/D；R15-B，同文件:1036 同一次渲染已有精确值；复扫补入。 |
+| 957 | assert | `test/integration/factory-board.test.ts:1130` | last-activity 非旧值 | a/D；R15-B，同文件:1121 精确时间。 |
+| 958 | assert | `test/integration/factory-board.test.ts:1206` | ticketA landing 不等于 wall | a/D；R15-B，同文件:1191–1196 精确两轴值。 |
+| 959 | assert | `test/integration/factory-board.test.ts:1213` | wallLabelA 不等于 landLabelA | a/D；R15-B，同文件:1201–1202 精确映射两轴。 |
+| 960 | assert | `test/integration/factory-board.test.ts:1304` | closed landing 非末条卷时刻 | a/D；R15-B，同文件:1292 精确 closed landing。 |
+| 961 | assert | `test/integration/factory-board.test.ts:1309` | closed/open landing 不等 | a/D；R15-B，同文件:1290–1292 精确两值。 |
+| 962 | assert | `test/integration/factory-board.test.ts:1314` | closed landing 不等于 wall | a/D；R15-B，同文件:1286–1292 精确两轴。 |
+| 963 | assert | `test/integration/factory-board.test.ts:1315` | open landing 不等于 wall | a/D；R15-B，同文件:1286–1292 精确两轴。 |
+| 964 | assert | `test/integration/factory-board.test.ts:1327` | wallL 不等于 landL | a/D；R15-B，同文件:1302–1303 精确两轴映射。 |
 | 291 | assert | `test/integration/factory-board.test.ts:1561` | assert.equal( elementsWith(html, banned).length, 0, `board must not project ${banned}`, ); | a/S；依据 sweep:91；退役字段黑名单 |
 | 292 | assert | `test/integration/factory-board.test.ts:1572` | assert.match(t["data-current-state"] ?? "", /^unaccepted-/); | 仍在 test/integration/factory-board.test.ts:1120 |
+| 965 | assert | `test/integration/factory-board.test.ts:1685` | desc 非 [50,40,78] | a/D；R15-B，同文件:1637 精确 [78,50,40]。 |
 | 293 | assert | `test/integration/factory-board.test.ts:2134` | assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30); | a/M；依据 sweep:91；阈值/refresh 常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
+| 966 | assert | `test/integration/factory-board.test.ts:2861` | onBoard 排除 20/21 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 967 | assert | `test/integration/factory-board.test.ts:2862` | onBoard 排除 40 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 968 | assert | `test/integration/factory-board.test.ts:2863` | onBoard 包含 41 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 969 | assert | `test/integration/factory-board.test.ts:2864` | onBoard 包含 11 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 970 | assert | `test/integration/factory-board.test.ts:2874` | onBoard 包含 31 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 971 | assert | `test/integration/factory-board.test.ts:2879` | onBoard 包含 50 | a/D；R15-B，同文件:2810 精确首 tick 集合。 |
+| 972 | assert | `test/integration/factory-board.test.ts:2897` | 后 tick 排除 41 | a/D；R15-B，同文件:2845 精确后 tick 集合。 |
+| 973 | assert | `test/integration/factory-board.test.ts:2903` | 后 tick 包含 11 | a/D；R15-B，同文件:2845 精确后 tick 集合。 |
+| 974 | assert | `test/integration/factory-board.test.ts:2904` | 后 tick 包含 50 | a/D；R15-B，同文件:2845 精确后 tick 集合。 |
 | 294 | assert | `test/integration/factory-board.test.ts:3302` | assert.equal(page.badgeSummary.textContent, "未知票 ×0"); | a/T；依据 sweep:91；未知票文案锁。data-unknown-count 仍留 R13-A 没有：只锁句子或措辞，不检查在役分支的输出值或失败行为。 |
 | 295 | case | `test/integration/factory-board.test.ts:1493` | S3 board projects no textual conclusion and excludes unlabelled narrative self-report | a/M；依据 sweep:91；阈值/refresh 常量自比 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
+| 975 | assert | `test/integration/gate-officer-resume-accounting.test.ts:99` | rounds.length=3 | a/D；R15-B，同文件:95、99 精确投影数组。 |
+| 976 | assert | `test/integration/gate-officer-resume-accounting.test.ts:194` | host 非 claude | a/D；R15-B，同文件:184 精确 pi。 |
+| 977 | assert | `test/integration/gate-officer-resume-accounting.test.ts:205` | model 非 sonnet | a/D；R15-B，同文件:190 精确 gpt-5.6-sol。 |
 | 296 | assert | `test/integration/gate-officer-resume-accounting.test.ts:245` | assert.equal( "materials" in request, false, "station-child officer must not grow a materials field on RoleTurnRequest", ); | a/S；依据 sweep:306；RoleTurnRequest 无 materials 字段，缺席哨兵不恢复 |
 | 297 | assert | `test/integration/gate-officer-resume-accounting.test.ts:301` | assert.equal(prompts[i + 1], NOTARY_FIXED_DISPATCH); | a/T；依据 sweep:92；锁固定句子。盲审 prompt≠父正文在同文件 :291，第二轮变异见 sweep:197 R13-A 没有：只锁句子或措辞，不检查在役分支的输出值或失败行为。 |
 | 298 | assert | `test/integration/gate-officer-resume-accounting.test.ts:450` | assert.equal("materials" in request, false); | a/S；依据 sweep:306；RoleTurnRequest 无 materials 字段，缺席哨兵不恢复 |
@@ -377,6 +505,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 318 | assert | `test/integration/merger-role.test.ts:69` | assert.deepEqual(accepted.details, args); | 改好 test/contract/judge-role.test.ts:566；变异：parameters 含 mergeCommitId 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 319 | case | `test/integration/merger-role.test.ts:52` | Merger accepts one honest escalation without Git success verification | b test/contract/judge-role.test.ts:388；变异：status 为 escalate 且含 attemptId 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
 | 320 | case | `test/integration/merger-role.test.ts:63` | Merger accepts completed receipt without path-scope/completion Git verification gate | 改好 test/contract/judge-role.test.ts:563；变异：parameters 含 mergeCommitId 时抛错；报红「filed seats preserve opaque receipts, including an unknown string status」。 |
+| 978 | assert | `test/integration/public-cli-1132-delivery-request.test.ts:241` | kind 非 no_receipt | a/D；R15-B，同文件:232 精确 accepted。 |
 | 321 | assert | `test/integration/public-cli-1132-delivery-request.test.ts:796` | assert.equal( result.terminal.roleOutcome.decisiveFacts?.officerPayloads, undefined, "parent/other-seat payload copies must not ride the returned terminal", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 officerPayloads 无生产者，哨兵不恢复 |
 | 322 | assert | `test/integration/public-cli-1132-delivery-request.test.ts:879` | assert.equal( opened.terminal?.roleOutcome.decisiveFacts?.officerPayloads, undefined, `limit ${limit}: no other-seat payload copy`, ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 officerPayloads 无生产者，哨兵不恢复 |
 | 323 | assert | `test/integration/public-cli-1169-relocate-resume-no-unbound-paths.test.ts:254` | assert.equal(topLevel.has(forbidden), false, `topology forbids ${forbidden}`); | a/S；依据 sweep:102；禁名表缺席哨兵，均无生产者 |
@@ -437,6 +566,8 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 378 | assert | `test/integration/public-cli-attach-path-passthrough.test.ts:121` | assert.equal("provenancePath" in attachment, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
 | 379 | assert | `test/integration/public-cli-attach-path-passthrough.test.ts:211` | await assert.rejects( () => access(join(runDirectory, "request-manifest.json")), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 request-manifest.json 无生产者，哨兵不恢复 |
 | 380 | assert | `test/integration/public-cli-attach-path-passthrough.test.ts:226` | assert.equal("manifestDigest" in current.admitted, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 manifestDigest 无生产者，哨兵不恢复 |
+| 979 | assert | `test/integration/public-cli-auto-resume-dispatch-throw.test.ts:123` | retained.length=3 | a/D；R15-B，同文件:123 attempt 精确数组。 |
+| 980 | assert | `test/integration/public-cli-auto-resume-dispatch-throw.test.ts:132` | pointers.length=3 | a/D；R15-B，同文件:131 attempt 精确数组。 |
 | 381 | assert | `test/integration/public-cli-auto-resume-limit-422.test.ts:62` | assert.equal(calls,5); | a/D；依据 sweep:107；直调 runWithAutoResumeLoop 与同文件 :46、:65 经 runAkRole 的 N=1/N=0 同结论 R13-A 没有：只锁派发次数；同文件经 runAkRole 的 N=1/N=0 案守循环是否继续，本条不另检查失败身份。 |
 | 382 | assert | `test/integration/public-cli-auto-resume-limit-422.test.ts:63` | assert.equal(result.exitCode,1); | 仍在 test/integration/public-cli-auto-resume-limit-422.test.ts:60 |
 | 383 | assert | `test/integration/public-cli-auto-resume-limit-422.test.ts:82` | assert.equal(calls,1); | a/D；依据 sweep:107；直调 runWithAutoResumeLoop 与同文件 :46、:65 经 runAkRole 的 N=1/N=0 同结论 R13-A 没有：只锁派发次数；同文件经 runAkRole 的 N=1/N=0 案守循环是否继续，本条不另检查失败身份。 |
@@ -456,6 +587,7 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 397 | assert | `test/integration/public-cli-cli.test.ts:275` | assert.equal( resolveEffectiveSeat(gatePersisted, "gatekeeper", { "openai-codex": true, xai: true, }).source, "persistent", ); | a/D；R13-A 有：行为=config set 落盘后还能读回。变异：savePublicCliConfig 直接 return；报红「CLI config commands persist and local roles reads do not rewrite disk」。 |
 | 398 | case | `test/integration/public-cli-cli.test.ts:108` | help document capabilities match typed registry without depending on layout | a/M；依据 sweep:109；help/registry 同源自比。角色路由行为在同文件 :374，不把名单 includes 说成该案的承接 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 399 | case | `test/integration/public-cli-cli.test.ts:123` | config persistence round-trips across processes on the typed seat face | a/D；R13-A 有：行为=config set 落盘后还能读回。变异：savePublicCliConfig 直接 return；报红「CLI config commands persist and local roles reads do not rewrite disk」。 |
+| 981 | assert | `test/integration/public-cli-coder.test.ts:113` | submissions[1].accepted.summary | a/D；R15-B，同文件:108 accepted 整体相等。 |
 | 400 | assert | `test/integration/public-cli-coder.test.ts:153` | assert.equal(req.continuation.prompt.startsWith("/skill:"), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 /skill: 无生产者，哨兵不恢复 |
 | 401 | assert | `test/integration/public-cli-coder.test.ts:563` | assert.equal("taskPath" in admitted, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
 | 402 | assert | `test/integration/public-cli-coder.test.ts:565` | assert.equal(existsSync(join(sessionDirectory, "worker-submission-gate")), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 worker-submission-gate 无生产者，哨兵不恢复 |
@@ -539,23 +671,64 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 480 | case | `test/integration/public-cli-engine-axis.test.ts:86` | persistent judge engine round-trips; syntax-illegal engine rejected at parse/validate | a/D；R13-A 有：行为=引擎名 . / .. / NUL 在公开入口被拒。变异：isEngineNameSyntax 去掉 name === "." || name === ".."；报红「public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects」。 |
 | 481 | assert | `test/integration/public-cli-engine-startup-material.test.ts:104` | assert.deepEqual(engines[0], { kind: "engine-session-material", name: ENGINE, model: ENGINE_MODEL, handbook, dispatchHandbook: dispatch, }); | b test/integration/public-cli-engine-startup-material.test.ts:104；变异：engineSessionMaterialFromOptions 把 handbook 写成空串；报红「#1167 public fixer: prompt dispatch-only; startup materials by engine shape」。 |
 | 482 | assert | `test/integration/public-cli-engine-startup-material.test.ts:242` | assert.deepEqual(engines[0], { kind: "engine-session-material", name: ENGINE, model: ENGINE_MODEL, handbook, dispatchHandbook: dispatch, }); | b test/integration/public-cli-engine-startup-material.test.ts:237；变异：engineSessionMaterialFromOptions 把 handbook 写成空串；报红「#1167 gate-summoned review seat: same startup delivery as worker seats」。 |
+| 982 | assert | `test/integration/public-cli-escalation-resume.test.ts:439` | role 非 judge | a/D；R15-B，同文件:416 精确 auditor。 |
 | 483 | assert | `test/integration/public-cli-failure-artifacts.test.ts:76` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 484 | assert | `test/integration/public-cli-failure-artifacts.test.ts:141` | assert.equal(stdout.length, 1, "one complete Terminal"); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 983 | assert | `test/integration/public-cli-failure-artifacts.test.ts:235` | terminal kind | a/D；R15-B，同文件:229 调用 failure-settlement-kit.ts:93。 |
+| 984 | assert | `test/integration/public-cli-failure-artifacts.test.ts:239` | terminal cause | a/D；R15-B，同文件:229 调用 failure-settlement-kit.ts:100。 |
+| 985 | assert | `test/integration/public-cli-failure-artifacts.test.ts:240` | terminal diagnostic | a/D；R15-B，同文件:229 传精确 diagnosticEquals，kit:102。 |
+| 986 | assert | `test/integration/public-cli-failure-artifacts.test.ts:247` | errorBody cause | a/D；R15-B，同文件:229 调用 failure-settlement-kit.ts:122。 |
+| 987 | assert | `test/integration/public-cli-failure-artifacts.test.ts:248` | errorBody diagnostic | a/D；R15-B，同文件:229 调用 failure-settlement-kit.ts:123。 |
 | 485 | assert | `test/integration/public-cli-failure-artifacts.test.ts:250` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 988 | assert | `test/integration/public-cli-failure-artifacts.test.ts:251` | result.terminal 存在 | a/D；R15-B，同文件:229 调用 failure-settlement-kit.ts:92。 |
 | 486 | assert | `test/integration/public-cli-failure-artifacts.test.ts:317` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 989 | assert | `test/integration/public-cli-failure-artifacts.test.ts:380` | terminal kind | a/D；R15-B，同文件:359 调用 failure-settlement-kit.ts:93。 |
+| 990 | assert | `test/integration/public-cli-failure-artifacts.test.ts:382` | terminal diagnostic | a/D；R15-B，同文件:359 传精确 multiline，kit:102。 |
+| 991 | assert | `test/integration/public-cli-failure-artifacts.test.ts:387` | errorBody diagnostic | a/D；R15-B，同文件:359 调用 failure-settlement-kit.ts:123。 |
 | 487 | assert | `test/integration/public-cli-failure-artifacts.test.ts:453` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 488 | assert | `test/integration/public-cli-failure-artifacts.test.ts:454` | assert.ok(stderr.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 489 | assert | `test/integration/public-cli-failure-artifacts.test.ts:643` | assert.equal(stdout.length, 1, "exactly one Terminal emission"); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 992 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:72` | terminal kind | a/D；R15-B，同文件:68 调用 failure-settlement-kit.ts:93。 |
+| 993 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:194` | terminal kind | a/D；R15-B，同文件:185 调用 failure-settlement-kit.ts:93。 |
+| 994 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:308` | terminal kind | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:93。 |
+| 995 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:310` | terminal cause | a/D；R15-B，同文件:298 传 provider，kit:100。 |
+| 996 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:311` | terminal diagnostic | a/D；R15-B，同文件:298 传精确 diagnosticEquals，kit:102。 |
+| 997 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:317` | errorBody cause | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:122。 |
+| 998 | assert | `test/integration/public-cli-failure-provider-stop.test.ts:318` | errorBody diagnostic | a/D；R15-B，同文件:298 调用 failure-settlement-kit.ts:123。 |
 | 490 | assert | `test/integration/public-cli-failure-real-entry.test.ts:307` | assert.equal(stderr.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 491 | assert | `test/integration/public-cli-failure-real-entry.test.ts:308` | assert.equal(stderr[0]?.includes(hostStderr), true); | 改好 test/integration/public-cli-failure-real-entry.test.ts:296；变异：隔离副本 /tmp/r10a-mut 将 presentFailureTerminal 的 hostStderr 附带改为 false；HEAD 红 production knownFailure channel reaches settlement as provider with typed identity |
+| 999 | assert | `test/integration/public-cli-failure-real-entry.test.ts:417` | terminal kind | a/D；R15-B，同文件:411 调用 failure-settlement-kit.ts:93。 |
 | 492 | assert | `test/integration/public-cli-failure-real-entry.test.ts:419` | assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential"); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
+| 1000 | assert | `test/integration/public-cli-failure-real-entry.test.ts:420` | diagnostic 类型 | a/D；R15-B，同文件:411 精确 hostStderr，kit:102。 |
+| 1001 | assert | `test/integration/public-cli-failure-real-entry.test.ts:421` | diagnostic 非空 | a/D；R15-B，同文件:411 精确 hostStderr，kit:102。 |
+| 1002 | assert | `test/integration/public-cli-failure-real-entry.test.ts:430` | errorBody cause | a/D；R15-B，同文件:411 调用 failure-settlement-kit.ts:122。 |
+| 1003 | assert | `test/integration/public-cli-failure-real-entry.test.ts:431` | errorBody diagnostic | a/D；R15-B，同文件:411 调用 failure-settlement-kit.ts:123。 |
 | 493 | assert | `test/integration/public-cli-failure-real-entry.test.ts:432` | assert.notEqual(errorBody.identity?.name, "MissingProviderCredential"); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
 | 494 | assert | `test/integration/public-cli-failure-real-entry.test.ts:433` | assert.ok(stderr[0]!.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁。同义非空已并入 kit:96 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 1004 | assert | `test/integration/public-cli-failure-real-entry.test.ts:609` | terminal kind | a/D；R15-B，同文件:584 调用 failure-settlement-kit.ts:93。 |
+| 1005 | assert | `test/integration/public-cli-failure-real-entry.test.ts:611` | terminal cause | a/D；R15-B，同文件:584 传 provider，kit:100。 |
+| 1006 | assert | `test/integration/public-cli-failure-real-entry.test.ts:621` | errorBody cause | a/D；R15-B，同文件:584 调用 failure-settlement-kit.ts:122。 |
+| 1007 | assert | `test/integration/public-cli-failure-real-entry.test.ts:622` | errorBody identity.name | a/D；R15-B，同文件:584 传 identityName，kit:125。 |
+| 1008 | assert | `test/integration/public-cli-failure-real-entry.test.ts:623` | errorBody identity.code | a/D；R15-B，同文件:584 传 identityCode，kit:128。 |
 | 495 | assert | `test/integration/public-cli-failure-real-entry.test.ts:624` | assert.ok(stderr[0]!.length > 0); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁。同义非空已并入 kit:96 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 496 | assert | `test/integration/public-cli-failure-real-entry.test.ts:688` | assert.equal(stderr.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
 | 497 | assert | `test/integration/public-cli-failure-real-entry.test.ts:694` | assert.deepEqual( (result.terminal!.submissions ?? []).map((row) => JSON.stringify(row)), [`{"status":"converged","ticketNumber":1171}`], "the sealed receipt stays recorded on the | a/M；依据 sweep:123；回执 JSON 串等值是格式镜像。原样收在 judge-role.test.ts:388 R13-A 没有：只比对同源表、常量或注册布局，不调用在役分支、不检查其输出或失败行为。 |
 | 498 | assert | `test/integration/public-cli-failure-settlement.test.ts:148` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 1009 | assert | `test/integration/public-cli-failure-settlement.test.ts:196` | terminal kind | a/D；R15-B，同文件:194 调用 failure-settlement-kit.ts:93。 |
+| 1010 | assert | `test/integration/public-cli-failure-settlement.test.ts:198` | terminal diagnostic=flood | a/D；R15-B，同文件:194 传精确 flood，kit:102。 |
+| 1011 | assert | `test/integration/public-cli-failure-settlement.test.ts:241` | errorBody diagnostic=stderrText | a/D；R15-B，同文件:232 传精确 stderrText，kit:123。 |
+| 1012 | assert | `test/integration/public-cli-failure-settlement.test.ts:242` | terminal kind | a/D；R15-B，同文件:232 调用 failure-settlement-kit.ts:93。 |
+| 1013 | assert | `test/integration/public-cli-failure-settlement.test.ts:244` | terminal diagnostic=stderrText | a/D；R15-B，同文件:232 传精确 stderrText，kit:102。 |
 | 499 | assert | `test/integration/public-cli-failure-settlement.test.ts:310` | assert.equal(stdout.length, 1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96 与 judge.test.ts:294、:386，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 1014 | assert | `test/integration/public-cli-failure-settlement.test.ts:384` | terminal kind | a/D；R15-B，同文件:369 调用 failure-settlement-kit.ts:93。 |
+| 1015 | assert | `test/integration/public-cli-failure-settlement.test.ts:387` | terminal cause=undefined | a/D；R15-B，同文件:369 调用 failure-settlement-kit.ts:100。 |
+| 1016 | assert | `test/integration/public-cli-failure-settlement.test.ts:388` | cause 非 activation | a/D；R15-B，同文件:369 精确 undefined，kit:100。 |
+| 1017 | assert | `test/integration/public-cli-failure-settlement.test.ts:389` | cause 非 output | a/D；R15-B，同文件:369 精确 undefined，kit:100。 |
+| 1018 | assert | `test/integration/public-cli-failure-settlement.test.ts:430` | terminal kind | a/D；R15-B，同文件:407 调用 failure-settlement-kit.ts:93。 |
+| 1019 | assert | `test/integration/public-cli-failure-settlement.test.ts:432` | terminal cause=timeout | a/D；R15-B，同文件:407 传 timeout，kit:100。 |
+| 1020 | assert | `test/integration/public-cli-failure-settlement.test.ts:440` | errorBody cause=timeout | a/D；R15-B，同文件:407 调用 failure-settlement-kit.ts:122。 |
+| 1021 | assert | `test/integration/public-cli-failure-settlement.test.ts:595` | terminal kind | a/D；R15-B，同文件:569 调用 failure-settlement-kit.ts:93。 |
+| 1022 | assert | `test/integration/public-cli-failure-settlement.test.ts:604` | result.exitCode=1 | a/D；R15-B，同文件:569 调用 failure-settlement-kit.ts:89。 |
 | 500 | assert | `test/integration/public-cli-fixer.test.ts:72` | await assert.rejects( () => admitFixerInvocation({ principalAuthority: piDurablePrincipalAuthority, home, cwd: project, phase: "apply", instruction: " ", attachmentPaths: [], }), ( | a/D；R13-A 有：行为=显式 plan 不被默认 apply 盖掉。变异：coder 的 parsed.phase ?? "apply" 改为恒 "apply"；报红「ak-role coder defaults apply, preserves plan, and rejects blank task structurally」，expected plan actual apply。 |
 | 501 | assert | `test/integration/public-cli-fixer.test.ts:99` | assert.equal(badAdmitted.prerequisitesPath, badPrereq); | a/D；R13-A 有：行为=空白 task 在准入前被拒。变异：coder 空白 instruction 的 throw 改为不执行；报红「ak-role coder defaults apply, preserves plan, and rejects blank task structurally」，expected 2 actual 1。 |
 | 502 | assert | `test/integration/public-cli-fixer.test.ts:100` | assert.equal("packetPath" in badAdmitted, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
@@ -645,12 +818,16 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 586 | assert | `test/integration/public-cli-report-ticket.test.ts:744` | assert.equal(Object.hasOwn(fixerLines[0]!, "model"), false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
 | 587 | assert | `test/integration/public-cli-report-ticket.test.ts:745` | assert.equal(Object.hasOwn(fixerLines[0]!, "host"), false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
 | 588 | assert | `test/integration/public-cli-report-ticket.test.ts:746` | assert.equal(Object.hasOwn(fixerLines[0]!, "thinking"), false); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
+| 1023 | assert | `test/integration/public-cli-report-ticket.test.ts:1132` | autoSummons 类型 | a/D；R15-B，同文件:1128 精确 firstInstruction。 |
+| 1024 | assert | `test/integration/public-cli-report-ticket.test.ts:1134` | instruction=autoSummons | a/D；R15-B，同文件:1127–1128 各自精确 firstInstruction。 |
 | 589 | assert | `test/integration/public-cli-report-ticket.test.ts:1894` | assert.equal( inspectorPointers.length, 0, `${reask}: parent must not book officer-pointer rows`, ); | a/S；依据 sweep:138；ReportTicketResult 无 runDirectory；进度行无 model/host/thinking；officer-pointer 已撤 |
 | 590 | assert | `test/integration/public-cli-resume-416.test.ts:100` | assert.equal(seenEnvelope,false); | a/S；依据 sweep:139；resume-continue 死哨兵 |
+| 1025 | assert | `test/integration/public-cli-resume-416.test.ts:255` | calls=3 | a/D；R15-B，同文件:247 同次结果已有精确 calls。 |
 | 591 | assert | `test/integration/public-cli-resume-416.test.ts:278` | assert.equal(isLawfulTypedTerminalOutcome({kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}}),true); | a/D；依据 sweep:139；重复 lawful helper 判定。不重试由同文件 F1 案接住，第二轮变异见 sweep:206 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 592 | assert | `test/integration/public-cli-resume-416.test.ts:299` | assert.equal(isLawfulTypedTerminalOutcome({kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:{acceptedReceipt:false}} as unknown as Parameters<typeof isLawf | a/D；依据 sweep:139；重复 lawful helper 判定。不重试由同文件 F1 案接住，第二轮变异见 sweep:206 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 593 | assert | `test/integration/public-cli-resume-416.test.ts:358` | assert.equal(resumeArgs!.includes("[ak-role:resume-continue]"), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 [ak-role:resume-continue] 无生产者，哨兵不恢复 |
 | 594 | assert | `test/integration/public-cli-resume-416.test.ts:359` | assert.equal(manualStdout.length,1); | a/C；依据 souls/quality-law.md:32 数条数；sweep:237；分块计数。交付观察在 failure-settlement-kit.ts:95/:96，第四轮变异见 sweep:245，不恢复条数锁 R13-A 没有：只锁条数或长度，不检查该次输出的值或失败行为。 |
+| 1026 | assert | `test/integration/public-cli-resume-callable-seats.test.ts:256` | resumeSessionFile 存在 | a/D；R15-B，同文件:257 精确 sessionFile。 |
 | 595 | assert | `test/integration/public-cli-resume.test.ts:217` | assert.ok(result.terminal); | 仍在 test/integration/public-cli-resume.test.ts:272 |
 | 596 | assert | `test/integration/public-cli-resume.test.ts:641` | assert.equal(args.includes("[ak-role:resume-continue]"), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 [ak-role:resume-continue] 无生产者，哨兵不恢复 |
 | 597 | assert | `test/integration/public-cli-resume.test.ts:681` | assert.equal(existsSync(join(liveRunDirectory, "attachments")), false); | a/S；依据 sweep:306；attachments 目录哨兵，无生产者 |
@@ -660,6 +837,8 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 601 | assert | `test/integration/public-cli-reviewer.test.ts:231` | assert.throws( () => parsePublicSeatArgv("reviewer", [ "--unknown-flag", "--base", "main", "--authority-ref", "CLAUDE.md", ]), isUsage, ); | a/D；R13-A 有：行为=未知旗在准入前被拒、不派发。变异：invocation.ts 未知 option 改为推进 positional；报红「malformed CLI structure and empty --project= reject structurally before admission」的 unknown flag 行。 |
 | 602 | assert | `test/integration/public-cli-reviewer.test.ts:289` | assert.throws( () => parsePublicSeatArgv("reviewer", [ "--project", "", "--base", "main", "--authority-ref", "CLAUDE.md", "task", ]), isUsage, ); | a/D；R13-A 有：行为=空 --project 在准入前被拒，不把空路径当成 cwd。变异：requireOptionPath 对空值不再 throw；报红「malformed CLI structure and empty --project= reject structurally before admission」的 empty --project= 行。 |
 | 603 | assert | `test/integration/public-cli-reviewer.test.ts:494` | assert.equal(args.includes("--ak-review-task"), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 --ak-review-task 无生产者，哨兵不恢复 |
+| 1027 | assert | `test/integration/public-cli-reviewer.test.ts:606` | lensRows.length | a/D；R15-B，同文件:559 round 精确连续数组。 |
+| 1028 | assert | `test/integration/public-cli-reviewer.test.ts:616` | round 唯一性 | a/D；R15-B，同文件:559 round 精确连续数组。 |
 | 604 | assert | `test/integration/public-cli-reviewer.test.ts:639` | assert.equal(projectEntries.includes("docs"), false); | a/S；依据 sweep:142；src 无写 docs 的路径 |
 | 605 | assert | `test/integration/public-cli-reviewer.test.ts:831` | assert.equal(captured!.includes("--ak-review-task"), false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 --ak-review-task 无生产者，哨兵不恢复 |
 | 606 | assert | `test/integration/public-cli-reviewer.test.ts:868` | assert.equal("taskPath" in admittedFacts, false); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:300 R6-A；失效名缺席，src/extensions/scripts/souls 零命中 |
@@ -669,9 +848,13 @@ R12-A：组级变异不算该行证明。原先无该值的，补进现有案并
 | 610 | case | `test/integration/public-cli-reviewer.test.ts:104` | parseReviewerArgv defaults to both lenses and accepts an optional single-lens override | a/D；依据 sweep:142；解析重复已裁；独有 --base/--lens/--authority-ref 留在同文件 :104 R13-A 没有：同一结果上的第二条观察，不另调用在役分支、不另检查失败行为。 |
 | 611 | assert | `test/integration/public-cli-same-ticket-resume.test.ts:674` | await assert.rejects( () => readdir(join(runDirectory, "attachments")), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；已撤冻结副本/案卷指针的 ENOENT 哨兵，不恢复 |
 | 612 | assert | `test/integration/public-cli-same-ticket-resume.test.ts:710` | await assert.rejects( () => readdir(join(runDirectory, "attachments")), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；已撤冻结副本/案卷指针的 ENOENT 哨兵，不恢复 |
+| 1029 | assert | `test/integration/public-cli-same-ticket-resume.test.ts:1046` | seen[2].runId 非 firstRunId | a/D；R15-B，同文件:1035 精确 freshRunId；已有 fresh/first 非等。 |
+| 1030 | assert | `test/integration/public-cli-same-ticket-resume.test.ts:1100` | freshChild/priorChild runId 不等 | a/D；R15-B，同文件:1088–1089 seen 新旧非等及 terminal 精确映射。 |
 | 613 | assert | `test/integration/public-cli-same-ticket-resume.test.ts:1209` | assert.deepEqual(rounds, []); | a/S；依据 sweep:143；officer-pointer 撤后 gate-cycle 零行与 attachments 哨兵。src 不再记账该行 |
 | 614 | assert | `test/integration/public-cli-secretariat-run.test.ts:491` | assert.equal(factsOut?.countersignTerminal, undefined, "parent final must not project countersignTerminal"); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 countersignTerminal 无生产者，哨兵不恢复 |
 | 615 | assert | `test/integration/public-cli-secretariat-run.test.ts:492` | assert.equal(factsOut?.notaryTerminal, undefined, "parent final must not project notaryTerminal"); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 notaryTerminal 无生产者，哨兵不恢复 |
+| 1031 | assert | `test/integration/public-cli-secretariat-run.test.ts:570` | kind 非 audit_escalation | a/D；R15-B，同文件:563 精确 accepted。 |
+| 1032 | assert | `test/integration/public-cli-secretariat-run.test.ts:592` | resumed role=secretariat | a/D；R15-B，同文件:581 同次结果已有精确 role。 |
 | 616 | assert | `test/integration/public-cli-secretariat-run.test.ts:593` | assert.equal( resumed.terminal?.roleOutcome.decisiveFacts?.countersignTerminal, undefined, "resumed secretariat must not project countersignTerminal", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 countersignTerminal 无生产者，哨兵不恢复 |
 | 617 | assert | `test/integration/public-cli-secretariat-run.test.ts:598` | assert.equal( resumed.terminal?.roleOutcome.decisiveFacts?.notaryTerminal, undefined, "resumed secretariat must not project notaryTerminal", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 notaryTerminal 无生产者，哨兵不恢复 |
 | 618 | assert | `test/integration/public-cli-secretariat-run.test.ts:629` | assert.equal( result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal, undefined, "notary escalate terminal must not carry parent countersignTerminal", ); | a/S；依据 docs/research/issue-1237-test-quality-sweep.md:306 R6-A 与 :177 第八轮；名字 countersignTerminal 无生产者，哨兵不恢复 |
@@ -948,8 +1131,10 @@ J＝现有 `JSONL tool_execution event flood keeps real diagnostic; oversized li
 | artifacts-empty | 失败返回 artifacts → `[]` | exit 1，4 pass / 5 fail；J 在 kit:114（缺 error ref）红 |
 | artifact-cause | publishFailureTerminal 的 error 原卷写入覆盖 `cause: "unrecognized"` | exit 1，4 pass / 5 fail；J 在 kit:122 红 |
 | outcome-cause | 失败 roleOutcome 覆盖 `cause: "unrecognized" as never` | exit 1，4 pass / 5 fail；J 在 kit:100 红 |
-| runId-type | 仅失败返回 runId → `undefined as never` | exit 0，9 pass / 0 fail；#182 如实记 c/null |
-| runId-empty | 仅失败返回 runId → `""` | exit 0，9 pass / 0 fail；#183 如实记 c/null |
+| runId-type | 仅失败返回 runId → `undefined as never` | 历史取样 exit 0，9 pass / 0 fail；R16 已纠正 #182 为 b，此取样未跑到现成守护 |
+| runId-empty | 仅失败返回 runId → `""` | 历史取样 exit 0，9 pass / 0 fail；R16 已纠正 #183 为 b，此取样未跑到现成守护 |
 | 恢复 | 恢复两个生产文件 | exit 0，9 pass / 0 fail |
 
-runId 缺口不是伪造内部输入：可由 runAkRole 的真实失败输出产生。全仓搜索 `terminal.*runId` 并打开 main-flow、1132、escalation-resume、engine-detour、failure-real-entry、failure-settlement、resume 等命中，已核的顶层 runId 断言落在 accepted/no_receipt；reviewer 的失败案检查 reviewerChildren 子腿 runId，不是失败 Terminal.runId。未找到已证守护，不冒称全套测试都已跑过。R14-B 只准改账，故没有为这两条改测试。
+R16 纠正上述取样的推论：`test/integration/engine-detour-usage-ledger.test.ts:810` 正是公开 host code 1 失败的顶层 runId 相等守护，并非 accepted/no_receipt。本轮隔离副本将 `src/public-cli/settlement.ts:1717` 的失败返回 runId 改空，跑 engine-detour-usage-ledger 与 public-cli-process-cancel 两文件：6 案中 3 红，恢复后 6/6 绿（2.561s / 2.699s）。准确案名与命令见 sweep 第十六轮；大理寺原判据为 `01a163ff-00d1-7ee0-ae50-de4209edc7c3@judge/receipts/12.json`。这是账本错报，不是需要新增守护的回归。
+
+其余 11 个 c/null 已逐项回查：#131–#135、#137、#141–#142 对应 notary 旗读码、bound 与注册归属案；非法、空白旗值不会由公开调用者传入，合法或省略值虽能到达 readNotaryTicketFlag，但被删案直接调用该读码函数，不等于已有公开结果案观察了其返回值。现存 public-cli-notary 的回执、读材与盲审断言不以 ticket 返回值为 oracle；不借其他字段改判 b。#137/#142 实际是注册归属观察，已去掉非法值套话而保留 R10-A 旧裁标签。#15 文件、#720 案、#719 断言对应 merger 空白 attemptId，公开层以 placed.runId 供值、拒收 --ak-merger-input，没有空白输入；保留原不可达判断。均未找到类似 #182/#183 的漏报公开值守护；不新增测试或生产机制。

@@ -226,28 +226,17 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
           }),
       },
     );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
+    const { terminal } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       diagnosticEquals: "Error: child failed after admission\n",
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       // A bare nonzero exit names no cause; the child's diagnostic is primary
       // and the auxiliary log-write errno must not become the identity.
-      assert.equal(terminal.roleOutcome.cause, undefined);
-      assert.equal(terminal.roleOutcome.diagnostic, "Error: child failed after admission\n");
       assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
-    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      cause?: string;
-      diagnostic: string;
-    };
-    assert.equal(errorBody.cause, undefined);
-    assert.equal(errorBody.diagnostic, "Error: child failed after admission\n");
-    // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
-    assert.equal(result.terminal !== undefined, true);
   });
 
   // A sealed acceptance stays accepted. The stderr log-line failure is a
@@ -367,22 +356,13 @@ test("multiline thrown diagnostic keeps full artifact identity", async () => {
           }),
       },
     );
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
+    await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       diagnosticEquals: multiline,
       identityName: "UpstreamProviderError",
     });
-    // Durable Terminal/Artifact keep the full original diagnostic (newlines intact).
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.diagnostic, multiline);
-    }
-    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      diagnostic: string;
-    };
-    assert.equal(errorBody.diagnostic, multiline);
   });
 });
 test("a Judge turn that sealed no receipt reports the host CLI's own nonzero exit", async () => {

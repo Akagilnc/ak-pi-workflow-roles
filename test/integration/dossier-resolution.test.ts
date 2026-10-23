@@ -48,7 +48,6 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
     if (a.status === "ok" && b.status === "ok") {
       assert.equal(a.runDirectory, runA);
       assert.equal(b.runDirectory, runB);
-      assert.notEqual(a.runDirectory, b.runDirectory);
     }
         },
       async () => { if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;

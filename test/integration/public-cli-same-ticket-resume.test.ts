@@ -1034,7 +1034,6 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     assert.equal(seen[2]!.kind, "resume", "ordinary same-parent re-summons still auto-resumes");
     assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest same-parent leg");
     assert.equal(seen[2]!.runDirectory, freshRunDirectory);
-    assert.notEqual(seen[2]!.runId, firstRunId);
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
   }
@@ -1088,7 +1087,6 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
     assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
     assert.equal(freshChild.terminal.runId, seen[1]!.runId);
-    assert.notEqual(freshChild.terminal.runId, priorChild.terminal.runId);
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);

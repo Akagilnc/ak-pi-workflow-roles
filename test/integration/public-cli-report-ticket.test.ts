@@ -1125,9 +1125,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     assert.equal(lines.length, 1);
     // #1208 resends current dialogue; #1199 records those same actual bytes.
     assert.equal(lines[0]!.instruction, firstInstruction);
-    assert.equal(typeof autoSummons, "string");
     assert.equal(autoSummons, firstInstruction);
-    assert.equal(lines[0]!.instruction, autoSummons);
     const sessionRel = lines[0]!.session;
     const head1 = lines[0]!.head;
 

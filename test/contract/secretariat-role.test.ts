@@ -66,7 +66,6 @@ test("secretariat activation exposes only the terminating package tool (G6)", as
     activationCount: 2,
   });
   const active = activeTools();
-  assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
   assert.equal([...active].filter((name) => name === SECRETARIAT_OUTPUT_TOOL_NAME).length, 1);
   // Host surface preserved without role hardcoding builtin names.
   assert.ok(active.includes("host_read"));

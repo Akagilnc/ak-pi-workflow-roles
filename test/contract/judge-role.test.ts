@@ -562,7 +562,6 @@ test("filed seats preserve opaque receipts, including an unknown string status",
       };
       const accepted = await accept("completed", completed);
       assert.equal(accepted.terminate, true);
-      assert.equal((accepted.details as { status?: unknown }).status, "completed");
       assert.deepEqual(accepted.details, completed);
     }
   }

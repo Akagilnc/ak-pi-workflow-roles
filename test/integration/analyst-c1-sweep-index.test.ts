@@ -179,7 +179,6 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
     assert.equal(first.index.rows.length, 3);
     for (const expected of expectedRows) {
       const row = first.index.rows.find((r) => r.projectRoot === expected.projectRoot);
-      assert.ok(row, `row for ${expected.projectRoot} must exist`);
       assert.deepEqual(row, expected);
     }
 
@@ -206,7 +205,6 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
     const pageFilesAgain = (await readdir(issueDir))
       .filter((n) => n.endsWith(".json"))
       .sort();
-    assert.equal(pageFilesAgain.length, 3, "re-sweep must not duplicate issue pages");
     assert.deepEqual(pageFilesAgain, pageFiles);
 
     assert.deepEqual(second.index, first.index);

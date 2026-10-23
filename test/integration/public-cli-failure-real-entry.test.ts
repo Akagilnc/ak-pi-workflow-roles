@@ -408,26 +408,12 @@ test("credential catalog absence does not relabel an unrelated nonzero host exit
     // No typed confirmation here, so no cause is claimed; the point of the case
     // is that credential absence did not supply one either. The diagnostic is
     // the host stderr for this call.
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
+    await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       diagnosticEquals: hostStderr,
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
-      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
-    }
-    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      cause: string;
-      identity?: { name?: string; code?: string | number };
-      diagnostic: string;
-    };
-    // A bare nonzero exit names no cause; what matters here is that credential
-    // absence did not relabel it either.
-    assert.equal(errorBody.cause, undefined);
-    assert.equal(errorBody.diagnostic, hostStderr);
   });
 });
 
@@ -595,7 +581,7 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
       },
     );
     assert.ok(hostTurns >= 1, `empty credentials must not pre-block host dispatch (hostTurns=${hostTurns})`);
-    const { terminal, errorRef } = await assertPublicFailureSettlement({
+    const { terminal } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
@@ -603,21 +589,12 @@ test("typed empty-auth host failure settles as MissingProviderCredential (#987)"
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
-    assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
       assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
       assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
-    const errorBody = terminalBodyAt(errorRef!.path, "error") as {
-      cause: string;
-      identity?: { name?: string; code?: string | number };
-    };
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
-    assert.equal(errorBody.identity?.code, "xai");
   });
 });
 test("a sealed receipt stays recorded when the host CLI reported a nonzero exit", async () => {

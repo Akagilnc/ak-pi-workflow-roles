@@ -164,7 +164,6 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
     await host.tool().execute("p1", params, undefined, undefined, host.context);
     const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows[0]?.accepted, params, "ledger must keep LLM params");
-    assert.notDeepEqual(rows[0]?.accepted, details, "must not store rewritten tool result");
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 1);
     assert.deepEqual(all[0], params);
@@ -492,7 +491,6 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
         ],
       );
       const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-      assert.equal(recorded.length, 2);
       assert.deepEqual(recorded, [
         { status: "continue" },
         { status: "converged" },

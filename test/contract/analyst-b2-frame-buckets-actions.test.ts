@@ -136,18 +136,7 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
   assert.equal(actual.wallMs, expected.wallMs);
   assert.equal(actual.toolBucketMs, expected.toolBucketMs);
   assert.equal(actual.modelBucketMs, expected.modelBucketMs);
-  // 两桶之和恒等腿墙钟
-  assert.equal(
-    actual.toolBucketMs + actual.modelBucketMs,
-    actual.wallMs,
-    "tool+model buckets must equal wall clock",
-  );
   assert.equal(actual.actionDurationMedianMs, expected.actionDurationMedianMs);
-  assert.deepEqual(
-    actual.actions.map((action) => action.durationMs),
-    expected.actions.map((action) => action.durationMs),
-    "action durations must be descending hand values",
-  );
   assert.deepEqual(actual.actions, expected.actions);
 }
 
@@ -169,24 +158,6 @@ test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (un
     assert.ok(overlap, "overlap scene run must appear in B2 section");
     assertRunMetrics(overlap, EXPECTED_OVERLAP_RUN);
 
-    // Overlap negative: individual tool action sum (30+25) must exceed union bucket (40).
-    const toolActionSum = overlap.actions
-      .filter((action) => action.kind === "tool")
-      .reduce((sum, action) => sum + action.durationMs, 0);
-    assert.equal(toolActionSum, 55_000);
-    assert.equal(overlap.toolBucketMs, 40_000);
-    assert.ok(
-      toolActionSum > overlap.toolBucketMs,
-      "union bucket must not double-count overlapping tool intervals",
-    );
-
-    // bash multi-line: A2 first-line summary only (not the whole command body).
-    const bash = overlap.actions.find(
-      (action) => action.kind === "tool" && action.toolCallId === "call_bash_overlap",
-    );
-    assert.ok(bash && bash.kind === "tool");
-    assert.equal(bash.commandSummary, "pnpm test:fast");
-
     // Host message timestamps may extend beyond the enclosing record span.
     // Reuse the owned source-session copy, not assembled A2 facts.
     await writeFile(join(home, ".ak-roles", "books", BOOK, "runs", `${PRD_RUN}@coder`, "session", "session.jsonl"), [
@@ -205,7 +176,6 @@ test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (un
     assert.equal(clipped.wallMs, 10_000);
     assert.equal(clipped.toolBucketMs, 10_000);
     assert.equal(clipped.modelBucketMs, 0);
-    assert.equal(clipped.toolBucketMs + clipped.modelBucketMs, clipped.wallMs);
     assert.equal(clipped.actions.length, 1);
     assert.equal(clipped.actions[0]?.kind, "tool");
     assert.equal(clipped.actions[0]?.durationMs, 10_000);

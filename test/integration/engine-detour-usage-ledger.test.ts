@@ -517,7 +517,6 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       if (row.label === "failure-empty") {
         assert.equal(usage.calls[0]?.code, 0);
         assert.equal(usage.calls[0]?.stdoutByteLength, 0);
-        assert.equal("stdoutByteLength" in (usage.calls[0] ?? {}), true);
       }
       if (row.label === "accepted-once" || row.label === "no-receipt-once") {
         assert.equal(usage.calls[0]?.code, 0);

@@ -110,7 +110,6 @@ test("public coder accepts an unreadable status before routing it back for re-su
       { kind: "accepted", accepted: corrected },
     ]);
     assert.equal(Object.hasOwn(unreadable, "summary"), false);
-    assert.equal((submissions[1]?.accepted as { summary?: unknown }).summary, corrected.summary);
   });
 });
 

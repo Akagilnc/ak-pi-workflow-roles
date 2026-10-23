@@ -214,7 +214,6 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
     assert.equal(sol.legCount, 1);
     // Two rows share display "Grok" but remain distinct raw identities.
     const grokDisplayRows = aliasedPage.groups.filter((g) => g.displayName === "Grok");
-    assert.equal(grokDisplayRows.length, 2);
     assert.deepEqual(
       grokDisplayRows.map((g) => g.rawGroupKey).sort(),
       ["grok-4.5", "sol-low"],

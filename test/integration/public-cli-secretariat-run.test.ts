@@ -561,7 +561,6 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.role, "countersign");
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.notEqual(result.terminal.roleOutcome.kind, "audit_escalation");
     const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
       status?: string;
       decisionGate?: { question?: string };
@@ -583,7 +582,6 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");
   });
 });
 

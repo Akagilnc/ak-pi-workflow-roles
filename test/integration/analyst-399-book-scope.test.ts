@@ -291,8 +291,6 @@ test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set",
       assert.notDeepEqual(ticketIds, bareIds);
       // Strict typed ticket — only TICKET_A readable legs; unbound main/wt2 out.
       assert.deepEqual(ticketIds, [RUN_WORKTREE_TICKET_A, RUN_MAIN_TICKET_A].sort());
-      assert.equal(ticketIds.includes(RUN_MAIN_NO_TICKET), false);
-      assert.equal(ticketIds.includes(RUN_MAIN_TICKET_B), false);
       // Damaged ticket-A run is unreadable exclusion, not silent drop (D7 sample).
       assert.ok(body.page.unreadable.some((u) => u.runId === RUN_DAMAGED));
     });

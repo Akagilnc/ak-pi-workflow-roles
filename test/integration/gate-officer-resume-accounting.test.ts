@@ -92,7 +92,6 @@ test("#753 multiple pointers to same officer session count seals once each", asy
     }
 
     const rounds = await readAnalystGateCyclesFromOfficers(parentRun);
-    assert.equal(rounds.length, 3, "3 seals via 3 pointers must stay 3 rounds, not 9");
     assert.deepEqual(
       rounds.map((r) => r.status),
       ["continue", "continue", "continue"],
@@ -187,18 +186,12 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
       "pi",
       "nested officer must start on own seat host (default pi), not parent invocation host",
     );
-    assert.notEqual(
-      nestedInvocation.host,
-      "claude",
-      "parent invocation host must not be forced onto the nested officer",
-    );
     assert.equal(nestedInvocation.provider, "openai-codex");
     assert.equal(
       nestedInvocation.model,
       "gpt-5.6-sol",
       "nested officer must record own seat model, not parent invocation model",
     );
-    assert.notEqual(nestedInvocation.model, "sonnet");
   });
 });
 

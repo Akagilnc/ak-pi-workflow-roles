@@ -435,8 +435,6 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
     assert.equal(observed.judgeSubmissions.length, 1);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
-    // Parent is not rewritten as the failed seat identity.
-    assert.notEqual(continued.terminal?.roleOutcome.role, "judge");
     // #1214 F1: officer scene remains visible on the structured terminal; public
     // stdout presentation is proven by mutation true-run in the fixer receipt,
     // not by locking free-text wording or table headers (C2).
