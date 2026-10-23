@@ -31,10 +31,10 @@ export type DiaristOutput =
       readonly ticketNumber?: number | null;
       /**
        * Dialogue bounds: one entry per session volume, each with one or more ranges.
-       * Empty / absent = lawful empty selection (no dialogue this turn).
+       * Empty / null / absent = lawful empty selection (no dialogue this turn).
        * Malformed endpoints → accept hook reasks (`reask-not-explode`).
        */
-      readonly sessions?: readonly TicketProvenanceSession[];
+      readonly sessions?: readonly TicketProvenanceSession[] | null;
       /** Per-ticket dialogue bounds for a single multi-ticket summons (#1107). */
       readonly ticketSessions?: readonly {
         readonly ticketNumber: number;
@@ -65,13 +65,13 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
 
 /**
  * Project sessions from a completed diarist payload.
- * Absent key → empty (lawful). Present but unusable → undefined (caller reasks).
+ * Null / absent key → empty (lawful). Non-null but unusable → undefined (caller reasks).
  */
 export function projectDiaristSessions(
   value: unknown,
 ): readonly TicketProvenanceSession[] | undefined {
   const raw = (value as { sessions?: unknown } | null)?.sessions;
-  if (raw === undefined) return [];
+  if (raw == null) return [];
   return projectTicketProvenanceSessions(raw);
 }
 
