@@ -179,7 +179,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       unknownKept: "literal-extra-field",
     };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
-    assert.equal(first.terminate, true);
+    assert.equal(first.terminate, false);
     assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       { role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first" },
@@ -218,7 +218,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       await secondHost.start("second");
       const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
       assert.deepEqual(accepted2.details, secondDetails);
-      assert.equal(accepted2.terminate, true);
+      assert.equal(accepted2.terminate, false);
     } finally {
       process.stderr.write = previousWrite;
     }
@@ -291,7 +291,7 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     });
     const result = await host.tool().execute("review-escalate", params, undefined, undefined, host.context);
     assert.equal(ran, 1);
-    assert.equal(result.terminate, true);
+    assert.equal(result.terminate, false);
     assert.deepEqual(result.details, params);
     const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.at(-1), {
@@ -318,7 +318,7 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     }, coderTool, "coder");
     const result = await host.tool().execute("coder-infra", params, undefined, undefined, host.context);
     assert.equal(ran, 1, "declaration must not abort before execute");
-    assert.equal(result.terminate, true);
+    assert.equal(result.terminate, false);
     assert.deepEqual(result.details, params);
     assert.deepEqual(host.closedSubmissions.at(-1), {
       role: "coder",

@@ -449,23 +449,6 @@ export type PostAdmissionEnv = {
    * keeps this env's autoResumeLimit; the counter is the only thing that moves.
    */
   unreadableReasksSpent?: number;
-  /**
-   * #1171: missing-ticket soft reasks already issued on this chain. Hard ceiling
-   * is one — still no ticket after that stays unbound with the sealed receipt.
-   * Budget only across rounds; not the current turn's settlement identity.
-   */
-  ticketReasksSpent?: number;
-  /**
-   * #1171 F2-R5: this turn is the one soft reask. Keep the sealed terminal face
-   * when it ends without a substitute seal. Not carried into audit continue.
-   */
-  softTicketReaskTurn?: true;
-  /**
-   * #1171 F2-R7: live ownership cell for this soft-reask nested chain.
-   * Created at soft-reask dispatch; settlement of that turn sets sealedSubstitute.
-   * Shared ref survives env spreads — not a second ledger.
-   */
-  softTicketReaskOwnership?: { sealedSubstitute: boolean };
   createRunId?: () => string;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
@@ -1220,20 +1203,7 @@ export async function dispatchPostAdmissionTurn<
       result.terminal === pendingTerminal
     ) {
       try {
-        // #1171 F2-R2 / F2-R3 (#419) / F2-R5: only the soft-reask turn itself
-        // preserves the sealed terminal face. ticketReasksSpent is budget across
-        // rounds — after audit continue, ordinary no-volume turns publish
-        // no_receipt honestly. previewOnly skips the terminal pointer;
-        // recordAttemptHistory still appends.
-        const softTicketReaskNoSeal =
-          pendingSettlement !== "sealed" && env.softTicketReaskTurn === true;
-        const noSealScope = softTicketReaskNoSeal
-          ? {
-              ...courtScope,
-              previewOnly: true as const,
-              recordAttemptHistory: true as const,
-            }
-          : { ...courtScope, recordAttemptHistory: true as const };
+        const noSealScope = { ...courtScope, recordAttemptHistory: true as const };
         const terminal = pendingSettlement === "sealed"
           ? await adapters.trySettle(admitted, env.principalAuthority,
               { ...courtScope, recordAttemptHistory: true })
@@ -1243,12 +1213,6 @@ export async function dispatchPostAdmissionTurn<
               noSealScope);
         if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
         result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
-        // #1171 F2-R7: ownership evidence at this soft-reask turn's seal —
-        // mutate the live ownership cell carried on env (survives spreads).
-        if (pendingSettlement === "sealed" && env.softTicketReaskTurn === true
-          && env.softTicketReaskOwnership !== undefined) {
-          env.softTicketReaskOwnership.sealedSubstitute = true;
-        }
         if (pendingSettlement === "sealed" && terminal.roleOutcome.kind === "accepted"
           && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
           try {
