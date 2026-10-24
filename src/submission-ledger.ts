@@ -1,4 +1,5 @@
-import { sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
+import { isUnboundRunDirectory, sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
+import { readPackageMaterial } from "./session-opening-materials.ts";
 
 import {
   resolveActivationLedgerHome,
@@ -676,6 +677,20 @@ export function createSubmissionLedgerHost(
                 ? { lens: rawLens }
                 : {}),
             });
+            // Native structured-output hosts have no tool-result reply to the model.
+            // Keep the conversation open only after the receipt is durably sealed.
+            const runDirectory = runDirectoryFromHostContext(context);
+            if (context.host !== "claude" && context.host !== "codex"
+              && runDirectory !== undefined && isUnboundRunDirectory(runDirectory)) {
+              result = {
+                ...result,
+                terminate: false,
+                content: [...result.content, {
+                  type: "text",
+                  text: (await readPackageMaterial("resources/ticket-at-receipt.md")).trim(),
+                }],
+              };
+            }
           } catch (error) {
             if (toolThrew) throw error;
             return failInfrastructure(error, context, toolCallId);

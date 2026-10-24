@@ -392,9 +392,8 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.deepEqual(report.cost, candidateCost);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
-    // #1171: completed receipt carries ticketNumber → live under ticket, not unbound.
     const runState = readCurrentSection(
-      join(home, ".ak-roles", "books", bookKey, "1171", "runs", "run-doctor-settle@doctor"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor"),
       "runState",
     ) as { state: string };
     assert.deepEqual(runState.state, "terminal", "doctor run must settle run-state terminal");
@@ -426,7 +425,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             missingEvidence: [
               { need: "session header", targetKeys: ["case"] },
             ],
-            ticketNumber: 1171,
           };
           await writeFile(
             sessionFile,
@@ -512,7 +510,6 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
           const details = {
             status: "refused", reason: `doctor report ${index}`,
             missingEvidence: [{ need: "session", targetKeys: ["case"] }],
-            ticketNumber: 1171,
           };
           const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
           await mkdir(sessionDirectory, { recursive: true });
@@ -570,7 +567,7 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
         return auditorHost.executeTurn(request);
       }
       doctorCalls++;
-      const details = { status: "refused", reason: "recorded once", missingEvidence: [{ need: "session", targetKeys: ["case"] }], ticketNumber: 1171 };
+      const details = { status: "refused", reason: "recorded once", missingEvidence: [{ need: "session", targetKeys: ["case"] }] };
       const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
       await mkdir(sessionDirectory, { recursive: true });
       await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
@@ -633,13 +630,11 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
           status: "escalate",
           reason: "hallucinated open status",
           missingEvidence: [{ need: "session", targetKeys: ["case"] }],
-          ticketNumber: 1171,
         }
         : {
           status: "refused",
           reason: "corrected after unreadable status reask",
           missingEvidence: [{ need: "session", targetKeys: ["case"] }],
-          ticketNumber: 1171,
         };
       if (doctorCalls > 1) assert.equal(request.continuation.kind, "resume");
       const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
@@ -705,8 +700,7 @@ test(mode === "rows"
     const bookKey = resolveBookKeyFromGit(project);
     await seedDoctorIssueRuns(home, bookKey, 41);
     const runId = `run-doctor-terminal-write-fail-${mode}`;
-    // #1171: bind ticket up front so the fault-injection path stays put (no
-    // mid-settle relocate) and soft reask does not expand auto-resume observations.
+    // Bind up front so fault injection targets a stable terminal path, not relocation.
     const runDirectory = join(
       home,
       ".ak-roles",

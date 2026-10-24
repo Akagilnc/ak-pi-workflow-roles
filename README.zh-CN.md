@@ -33,6 +33,8 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 催交与实发次数记账（#1132）见 [角色运行时](src/role-runtime.ts)、[回执递送策略](src/receipt-delivery-policy.ts)、[外部宿主循环](src/external-host-turn-loop.ts)。unfinished 缺理由处置见 [ADR 0050](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。
 
+**收卷与票号：** 所有宿主都不另开补报票号轮。pi、grok-build、hermes 的未绑定腿收卷后，工具回话会问票号；卷已收下，不必重交，知道就调 `ak_report_ticket`，不知道就结束本轮。已绑定或交卷自带 `ticketNumber` 时照旧收卷即结束。同轮再次交卷照收，最新一份成为结论。claude（`--json-schema`）、codex（`--output-schema`）的原生结构化输出交卷即结束，无法插入收卷回话；只靠交卷 `ticketNumber` 字段与随时可调的 `ak_report_ticket`，漏报留在 unbound，不补适配层。
+
 席位与官席配置：
 
 ```bash

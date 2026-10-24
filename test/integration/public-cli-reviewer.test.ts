@@ -58,13 +58,14 @@ function lawfulReviewerReceipt(
   const axisKey = options?.axisKey ?? lens;
   const report = options?.report ?? `${lens}-axis-report`;
   const amendments = { [axisKey]: report };
+  // Progress and resume assertions below read the ticket subject; the explicit
+  // omit option exercises unbound staging instead.
   const ticket = options?.omitTicketNumber === true ? {} : { ticketNumber: 1171 as const };
   if (status === "refused") {
     return {
       status: "refused" as const,
       diagnostic: "hard-stop: review cannot proceed",
       amendments,
-      // #1171: ordinary reviewer tracers are not the missing-ticket reask case.
       ...ticket,
     };
   }
@@ -684,7 +685,7 @@ test("explicit single-lens hard-stop refused still lands mismatched axis key", a
       ["refused"],
     );
     const bookKey = resolveBookKeyFromGit(project);
-    // Receipt carries ticketNumber (#1171 ordinary tracer) → live under ticket.
+    // Receipt carries ticketNumber, so resume reads the ticket leaf.
     const refusedRunDirectory = join(
       home, ".ak-roles", "books", bookKey, "1171", "runs",
       "run-cli-reviewer-hard-stop@reviewer",

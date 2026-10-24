@@ -154,8 +154,7 @@ async function runExternalJudge(
           runId: runIdFromRunDirectory(request.runDirectory)!,
           runDirectory: request.runDirectory,
           role: "judge",
-          // #1171: 催交/得卷 tracers are not the missing-ticket soft reask case.
-          details: { status: "converged", ticketNumber: 1171 },
+          details: { status: "converged" },
           toolCallId: `judge-call-${call}`,
           home: request.home,
           ...(request.courtAttemptId === undefined
@@ -249,12 +248,12 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.deepEqual(
       sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
-      [{ type: "sealed", accepted: { status: "converged", ticketNumber: 1171 }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
     );
     assert.deepEqual(
       (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
         .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
-      [{ kind: "accepted", accepted: { status: "converged", ticketNumber: 1171 }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
     );
   });
 });
@@ -289,7 +288,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
             runId: runIdFromRunDirectory(request.runDirectory)!,
             runDirectory: request.runDirectory,
             role: "countersign",
-            details: { status: "converged", ticketNumber: 1171 },
+            details: { status: "converged" },
             toolCallId: "countersign-call-2",
             home: request.home,
             ...(request.courtAttemptId === undefined
@@ -410,9 +409,7 @@ async function driveFixerCloseRound(
       async runRound() {
         rounds.count += 1;
         if (rounds.count === 1) {
-          // #1171: unfinished still seals accepted; carry ticket so soft reask
-          // does not steal a second round from the delivery-count tracer.
-          await prepared.ingestStructuredOutput({ status: "unfinished", ticketNumber: 1171 });
+          await prepared.ingestStructuredOutput({ status: "unfinished" });
         }
         return { status: "delivered" };
       },
@@ -569,7 +566,7 @@ test("#1132: an unreadable gate-child conclusion reasks only up to the configure
   const sideways = {
     role: "notary" as const,
     toolName: NOTARY_OUTPUT_TOOL_NAME,
-    details: { status: "sideways", ticketNumber: 1171},
+    details: { status: "sideways" },
     seal: true,
   };
   const openNotary = (home: string, project: string, sourceRunPath: string, runId: string) =>
@@ -664,7 +661,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
               runId: runIdFromRunDirectory(request.runDirectory)!,
               runDirectory: request.runDirectory,
               role: "judge",
-              details: { status: "continue", ticketNumber: 1171},
+              details: { status: "continue" },
               toolCallId: "judge-continue",
               home: request.home,
               ...(request.courtAttemptId === undefined
@@ -680,7 +677,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
             runId: runIdFromRunDirectory(request.runDirectory)!,
             runDirectory: request.runDirectory,
             role: "notary",
-            details: { status: "continue", ticketNumber: 1171},
+            details: { status: "continue" },
             toolCallId: "notary-continue",
             home: request.home,
             ...(request.courtAttemptId === undefined
@@ -741,7 +738,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
                 runId: runIdFromRunDirectory(request.runDirectory)!,
                 runDirectory: request.runDirectory,
                 role: "judge",
-                details: { status: "continue", ticketNumber: 1171},
+                details: { status: "continue" },
                 toolCallId: "judge-continue",
                 home: request.home,
                 ...(request.courtAttemptId === undefined
@@ -758,7 +755,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
               runId: runIdFromRunDirectory(request.runDirectory)!,
               runDirectory: request.runDirectory,
               role: "notary",
-              details: { status: "sideways", revision: notaryCalls, ticketNumber: 1171},
+              details: { status: "sideways", revision: notaryCalls },
               toolCallId: `notary-sideways-${notaryCalls}`,
               home: request.home,
               ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
@@ -914,11 +911,8 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
         return { code: 0, stderr: "", timedOut: false };
       },
     };
-    // #1171: this case injects control-plane damage to exercise resume binding
-    // fail-closed — not missing-ticket discovery. Bind the ticket up front so
-    // post-host board re-read is not owed; damage still fails closed on the
-    // resume adapter load (original failure path below). Do not wash unbound
-    // board-read damage into "no ticket".
+    // Bind up front so control-plane damage exercises the resume adapter load,
+    // not the post-host board re-read.
     const result = await runAkRole(
       ["judge", "--host", "grok-build", "--project", project, "go"],
       {

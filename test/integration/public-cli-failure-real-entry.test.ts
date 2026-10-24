@@ -54,7 +54,6 @@ test("public report publication failure stays beside the accepted terminal", asy
       manifestDigest: "role-submitted-optional",
       groups: [],
       unfinishedReasons: [],
-      ticketNumber: 1171,
     };
     try {
       const inner = roleTurnHostFromLegacyPiRunner({
@@ -84,9 +83,8 @@ test("public report publication failure stays beside the accepted terminal", asy
           cwd: project,
           credentials: { "openai-codex": true, xai: false },
           createRunId: () => runId,
-          // #1171: publication-lock injects after seal; bind up front so board
-          // discovery / soft-reask are not owed and relocate does not race the
-          // locked current.json plant. Intended seam stays terminal render EACCES.
+          // Bind up front so relocation cannot race the post-seal current.json lock;
+          // the intended failure is terminal render EACCES.
           boundTicketNumber: 1171,
           io,
           roleTurnHost: {
@@ -617,7 +615,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
           if (role === "notary" || role === "auditor") {
             return scriptedTerminatingToolSession({
               role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged", ticketNumber: 1171},
+              details: { status: "converged" },
             })(args, options);
           }
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
@@ -630,7 +628,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { status: "converged", ticketNumber: 1171},
+                details: { status: "converged" },
               },
             })}\n`,
             "utf8",
@@ -642,7 +640,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
             args: [...args],
             sealedAcceptance: {
               role: "judge" as const,
-              details: { status: "converged", ticketNumber: 1171},
+              details: { status: "converged" },
             },
           };
         },
@@ -659,7 +657,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     }
     assert.deepEqual(
       result.terminal!.submissions,
-      [{ status: "converged", ticketNumber: 1171 }],
+      [{ status: "converged" }],
       "the sealed receipt stays recorded on the run-scoped carrier",
     );
   });

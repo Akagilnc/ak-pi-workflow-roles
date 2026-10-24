@@ -1,8 +1,8 @@
 /**
- * #1171 — mid-turn ticket report relocates immediately; missing-ticket soft
- * reask once. Public entry + in-repo fake hosts.
- * - pi: native SessionManager.setSessionFile (not envelope MCP)
- * - codex / grok-build: prepareRoleEnvelope MCP mouth (their real seam)
+ * Mid-turn ticket reports relocate immediately; #1268 never opens a ticket-only
+ * turn after a receipt. Public entry + in-repo fake hosts.
+ * Native Pi relocation fixtures use SessionManager.setSessionFile.
+ * Cross-host settlement fixtures use prepareRoleEnvelope, not Pi's native agent loop.
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
@@ -15,8 +15,9 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
@@ -65,7 +66,6 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 
@@ -110,13 +110,15 @@ function nestAdaptersFor(
   return [
     { name: "pi", create: () => ({ ok: true as const, host }) },
     { name: "codex", create: () => ({ ok: true as const, host }) },
+    { name: "claude", create: () => ({ ok: true as const, host }) },
     { name: "grok-build", create: () => ({ ok: true as const, host }) },
+    { name: "hermes", create: () => ({ ok: true as const, host }) },
   ];
 }
 
-/** Headless / ACP seam: report via envelope MCP, then optional submit. */
+/** Shared runtime seam via envelope MCP / structured output; not a native Pi loop. */
 function envelopeHostThatReportsThen(input: {
-  readonly hostName: "codex" | "grok-build";
+  readonly hostName: "pi" | "codex" | "claude" | "grok-build" | "hermes";
   readonly ticketNumber: number;
   /** When set, each entry is one report call (overrides reportCount + ticketNumber). */
   readonly ticketNumbers?: readonly number[];
@@ -125,11 +127,18 @@ function envelopeHostThatReportsThen(input: {
   readonly beforeReport?: (request: RoleTurnRequest) => void | Promise<void>;
   readonly onAfterReport?: () => void;
   readonly afterReportOnly?: boolean;
+  readonly afterSubmitTicket?: unknown;
+  readonly expectReportError?: boolean;
+  readonly resubmit?: Record<string, unknown>;
+  readonly outputToolName?: string;
 }) {
+  const observations = { turns: 0 };
   const tickets = input.ticketNumbers
     ?? Array.from({ length: input.reportCount ?? 1 }, () => input.ticketNumber);
   return {
+    observations,
     async executeTurn(request: RoleTurnRequest) {
+      observations.turns += 1;
       // Socket root owned here — dispose closes the sock; finally removes the root (#1199 R5).
       return withOutsideTempRoot("ak-1171-sock-", async (socketDir) => {
         const socketPath = join(socketDir, "mcp.sock");
@@ -137,7 +146,7 @@ function envelopeHostThatReportsThen(input: {
           request: { ...request, host: input.hostName },
           dependencies: createRoleRuntimeDependencies(packageRoot),
           socketPath,
-          listTerminatingToolOnMcp: input.hostName === "grok-build",
+          listTerminatingToolOnMcp: input.hostName !== "codex" && input.hostName !== "claude",
           sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
           principalAuthority: piDurablePrincipalAuthority,
         });
@@ -164,13 +173,20 @@ function envelopeHostThatReportsThen(input: {
             });
           }
           if (input.submit !== undefined) {
-            if (input.hostName === "grok-build") {
+            if (input.hostName !== "codex" && input.hostName !== "claude") {
               await callMcpTool({
-                socketPath, token, name: FIXER_OUTPUT_TOOL_NAME, args: input.submit,
+                socketPath, token, name: input.outputToolName ?? FIXER_OUTPUT_TOOL_NAME, args: input.submit,
               });
             } else {
               await prepared.ingestStructuredOutput(input.submit);
             }
+          }
+          if (input.afterSubmitTicket !== undefined) {
+            const reported = await callMcpTool({ socketPath, token, name: REPORT_TICKET_TOOL_NAME, args: { ticketNumber: input.afterSubmitTicket } });
+            assert.equal(reported.isError === true, input.expectReportError === true);
+          }
+          if (input.resubmit !== undefined) {
+            await callMcpTool({ socketPath, token, name: input.outputToolName ?? FIXER_OUTPUT_TOOL_NAME, args: input.resubmit });
           }
           return await driveExternalRoleTurnRounds(prepared, request, {
             roundLimitName: "ReportTicketRoundLimit",
@@ -637,53 +653,44 @@ test("#1171 delivery throw after mid-turn report does not revive unbound", async
   });
 });
 
-test("#1171 submit without ticket soft-reasks once; second reply with ticket relocates", async () => {
+test("#1268 unbound submission stays accepted without opening another turn", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000reask";
-    const scripted = fixerTurnHost((turn) => ({
-      status: "completed",
-      report: turn === 1 ? "no ticket yet" : "with ticket",
-      ...(turn === 1 ? {} : { ticketNumber: TICKET }),
-      classResults: FIXER_DONE.classResults,
-    }));
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair without declaring ticket first."],
-      seatEnv(home, project, runId, "pi", scripted.host),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(scripted.turns, 2, "exactly one soft reask turn");
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-    assert.equal(result.admitted?.ticketNumber, TICKET);
-    // F2-R4b duplicate full present is human-observed on mutation (no stdout count lock).
-  });
-});
-
-test("#1171 still no ticket on second submit: ask once, stay unbound, sealed receipt kept", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000still";
-    const scripted = fixerTurnHost((turn) => ({
-      status: "completed",
-      report: turn === 1 ? "still unbound turn 1" : "still unbound turn 2",
-      classResults: FIXER_DONE.classResults,
-    }));
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair with no ticket ever."],
-      seatEnv(home, project, runId, "pi", scripted.host),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(scripted.turns, 2, "reask once then stop");
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).at(-1)?.report,
-      "still unbound turn 2",
-    );
+    await writeFile(join(home, ".ak-roles", "host-providers.json"), JSON.stringify({ hermes: { test: "test" } }));
+    for (const hostName of ["pi", "grok-build", "hermes", "claude", "codex"] as const) {
+      const nativeOutput = hostName === "claude" || hostName === "codex";
+      for (const action of nativeOutput ? ["end"] as const : ["end", "report", "invalid", "resubmit"] as const) {
+        const runId = `1268-${hostName}-${action}`;
+        const scripted = envelopeHostThatReportsThen({
+          hostName,
+          ticketNumber: TICKET,
+          ticketNumbers: [],
+          outputToolName: REVIEWER_OUTPUT_TOOL_NAME,
+          submit: { status: "completed", amendments: { completeness: "No amendments." }, revision: 1 },
+          ...(action === "report" || action === "invalid" ? {
+            afterSubmitTicket: action === "report" ? TICKET : "mypy-15105",
+            expectReportError: action === "invalid",
+          } : {}),
+          ...(action === "resubmit" ? { resubmit: { status: "refused", report: "no ticket", revision: 2 } } : {}),
+        });
+        const host = withPassingReviewHost(scripted);
+        const captured = captureIo();
+        const result = await runAkRole([
+          "reviewer", "--base", "HEAD", "--lens", "completeness", "--authority-ref", "CLAUDE.md",
+          "--host", hostName, "--model", "test/caller-seat:high", "Review without a ticket declared at entry.",
+        ], { ...seatEnv(home, project, runId, hostName, host, { hostAdapters: nestAdaptersFor(host) }), io: captured.io });
+        assert.equal(scripted.observations.turns, 1, `${hostName}/${action}: no ticket-only or delivery turn`);
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+        assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.revision, action === "resubmit" ? 2 : 1);
+        const bound = action === "report";
+        const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
+        assert.equal(existsSync(leaf), true);
+        assert.equal(readCurrentSection(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
+        const progress = readTicketProgressLines(join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound"));
+        const rows = progress.filter((row) => row.receipt.startsWith(`runs/${formatRunLeaf(runId, "reviewer")}/`));
+        assert.equal(rows.length, action === "resubmit" ? 2 : 1);
+      }
+    }
   });
 });
 
@@ -1314,134 +1321,6 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
   });
 });
 
-test("#1171 public resume first sealed submit without ticket soft-reasks once", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000resreask";
-    // Spend the initial soft-reask budget so the leg stays unbound with a sealed receipt.
-    const seed = fixerTurnHost((turn) => ({
-      status: "completed",
-      report: turn === 1 ? "seed turn 1" : "seed turn 2 still unbound",
-      classResults: FIXER_DONE.classResults,
-    }));
-    await runPublicInstructionSeat(
-      ["apply", "Seed unbound sealed receipt."],
-      seatEnv(home, project, runId, "pi", seed.host),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(seed.turns, 2);
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-
-    const resumed = fixerTurnHost((turn) => ({
-      status: "completed",
-      report: turn === 1 ? "resume no ticket" : "resume still no ticket",
-      classResults: FIXER_DONE.classResults,
-    }));
-    const result = await runPublicInstructionSeatResume(
-      { runId, message: "resume without ticket" },
-      seatEnv(home, project, runId, "pi", resumed.host),
-      captureIo().io,
-    );
-    assert.equal(resumed.turns, 2, "resume must soft-reask missing ticket once");
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).at(-1)?.report,
-      "resume still no ticket",
-    );
-  });
-});
-
-test("#1171 F2-R6 resume prior seals; silence soft reask keeps this seal", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000f2r6hist";
-    // Seed two sealed unbound rows so full-run sealed.length > 1 before this call.
-    // Distinct toolCallIds so later audit is not skipped as "already passed".
-    const seedRoles: string[] = [];
-    const seedHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = args[args.indexOf("--ak-role") + 1]!;
-        seedRoles.push(role);
-        if (role === "fixer") {
-          const turn = seedRoles.filter((r) => r === "fixer").length;
-          return scriptedTerminatingToolSession({
-            role: "fixer",
-            toolName: FIXER_OUTPUT_TOOL_NAME,
-            details: {
-              ...FIXER_DONE,
-              report: turn === 1 ? "seed-1" : "seed-2",
-            },
-            toolCallId: `call_fixer_seed_${turn}`,
-            ...(turn === 1 ? {} : { sessionWriteMode: "append" as const }),
-          })(args, options);
-        }
-        return scriptedTerminatingToolSession({
-          role: role as "inspector",
-          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
-          toolCallId: `call_inspector_seed_${seedRoles.filter((r) => r === "inspector").length}`,
-        })(args, options);
-      },
-    });
-    await runPublicInstructionSeat(
-      ["apply", "Seed multi-seal unbound history."],
-      seatEnv(home, project, runId, "pi", seedHost),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(seedRoles.filter((r) => r === "fixer").length, 2);
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-
-    const roles: string[] = [];
-    const resumeHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = args[args.indexOf("--ak-role") + 1]!;
-        roles.push(role);
-        if (role === "fixer") {
-          const turn = roles.filter((r) => r === "fixer").length;
-          if (turn === 1) {
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: { ...FIXER_DONE, report: "resume-this-seal" },
-              toolCallId: "call_fixer_resume_1",
-              sessionWriteMode: "append",
-            })(args, options);
-          }
-          // Soft reask silence: historical sealed.count must not invent a substitute.
-          return { code: 0, stderr: "", timedOut: false };
-        }
-        return scriptedTerminatingToolSession({
-          role: role as "inspector",
-          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: "converged", findings: [], reason: "ok", ticketNumber: TICKET },
-          toolCallId: "call_inspector_resume_1",
-        })(args, options);
-      },
-    });
-    const result = await runPublicInstructionSeatResume(
-      { runId, message: "resume; soft reask silent" },
-      seatEnv(home, project, runId, "pi", resumeHost),
-      captureIo().io,
-    );
-    assert.equal(roles.filter((r) => r === "fixer").length, 2, "resume soft-reasks once");
-    assert.ok(roles.includes("inspector"), "kept this-call seal must still enter audit");
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "resume-this-seal"),
-      true,
-      "silence must keep this resume seal; must not wash via nested no_receipt ownership",
-    );
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-  });
-});
-
 test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_DIR", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000f1nest";
@@ -1482,602 +1361,5 @@ test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_D
       if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = prior;
     }
-  });
-});
-
-test("#1171 F2-R1 reask host failure keeps original volume but delivers nonzero exit", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f2fail";
-    const roles: string[] = [];
-    const parent = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = args[args.indexOf("--ak-role") + 1]!;
-        roles.push(role);
-        if (role === "fixer") {
-          const turn = roles.filter((r) => r === "fixer").length;
-          if (turn === 1) {
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: { ...FIXER_DONE },
-            })(args, options);
-          }
-          // Soft reask: real host failure — no substitute sealed submission.
-          return { code: 7, stderr: "injected reask host failure", timedOut: false };
-        }
-        return scriptedTerminatingToolSession({
-          role: role as "inspector",
-          toolName: "ak_submission_output",
-          details: { status: "converged", findings: [], reason: "ok" },
-        })(args, options);
-      },
-    });
-    const result = await runPublicInstructionSeat(
-      ["apply", "Repair without ticket; reask host fails."],
-      seatEnv(home, project, runId, "pi", parent),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(roles.filter((r) => r === "fixer").length, 2, "must soft-reask once");
-    assert.notEqual(result.exitCode, 0, "real reask failure must not wash to exit 0");
-    assert.notEqual(
-      result.terminal?.roleOutcome.kind,
-      "accepted",
-      "must not present washed accepted over a failed reask",
-    );
-    assert.equal(
-      roles.includes("inspector"),
-      false,
-      "failed reask must not continue into audit as accepted",
-    );
-    // Original sealed volume remains under unbound (no ticket reported).
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-  });
-});
-
-async function assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory(input: {
-  readonly home: string;
-  readonly project: string;
-  readonly bookKey: string;
-  readonly runId: string;
-  readonly reask:
-    | "report-only"
-    | "silence"
-    | "substitute"
-    | "substitute-with-ticket"
-    /** #1171 F2-R9: soft reask seals unreadable status + ticket; status reask is ordinary. */
-    | "bad-status-with-ticket";
-  /** #1171 F2-R4a / F2-R5 / F2-R6: inspector continue once after the first sealed chain. */
-  readonly inspectorContinuesOnce?: boolean;
-  /**
-   * Ordinary turn after inspector continue.
-   * - reseal: F2-R4a — spent budget must block a second soft reask; reseal reaches audit
-   * - no-volume: F2-R5 / F2-R6 / F2-R9 — honest no_receipt; no outer restore of a prior volume
-   */
-  readonly ordinaryContinue?: "reseal" | "no-volume";
-  /**
-   * #1171 F2-R8: during plain soft-reask silence, another public resume seals
-   * foreign-volume and passes台院 — original must not borrow that pass.
-   */
-  readonly foreignCourtPassesAudit?: boolean;
-}): Promise<void> {
-  const { home, project, bookKey, runId, reask } = input;
-  const ordinaryContinue = input.ordinaryContinue
-    ?? (input.inspectorContinuesOnce === true ? "no-volume" : undefined);
-  const roles: string[] = [];
-  let inspectorTurns = 0;
-  /** Structured report field from parent-host inspector summons (F2-R8). */
-  const parentInspectorReports: string[] = [];
-  const parent = roleTurnHostFromLegacyPiRunner({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    piRunner: async (args, options) => {
-      const role = args[args.indexOf("--ak-role") + 1]!;
-      roles.push(role);
-      if (role === "fixer") {
-        const turn = roles.filter((r) => r === "fixer").length;
-        if (turn === 1) {
-          return scriptedTerminatingToolSession({
-            role: "fixer",
-            toolName: FIXER_OUTPUT_TOOL_NAME,
-            details: { ...FIXER_DONE, report: "original-volume" },
-            toolCallId: "call_fixer_original",
-          })(args, options);
-        }
-        if (turn === 2) {
-          if (reask === "report-only") {
-            // Soft reask: report ticket only — no substitute sealed submission.
-            const runDirectory = runDirectoryFromSessionDirectory(argvFlagValue(args, "--session-dir")!);
-            await mkdir(sessionDirectoryOf(runDirectory), { recursive: true });
-            const context: HostContext = {
-              cwd: options.cwd,
-              mode: "rpc",
-              model: undefined,
-              runDirectory,
-              sessionManager: {
-                getLeafEntry: () => undefined,
-                getLeafId: () => runId,
-                getEntries: () => [],
-                getSessionDir: () => sessionDirectoryOf(runDirectory),
-                getSessionFile: () => sessionFileOf(runDirectory),
-                setSessionFile() {},
-                appendCustomEntry() {},
-              },
-              abort() {},
-            };
-            await reportTicketFromHostContext(context, TICKET);
-            return { code: 0, stderr: "", timedOut: false };
-          }
-          if (reask === "substitute" || reask === "substitute-with-ticket") {
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: {
-                ...FIXER_DONE,
-                report: "substitute-volume",
-                ...(reask === "substitute-with-ticket" ? { ticketNumber: TICKET } : {}),
-              },
-              sessionWriteMode: "append",
-            })(args, options);
-          }
-          if (reask === "bad-status-with-ticket") {
-            // Soft reask seals unreadable status + ticket; nested status reask is ordinary.
-            return scriptedTerminatingToolSession({
-              role: "fixer",
-              toolName: FIXER_OUTPUT_TOOL_NAME,
-              details: {
-                status: "not-a-lawful-status",
-                report: "bad-status-volume",
-                ticketNumber: TICKET,
-                classResults: FIXER_DONE.classResults,
-              },
-              sessionWriteMode: "append",
-            })(args, options);
-          }
-          // silence: exit cleanly with neither report nor sealed substitute.
-          // F2-R7: on the plain soft-reask silence line, another lawful court
-          // on the same leg may seal meanwhile — ownership must not invent a
-          // substitute from that foreign seal. Audit-continue silence paths
-          // (R4a/R5) keep plain silence; their necessary inputs stay separate.
-          // F2-R8: another public resume seals foreign-volume and passes台院 —
-          // reuse the existing public-entry seam (no hand-crafted inspector pages).
-          if (input.inspectorContinuesOnce !== true) {
-            if (input.foreignCourtPassesAudit === true) {
-              const foreignHost = roleTurnHostFromLegacyPiRunner({
-                packageRoot,
-                principalAuthority: piDurablePrincipalAuthority,
-                piRunner: async (foreignArgs, foreignOptions) => {
-                  const foreignRole = foreignArgs[foreignArgs.indexOf("--ak-role") + 1]!;
-                  if (foreignRole === "fixer") {
-                    return scriptedTerminatingToolSession({
-                      role: "fixer",
-                      toolName: FIXER_OUTPUT_TOOL_NAME,
-                      details: {
-                        ...FIXER_DONE,
-                        report: "foreign-volume",
-                        ticketNumber: TICKET,
-                      },
-                      toolCallId: "call_fixer_foreign_court",
-                      sessionWriteMode: "append",
-                    })(foreignArgs, foreignOptions);
-                  }
-                  return scriptedTerminatingToolSession({
-                    role: foreignRole as "inspector",
-                    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-                    details: {
-                      status: "converged",
-                      findings: [],
-                      reason: "ok",
-                      ticketNumber: TICKET,
-                    },
-                    toolCallId: "call_inspector_foreign",
-                  })(foreignArgs, foreignOptions);
-                },
-              });
-              // Same-run public resume face (`message`) during an open soft-reask
-              // court is adopted as that court's substitute. The proven interleave
-              // seam is summons resume — real seal→audit→settle, distinct court.
-              await runPublicInstructionSeatResume(
-                { runId, summons: { instruction: "manual public continue" } },
-                seatEnv(home, project, runId, "pi", foreignHost),
-                captureIo().io,
-              );
-            } else {
-              const runDirectory = runDirectoryFromSessionDirectory(argvFlagValue(args, "--session-dir")!);
-              await sealAcceptedSubmission({
-                cwd: project,
-                home,
-                runId,
-                role: "fixer",
-                runDirectory,
-                courtAttemptId: "foreign-court-other-public-call",
-                toolCallId: "call_fixer_foreign_court",
-                details: {
-                  ...FIXER_DONE,
-                  report: "foreign-court-volume",
-                },
-              });
-            }
-          }
-          return { code: 0, stderr: "", timedOut: false };
-        }
-        // Ordinary status reask / audit-continue turn: spent budget blocks a second soft reask.
-        if (ordinaryContinue === "no-volume") {
-          return { code: 0, stderr: "", timedOut: false };
-        }
-        return scriptedTerminatingToolSession({
-          role: "fixer",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          details: { ...FIXER_DONE, report: "after audit continue still unbound" },
-          sessionWriteMode: "append",
-        })(args, options);
-      }
-      if (role === "inspector") {
-        inspectorTurns += 1;
-        const status = input.inspectorContinuesOnce === true && inspectorTurns === 1
-          ? "continue"
-          : "converged";
-        return scriptedTerminatingToolSession({
-          role: "inspector",
-          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status, findings: [], reason: "ok", ticketNumber: TICKET },
-        })(args, options);
-      }
-      return scriptedTerminatingToolSession({
-        role: role as "notary",
-        toolName: "ak_notary_output",
-        details: { status: "converged", findings: [], reason: "ok" },
-      })(args, options);
-    },
-  });
-  // Capture structured peer payload the parent-host inspector is summoned with (#1171 F2-R8).
-  const capturingParent: typeof parent = {
-    async executeTurn(request) {
-      if (request.activation.role === "inspector") {
-        const prompt = request.continuation.prompt;
-        if (typeof prompt === "string" && prompt.length > 0) {
-          try {
-            const parsed: unknown = JSON.parse(prompt);
-            if (isRecord(parsed) && typeof parsed.report === "string") {
-              parentInspectorReports.push(parsed.report);
-            }
-          } catch {
-            // Gate may deliver non-JSON; F2-R8 asserts structured report when present.
-          }
-        }
-      }
-      return parent.executeTurn(request);
-    },
-  };
-  const result = await runPublicInstructionSeat(
-    ["apply", "Repair without ticket on first seal."],
-    seatEnv(home, project, runId, "pi", capturingParent),
-    captureIo().io,
-    "fixer",
-    (args) => parsePublicSeatArgv("fixer", args),
-  );
-  const fixerTurns = roles.filter((r) => r === "fixer").length;
-  if (reask === "bad-status-with-ticket" && ordinaryContinue === "no-volume") {
-    // F2-R9: soft reask sealed bad-status+ticket; ordinary status reask no-volume.
-    assert.equal(fixerTurns, 3, "soft reask seal then ordinary status reask");
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", "ordinary status reask publishes no_receipt");
-    const live = result.admitted?.runDirectory;
-    assert.ok(live !== undefined && existsSync(live), "live admitted directory");
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
-      .map((row) => row.outcome?.kind);
-    assert.deepEqual(
-      attemptKinds,
-      ["accepted", "accepted", "no_receipt"],
-      "original, bad-status seal, ordinary status reask no_receipt",
-    );
-    const durable = readCurrentSection(live!, "terminal") as {
-      face?: string;
-      body?: { outcome?: { kind?: string } };
-    } | undefined;
-    assert.equal(durable?.face, "no_receipt", "durable face follows ordinary status reask");
-    assert.equal(durable?.body?.outcome?.kind, "no_receipt", "durable outcome is no_receipt");
-    return;
-  }
-  if (input.inspectorContinuesOnce === true && ordinaryContinue === "reseal") {
-    // F2-R4a: silence soft reask, then reseal after continue — budget blocks second reask.
-    assert.equal(fixerTurns, 3, `${reask}: one soft reask then one reseal turn`);
-    assert.equal(inspectorTurns, 2, `${reask}: continue then converge on reseal`);
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${reask}: reseal remains accepted`);
-    const live = result.admitted?.runDirectory;
-    assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
-    assert.equal(
-      objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "after audit continue still unbound"),
-      true,
-      `${reask}: presented volume is the reseal, not a washed prior draft`,
-    );
-    const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
-      .map((row) => row.outcome?.kind);
-    assert.deepEqual(
-      attemptKinds,
-      ["accepted", "no_receipt", "accepted"],
-      `${reask}: seal, soft reask, reseal — no second soft reask`,
-    );
-    return;
-  }
-  if (input.inspectorContinuesOnce === true && ordinaryContinue === "no-volume") {
-    assert.equal(fixerTurns, 3, `${reask}: one soft reask then one audit-continue turn`);
-    // Continue once; ordinary no-volume does not seal again, so no second inspector.
-    // After a sealed substitute, outer must not restore/re-audit the original volume (F2-R6).
-    assert.equal(inspectorTurns, 1, `${reask}: inspector continue once; no outer restore audit`);
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", `${reask}: ordinary continue no-volume publishes`);
-    const live = result.admitted?.runDirectory;
-    assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
-    if (reask === "substitute-with-ticket") {
-      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-      assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
-    } else {
-      assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-      assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), false);
-    }
-    const attemptRows = historyPayloads<{ outcome?: { kind?: string; payloads?: unknown[] } }>(
-      live!,
-      "attempt-history",
-    );
-    const attemptKinds = attemptRows.map((row) => row.outcome?.kind);
-    const expectedAttempts = reask === "substitute" || reask === "substitute-with-ticket"
-      ? ["accepted", "accepted", "no_receipt"]
-      : ["accepted", "no_receipt", "no_receipt"];
-    assert.deepEqual(
-      attemptKinds,
-      expectedAttempts,
-      `${reask}: attempt history by real dispatch rounds`,
-    );
-    if (reask === "substitute" || reask === "substitute-with-ticket") {
-      const sealedReports = attemptRows
-        .filter((row) => row.outcome?.kind === "accepted" || row.outcome?.kind === "audit_escalation")
-        .map((row) => {
-          const payload = row.outcome?.payloads?.at(-1);
-          return isRecord(payload) && typeof payload.report === "string" ? payload.report : undefined;
-        });
-      assert.deepEqual(
-        sealedReports,
-        ["original-volume", "substitute-volume"],
-        `${reask}: substitute sealed after original; chain must not wash ownership`,
-      );
-      // inspectorTurns===1 already proves original was not re-audited after ordinary no-volume.
-    }
-    const durable = readCurrentSection(live!, "terminal") as {
-      face?: string;
-      body?: { outcome?: { kind?: string } };
-    } | undefined;
-    assert.equal(durable?.face, "no_receipt", `${reask}: durable face follows ordinary continue`);
-    assert.equal(durable?.body?.outcome?.kind, "no_receipt", `${reask}: durable outcome is no_receipt`);
-    return;
-  }
-  assert.equal(fixerTurns, 2, `${reask}: must soft-reask once`);
-  assert.ok(roles.includes("inspector"), `${reask}: original sealed submission must still enter audit`);
-  assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${reask}: keep original accepted`);
-  const live = result.admitted?.runDirectory;
-  assert.ok(live !== undefined && existsSync(live), `${reask}: live admitted directory`);
-  if (reask === "report-only") {
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-  }
-  assert.equal(
-    objectPayloads(result.terminal!.roleOutcome).some((p) => p.report === "original-volume"),
-    true,
-    `${reask}: original sealed payload must remain the presented volume`,
-  );
-  if (input.foreignCourtPassesAudit === true) {
-    // F2-R8: parent台院 must review original-volume bound to original tool call —
-    // not skip via foreign-volume's pass record.
-    assert.deepEqual(
-      parentInspectorReports,
-      ["original-volume"],
-      `${reask}: parent inspector structured report is original, not foreign`,
-    );
-  }
-  // #419 / F2-R3: real soft-reask attempt appends no_receipt; terminal stays accepted.
-  // F2-R7 ledger-only foreign seal does not append attempt-history.
-  // F2-R8 real public resume seals foreign-volume → accepted before reask no_receipt.
-  const attemptKinds = historyPayloads<{ outcome?: { kind?: string } }>(live!, "attempt-history")
-    .map((row) => row.outcome?.kind);
-  assert.deepEqual(
-    attemptKinds,
-    input.foreignCourtPassesAudit === true
-      ? ["accepted", "accepted", "no_receipt"]
-      : ["accepted", "no_receipt"],
-    input.foreignCourtPassesAudit === true
-      ? `${reask}: original, foreign public resume, soft-reask no_receipt`
-      : `${reask}: attempt history must keep original accepted and append reask no_receipt`,
-  );
-  const durable = readCurrentSection(live!, "terminal") as {
-    face?: string;
-    body?: { outcome?: { kind?: string } };
-  } | undefined;
-  assert.equal(durable?.face, "report", `${reask}: durable face stays report`);
-  assert.equal(durable?.body?.outcome?.kind, "accepted", `${reask}: durable outcome stays accepted`);
-}
-
-test("#1171 F2 reask report-only keeps original accepted and reaches audit", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000000f2keep",
-      reask: "report-only",
-    });
-  });
-});
-
-test("#1171 F2 / F2-R7 reask silence keeps original; foreign-court seal does not steal", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000000f2siln",
-      reask: "silence",
-    });
-  });
-});
-
-test("#1171 F2-R8 silence; foreign public seal+pass must not skip original audit", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r8",
-      reask: "silence",
-      foreignCourtPassesAudit: true,
-    });
-  });
-});
-
-test("#1171 F2-R9 soft reask bad-status+ticket; ordinary status no-volume persists", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r9",
-      reask: "bad-status-with-ticket",
-      ordinaryContinue: "no-volume",
-    });
-  });
-});
-
-test("#1171 F2-R4a silence then inspector continue reseals once without second soft reask", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r4a",
-      reask: "silence",
-      inspectorContinuesOnce: true,
-      ordinaryContinue: "reseal",
-    });
-  });
-});
-
-test("#1171 F2-R5 silence then inspector continue; ordinary no-volume persists", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r5",
-      reask: "silence",
-      inspectorContinuesOnce: true,
-      ordinaryContinue: "no-volume",
-    });
-  });
-});
-
-test("#1171 F2-R6 substitute then inspector continue; ordinary no-volume owns chain", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r6a",
-      reask: "substitute",
-      inspectorContinuesOnce: true,
-      ordinaryContinue: "no-volume",
-    });
-  });
-});
-
-test("#1171 F2-R6 substitute-with-ticket then continue; ordinary no-volume owns chain", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    await assertSoftReaskKeepsAcceptedAndRecordsNoReceiptHistory({
-      home,
-      project,
-      bookKey,
-      runId: "01a011710-0000-7000-8000-0000f2r6b",
-      reask: "substitute-with-ticket",
-      inspectorContinuesOnce: true,
-      ordinaryContinue: "no-volume",
-    });
-  });
-});
-
-test("#1171 F3 status-reask exhaustion still issues missing-ticket reask once", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f3ask";
-    const scripted = fixerTurnHost((turn) => {
-      if (turn === 1 || turn === 2) {
-        return {
-          status: "not-a-lawful-status",
-          report: `bad status turn ${turn}`,
-          classResults: FIXER_DONE.classResults,
-        };
-      }
-      return {
-        status: "completed",
-        report: "after ticket reask",
-        ticketNumber: TICKET,
-        classResults: FIXER_DONE.classResults,
-      };
-    });
-    const result = await runPublicInstructionSeat(
-      ["apply", "Bad status then ticket."],
-      seatEnv(home, project, runId, "pi", scripted.host, { autoResumeLimit: 1 }),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.ok(scripted.turns >= 3, `missing-ticket reask must run after status budget; turns=${scripted.turns}`);
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "fixer")), true);
-    assert.equal(result.admitted?.ticketNumber, TICKET);
-  });
-});
-
-test("#1171 F8 countersign unbound seal soft-reasks missing ticket once", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f8ask";
-    let countersignTurns = 0;
-    let notaryTurns = 0;
-    const countersignHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        countersignTurns += 1;
-        return scriptedTerminatingToolSession({
-          role: "countersign",
-          toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-          details: countersignTurns === 1
-            ? { status: "converged", note: "no ticket first" }
-            : { status: "converged", note: "after reask", ticketNumber: TICKET },
-          ...(countersignTurns === 1 ? {} : { sessionWriteMode: "append" as const }),
-        })(args, options);
-      },
-    });
-    const review = withPassingReviewHost(countersignHost);
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        if (request.activation.role === "notary") notaryTurns += 1;
-        return review.executeTurn(request);
-      },
-    };
-    const result = await runPublicInstructionSeat(
-      ["裁：无号卷须补问一次。"],
-      seatEnv(home, project, runId, "pi", host),
-      captureIo().io,
-      "countersign",
-      (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(countersignTurns, 2, "exactly one soft reask turn");
-    assert.ok(notaryTurns >= 1, "after reask the sealed volume still enters audit");
-    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(existsSync(ticketLeaf(home, bookKey, TICKET, runId, "countersign")), true);
-    assert.equal(result.admitted?.ticketNumber, TICKET);
   });
 });

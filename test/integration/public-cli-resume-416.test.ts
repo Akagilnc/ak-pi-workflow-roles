@@ -64,7 +64,7 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   });
 }
 /** Accepted judge details + sealedAcceptance for faux runners (S4 ledger-only settlement). */
-function acceptedJudge(details: Record<string, unknown> = { status: "converged", ticketNumber: 1171 }) {
+function acceptedJudge(details: Record<string, unknown> = { status: "converged" }) {
   return {
     write: (sessionFile: string) => writeFile(sessionFile, JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } }) + "\n", "utf8"),
     sealedAcceptance: { role: "judge" as const, details },

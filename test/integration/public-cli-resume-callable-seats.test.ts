@@ -78,8 +78,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
       attachmentPaths: [],
     }, {
       home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId,
-      // #1171: ordinary resume tracer is not the missing-ticket reask case.
-      boundTicketNumber: 1171,
     }),
     originalInstruction: "original admitted gatekeeper instruction",
     sealedDetails: () => ({ status: "pass", findings: [] }),
@@ -97,7 +95,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         createRunId: () => runId,
-        boundTicketNumber: 1171,
       }),
     originalInstruction: "original admitted collector instruction",
     sealedDetails: (admitted) =>
@@ -124,7 +121,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         createRunId: () => runId,
-        boundTicketNumber: 1171,
       });
     },
     originalInstruction: "original admitted doctor instruction",
@@ -148,7 +144,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         createRunId: () => runId,
-        boundTicketNumber: 1171,
       });
     },
     sealedDetails: () => ({ status: "converged", findings: [] }),
@@ -165,7 +160,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         createRunId: () => runId,
-        boundTicketNumber: 1171,
       }),
     sealedDetails: () => ({ status: "converged", findings: [] }),
     originalInstruction: "original admitted inspector instruction",

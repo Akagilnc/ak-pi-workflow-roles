@@ -33,6 +33,8 @@ Automatic retry behavior: [auto-resume implementation](src/public-cli/auto-resum
 
 Receipt re-requests and delivery accounting (#1132): [role runtime](src/role-runtime.ts), [receipt delivery policy](src/receipt-delivery-policy.ts), [external host loop](src/external-host-turn-loop.ts). Unfinished-reason handling: [ADR 0050](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md).
 
+**Receipts and tickets:** No host opens a separate ticket-reporting turn. For unbound legs on pi, grok-build, and hermes, the submission tool replies that the receipt is filed: report a known ticket with `ak_report_ticket`, or end the turn without resubmitting. Bound legs and receipts carrying `ticketNumber` retain immediate completion. Another submission in the same turn is filed normally and becomes the latest conclusion. Claude (`--json-schema`) and codex (`--output-schema`) end on native structured output, leaving no tool-result reply in which to ask; they rely on the receipt's `ticketNumber` field and the always-available `ak_report_ticket`. Missed reports stay unbound; no adapter layer is added.
+
 Seat and Gate-officer configuration:
 
 ```bash

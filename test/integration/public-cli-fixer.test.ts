@@ -76,7 +76,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
           home,
           cwd: project,
           createRunId: () => runId,
-          boundTicketNumber: 1171,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -94,7 +93,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
                 args: [...args],
                 sealedAcceptance: {
                   role: "fixer" as const,
-                  details: { status: "planned", report: `started despite ${label} prereq` , ticketNumber: 1171},
+                  details: { status: "planned", report: `started despite ${label} prereq` },
                 },
               };
             },
@@ -121,7 +120,6 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const receipt = {
         status: "planned" as const,
         report: "Plan: inspect root cause; diagnosis available if needed.",
-        ticketNumber: 1171,
       };
       const result = await runAkRole([
           "fixer", "--model", "test/caller-seat:high",
@@ -532,7 +530,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
           if (args[args.indexOf("--ak-role") + 1] === "inspector") {
             return scriptedTerminatingToolSession({
               role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-              details: { status: "converged", ticketNumber: 1171},
+              details: { status: "converged" },
             })(args, options);
           }
           const sessionFile = args[args.indexOf("--session") + 1]!;

@@ -12,6 +12,8 @@ import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { reportTicketFromHostContext } from "../../src/report-ticket-tool.ts";
+import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { Type } from "typebox";
 import {
   createSubmissionLedgerHost,
@@ -151,16 +153,25 @@ test("non-object params stay raw on accepted/submissions — no envelope wrap (#
   });
 });
 
-test("ledger records LLM params, not rewritten result.details (#836 bounce)", async () => {
+test.each(["unbound", "bound", "inline"] as const)("ledger records raw params and returns ticket-dependent termination (%s)", async (placement) => {
   await withLedgerFixture(async (f) => {
-    const params = { status: "converged", report: "from-llm-params" };
+    const params = { status: "converged", report: "from-llm-params", ...(placement === "inline" ? { ticketNumber: 1268 } : {}) };
     const details = { status: "converged", report: "from-tool-result", injected: true };
     const host = registerTool(
       f.root,
       async () => ({ content: [], details, terminate: true }),
     );
+    for (const section of ["invocation", "admitted"] as const) {
+      seedCurrentSection(host.context.runDirectory!, section, {
+        role: "judge", runId: "run-ledger", bookKey: "fixture", projectRoot: f.root,
+        instruction: "Review the submission.",
+      });
+    }
+    if (placement === "bound") await reportTicketFromHostContext(host.context, 1268);
     await host.start("p1");
-    await host.tool().execute("p1", params, undefined, undefined, host.context);
+    const result = await host.tool().execute("p1", params, undefined, undefined, host.context);
+    assert.equal(result.terminate, placement !== "unbound");
+    assert.deepEqual(result.details, details);
     const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows[0]?.accepted, params, "ledger must keep LLM params");
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
@@ -179,7 +190,6 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       unknownKept: "literal-extra-field",
     };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
-    assert.equal(first.terminate, true);
     assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       { role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first" },
@@ -218,7 +228,6 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       await secondHost.start("second");
       const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
       assert.deepEqual(accepted2.details, secondDetails);
-      assert.equal(accepted2.terminate, true);
     } finally {
       process.stderr.write = previousWrite;
     }
@@ -291,7 +300,6 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     });
     const result = await host.tool().execute("review-escalate", params, undefined, undefined, host.context);
     assert.equal(ran, 1);
-    assert.equal(result.terminate, true);
     assert.deepEqual(result.details, params);
     const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.at(-1), {
@@ -318,7 +326,6 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     }, coderTool, "coder");
     const result = await host.tool().execute("coder-infra", params, undefined, undefined, host.context);
     assert.equal(ran, 1, "declaration must not abort before execute");
-    assert.equal(result.terminate, true);
     assert.deepEqual(result.details, params);
     assert.deepEqual(host.closedSubmissions.at(-1), {
       role: "coder",

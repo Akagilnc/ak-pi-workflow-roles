@@ -29,7 +29,6 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
@@ -48,7 +47,6 @@ test("public coder accepts an unreadable status before routing it back for re-su
     const corrected = {
       status: "planned",
       report: { unvalidated: true },
-      ticketNumber: 1171,
       summary: "x".repeat(200),
     };
     let handedSchema: unknown;
@@ -96,10 +94,7 @@ test("public coder accepts an unreadable status before routing it back for re-su
       : [];
     assert.equal(required.includes("summary"), false);
     // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
-    // #1171: corrected seal carries ticketNumber → live path may leave the first-seen unbound dir.
-    const liveDirectory =
-      (await findRunDirectoryById(home, "run-cli-coder-status-reask")) ?? runDirectory;
-    assertRunDirectoryHoldsOnlyDossier(liveDirectory);
+    assertRunDirectoryHoldsOnlyDossier(runDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
@@ -229,14 +224,13 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
       packageRoot, principalAuthority: piDurablePrincipalAuthority,
       piRunner: scriptedTerminatingToolSession({
         role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "converged", ticketNumber: 1171},
+        details: { status: "converged" },
       }),
     });
     const receipt = {
       status: "completed" as const,
       report: "Alternate host sealed through production ledger producer.",
       summary: "coder short conclusion",
-      ticketNumber: 1171,
     };
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Finish without a Pi session leaf."],
@@ -293,7 +287,7 @@ test("Coder submission remains recorded when the later Inspector transport fails
     await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
       packageRoot, home, io: captureIo().io,
     });
-    const receipt = { status: "completed" as const, report: "submitted before review", ticketNumber: 1171};
+    const receipt = { status: "completed" as const, report: "submitted before review" };
     const runId = "run-coder-inspector-transport-failure";
     const { io } = captureIo();
     const result = await runAkRole(
@@ -495,7 +489,7 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
             if (args[args.indexOf("--ak-role") + 1] === "inspector") {
               return scriptedTerminatingToolSession({
                 role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-                details: { status: "converged", ticketNumber: 1171},
+                details: { status: "converged" },
               })(args, options);
             }
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;

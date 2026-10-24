@@ -40,8 +40,7 @@ const reportTicketArgsSchema = Type.Object(
 
 export const REPORT_TICKET_TOOL_DESCRIPTION =
   "向包申报本票号。已知票号时开工第一件事调用；包当场把本腿归到票号目录。"
-  + "尚无票号（例如中书省建票前）不要调用，取得后再报。"
-  + "交卷时若仍未报过且交卷亦未带票号，包会经既有重交通道再问一次。";
+  + "尚无票号（例如中书省建票前）不要调用，取得后再报。";
 
 function pageString(page: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = page?.[key];
@@ -199,6 +198,3 @@ export function registerReportTicketTool(
     },
   });
 }
-
-/** Soft re-ask when a sealed submission still leaves the leg unbound (#1171 / ADR 0073). */
-export const MISSING_TICKET_REASK_MATERIAL = "resources/missing-ticket-reask.md" as const;
