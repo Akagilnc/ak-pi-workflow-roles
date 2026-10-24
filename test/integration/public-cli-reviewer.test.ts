@@ -58,13 +58,14 @@ function lawfulReviewerReceipt(
   const axisKey = options?.axisKey ?? lens;
   const report = options?.report ?? `${lens}-axis-report`;
   const amendments = { [axisKey]: report };
+  // Progress and resume assertions below read the ticket subject; the explicit
+  // omit option exercises unbound staging instead.
   const ticket = options?.omitTicketNumber === true ? {} : { ticketNumber: 1171 as const };
   if (status === "refused") {
     return {
       status: "refused" as const,
       diagnostic: "hard-stop: review cannot proceed",
       amendments,
-      // Placement and progress assertions below consume this ticket identity.
       ...ticket,
     };
   }

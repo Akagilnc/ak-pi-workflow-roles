@@ -260,7 +260,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
-          // #1171: bind before the publication-lock fault so relocate does not
+          // Bind before the publication-lock fault so relocation does not
           // race the locked current.json plant.
           boundTicketNumber: 1171,
           io,
@@ -389,7 +389,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
-          // #1171: EISDIR poison targets later audit/persist of run-state rows.
+          // EISDIR poison targets later audit/persist of run-state rows.
           // Bind up front so post-host board discovery is not owed; damage still
           // fails closed on the intended seam (not washed as unbound no-ticket).
           boundTicketNumber: 1171,
@@ -651,7 +651,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { status: "converged", note: "resumed ok", ticketNumber: 1171 },
+                details: { status: "converged", note: "resumed ok" },
               },
             })}\n`,
             "utf8",
@@ -661,7 +661,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             stderr: "",
             timedOut: false,
             args: [...args],
-            sealedAcceptance: { role: "judge", details: { status: "converged", note: "resumed ok", ticketNumber: 1171 } },
+            sealedAcceptance: { role: "judge", details: { status: "converged", note: "resumed ok" } },
           };
         },
         }),
@@ -755,7 +755,7 @@ test("resume model override is temporary and does not rewrite persistent config"
               role: "toolResult",
               toolName: JUDGE_OUTPUT_TOOL_NAME,
               isError: false,
-              details: { status: "converged", ticketNumber: 1171 },
+              details: { status: "converged" },
             },
           })}\n`,
           "utf8",
@@ -853,7 +853,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                   role: "toolResult",
                   toolName: JUDGE_OUTPUT_TOOL_NAME,
                   isError: false,
-                  details: { status: "converged", ticketNumber: 1171 },
+                  details: { status: "converged" },
                 },
               })}\n`,
               "utf8",
@@ -863,7 +863,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
               stderr: "",
               timedOut: false,
               args: [...args],
-              sealedAcceptance: { role: "judge", details: { status: "converged", ticketNumber: 1171 } },
+              sealedAcceptance: { role: "judge", details: { status: "converged" } },
             };
           },
         }),
@@ -910,7 +910,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                     role: "toolResult",
                     toolName: JUDGE_OUTPUT_TOOL_NAME,
                     isError: false,
-                    details: { status: "converged", ticketNumber: 1171 },
+                    details: { status: "converged" },
                   },
                 })}\n`,
                 "utf8",
@@ -920,7 +920,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
                 stderr: "",
                 timedOut: false,
                 args: [...args],
-                sealedAcceptance: { role: "judge", details: { status: "converged", ticketNumber: 1171 } },
+                sealedAcceptance: { role: "judge", details: { status: "converged" } },
               };
             },
           }),
@@ -1037,7 +1037,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => runId,
-      // #1171: bind up front so resume seal need not relocate under a held lease.
+      // Bind up front so the writer-lease test does not also exercise relocation.
       boundTicketNumber: 1171,
       io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
@@ -1103,7 +1103,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                         role: "toolResult",
                         toolName: JUDGE_OUTPUT_TOOL_NAME,
                         isError: false,
-                        details: { status: "converged", note: "resume despite live lease", ticketNumber: 1171 },
+                        details: { status: "converged", note: "resume despite live lease" },
                       },
                     })}\n`,
                     "utf8",
@@ -1115,7 +1115,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                     args: [...args],
                     sealedAcceptance: {
                       role: "judge",
-                      details: { status: "converged", note: "resume despite live lease", ticketNumber: 1171 },
+                      details: { status: "converged", note: "resume despite live lease" },
                     },
                   };
                 },
@@ -1430,6 +1430,8 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args) => {
         const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
+        // Bind on resume to verify the host-issued filename survives relocation;
+        // the progress assertion below reads the ticket subject, not unbound staging.
         await writeFile(
           sessionPath,
           `${JSON.stringify({
@@ -1938,7 +1940,7 @@ test("public resume failures persist structured diagnostics", async () => {
             sessionDirectory === child.sessionDirectory || sessionDirectory === dispatchedChild.sessionDirectory,
             true,
           );
-          const details = { status: "converged", ticketNumber: 1171 };
+          const details = { status: "converged" };
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(sessionFile, `${JSON.stringify({
             type: "message",

@@ -246,7 +246,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    const acceptedDetails = { status: "converged", note: "ok", ticketNumber: 1171};
+    const acceptedDetails = { status: "converged", note: "ok" };
     await configurePassingReviewSeats(home);
     let sealedSessionFile = "";
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then log.jsonl blocked"],
