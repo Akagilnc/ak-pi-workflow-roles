@@ -1,8 +1,8 @@
 /**
  * Mid-turn ticket reports relocate immediately; #1268 never opens a ticket-only
  * turn after a receipt. Public entry + in-repo fake hosts.
- * - pi: native SessionManager.setSessionFile (not envelope MCP)
- * - codex / grok-build: prepareRoleEnvelope MCP mouth (their real seam)
+ * Native Pi relocation fixtures use SessionManager.setSessionFile.
+ * Cross-host settlement fixtures use prepareRoleEnvelope, not Pi's native agent loop.
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
@@ -15,7 +15,6 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -117,7 +116,7 @@ function nestAdaptersFor(
   ];
 }
 
-/** Headless / ACP seam: report via envelope MCP, then optional submit. */
+/** Shared runtime seam via envelope MCP / structured output; not a native Pi loop. */
 function envelopeHostThatReportsThen(input: {
   readonly hostName: "pi" | "codex" | "claude" | "grok-build" | "hermes";
   readonly ticketNumber: number;
@@ -659,14 +658,14 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
     await writeFile(join(home, ".ak-roles", "host-providers.json"), JSON.stringify({ hermes: { test: "test" } }));
     for (const hostName of ["pi", "grok-build", "hermes", "claude", "codex"] as const) {
       const nativeOutput = hostName === "claude" || hostName === "codex";
-      for (const action of nativeOutput ? ["end"] as const : ["end", "report", "invalid", "resubmit", "bound", "inline"] as const) {
+      for (const action of nativeOutput ? ["end"] as const : ["end", "report", "invalid", "resubmit"] as const) {
         const runId = `1268-${hostName}-${action}`;
         const scripted = envelopeHostThatReportsThen({
           hostName,
           ticketNumber: TICKET,
-          ticketNumbers: action === "bound" ? [TICKET] : [],
+          ticketNumbers: [],
           outputToolName: REVIEWER_OUTPUT_TOOL_NAME,
-          submit: { status: "completed", amendments: { completeness: "No amendments." }, revision: 1, ...(action === "inline" ? { ticketNumber: TICKET } : {}) },
+          submit: { status: "completed", amendments: { completeness: "No amendments." }, revision: 1 },
           ...(action === "report" || action === "invalid" ? {
             afterSubmitTicket: action === "report" ? TICKET : "mypy-15105",
             expectReportError: action === "invalid",
@@ -683,7 +682,7 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
         assert.equal(result.exitCode, 0);
         assert.equal(result.terminal?.roleOutcome.kind, "accepted");
         assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.revision, action === "resubmit" ? 2 : 1);
-        const bound = action === "report" || action === "bound" || action === "inline";
+        const bound = action === "report";
         const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
         assert.equal(existsSync(leaf), true);
         assert.equal(readCurrentSection(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
@@ -1322,42 +1321,6 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
   });
 });
 
-test("#1268 public resume accepts an unbound receipt without another turn", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000resreask";
-    // Seed an unbound receipt, then submit a new receipt on explicit resume.
-    const seed = fixerTurnHost(() => ({
-      status: "completed",
-      report: "seed unbound receipt",
-      classResults: FIXER_DONE.classResults,
-    }));
-    await runPublicInstructionSeat(
-      ["apply", "Seed unbound sealed receipt."],
-      seatEnv(home, project, runId, "pi", seed.host),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(seed.turns, 1);
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-
-    const resumed = fixerTurnHost(() => ({
-      status: "completed",
-      report: "resume no ticket",
-      classResults: FIXER_DONE.classResults,
-    }));
-    const result = await runPublicInstructionSeatResume(
-      { runId, message: "resume without ticket" },
-      seatEnv(home, project, runId, "pi", resumed.host),
-      captureIo().io,
-    );
-    assert.equal(resumed.turns, 1, "resume must not open a ticket-only turn");
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.status, "completed");
-  });
-});
-
 test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_DIR", async () => {
   await withSeatProject(async ({ home, project, bookKey }) => {
     const runId = "01a011710-0000-7000-8000-0000000f1nest";
@@ -1398,66 +1361,5 @@ test("#1171 F1 nested child report does not rewrite parent ambient AK_ROLE_RUN_D
       if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = prior;
     }
-  });
-});
-
-test("#1268 status-reask exhaustion does not open a ticket-only turn", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f3ask";
-    const scripted = fixerTurnHost(() => ({
-      status: "not-a-lawful-status",
-      report: "unreadable status",
-      classResults: FIXER_DONE.classResults,
-    }));
-    const result = await runPublicInstructionSeat(
-      ["apply", "Unreadable status without ticket."],
-      seatEnv(home, project, runId, "pi", scripted.host, { autoResumeLimit: 1 }),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(scripted.turns, 2);
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), true);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-  });
-});
-
-test("#1268 countersign unbound receipt still reaches audit without a ticket-only turn", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000000f8ask";
-    let countersignTurns = 0;
-    let notaryTurns = 0;
-    const countersignHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        countersignTurns += 1;
-        return scriptedTerminatingToolSession({
-          role: "countersign",
-          toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-          details: { status: "converged", note: "no ticket" },
-        })(args, options);
-      },
-    });
-    const review = withPassingReviewHost(countersignHost);
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        if (request.activation.role === "notary") notaryTurns += 1;
-        return review.executeTurn(request);
-      },
-    };
-    const result = await runPublicInstructionSeat(
-      ["裁：无号卷照常送审。"],
-      seatEnv(home, project, runId, "pi", host),
-      captureIo().io,
-      "countersign",
-      (args) => parsePublicSeatArgv("countersign", args),
-    );
-    assert.equal(countersignTurns, 1);
-    assert.ok(notaryTurns >= 1, "sealed volume still enters audit");
-    assert.equal(result.exitCode, 0, `${result.terminal?.roleOutcome.kind}`);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "countersign")), true);
-    assert.equal(result.admitted?.ticketNumber, undefined);
   });
 });

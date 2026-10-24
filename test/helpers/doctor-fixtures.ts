@@ -81,7 +81,5 @@ export function sampleCompletedDoctorOutput(
       findingObservation === undefined
         ? []
         : [{ targetKey: "law/unique-s2", observation: findingObservation, evidenceIds: ["ev-1"] }],
-    // #1171: ordinary doctor tracers are not the missing-ticket soft reask case.
-    ticketNumber: 1171,
   } as DoctorOutput;
 }

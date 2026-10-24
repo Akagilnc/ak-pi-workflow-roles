@@ -84,9 +84,8 @@ test("public report publication failure stays beside the accepted terminal", asy
           cwd: project,
           credentials: { "openai-codex": true, xai: false },
           createRunId: () => runId,
-          // #1171: publication-lock injects after seal; bind up front so board
-          // discovery / soft-reask are not owed and relocate does not race the
-          // locked current.json plant. Intended seam stays terminal render EACCES.
+          // Bind up front so relocation cannot race the post-seal current.json lock;
+          // the intended failure is terminal render EACCES.
           boundTicketNumber: 1171,
           io,
           roleTurnHost: {

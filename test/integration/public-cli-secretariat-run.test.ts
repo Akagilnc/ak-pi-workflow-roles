@@ -410,7 +410,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
           ? "01a0sec969-gate-7000-8000-000000000021"
           : "01a0sec969-gate-7000-8000-000000000031";
     const capture = captureIo();
-    // #1171: ordinary gate-entry cases carry a ticket; missing-ticket soft reask is a separate case.
+    // Rework changes the submitted issue from the first ticket to 924.
     const firstTicket = 923;
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
@@ -786,7 +786,6 @@ for (const preliminaryTicket of [null, 923] as const) {
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
     const diaristRunDirectories: string[] = [];
-    let parentDiaristFirstTurn = true;
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
@@ -795,20 +794,12 @@ for (const preliminaryTicket of [null, 923] as const) {
       diaristRunDirectories,
       submissionGateHost: "codex",
       parentDiaristRunner: (args, options) => {
-        const first = parentDiaristFirstTurn;
-        parentDiaristFirstTurn = false;
         const sessions = [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }];
-        if (first) {
-          return courtDiaristWithDetails({
-            status: "completed",
-            ...(preliminaryTicket === null ? {} : { ticketNumber: preliminaryTicket }),
-            sessions,
-          })(args, options);
-        }
-        // #1171: unbound preliminary stays ticket-less through the one soft reask.
-        return courtDiaristWithDetails(preliminaryTicket === null
-          ? { status: "completed", sessions }
-          : { status: "completed", ticketNumber: 923 })(args, options);
+        return courtDiaristWithDetails({
+          status: "completed",
+          ...(preliminaryTicket === null ? {} : { ticketNumber: preliminaryTicket }),
+          sessions,
+        })(args, options);
       },
       countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924 } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
@@ -822,12 +813,7 @@ for (const preliminaryTicket of [null, 923] as const) {
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.role, "secretariat");
     assert.ok(countersignRequests.length > 0, "the gate summons must reach Countersign");
-    // #1171: missing-ticket soft reask is one resume of the same preliminary diarist, not a second summons.
-    assert.equal(
-      new Set(diaristRunDirectories.filter(Boolean)).size,
-      1,
-      "only Secretariat summons the preliminary diarist",
-    );
+    assert.equal(diaristRunDirectories.length, 1, "Secretariat summons one preliminary diarist");
     const book = join(home, ".ak-roles", "books", "project");
     const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
     assert.equal(

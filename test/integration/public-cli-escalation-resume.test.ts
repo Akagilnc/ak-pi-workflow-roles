@@ -28,9 +28,7 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { withOutsideTempRoot, withTempHome } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
-// #1171: ordinary audit-escalation tracers carry ticketNumber so soft reask
-// does not steal officer / resume turns.
-const VERDICT = { status: "converged", mark: 1, ticketNumber: 1171 } as const;
+const VERDICT = { status: "converged", mark: 1 } as const;
 const RULING = "ruling-1057";
 
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
@@ -209,14 +207,10 @@ async function runJudge(
 }
 
 function officer(role: "notary" | "auditor", details: unknown): LegacyFauxPiRunner {
-  const withTicket =
-    details !== null && typeof details === "object" && !Array.isArray(details)
-      ? { ...(details as Record<string, unknown>), ticketNumber: 1171 }
-      : details;
   return scriptedTerminatingToolSession({
     role,
     toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
-    details: withTicket,
+    details,
   });
 }
 
@@ -230,11 +224,7 @@ function assertEscalationPresented(
   assert.equal(terminal.roleOutcome.role, role);
   assert.equal(terminal.roleOutcome.kind, "accepted");
   if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted officer terminal");
-  const expected =
-    receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
-      ? { ...(receipt as Record<string, unknown>), ticketNumber: 1171 }
-      : receipt;
-  assert.deepEqual(terminal.roleOutcome.payloads?.at(-1), expected);
+  assert.deepEqual(terminal.roleOutcome.payloads?.at(-1), receipt);
   assert.ok(typeof terminal.runId === "string" && terminal.runId.length > 0);
   assert.ok(observed.firstStdout.length > 0, "the first escalation must emit its terminal on stdout");
 }
@@ -339,7 +329,7 @@ test("#1057 an auditor escalation resumes and settles the finished Judge submiss
 });
 
 test("#1057 an auditor continue after escalation resumes the Judge for a revised verdict", async () => {
-  const revised = { status: "converged", mark: 10, ticketNumber: 1171 } as const;
+  const revised = { status: "converged", mark: 10 } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
@@ -438,7 +428,7 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
 });
 
 test("#1057 a new judge verdict after acceptance runs the audits again", async () => {
-  const next = { status: "converged", mark: 9, ticketNumber: 1171 } as const;
+  const next = { status: "converged", mark: 9 } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
@@ -464,7 +454,7 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
 });
 
 test("#1195 cross-submission resume of prior auditor does not skip new seal's notary", async () => {
-  const next = { status: "converged", mark: 9, ticketNumber: 1171 } as const;
+  const next = { status: "converged", mark: 9 } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
