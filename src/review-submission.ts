@@ -72,7 +72,7 @@ export const notaryClauseItemSchema = Type.Object(
     }),
     derivation: Type.String({
       description:
-        "一句推导：从原话哪个意思到该条款。条款的对象在 askedObject 之内，或另有原话点名更大的对象，ownerUuid 才站得住；否则 ownerUuid 填 null",
+        "一句推导：从原话哪个意思到该条款。answered 不为 null 时，条款的对象须在 askedObject 之内，或另有原话点名更大的对象，ownerUuid 才站得住，否则填 null；陛下独立提出的原话直接按它的意思推",
     }),
   },
   { additionalProperties: true },
