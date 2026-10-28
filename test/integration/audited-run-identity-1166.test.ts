@@ -496,12 +496,12 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
             status: "continue",
             violations: ["rewrite"],
             ticketNumber: 1195,
-            clauses: [{ clause: "blind input seam", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", derivation: "Q2(a)" }],
+            clauses: [{ clause: "blind input seam", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a)" }],
           }
           : {
             status: "converged",
             ticketNumber: 1195,
-            clauses: [{ clause: "resubmit after bounce", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", derivation: "Q2(a) still blind" }],
+            clauses: [{ clause: "resubmit after bounce", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a) still blind" }],
           };
         return roleTurnHostFromLegacyPiRunner({
           packageRoot,

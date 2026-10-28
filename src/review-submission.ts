@@ -52,7 +52,7 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
 
 /**
  * #1195 notary clause row: original ticket text, owner uuid (or null),
- * and one-line derivation. Dual readings of runner context live in derivation.
+ * the runner line that utterance answered and what it asked about, and a one-line derivation.
  * Generation-required on notary only; package still records as-is.
  */
 export const notaryClauseItemSchema = Type.Object(
@@ -63,9 +63,16 @@ export const notaryClauseItemSchema = Type.Object(
     ownerUuid: Type.Union([Type.String(), Type.Null()], {
       description: "推出该条的陛下原话 uuid；无原话则 null",
     }),
+    answered: Type.Union([Type.String(), Type.Null()], {
+      description:
+        "那句原话所答的 runner 句原文（问句、选项、表格行，照抄）；陛下独立提出、不是在答谁的，填 null",
+    }),
+    askedObject: Type.Union([Type.String(), Type.Null()], {
+      description: "所答那句问的是哪件事（它的对象）；answered 为 null 时同为 null",
+    }),
     derivation: Type.String({
       description:
-        "一句推导：从原话哪个意思到该条款。用作上下文的 runner 句先写至少两种读法，再写票面取哪种；写不出第二种才记无歧义",
+        "一句推导：从原话哪个意思到该条款。条款的对象在 askedObject 之内，或另有原话点名更大的对象，ownerUuid 才站得住；否则 ownerUuid 填 null",
     }),
   },
   { additionalProperties: true },
