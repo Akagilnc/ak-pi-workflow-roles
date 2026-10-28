@@ -340,7 +340,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     };
     assert.equal(Value.Check(handed.schema as never, {
       ...face,
-      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", official: null, layer: 1 }],
+      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", official: "https://eventsourcing.readthedocs.io/en/stable/topics/application.html 示范直接 repository.get，没有应用级读结果缓存", layer: 1 }],
     }), true);
     // A mechanism row without the official-counterpart cell is not a row.
     assert.equal(Value.Check(handed.schema as never, {
