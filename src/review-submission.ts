@@ -144,7 +144,7 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
       }),
       mechanisms: Type.Array(mechanismRowSchema, {
         description:
-          "整票机制层：本票起点到 HEAD 新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行，前几轮已署过的也列；一处没有为空数组。",
+          "整票机制层：本票起点到 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行，前几轮已署过的也列，测试夹具不列；一处没有为空数组。",
       }),
     },
     { additionalProperties: true },
