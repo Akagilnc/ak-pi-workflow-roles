@@ -543,7 +543,7 @@ test("filed seats preserve opaque receipts, including an unknown string status",
       assert.deepEqual(escalated.details, { status: "escalate", note: "need owner" });
       const legacy = {
         status: "converged",
-        clauses: [{ clause: "c", ownerUuid: null, derivation: "d" }],
+        clauses: [{ clause: "c", ownerUuid: null, answered: null, askedObject: null, derivation: "d" }],
       };
       const withLegacy = await accept("legacy", legacy);
       assert.equal(withLegacy.terminate, true);
