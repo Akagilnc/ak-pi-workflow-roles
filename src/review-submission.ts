@@ -112,6 +112,22 @@ export const ticketComplexityRowSchema = Type.Object(
   { additionalProperties: true },
 );
 
+/** Inspector whole-ticket mechanism row: one added line that keeps state across calls, locks, caches, or adds a dependency. */
+export const mechanismRowSchema = Type.Object(
+  {
+    where: Type.String({
+      description:
+        "本票净增里的那一行 path:line：新增依赖行、跨调用保存的状态（模块级或实例级的字典、集合、列表、LRU 等）、锁、缓存装饰或包装；一行一条，照 diff 列，不合并",
+    }),
+    keeps: Type.String({ description: "这一行让什么东西在两次调用之间留下来，或挡住什么" }),
+    official: Type.Union([Type.String(), Type.Null()], {
+      description: "所用框架或库的官方文档／官方示范里处理同一关切的那一处：链接＋原句；官方示范里没有这一层，填 null",
+    }),
+    layer: Type.Integer({ description: "从本票起点到 HEAD，这是第几处这样的新增（含前几轮已署过的）" }),
+  },
+  { additionalProperties: true },
+);
+
 /** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
 export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object(
@@ -124,6 +140,10 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
       ticketComplexity: Type.Array(ticketComplexityRowSchema, {
         description:
           "整票复杂度：本票起点（本分支与家族分支或目标分支的 git merge-base）到 HEAD 的生产与测试净增，对《质量法》里每一句要求删除、合并、复用或不另写的条文各答一行。前几轮已署过的改动也算在内。",
+      }),
+      mechanisms: Type.Array(mechanismRowSchema, {
+        description:
+          "整票机制层：本票起点到 HEAD 新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行，前几轮已署过的也列；一处没有为空数组。",
       }),
     },
     { additionalProperties: true },

@@ -327,8 +327,9 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     const required = handed.required;
     assert.equal(Array.isArray(required) && required.includes("suspect"), true);
     assert.equal(Array.isArray(required) && required.includes("ticketComplexity"), true);
+    assert.equal(Array.isArray(required) && required.includes("mechanisms"), true);
     assert.equal(handed.hitsType, "array");
-    assert.equal(Value.Check(handed.schema as never, {
+    const face = {
       status: "converged",
       suspect: "ming/a.py:1",
       ticketComplexity: [{
@@ -336,7 +337,16 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         hits: [],
         checked: "比对了 ming/a.py:1 与 ming/b.py:2",
       }],
+    };
+    assert.equal(Value.Check(handed.schema as never, {
+      ...face,
+      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", official: null, layer: 1 }],
     }), true);
+    // A mechanism row without the official-counterpart cell is not a row.
+    assert.equal(Value.Check(handed.schema as never, {
+      ...face,
+      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", layer: 1 }],
+    }), false);
     const inherited = captured.current!;
     assert.equal(inherited.activation.role, "inspector");
     assert.deepEqual(inherited.model, {
