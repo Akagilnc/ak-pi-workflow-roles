@@ -136,31 +136,44 @@ const mechanismRowBase = {
 const MECHANISM_FRAMEWORK_RULE =
   "框架是仓库 ADR 或票面点名的那一个（读写模型、Web、测试等框架），不是席位自选；实现这一层所用的库（ORM、缓存库、解析库）不是框架，它的 API 页或示例填不进这格——那答的是「这层怎么做」，这格问的是「示范不带这层怎么办」";
 
-export const mechanismRowSchema = Type.Union(
-  [
-    Type.Object(
-      {
-        ...mechanismRowBase,
-        official: Type.String({
-          description: `这段代码所属应用框架的官方示范里，不带这一层时同一关切怎么处理：先写框架名，再链接＋原句（示范里直接读、直接查、交给框架哪项设置）。${MECHANISM_FRAMEWORK_RULE}`,
-        }),
-        disposition: Type.Literal("删：示范不带这一层也处理得了", { description: "official 填了字，这一行只能是这个处置" }),
-      },
-      { additionalProperties: true },
-    ),
-    Type.Object(
-      {
-        ...mechanismRowBase,
-        official: Type.Null({
-          description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 keeps 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
-        }),
-        disposition: Type.Literal("留：示范本身就为同一关切带同样的层", { description: "official 为 null，这一行只能是这个处置" }),
-      },
-      { additionalProperties: true },
-    ),
-  ],
-  { description: "两种行形，没有第三种：示范不带这一层也处理得了（official 填字，删）；示范本身就带同样的层（official null，留）" },
-);
+/** The two row shapes, with any extra per-row fields a seat needs (the auditor adds what the verdict said about the layer). */
+const mechanismRowUnion = (extra: Record<string, ReturnType<typeof Type.Union> | ReturnType<typeof Type.String>> = {}) =>
+  Type.Union(
+    [
+      Type.Object(
+        {
+          ...mechanismRowBase,
+          official: Type.String({
+            description: `这段代码所属应用框架的官方示范里，不带这一层时同一关切怎么处理：先写框架名，再链接＋原句（示范里直接读、直接查、交给框架哪项设置）。${MECHANISM_FRAMEWORK_RULE}`,
+          }),
+          disposition: Type.Literal("删：示范不带这一层也处理得了", { description: "official 填了字，这一行只能是这个处置" }),
+          ...extra,
+        },
+        { additionalProperties: true },
+      ),
+      Type.Object(
+        {
+          ...mechanismRowBase,
+          official: Type.Null({
+            description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 keeps 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
+          }),
+          disposition: Type.Literal("留：示范本身就为同一关切带同样的层", { description: "official 为 null，这一行只能是这个处置" }),
+          ...extra,
+        },
+        { additionalProperties: true },
+      ),
+    ],
+    { description: "两种行形，没有第三种：示范不带这一层也处理得了（official 填字，删）；示范本身就带同样的层（official null，留）" },
+  );
+
+export const mechanismRowSchema = mechanismRowUnion();
+
+/** Auditor row: the inspector row plus what the judge's verdict said about this layer, verbatim, or null when the verdict never touched it. */
+export const auditorMechanismRowSchema = mechanismRowUnion({
+  judgeSaid: Type.Union([Type.String(), Type.Null()], {
+    description: "大理寺判词里裁到这一层的那句原文（照抄）；判词没提这一层，填 null",
+  }),
+});
 
 /** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
 export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
@@ -179,6 +192,40 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
         description:
           "整票机制层：本票起点到 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行，前几轮已署过的也列，测试夹具不列；一处没有为空数组。",
       }),
+    },
+    { additionalProperties: true },
+  ),
+);
+
+/** Auditor generation schema: shared review face plus the complexity account of the implementation the verdict ruled on (package records as-is). */
+export const auditorSubmissionSchema = withTerminatingOutputDeclarations(
+  Type.Object(
+    {
+      status: reviewStatusField,
+      ...reviewNarrativeFields,
+      mechanisms: Type.Array(auditorMechanismRowSchema, {
+        description:
+          "复杂度账：大理寺本轮判词所裁的实现，从本票起点到该 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行（同台院机制层表），再写判词对这一层说了什么；一处没有为空数组。判词署了而表里有「删」行判词没处置，就是错署。",
+      }),
+      runtime: Type.Array(
+        Type.Object(
+          {
+            entry: Type.String({ description: "真实入口：你亲跑的命令原文（测试用例或程序入口）。票面、判词、施工记录、台院回执里点名过的每个真实入口都要有一行，一个不漏，再加你自己选的；数字只认自己跑出来的，不抄记录" }),
+            atBase: Type.String({ description: "在本票起点（本分支与家族分支或目标分支的 git merge-base，同台院）上跑这一入口的机器输出：用时、SQL／读次数、峰值内存等能读到的数字；入口是本票新加、票起点上没有的，写「票起点无此入口」" }),
+            atHead: Type.String({ description: "在所裁 HEAD 上跑同一入口的机器输出，同一机器同一环境" }),
+            judgeSaid: Type.Union([Type.String(), Type.Null()], { description: "判词对这一入口快慢说的那句原文（照抄）；没说填 null" }),
+            compared: Type.Union(
+              [Type.Literal("HEAD 比票起点慢或读得多"), Type.Literal("HEAD 不比票起点慢、不多读"), Type.Literal("无从比：票起点无此入口，或这一端跑失败")],
+              { description: "只认 atBase 与 atHead 并排的数字：用时或读次数任一变大就是第一种；一次性成本、CI 另算、不阻断都不是理由。第三种给两类行：票起点上不存在的入口（atBase 写「票起点无此入口」），或任一端跑失败（把失败输出原样写进那一端）；跑失败的行没解决前不得 converged" },
+            ),
+          },
+          { additionalProperties: true },
+        ),
+        {
+          description:
+            "性能账（受审之物是大理寺判词时填；受审太医署时此表与 mechanisms 都为空数组）：票面涉及的真实入口，每个一行，票起点与所裁 HEAD 各亲跑一次并排记；至少一行是票起点上就有、两端都跑出数字的既有入口。有一行 compared 为「慢或读得多」而 judgeSaid 为 null，判词就是署了没处置，status 不能是 converged；有跑失败的行，或没有一行可比，status 同样不能是 converged。",
+        },
+      ),
     },
     { additionalProperties: true },
   ),
