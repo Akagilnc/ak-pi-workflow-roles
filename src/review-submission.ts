@@ -191,7 +191,11 @@ export const auditorMechanismRowSchema = mechanismRowUnion({
 /** 存废尺 row for a ticket clause: what the clause makes exist, against the framework's example. */
 const clauseRowBase = {
   clause: Type.String({ description: "现行票面里让某个机制存在的那条条款原文（照抄，不合并、不改写）" }),
-  makes: Type.String({ description: "这条条款落实后会让什么东西存在：跨调用保存的状态、缓存、锁、失效规则、预计算、新依赖；写出它的形状" }),
+  kind: Type.Union(
+    [Type.Literal("明写机制：条款自己点名了状态、表、缓存、锁、依赖"), Type.Literal("只写结果：条款只提要求，现状代码满足不了，得长出机制才做得到")],
+    { description: "两类都要列。第二类最容易漏：零重复、跨提交不重读、不建豁免、每 X 只做一次、永不 Y——这种句子没写机制两个字，却只能靠新状态、缓存、失效规则满足；先打开现状代码核一遍它做不做得到，做不到就是这类" },
+  ),
+  makes: Type.String({ description: "这条条款落实后会让什么东西存在：跨调用保存的状态、缓存、锁、失效规则、预计算、新依赖；写出它的形状。只写结果的条款，写满足它必须长出的那样东西" }),
 } as const;
 const CLAUSE_LABELS = { without: "不要：示范不带这一层也处理得了", carries: "要：示范本身就为同一关切带同样的层" } as const;
 export const clauseExistenceRowSchema = existenceRowUnion(clauseRowBase, CLAUSE_LABELS);
@@ -204,7 +208,7 @@ export const countersignSubmissionSchema = withTerminatingOutputDeclarations(
       ...reviewNarrativeFields,
       existence: Type.Array(clauseExistenceRowSchema, {
         description:
-          "存废尺：现行票面每条让机制存在的条款各一行，到 ADR／票面点名的应用框架官方示范里看不带它时同一关切怎么处理。有「不要」行在，不得署，封驳或上呈并点名那条。票面已写、前轮判词要求过、签发方答过、陛下对别的题点过头，都不是「要」的理由；「要」只认示范里带同样的层。一条没有为空数组。",
+          "存废尺：现行票面每条让机制存在的条款各一行——明写机制的，和只写结果要求、现状代码满足不了的，两类都算——到 ADR／票面点名的应用框架官方示范里看不带它时同一关切怎么处理。有「不要」行在，不得署，封驳或上呈并点名那条。票面已写、前轮判词要求过、签发方答过、陛下对别的题点过头，都不是「要」的理由；「要」只认示范里带同样的层。一条没有为空数组。",
       }),
     },
     { additionalProperties: true },
