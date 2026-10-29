@@ -5,7 +5,7 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { auditorSubmissionSchema, notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { auditorSubmissionSchema, countersignSubmissionSchema, notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
@@ -79,9 +79,9 @@ const SUBMISSION_FACE = {
   },
   countersign: {
     label: "给事中输出",
-    description: "给事中决议。",
+    description: "给事中决议（含现行票面条款的存废尺 existence）。",
     promptSnippet: "给事中决议",
-    parameters: reviewSubmissionSchema,
+    parameters: countersignSubmissionSchema,
   },
   secretariat: {
     label: "中书省输出",
