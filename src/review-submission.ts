@@ -68,7 +68,7 @@ export const notaryClauseItemSchema = Type.Object(
         "那句原话所答的 runner 句原文（问句、选项、表格行，照抄）；陛下独立提出、不是在答谁的，填 null",
     }),
     askedObject: Type.Union([Type.String(), Type.Null()], {
-      description: "所答那句问的是哪件事（它的对象）；answered 为 null 时同为 null",
+      description: "所答那句问的是哪件事：照抄 answered 里点名对象的原词，不转述、不概括（那句问「缓存是解禁还是维持禁令」，这格就是「缓存禁令」，不是「运行时 DRY 修复」）；answered 为 null 时同为 null",
     }),
     derivation: Type.String({
       description:
