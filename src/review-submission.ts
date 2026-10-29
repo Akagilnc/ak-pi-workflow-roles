@@ -210,7 +210,7 @@ export const auditorSubmissionSchema = withTerminatingOutputDeclarations(
       runtime: Type.Array(
         Type.Object(
           {
-            entry: Type.String({ description: "真实入口：你亲跑的命令原文（测试用例或程序入口），不是施工或大理寺记录里抄来的" }),
+            entry: Type.String({ description: "真实入口：你亲跑的命令原文（测试用例或程序入口）。票面、判词、施工记录、台院回执里点名过的每个真实入口都要有一行，一个不漏，再加你自己选的；数字只认自己跑出来的，不抄记录" }),
             atBase: Type.String({ description: "在本票起点（分支与目标分支的 merge-base）上跑这一入口的机器输出：用时、SQL／读次数、峰值内存等能读到的数字" }),
             atHead: Type.String({ description: "在所裁 HEAD 上跑同一入口的机器输出，同一机器同一环境" }),
             judgeSaid: Type.Union([Type.String(), Type.Null()], { description: "判词对这一入口快慢说的那句原文（照抄）；没说填 null" }),
