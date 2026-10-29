@@ -5,7 +5,7 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { auditorSubmissionSchema, notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
@@ -115,9 +115,9 @@ const SUBMISSION_FACE = {
   },
   auditor: {
     label: "审刑院输出",
-    description: "审刑院终局回执，status 为 converged、continue 或 escalate。",
+    description: "审刑院终局回执，status 为 converged、continue 或 escalate（含所裁实现的复杂度账 mechanisms）。",
     promptSnippet: "审刑院终局回执",
-    parameters: reviewSubmissionSchema,
+    parameters: auditorSubmissionSchema,
   },
   diarist: {
     label: "起居郎输出",
