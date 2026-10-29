@@ -52,7 +52,7 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
 // #1134 deleted the required set for the narrative fields; the 存废尺 table is the one generation-required field,
 // as it is for 给事中／台院／审刑院／大理寺 (the package still records the receipt as-is).
 (secretariatVerdictSchema as unknown as { required: string[] }).required = ["existence"];
-// Reflect the declaration's empty required set and open additional properties,
-// including the shared terminating fields composed at runtime.
+// The type stays loose: narrative fields are unrequired (ADR 0057), additional properties stay open,
+// and the shared terminating fields are composed at runtime.
 export type SecretariatVerdict =
   Partial<Static<typeof secretariatVerdictSchema>> & Record<string, unknown>;
