@@ -122,9 +122,13 @@ export const mechanismRowSchema = Type.Object(
     keeps: Type.String({ description: "这一行让什么东西在两次调用之间留下来，或挡住什么" }),
     official: Type.Union([Type.String(), Type.Null()], {
       description:
-        "这段代码所属应用框架（读写模型、Web、测试等框架）的官方示范里，不带这一层时同一关切怎么处理：链接＋原句（示范里直接读、直接查、交给框架哪项设置）。示范代码本身就为同一关切带同样的状态、锁、缓存或依赖的，填 null，并在 keeps 末尾写示范里那一处。实现这一层所用的库自己的 API 页或缓存示例填不进这格——那答的是「这层怎么做」，这格问的是「示范不带这层怎么办」",
+        "这段代码所属应用框架的官方示范里，不带这一层时同一关切怎么处理：先写框架名，再链接＋原句（示范里直接读、直接查、交给框架哪项设置）。框架是仓库 ADR 或票面点名的那一个（读写模型、Web、测试等框架），不是席位自选；实现这一层所用的库（ORM、缓存库、解析库）不是框架，它的 API 页或示例填不进这格——那答的是「这层怎么做」，这格问的是「示范不带这层怎么办」。示范代码本身就为同一关切带同样的状态、锁、缓存或依赖的，填 null，并在 keeps 末尾写示范里那一处",
     }),
     layer: Type.Integer({ description: "从本票起点到 HEAD，这是第几处这样的新增（含前几轮已署过的）" }),
+    disposition: Type.Union(
+      [Type.Literal("删：示范不带这一层也处理得了"), Type.Literal("留：示范本身就为同一关切带同样的层")],
+      { description: "这一行的处置，由 official 一格定：official 填了字就是前者，null 就是后者；没有第三种" },
+    ),
   },
   { additionalProperties: true },
 );
