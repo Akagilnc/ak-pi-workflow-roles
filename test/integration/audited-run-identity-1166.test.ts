@@ -8,6 +8,7 @@
  * RoleTurnRequest the gate built — never invents continuation.prompt.
  */
 import assert from "node:assert/strict";
+import { Value } from "typebox/value";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -490,18 +491,26 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
+        // Every clause row says whether it was in the table at the last seal; a row without that, or with a third word, is no row.
+        {
+          const row = { clause: "c", ownerUuid: null, answered: null, askedObject: null, derivation: "d", sealed: "最后一签后才出现在票面" };
+          const face = { status: "escalate" };
+          assert.equal(Value.Check(inspected.jsonSchema as never, { ...face, clauses: [row] }), true);
+          assert.equal(Value.Check(inspected.jsonSchema as never, { ...face, clauses: [{ ...row, sealed: undefined }] }), false);
+          assert.equal(Value.Check(inspected.jsonSchema as never, { ...face, clauses: [{ ...row, sealed: "不知道" }] }), false);
+        }
         notaryIdentities.push(inspected.identities[0]!.auditedRun);
         const details = notaryPrompts.length <= 1
           ? {
             status: "continue",
             violations: ["rewrite"],
             ticketNumber: 1195,
-            clauses: [{ clause: "blind input seam", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a)" }],
+            clauses: [{ clause: "blind input seam", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a)", sealed: "最后一签时已在条款表" }],
           }
           : {
             status: "converged",
             ticketNumber: 1195,
-            clauses: [{ clause: "resubmit after bounce", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a) still blind" }],
+            clauses: [{ clause: "resubmit after bounce", ownerUuid: "67679846-d549-4b9f-993a-2f79820d62be", answered: "Q2 (a)", askedObject: "blind input seam", derivation: "Q2(a) still blind", sealed: "最后一签后才出现在票面" }],
           };
         return roleTurnHostFromLegacyPiRunner({
           packageRoot,

@@ -74,13 +74,20 @@ export const notaryClauseItemSchema = Type.Object(
       description:
         "一句推导：从原话哪个意思到该条款。answered 不为 null 时，条款的对象须在 askedObject 之内，或另有原话点名更大的对象，ownerUuid 才站得住，否则填 null；陛下独立提出的原话直接按它的意思推",
     }),
+    sealed: Type.Union(
+      [Type.Literal("最后一签时已在条款表"), Type.Literal("最后一签后才出现在票面")],
+      {
+        description:
+          "对照起居录里本票最后一次签押（给事中／符宝郎 converged）那一轮符宝郎交的条款表：这条当时在不在。现行票面的更新时间晚于那次签押、而这条不在当时的表里，就是后者；后者没有过庭，不是现行票面",
+      },
+    ),
   },
   { additionalProperties: true },
 );
 
 export const notaryClausesField = Type.Array(notaryClauseItemSchema, {
   description:
-    "票面逐条核旨表：每条改变实际行为的条款的原文、陛下原话 uuid、推导。无原话则 ownerUuid 为 null。",
+    "票面逐条核旨表，每一轮都填，不论本轮受审的是票面还是大理寺的判词：现行票面每条改变实际行为的条款的原文、陛下原话 uuid、推导、是否在最后一签时就在表里。无原话则 ownerUuid 为 null。",
 });
 
 /**
