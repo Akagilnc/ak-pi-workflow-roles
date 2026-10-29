@@ -215,6 +215,29 @@ export const countersignSubmissionSchema = withTerminatingOutputDeclarations(
   ),
 );
 
+/** Judge row: the mechanism row plus where the layer comes from — the implementation under judgment, or the judge's own prescription. */
+export const judgeMechanismRowSchema = mechanismRowUnion({
+  origin: Type.Union(
+    [Type.Literal("实现净增：本票起点到所审 HEAD 的生产代码里已有的"), Type.Literal("本判处方：本轮判词的处方或约束落实后会长出的")],
+    { description: "这一层从哪来。处方行的 where 写处方原文而不是 path:line；处方会长出示范不带的层，处方本身就不能开" },
+  ),
+});
+
+/** Judge generation schema: shared review face plus the 存废尺 over everything the verdict rules on (package records as-is). */
+export const judgeSubmissionSchema = withTerminatingOutputDeclarations(
+  Type.Object(
+    {
+      status: reviewStatusField,
+      ...reviewNarrativeFields,
+      mechanisms: Type.Array(judgeMechanismRowSchema, {
+        description:
+          "存废尺：所审实现从本票起点到 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装各一行（origin 实现净增），再加本轮判词每条处方或约束落实后会长出的每一层各一行（origin 本判处方）。每行只问一件事：这一关切（读复用、并发、失效……）在 ADR／票面点名的应用框架官方示范里怎么处理——示范不带这一层也处理得了，就是删；不问票面那句要求能不能靠示范满足。票面要求超过示范的，行照填删，那句要求上呈。有「删」行：实现里的，判删或上呈，不得据以署收敛；处方里的，那条处方不能开。票面已写、前轮判词要求过、施工自述、陛下对别的题点过头，都不是「留」的理由。行只能进这张表：不另开字段存放，不留「待定」；一处没有为空数组。",
+      }),
+    },
+    { additionalProperties: true },
+  ),
+);
+
 /** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
 export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object(

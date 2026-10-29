@@ -5,7 +5,7 @@
  * Execute lives in filed-submission.ts.
  */
 import { packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
-import { auditorSubmissionSchema, countersignSubmissionSchema, notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
+import { auditorSubmissionSchema, countersignSubmissionSchema, judgeSubmissionSchema, notaryReviewSubmissionSchema, inspectorSubmissionSchema, reviewSubmissionSchema } from "./review-submission.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 import { diaristOutputSchema } from "./diarist-contracts.ts";
 import { doctorSubmissionSchema, DOCTOR_OUTPUT_TOOL_DESCRIPTION } from "./doctor-contracts.ts";
@@ -32,9 +32,9 @@ type SubmissionFace = Omit<RoleSubmissionDeclaration, "role" | "name">;
 const SUBMISSION_FACE = {
   judge: {
     label: "大理寺输出",
-    description: "提交大理寺终局判词；交卷调用结束后，由公开调用接缝按判词状态执行适用审核。",
+    description: "提交大理寺终局判词（含所审实现与本判处方的存废尺 mechanisms）；交卷调用结束后，由公开调用接缝按判词状态执行适用审核。",
     promptSnippet: "提交大理寺终局判词",
-    parameters: reviewSubmissionSchema,
+    parameters: judgeSubmissionSchema,
   },
   fixer: {
     label: "修内司输出",
