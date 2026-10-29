@@ -136,35 +136,48 @@ const mechanismRowBase = {
 const MECHANISM_FRAMEWORK_RULE =
   "框架是仓库 ADR 或票面点名的那一个（读写模型、Web、测试等框架），不是席位自选；实现这一层所用的库（ORM、缓存库、解析库）不是框架，它的 API 页或示例填不进这格——那答的是「这层怎么做」，这格问的是「示范不带这层怎么办」";
 
-/** The two row shapes, with any extra per-row fields a seat needs (the auditor adds what the verdict said about the layer). */
-const mechanismRowUnion = (extra: Record<string, ReturnType<typeof Type.Union> | ReturnType<typeof Type.String>> = {}) =>
+/**
+ * The two row shapes of the 存废尺 (existence ruler), with any extra per-row fields a seat needs.
+ * `base` names the thing (a production line for 台院／大理寺／审刑院, a ticket clause for 中书省／给事中);
+ * `labels` are the two dispositions (删／留 for code, 不要／要 for clauses). The coupling is the same everywhere:
+ * official filled = the example manages without it; official null = the example carries the same layer.
+ */
+type RowFields = Record<string, ReturnType<typeof Type.String> | ReturnType<typeof Type.Integer> | ReturnType<typeof Type.Union>>;
+const existenceRowUnion = (
+  base: RowFields,
+  labels: { readonly without: string; readonly carries: string; readonly evidenceField: string },
+  extra: RowFields = {},
+) =>
   Type.Union(
     [
       Type.Object(
         {
-          ...mechanismRowBase,
+          ...base,
           official: Type.String({
             description: `这段代码所属应用框架的官方示范里，不带这一层时同一关切怎么处理：先写框架名，再链接＋原句（示范里直接读、直接查、交给框架哪项设置）。${MECHANISM_FRAMEWORK_RULE}`,
           }),
-          disposition: Type.Literal("删：示范不带这一层也处理得了", { description: "official 填了字，这一行只能是这个处置" }),
+          disposition: Type.Literal(labels.without, { description: "official 填了字，这一行只能是这个处置" }),
           ...extra,
         },
         { additionalProperties: true },
       ),
       Type.Object(
         {
-          ...mechanismRowBase,
+          ...base,
           official: Type.Null({
-            description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 keeps 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
+            description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 ${labels.evidenceField} 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
           }),
-          disposition: Type.Literal("留：示范本身就为同一关切带同样的层", { description: "official 为 null，这一行只能是这个处置" }),
+          disposition: Type.Literal(labels.carries, { description: "official 为 null，这一行只能是这个处置" }),
           ...extra,
         },
         { additionalProperties: true },
       ),
     ],
-    { description: "两种行形，没有第三种：示范不带这一层也处理得了（official 填字，删）；示范本身就带同样的层（official null，留）" },
+    { description: `两种行形，没有第三种：示范不带这一层也处理得了（official 填字，${labels.without.split("：")[0]}）；示范本身就带同样的层（official null，${labels.carries.split("：")[0]}）` },
   );
+
+const MECHANISM_LABELS = { without: "删：示范不带这一层也处理得了", carries: "留：示范本身就为同一关切带同样的层", evidenceField: "keeps" } as const;
+const mechanismRowUnion = (extra: RowFields = {}) => existenceRowUnion(mechanismRowBase, MECHANISM_LABELS, extra);
 
 export const mechanismRowSchema = mechanismRowUnion();
 
@@ -174,6 +187,33 @@ export const auditorMechanismRowSchema = mechanismRowUnion({
     description: "大理寺判词里裁到这一层的那句原文（照抄）；判词没提这一层，填 null",
   }),
 });
+
+/** 存废尺 row for a ticket clause: what the clause makes exist, against the framework's example. */
+const clauseRowBase = {
+  clause: Type.String({ description: "现行票面里让某个机制存在的那条条款原文（照抄，不合并、不改写）" }),
+  kind: Type.Union(
+    [Type.Literal("明写机制：条款自己点名了状态、表、缓存、锁、依赖"), Type.Literal("只写结果：条款只提要求，现状代码满足不了，得长出机制才做得到")],
+    { description: "两类都要列。第二类最容易漏：零重复、跨提交不重读、不建豁免、每 X 只做一次、永不 Y——这种句子没写机制两个字，却只能靠新状态、缓存、失效规则满足；先打开现状代码核一遍它做不做得到，做不到就是这类" },
+  ),
+  makes: Type.String({ description: "这条条款落实后会让什么东西存在：跨调用保存的状态、缓存、锁、失效规则、预计算、新依赖；写出它的形状。只写结果的条款，写满足它必须长出的那样东西" }),
+} as const;
+const CLAUSE_LABELS = { without: "不要：示范不带这一层也处理得了", carries: "要：示范本身就为同一关切带同样的层", evidenceField: "makes" } as const;
+export const clauseExistenceRowSchema = existenceRowUnion(clauseRowBase, CLAUSE_LABELS);
+
+/** Countersign generation schema: shared review face plus the 存废尺 over the current ticket's clauses (package records as-is). */
+export const countersignSubmissionSchema = withTerminatingOutputDeclarations(
+  Type.Object(
+    {
+      status: reviewStatusField,
+      ...reviewNarrativeFields,
+      existence: Type.Array(clauseExistenceRowSchema, {
+        description:
+          "存废尺：现行票面每条让机制存在的条款各一行——明写机制的，和只写结果要求、现状代码满足不了的，两类都算——到 ADR／票面点名的应用框架官方示范里看不带它时同一关切怎么处理。有「不要」行在，不得署，封驳或上呈并点名那条。票面已写、前轮判词要求过、签发方答过、陛下对别的题点过头，都不是「要」的理由；「要」只认示范里带同样的层。一条没有为空数组。",
+      }),
+    },
+    { additionalProperties: true },
+  ),
+);
 
 /** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
 export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
