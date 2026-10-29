@@ -145,7 +145,7 @@ const MECHANISM_FRAMEWORK_RULE =
 type RowFields = Record<string, ReturnType<typeof Type.String> | ReturnType<typeof Type.Integer> | ReturnType<typeof Type.Union>>;
 const existenceRowUnion = (
   base: RowFields,
-  labels: { readonly without: string; readonly carries: string },
+  labels: { readonly without: string; readonly carries: string; readonly evidenceField: string },
   extra: RowFields = {},
 ) =>
   Type.Union(
@@ -165,7 +165,7 @@ const existenceRowUnion = (
         {
           ...base,
           official: Type.Null({
-            description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 keeps 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
+            description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 ${labels.evidenceField} 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
           }),
           disposition: Type.Literal(labels.carries, { description: "official 为 null，这一行只能是这个处置" }),
           ...extra,
@@ -176,7 +176,7 @@ const existenceRowUnion = (
     { description: `两种行形，没有第三种：示范不带这一层也处理得了（official 填字，${labels.without.split("：")[0]}）；示范本身就带同样的层（official null，${labels.carries.split("：")[0]}）` },
   );
 
-const MECHANISM_LABELS = { without: "删：示范不带这一层也处理得了", carries: "留：示范本身就为同一关切带同样的层" } as const;
+const MECHANISM_LABELS = { without: "删：示范不带这一层也处理得了", carries: "留：示范本身就为同一关切带同样的层", evidenceField: "keeps" } as const;
 const mechanismRowUnion = (extra: RowFields = {}) => existenceRowUnion(mechanismRowBase, MECHANISM_LABELS, extra);
 
 export const mechanismRowSchema = mechanismRowUnion();
@@ -197,7 +197,7 @@ const clauseRowBase = {
   ),
   makes: Type.String({ description: "这条条款落实后会让什么东西存在：跨调用保存的状态、缓存、锁、失效规则、预计算、新依赖；写出它的形状。只写结果的条款，写满足它必须长出的那样东西" }),
 } as const;
-const CLAUSE_LABELS = { without: "不要：示范不带这一层也处理得了", carries: "要：示范本身就为同一关切带同样的层" } as const;
+const CLAUSE_LABELS = { without: "不要：示范不带这一层也处理得了", carries: "要：示范本身就为同一关切带同样的层", evidenceField: "makes" } as const;
 export const clauseExistenceRowSchema = existenceRowUnion(clauseRowBase, CLAUSE_LABELS);
 
 /** Countersign generation schema: shared review face plus the 存废尺 over the current ticket's clauses (package records as-is). */
