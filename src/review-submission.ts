@@ -207,6 +207,21 @@ export const auditorSubmissionSchema = withTerminatingOutputDeclarations(
         description:
           "复杂度账：大理寺本轮判词所裁的实现，从本票起点到该 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行（同台院机制层表），再写判词对这一层说了什么；一处没有为空数组。判词署了而表里有「删」行判词没处置，就是错署。",
       }),
+      runtime: Type.Array(
+        Type.Object(
+          {
+            entry: Type.String({ description: "真实入口：你亲跑的命令原文（测试用例或程序入口），不是施工或大理寺记录里抄来的" }),
+            atBase: Type.String({ description: "在本票起点（分支与目标分支的 merge-base）上跑这一入口的机器输出：用时、SQL／读次数、峰值内存等能读到的数字" }),
+            atHead: Type.String({ description: "在所裁 HEAD 上跑同一入口的机器输出，同一机器同一环境" }),
+            judgeSaid: Type.Union([Type.String(), Type.Null()], { description: "判词对这一入口快慢说的那句原文（照抄）；没说填 null" }),
+          },
+          { additionalProperties: true },
+        ),
+        {
+          description:
+            "性能账：票面涉及的真实入口，每个一行，票起点与所裁 HEAD 各亲跑一次并排记；用户等的时间变长、读次数变多而判词署了没处置，就是错署。一个入口都跑不了的，写明为什么，status 不能是 converged。",
+        },
+      ),
     },
     { additionalProperties: true },
   ),
