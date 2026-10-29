@@ -211,19 +211,19 @@ export const auditorSubmissionSchema = withTerminatingOutputDeclarations(
         Type.Object(
           {
             entry: Type.String({ description: "真实入口：你亲跑的命令原文（测试用例或程序入口）。票面、判词、施工记录、台院回执里点名过的每个真实入口都要有一行，一个不漏，再加你自己选的；数字只认自己跑出来的，不抄记录" }),
-            atBase: Type.String({ description: "在本票起点（分支与目标分支的 merge-base）上跑这一入口的机器输出：用时、SQL／读次数、峰值内存等能读到的数字" }),
+            atBase: Type.String({ description: "在本票起点（本分支与家族分支或目标分支的 git merge-base，同台院）上跑这一入口的机器输出：用时、SQL／读次数、峰值内存等能读到的数字；入口是本票新加、票起点上没有的，写「票起点无此入口」" }),
             atHead: Type.String({ description: "在所裁 HEAD 上跑同一入口的机器输出，同一机器同一环境" }),
             judgeSaid: Type.Union([Type.String(), Type.Null()], { description: "判词对这一入口快慢说的那句原文（照抄）；没说填 null" }),
             compared: Type.Union(
-              [Type.Literal("HEAD 比票起点慢或读得多"), Type.Literal("HEAD 不比票起点慢、不多读")],
-              { description: "只认 atBase 与 atHead 并排的数字：用时或读次数任一变大就是前者；一次性成本、CI 另算、不阻断都不是第三种" },
+              [Type.Literal("HEAD 比票起点慢或读得多"), Type.Literal("HEAD 不比票起点慢、不多读"), Type.Literal("票起点无此入口，无从比")],
+              { description: "只认 atBase 与 atHead 并排的数字：用时或读次数任一变大就是第一种；一次性成本、CI 另算、不阻断都不是理由。第三种只给票起点上不存在的入口；入口在票起点存在而跑失败，写明失败输出，不算第三种" },
             ),
           },
           { additionalProperties: true },
         ),
         {
           description:
-            "性能账：票面涉及的真实入口，每个一行，票起点与所裁 HEAD 各亲跑一次并排记。有一行 compared 为「慢或读得多」而 judgeSaid 为 null，判词就是署了没处置，status 不能是 converged。一个入口都跑不了的，写明为什么，status 同样不能是 converged。",
+            "性能账（受审之物是大理寺判词时填；受审太医署时此表与 mechanisms 都为空数组）：票面涉及的真实入口，每个一行，票起点与所裁 HEAD 各亲跑一次并排记。有一行 compared 为「慢或读得多」而 judgeSaid 为 null，判词就是署了没处置，status 不能是 converged。一个入口都跑不了的，写明为什么，status 同样不能是 converged。",
         },
       ),
     },
