@@ -327,8 +327,9 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     const required = handed.required;
     assert.equal(Array.isArray(required) && required.includes("suspect"), true);
     assert.equal(Array.isArray(required) && required.includes("ticketComplexity"), true);
+    assert.equal(Array.isArray(required) && required.includes("mechanisms"), true);
     assert.equal(handed.hitsType, "array");
-    assert.equal(Value.Check(handed.schema as never, {
+    const face = {
       status: "converged",
       suspect: "ming/a.py:1",
       ticketComplexity: [{
@@ -336,7 +337,21 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         hits: [],
         checked: "比对了 ming/a.py:1 与 ming/b.py:2",
       }],
+    };
+    assert.equal(Value.Check(handed.schema as never, {
+      ...face,
+      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", official: "eventsourcing https://eventsourcing.readthedocs.io/en/stable/topics/application.html 示范直接 repository.get，没有应用级读结果缓存", layer: 1, disposition: "删：示范不带这一层也处理得了" }],
     }), true);
+    const keepRow = { where: "ming/ledger/__init__.py:231", keeps: "AGGREGATE_CACHE_FASTFORWARD；eventsourcing application 页示范里就带这一项", official: null, layer: 2, disposition: "留：示范本身就为同一关切带同样的层" };
+    assert.equal(Value.Check(handed.schema as never, { ...face, mechanisms: [keepRow] }), true);
+    // A mechanism row without the official-counterpart cell is not a row.
+    assert.equal(Value.Check(handed.schema as never, {
+      ...face,
+      mechanisms: [{ where: "ming/ledger/__init__.py:40", keeps: "读结果跨调用保存", layer: 1 }],
+    }), false);
+    // official and disposition come as one of two shapes; a filled official with 留, or null with 删, is no row.
+    assert.equal(Value.Check(handed.schema as never, { ...face, mechanisms: [{ ...keepRow, official: "eventsourcing 示范直接读" }] }), false);
+    assert.equal(Value.Check(handed.schema as never, { ...face, mechanisms: [{ ...keepRow, disposition: "删：示范不带这一层也处理得了" }] }), false);
     const inherited = captured.current!;
     assert.equal(inherited.activation.role, "inspector");
     assert.deepEqual(inherited.model, {

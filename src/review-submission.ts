@@ -112,6 +112,49 @@ export const ticketComplexityRowSchema = Type.Object(
   { additionalProperties: true },
 );
 
+/**
+ * Inspector whole-ticket mechanism row: one added line that keeps state across calls, locks, caches, or adds a dependency.
+ * Two row shapes, no third: the framework's example manages without the layer (official filled, 删), or it carries the
+ * same layer itself (official null, 留). The union sits inside the array item, never at the root (see reviewSubmissionSchema).
+ */
+const mechanismRowBase = {
+  where: Type.String({
+    description:
+      "本票生产代码净增里的那一行 path:line：新增依赖行、跨调用保存的状态（模块级或实例级的字典、集合、列表、LRU 等）、锁、缓存装饰或包装；一行一条，照 diff 列，不合并；测试夹具不列",
+  }),
+  keeps: Type.String({ description: "这一行让什么东西在两次调用之间留下来，或挡住什么" }),
+  layer: Type.Integer({ description: "从本票起点到 HEAD，这是第几处这样的新增（含前几轮已署过的）" }),
+} as const;
+
+const MECHANISM_FRAMEWORK_RULE =
+  "框架是仓库 ADR 或票面点名的那一个（读写模型、Web、测试等框架），不是席位自选；实现这一层所用的库（ORM、缓存库、解析库）不是框架，它的 API 页或示例填不进这格——那答的是「这层怎么做」，这格问的是「示范不带这层怎么办」";
+
+export const mechanismRowSchema = Type.Union(
+  [
+    Type.Object(
+      {
+        ...mechanismRowBase,
+        official: Type.String({
+          description: `这段代码所属应用框架的官方示范里，不带这一层时同一关切怎么处理：先写框架名，再链接＋原句（示范里直接读、直接查、交给框架哪项设置）。${MECHANISM_FRAMEWORK_RULE}`,
+        }),
+        disposition: Type.Literal("删：示范不带这一层也处理得了", { description: "official 填了字，这一行只能是这个处置" }),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        ...mechanismRowBase,
+        official: Type.Null({
+          description: `示范代码本身就为同一关切带同样的状态、锁、缓存或依赖：填 null，并在 keeps 末尾写框架名与示范里那一处。${MECHANISM_FRAMEWORK_RULE}`,
+        }),
+        disposition: Type.Literal("留：示范本身就为同一关切带同样的层", { description: "official 为 null，这一行只能是这个处置" }),
+      },
+      { additionalProperties: true },
+    ),
+  ],
+  { description: "两种行形，没有第三种：示范不带这一层也处理得了（official 填字，删）；示范本身就带同样的层（official null，留）" },
+);
+
 /** Inspector generation schema: shared review face plus the required whole-ticket complexity answer (package records as-is). */
 export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object(
@@ -124,6 +167,10 @@ export const inspectorSubmissionSchema = withTerminatingOutputDeclarations(
       ticketComplexity: Type.Array(ticketComplexityRowSchema, {
         description:
           "整票复杂度：本票起点（本分支与家族分支或目标分支的 git merge-base）到 HEAD 的生产与测试净增，对《质量法》里每一句要求删除、合并、复用或不另写的条文各答一行。前几轮已署过的改动也算在内。",
+      }),
+      mechanisms: Type.Array(mechanismRowSchema, {
+        description:
+          "整票机制层：本票起点到 HEAD 生产代码新增的每一处依赖行、跨调用状态、锁、缓存装饰或包装，各一行，前几轮已署过的也列，测试夹具不列；一处没有为空数组。",
       }),
     },
     { additionalProperties: true },
