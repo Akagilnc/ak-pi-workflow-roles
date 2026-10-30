@@ -91,6 +91,44 @@ export const notaryClausesField = Type.Array(notaryClauseItemSchema, {
 });
 
 /**
+ * Notary ADR-landing row (2026-10-30, 陛下: summoned by the countersign gate, the notary checks the grill's ADR
+ * against the owner's words). One row per owner decision at the direction/design/decision level; two row shapes,
+ * no third: the ADR text carries the sentence (adr filled, 落了) or it does not (adr null, 未落). A ticket clause,
+ * a CLAUDE.md index line, a verdict citation or an ADR title is not a landing.
+ */
+const adrRowBase = {
+  ownerUuid: Type.String({ description: "陛下拍定那句原话的 uuid" }),
+  decided: Type.String({
+    description: "那句拍定了什么：照原词，不概括、不合并（四层分工、四条规矩、账本只存事实……一条一行）",
+  }),
+};
+export const notaryAdrRowSchema = Type.Union([
+  Type.Object(
+    {
+      ...adrRowBase,
+      adr: Type.String({ description: "落处：docs/adr 文件名＋文内承载这条拍定的那一句原文（照抄）" }),
+      landed: Type.Literal("落了：ADR 文内有承载它的句子"),
+    },
+    { additionalProperties: true },
+  ),
+  Type.Object(
+    {
+      ...adrRowBase,
+      adr: Type.Null(),
+      landed: Type.Literal(
+        "未落：ADR 文内没有承载它的句子；票面条款写了、CLAUDE.md 一类索引说某份 ADR 含它、判词引过它、ADR 标题像，都不是落处",
+      ),
+    },
+    { additionalProperties: true },
+  ),
+]);
+
+export const notaryAdrField = Type.Array(notaryAdrRowSchema, {
+  description:
+    "ADR 落处表：受审之物是给事中对票面的判词（票庭）时填——起居录与源卷里陛下拍定的方向、设计、决策一级的东西，每条一行，到 docs/adr 里找承载它的那一句。有「未落」行，status 只能是 escalate，拍定原文与它该进哪份 ADR 列进 decisionGate，进不进由陛下定。受审之物是大理寺的判词、修法方向或收敛的实现时为空数组。",
+});
+
+/**
  * Notary generation schema (#1195): shared review face plus
  * required top-level clauses. Package execute does not reject a missing table.
  */
@@ -100,6 +138,7 @@ export const notaryReviewSubmissionSchema = withTerminatingOutputDeclarations(
       status: reviewStatusField,
       ...reviewNarrativeFields,
       clauses: notaryClausesField,
+      adr: notaryAdrField,
     },
     { additionalProperties: true },
   ),
