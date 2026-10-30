@@ -113,7 +113,7 @@ export const DIARIST_BOUND_ENDPOINTS =
   "起点与终点各写 id 或 line，二选一：id＝会话卷里那一行 JSON 的 uuid 字段值（没有 uuid 取 id；顶层都没有再取 message 或 payload 里的 uuid / id），同一 id 出现多次时取第一次出现的那一行；line＝那一行在文件里从 1 数起的行号。两端都含在区间内。" as const;
 
 const DIARIST_SESSIONS_DESCRIPTION =
-  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
+  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话、陛下用斜杠命令带的参数（命令名是机器的，参数是陛下说的话）；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
 
 /**
  * 2026-10-30 (陛下: #1943 的起居录漏了整场 grill): the gap since the last recorded line is a required cell.
