@@ -143,10 +143,18 @@ export const diaristSinceLastSchema = Type.Union(
       },
       { additionalProperties: true },
     ),
+    Type.Object(
+      {
+        lastRecorded: Type.Null(),
+        swept: Type.Null(),
+        found: Type.Literal("无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么"),
+      },
+      { additionalProperties: true },
+    ),
   ],
   {
     description:
-      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。三种答法：谈过（逐行列 uuid）／没有再谈／本票尚无起居录。多票庭按主票填。",
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid）／没有再谈／本票尚无起居录／无法扫（只配 status escalate，不得用来免扫）。多票庭按主票填。",
   },
 );
 
