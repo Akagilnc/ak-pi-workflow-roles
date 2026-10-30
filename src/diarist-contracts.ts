@@ -106,6 +106,50 @@ export const DIARIST_BOUND_ENDPOINTS =
 const DIARIST_SESSIONS_DESCRIPTION =
   `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
 
+/**
+ * 2026-10-30 (陛下: #1943 的起居录漏了整场 grill): the gap since the last recorded line is a required cell.
+ * Three shapes, no fourth: the owner spoke about this ticket in the gap (every such line listed and inside
+ * ranges), the owner did not, or the ticket has no 起居录 yet. Generation-required under ADR 0057's exception;
+ * the package still records the receipt as-is.
+ */
+const lastRecordedField = Type.String({
+  description: "本票已有起居录里、本卷上次成录的最后一行：照起居录端点写 uuid 或 line",
+});
+export const diaristSinceLastSchema = Type.Union(
+  [
+    Type.Object(
+      {
+        lastRecorded: lastRecordedField,
+        swept: Type.Array(Type.String(), {
+          description: "上次成录末尾到本轮之间，陛下谈本票的每一行 uuid，一行一条；这些行都已划进 ranges",
+        }),
+        found: Type.Literal("上次成录末尾到本轮之间陛下谈过本票，已划进 ranges"),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        lastRecorded: lastRecordedField,
+        swept: Type.Null(),
+        found: Type.Literal("上次成录末尾到本轮之间陛下没有再谈本票"),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        lastRecorded: Type.Null(),
+        swept: Type.Null(),
+        found: Type.Literal("本票尚无起居录，本轮从头收"),
+      },
+      { additionalProperties: true },
+    ),
+  ],
+  {
+    description:
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。三种答法：谈过（逐行列 uuid）／没有再谈／本票尚无起居录。多票庭按主票填。",
+  },
+);
+
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
@@ -127,6 +171,9 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
       ticketSessions: Type.Unknown({
         description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。`,
       }),
+      sinceLast: diaristSinceLastSchema,
     }),
   ),
 );
+// #1134 emptied the required set; sinceLast is the one generation-required cell (ADR 0057 exception; the package still records as-is).
+(diaristOutputSchema as unknown as { required: string[] }).required = ["sinceLast"];
