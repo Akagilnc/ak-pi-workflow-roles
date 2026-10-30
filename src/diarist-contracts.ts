@@ -39,13 +39,22 @@ export type DiaristOutput =
       readonly ticketSessions?: readonly {
         readonly ticketNumber: number;
         readonly sessions: readonly TicketProvenanceSession[];
+        readonly sinceLast?: DiaristSinceLast;
       }[];
+      /** 2026-10-30: the sweep since the last recorded line (generation-required; the package records as-is, so typed as optional). */
+      readonly sinceLast?: DiaristSinceLast;
     }
   | {
       /** LLM cannot sign this round normally (Soul) — escalate, never wash into 无录. */
       readonly status: "escalate";
       readonly reason: string;
     };
+
+export type DiaristSinceLast =
+  | { readonly lastRecorded: string; readonly swept: readonly string[]; readonly found: "上次成录末尾到本轮之间陛下谈过本票，已划进 ranges" }
+  | { readonly lastRecorded: string; readonly swept: null; readonly found: "上次成录末尾到本轮之间陛下没有再谈本票" }
+  | { readonly lastRecorded: null; readonly swept: null; readonly found: "本票尚无起居录，本轮从头收" }
+  | { readonly lastRecorded: null; readonly swept: null; readonly found: "无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么" };
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   if (!isRecord(value)) {
@@ -121,7 +130,7 @@ export const diaristSinceLastSchema = Type.Union(
       {
         lastRecorded: lastRecordedField,
         swept: Type.Array(Type.String(), {
-          description: "上次成录末尾到本轮之间，陛下谈本票的每一行 uuid，一行一条；这些行都已划进 ranges",
+          description: "上次成录末尾到本轮之间，陛下谈本票的每一行，一行一条，照边界端点的写法（uuid，没有 uuid 的写 line）；这些行都已划进 ranges",
         }),
         found: Type.Literal("上次成录末尾到本轮之间陛下谈过本票，已划进 ranges"),
       },
@@ -154,7 +163,7 @@ export const diaristSinceLastSchema = Type.Union(
   ],
   {
     description:
-      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid）／没有再谈／本票尚无起居录／无法扫（只配 status escalate，不得用来免扫）。多票庭按主票填。",
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本票尚无起居录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
   },
 );
 
@@ -177,7 +186,7 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
         description: `仅单票庭时填对话边界；没有就填 null。${DIARIST_SESSIONS_DESCRIPTION}`,
       })),
       ticketSessions: Type.Unknown({
-        description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。`,
+        description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）、sessions（${DIARIST_SESSIONS_DESCRIPTION}）与该票自己的 sinceLast（形状同顶层 sinceLast）。一次交卷各票各自分录。`,
       }),
       sinceLast: diaristSinceLastSchema,
     }),
