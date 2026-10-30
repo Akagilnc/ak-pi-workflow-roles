@@ -58,7 +58,7 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
 export const notaryClauseItemSchema = Type.Object(
   {
     clause: Type.String({
-      description: "票面条款原文（改变实际行为的条款；不合并、不改写）",
+      description: "票面条款原文（改变实际行为的条款；不合并、不改写）；票面点名为法源的 ADR 里本票新写或改过的决定句也算一条，前缀文件名照抄",
     }),
     ownerUuid: Type.Union([Type.String(), Type.Null()], {
       description: "推出该条的陛下原话 uuid；无原话则 null",
@@ -87,7 +87,7 @@ export const notaryClauseItemSchema = Type.Object(
 
 export const notaryClausesField = Type.Array(notaryClauseItemSchema, {
   description:
-    "票面逐条核旨表，每一轮都填，不论本轮受审的是票面还是大理寺的判词：现行票面每条改变实际行为的条款的原文、陛下原话 uuid、推导、是否在最后一签时就在表里。无原话则 ownerUuid 为 null。真无票对象没有票面，填空数组。",
+    "票面逐条核旨表，每一轮都填，不论本轮受审的是票面还是大理寺的判词：现行票面每条改变实际行为的条款的原文（含票面点名为法源的 ADR 里本票新写或改过的决定句）、陛下原话 uuid、推导、是否在最后一签时就在表里。无原话则 ownerUuid 为 null。真无票对象没有票面，填空数组。",
 });
 
 /**
