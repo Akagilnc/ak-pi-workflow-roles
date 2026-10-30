@@ -125,7 +125,7 @@ export const notaryAdrRowSchema = Type.Union([
 
 export const notaryAdrField = Type.Array(notaryAdrRowSchema, {
   description:
-    "ADR 落处表：受审之物是给事中对票面的判词（票庭）时填——起居录与源卷里陛下拍定的方向、设计、决策一级的东西，每条一行，到 docs/adr 里找承载它的那一句。有「未落」行，status 只能是 escalate，拍定原文与它该进哪份 ADR 列进 decisionGate，进不进由陛下定。受审之物是大理寺的判词、修法方向或收敛的实现时为空数组。",
+    "ADR 落处表：受审之物是给事中对票面的判词（票庭）时填——起居录与源卷里陛下拍定的、该进 ADR 的决定（架构形状、分层与边界、技术选型、刻意偏离常规的做法：难逆、读代码的人会问为什么的那类），每条一行，到 docs/adr 里找承载它的那一句；怎么测、怎么分支合入、数据怎么补、字段叫什么这类办事方法与票内细节不列。有「未落」行，status 只能是 escalate，拍定原文与它该进哪份 ADR 列进 decisionGate，进不进由陛下定。受审之物是大理寺的判词、修法方向或收敛的实现时为空数组。",
 });
 
 /**
