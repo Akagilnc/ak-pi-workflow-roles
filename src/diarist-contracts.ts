@@ -53,7 +53,7 @@ export type DiaristOutput =
 export type DiaristSinceLast =
   | { readonly lastRecorded: string; readonly swept: readonly string[]; readonly found: "上次成录末尾到本轮之间陛下谈过本票，已划进 ranges" }
   | { readonly lastRecorded: string; readonly swept: null; readonly found: "上次成录末尾到本轮之间陛下没有再谈本票" }
-  | { readonly lastRecorded: null; readonly swept: null; readonly found: "本票尚无起居录，本轮从头收" }
+  | { readonly lastRecorded: null; readonly swept: null; readonly found: "本卷尚无成录（本票没有起居录，或起居录里没有本卷），本轮从本卷开头收" }
   | { readonly lastRecorded: null; readonly swept: null; readonly found: "无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么" };
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
@@ -117,8 +117,8 @@ const DIARIST_SESSIONS_DESCRIPTION =
 
 /**
  * 2026-10-30 (陛下: #1943 的起居录漏了整场 grill): the gap since the last recorded line is a required cell.
- * Three shapes, no fourth: the owner spoke about this ticket in the gap (every such line listed and inside
- * ranges), the owner did not, or the ticket has no 起居录 yet. Generation-required under ADR 0057's exception;
+ * Three shapes plus the escalate-only 无法扫: the owner spoke about this ticket in the gap (every such line listed and inside
+ * ranges), the owner did not, or this volume has no recorded line yet (new ticket or new volume). Generation-required under ADR 0057's exception;
  * the package still records the receipt as-is.
  */
 const lastRecordedField = Type.String({
@@ -148,7 +148,7 @@ export const diaristSinceLastSchema = Type.Union(
       {
         lastRecorded: Type.Null(),
         swept: Type.Null(),
-        found: Type.Literal("本票尚无起居录，本轮从头收"),
+        found: Type.Literal("本卷尚无成录（本票没有起居录，或起居录里没有本卷），本轮从本卷开头收"),
       },
       { additionalProperties: true },
     ),
@@ -163,7 +163,7 @@ export const diaristSinceLastSchema = Type.Union(
   ],
   {
     description:
-      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本票尚无起居录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本卷尚无成录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
   },
 );
 
