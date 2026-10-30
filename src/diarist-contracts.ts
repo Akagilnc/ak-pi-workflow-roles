@@ -39,13 +39,24 @@ export type DiaristOutput =
       readonly ticketSessions?: readonly {
         readonly ticketNumber: number;
         readonly sessions: readonly TicketProvenanceSession[];
+        readonly sinceLast?: DiaristSinceLast;
       }[];
+      /** 2026-10-30: the sweep since the last recorded line (generation-required; the package records as-is, so typed as optional). */
+      readonly sinceLast?: DiaristSinceLast;
     }
   | {
       /** LLM cannot sign this round normally (Soul) — escalate, never wash into 无录. */
       readonly status: "escalate";
       readonly reason: string;
+      /** On the escalate path the honest shape is 无法扫 (or whatever was actually swept before the failure). */
+      readonly sinceLast?: DiaristSinceLast;
     };
+
+export type DiaristSinceLast =
+  | { readonly lastRecorded: string; readonly swept: readonly string[]; readonly found: "上次成录末尾到本轮之间陛下谈过本票，已划进 ranges" }
+  | { readonly lastRecorded: string; readonly swept: null; readonly found: "上次成录末尾到本轮之间陛下没有再谈本票" }
+  | { readonly lastRecorded: null; readonly swept: null; readonly found: "本卷尚无成录（本票没有起居录，或起居录里没有本卷），本轮从本卷开头收" }
+  | { readonly lastRecorded: null; readonly swept: null; readonly found: "无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么" };
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   if (!isRecord(value)) {
@@ -104,7 +115,59 @@ export const DIARIST_BOUND_ENDPOINTS =
   "起点与终点各写 id 或 line，二选一：id＝会话卷里那一行 JSON 的 uuid 字段值（没有 uuid 取 id；顶层都没有再取 message 或 payload 里的 uuid / id），同一 id 出现多次时取第一次出现的那一行；line＝那一行在文件里从 1 数起的行号。两端都含在区间内。" as const;
 
 const DIARIST_SESSIONS_DESCRIPTION =
-  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
+  `对话边界。每卷含 path（会话卷绝对或可读路径）与 ranges（本卷本轮各区间）。每段区间含 from / to；${DIARIST_BOUND_ENDPOINTS}区间里只有说话人的原文进录：用户与助手消息里的文本、真人经队列的插话、陛下用斜杠命令带的参数（命令名是机器的，参数是陛下说的话）；思考、工具调用、工具结果和机器通知不进录，区间可以直接跨过它们，不必拆段。每次交卷的边界照投影追加进本票起居录，不去重，也不改已有的录。空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。` as const;
+
+/**
+ * 2026-10-30 (陛下: #1943 的起居录漏了整场 grill): the gap since the last recorded line is a required cell.
+ * Three shapes plus the escalate-only 无法扫: the owner spoke about this ticket in the gap (every such line listed and inside
+ * ranges), the owner did not, or this volume has no recorded line yet (new ticket or new volume). Generation-required under ADR 0057's exception;
+ * the package still records the receipt as-is.
+ */
+const lastRecordedField = Type.String({
+  description: "本票已有起居录里、本卷上次成录的最后一行：照起居录端点写 uuid 或 line",
+});
+export const diaristSinceLastSchema = Type.Union(
+  [
+    Type.Object(
+      {
+        lastRecorded: lastRecordedField,
+        swept: Type.Array(Type.String(), {
+          description: "上次成录末尾到本轮之间，陛下谈本票的每一行，一行一条，照边界端点的写法（uuid，没有 uuid 的写 line）；这些行都已划进 ranges",
+        }),
+        found: Type.Literal("上次成录末尾到本轮之间陛下谈过本票，已划进 ranges"),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        lastRecorded: lastRecordedField,
+        swept: Type.Null(),
+        found: Type.Literal("上次成录末尾到本轮之间陛下没有再谈本票"),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        lastRecorded: Type.Null(),
+        swept: Type.Null(),
+        found: Type.Literal("本卷尚无成录（本票没有起居录，或起居录里没有本卷），本轮从本卷开头收"),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        lastRecorded: Type.Null(),
+        swept: Type.Null(),
+        found: Type.Literal("无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么"),
+      },
+      { additionalProperties: true },
+    ),
+  ],
+  {
+    description:
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从它的下一行起一直扫到本轮（那一行已在录里，不再划），陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本卷尚无成录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
+  },
+);
 
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
@@ -125,8 +188,11 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
         description: `仅单票庭时填对话边界；没有就填 null。${DIARIST_SESSIONS_DESCRIPTION}`,
       })),
       ticketSessions: Type.Unknown({
-        description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）与 sessions（${DIARIST_SESSIONS_DESCRIPTION}）。一次交卷各票各自分录。`,
+        description: `仅多票庭时填逐票对话边界；没有就填 null。每票含 ticketNumber（本条边界所归票号，正整数）、sessions（${DIARIST_SESSIONS_DESCRIPTION}）与该票自己的 sinceLast（形状同顶层 sinceLast）。一次交卷各票各自分录。`,
       }),
+      sinceLast: diaristSinceLastSchema,
     }),
   ),
 );
+// #1134 emptied the required set; sinceLast is the one generation-required cell (ADR 0057 exception; the package still records as-is).
+(diaristOutputSchema as unknown as { required: string[] }).required = ["sinceLast"];
