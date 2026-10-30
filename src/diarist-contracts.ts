@@ -48,6 +48,8 @@ export type DiaristOutput =
       /** LLM cannot sign this round normally (Soul) — escalate, never wash into 无录. */
       readonly status: "escalate";
       readonly reason: string;
+      /** On the escalate path the honest shape is 无法扫 (or whatever was actually swept before the failure). */
+      readonly sinceLast?: DiaristSinceLast;
     };
 
 export type DiaristSinceLast =
