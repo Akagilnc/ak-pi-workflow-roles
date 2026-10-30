@@ -163,7 +163,7 @@ export const diaristSinceLastSchema = Type.Union(
   ],
   {
     description:
-      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从那一行往后一直扫到本轮，陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本卷尚无成录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
+      "上次成录以来的扫段：先打开本票已有的起居录，找出本卷上次成录的最后一行，从它的下一行起一直扫到本轮（那一行已在录里，不再划），陛下关于本票说过的每一句都划进 ranges——传召点名的 uuid 只是起点，不是候选集合。四种答法：谈过（逐行列 uuid 或 line）／没有再谈／本卷尚无成录／无法扫（只配 status escalate，不得用来免扫）。多票庭这里填主票，其余各票的扫段各写进 ticketSessions 那一票的 sinceLast。",
   },
 );
 
