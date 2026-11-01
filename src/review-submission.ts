@@ -239,6 +239,86 @@ const clauseRowBase = {
 const CLAUSE_LABELS = { without: "不要：示范不带这一层也处理得了", carries: "要：示范本身就为同一关切带同样的层", evidenceField: "makes" } as const;
 export const clauseExistenceRowSchema = existenceRowUnion(clauseRowBase, CLAUSE_LABELS);
 
+/**
+ * 架构归位表 (architecture table) rows, shared by 中书省 and 给事中. Two duties, two row kinds:
+ * 遵循 — one row per thing the draft puts into code, placed into a layer of the established architecture
+ * (the layer table and rules in docs/adr or the ticket-named 法源); 核架构 — one row per clause of that
+ * architecture, checked against how the chosen framework's official docs and recognized references
+ * handle the same concern. The literal cells leave no third answer; the package records the rows as-is.
+ */
+const ARCH_FIT_RULE = "既有架构＝docs/adr 里的层表与规矩，或票面点名的法源里的层表与规矩；分层配置（import-linter 一类）与代码现状是要核对的对象，不是法源";
+const archFitBase = {
+  kind: Type.Literal("遵循：稿里一样进代码的东西归到既有架构的层里"),
+  item: Type.String({ description: "稿里那样东西的原句（照抄）：模块、类、表、调用路径、入口、分层配置里的一档" }),
+  layer: Type.String({ description: `它该属的那一层：法源（docs/adr 文件名或票面票号）＋那层分工的原句（照抄）；层表里没有能放它的层，写「法源无此层」。${ARCH_FIT_RULE}` }),
+  today: Type.String({ description: "打开代码：这层现在装着什么、这件事现在由谁承担（模块或路径）；没有就写没有" }),
+} as const;
+const archVerifyBase = {
+  kind: Type.Literal("核架构：既有架构的一条条款对照外界做法"),
+  clause: Type.String({ description: "既有架构的一条条款原句（层表一行或一条规矩，照抄）＋法源" }),
+  reference: Type.String({ description: "联网查到的参照：所选框架官方文档、公认架构资料里承担同一关切的做法——链接＋原句；查不到写搜了什么、在哪搜" }),
+} as const;
+export const architectureRowSchema = Type.Union(
+  [
+    Type.Object(
+      {
+        ...archFitBase,
+        fit: Type.Union(
+          [Type.Literal("合：同层复用——现状已有的那样东西承担，不新建"), Type.Literal("合：同层新增——新建，但在这层法源写的分工之内")],
+          { description: "归到法源层表里的某一层、且在那层分工之内，才是合" },
+        ),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        ...archFitBase,
+        fit: Type.Union(
+          [
+            Type.Literal("不合：新开一层或一档——法源的层表里没有这一层；写在两层之间、「不是第 N 个 X」、给分层配置加一档，都算"),
+            Type.Literal("不合：跨层或反向依赖——法源只许往下依赖，这样东西反着依赖、或越过中间那层直接碰"),
+            Type.Literal("不合：进了这层分工之外的事——法源写这层只许／只做什么，这件事不在其中"),
+          ],
+          { description: "三种不合，没有第四种；不合的行不由宰相或签发方答，归陛下" },
+        ),
+        rule: Type.String({ description: "被违的那条分工或规矩的原句（照抄）" }),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        ...archVerifyBase,
+        verdict: Type.Union(
+          [
+            Type.Literal("合理：参照里同一关切的做法与本条一致，或本条是刻意偏离且法源写了为什么"),
+            Type.Literal("已拍：陛下对这一点拍过（起居录 uuid 或 ADR 原句），不再呈"),
+            Type.Literal("查不到参照：reference 写明搜了什么"),
+          ],
+          { description: "没有建议要呈的三种答法" },
+        ),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        ...archVerifyBase,
+        verdict: Type.Literal("可改进：参照里有更简单或更一致的做法，suggestion 一句，呈陛下"),
+        suggestion: Type.String({ description: "一句建议：改哪条、改成什么、参照里的依据；陛下拍不拍由陛下定" }),
+      },
+      { additionalProperties: true },
+    ),
+  ],
+  { description: "四种行形：遵循·合／遵循·不合（带 rule）／核架构·无建议／核架构·可改进（带 suggestion）" },
+);
+const ARCH_TABLE_COMMON =
+  "架构归位表：先盘既有架构——docs/adr 与票面点名法源里的层表与规矩，再打开分层配置与代码看每层现在装着什么、有没有法源里没有的层。遵循行：稿里每样进代码的东西各一行，归到法源的层里；核架构行：既有架构每条条款各一行，联网找所选框架官方文档与公认资料里承担同一关切的做法，附链接与原句。仓里没有既有架构（法源里没有层表）时为空数组，并在 note 写明。";
+export const secretariatArchitectureField = Type.Array(architectureRowSchema, {
+  description: `${ARCH_TABLE_COMMON}有「不合」或「可改进」行，secretariatStatus 只能是 escalate：不合行的原文与两边（改稿归位／改架构）、可改进的建议，都列进 decisionGate 由陛下拍，不出给宰相答。`,
+});
+export const countersignArchitectureField = Type.Array(architectureRowSchema, {
+  description: `${ARCH_TABLE_COMMON}有「不合」行不得署：票面意在改架构的上呈，否则封驳退签发方归位；有「可改进」行上呈，建议附原文。`,
+});
+
 /** Countersign generation schema: shared review face plus the 存废尺 over the current ticket's clauses (package records as-is). */
 export const countersignSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object(
@@ -249,6 +329,7 @@ export const countersignSubmissionSchema = withTerminatingOutputDeclarations(
         description:
           "存废尺：现行票面每条让机制存在的条款各一行——明写机制的，和只写结果要求、现状代码满足不了的，两类都算——到 ADR／票面点名的应用框架官方示范里看不带它时同一关切怎么处理。有「不要」行在，不得署，封驳或上呈并点名那条。票面已写、前轮判词要求过、签发方答过、陛下对别的题点过头，都不是「要」的理由；「要」只认示范里带同样的层。一条没有为空数组。",
       }),
+      architecture: countersignArchitectureField,
     },
     { additionalProperties: true },
   ),
