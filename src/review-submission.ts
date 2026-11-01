@@ -291,11 +291,20 @@ export const architectureRowSchema = Type.Union(
         verdict: Type.Union(
           [
             Type.Literal("合理：参照里同一关切的做法与本条一致，或本条是刻意偏离且法源写了为什么"),
-            Type.Literal("已拍：陛下对这一点拍过（起居录 uuid 或 ADR 原句），不再呈"),
             Type.Literal("查不到参照：reference 写明搜了什么"),
           ],
-          { description: "没有建议要呈的三种答法" },
+          { description: "没有建议要呈、也没有陛下拍过的凭据时的两种答法" },
         ),
+      },
+      { additionalProperties: true },
+    ),
+    Type.Object(
+      {
+        ...archVerifyBase,
+        verdict: Type.Literal("已拍：陛下对这一点拍过，decidedBy 给凭据，不再呈"),
+        decidedBy: Type.String({
+          description: "拍过的凭据：起居录里陛下那句原话的 uuid，或 ADR 编号＋文内拍定原句（照抄）；拿不出凭据的不是已拍，按合理／查不到／可改进答",
+        }),
       },
       { additionalProperties: true },
     ),
@@ -308,7 +317,7 @@ export const architectureRowSchema = Type.Union(
       { additionalProperties: true },
     ),
   ],
-  { description: "四种行形：遵循·合／遵循·不合（带 rule）／核架构·无建议／核架构·可改进（带 suggestion）" },
+  { description: "五种行形：遵循·合／遵循·不合（带 rule）／核架构·合理或查不到／核架构·已拍（带 decidedBy）／核架构·可改进（带 suggestion）" },
 );
 const ARCH_TABLE_COMMON =
   "架构归位表：先盘既有架构——docs/adr 与票面点名法源里的层表与规矩，再打开分层配置与代码看每层现在装着什么、有没有法源里没有的层。遵循行：稿里每样进代码的东西各一行，归到法源的层里；核架构行：既有架构每条条款各一行，联网找所选框架官方文档与公认资料里承担同一关切的做法，附链接与原句。法源里既没有层表也没有架构规矩时才为空数组，并在 note 写明；只有规矩没有层表的，遵循行的 layer 写被核的那条规矩原句，核架构行按规矩逐条列。";
