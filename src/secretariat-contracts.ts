@@ -50,8 +50,8 @@ export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
     { additionalProperties: true },
   ),
 );
-// #1134 deleted the required set for the narrative fields; the 存废尺 table is the one generation-required field,
-// as it is for 给事中／台院／审刑院／大理寺 (the package still records the receipt as-is).
+// #1134 deleted the required set for the narrative fields; the 存废尺 and 架构归位表 tables are the
+// generation-required fields, as they are for 给事中 (the package still records the receipt as-is).
 (secretariatVerdictSchema as unknown as { required: string[] }).required = ["existence", "architecture"];
 // The type stays loose: narrative fields are unrequired (ADR 0057), additional properties stay open,
 // and the shared terminating fields are composed at runtime.
