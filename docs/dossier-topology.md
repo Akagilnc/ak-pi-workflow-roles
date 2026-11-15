@@ -11,16 +11,20 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 └── books/<book-key>/
     ├── <ticket>/
     │   ├── records.jsonl                    起居录：陛下原话加源卷指针，一票一份，只追加
+    │   ├── current.jsonl                    本票进度：每收下一份交卷一行，只追加（ADR 0088）
     │   └── runs/<runId>@<role>/
+    │       ├── receipts/<n>.json            回执原件：本腿第 n 份交卷，原样一份
+    │       ├── session/                     宿主原件（见下）
     │       ├── current.json                 当前（整文件重写）
     │       ├── history.jsonl                历史（只追加）
     │       ├── state.jsonl                  状态事实行（只追加；含四整页与 worker 闸状态）
-    │       ├── log.jsonl                    司天台流水（只追加）
-    │       └── session/                     宿主原件（见下）
+    │       └── log.jsonl                    司天台流水（只追加）
     ├── unbound/
-    │   └── runs/<runId>@<role>/             同上形状
+    │   └── runs/<runId>@<role>/             同上形状；另有 progress.jsonl 暂存进度行，归位时补轮并入票级 current.jsonl
     └── collector-handbook/
 ```
+
+票级 `current.jsonl` 与腿内 `receipts/` 由 [ADR 0088](adr/0088-ticket-current-replaces-run-dossiers.md) 定。同一 ADR 判撤每腿的 `current.json`／`history.jsonl`／`state.jsonl`／`log.jsonl`；撤掉之前它们照下文所述仍在写。
 
 簿根只有三类项：
 
