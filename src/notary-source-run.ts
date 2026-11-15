@@ -95,11 +95,7 @@ export async function resolveNotarySourceRunLocator(options: {
   let candidate: string;
   const address = parseTicketLegLocator(raw);
   if (address !== undefined) {
-    candidate = locateTicketLeg({
-      ...address,
-      projectRoot: options.projectRoot,
-      ...(options.home === undefined ? {} : { home: options.home }),
-    });
+    candidate = locateTicketLeg(bookDirectory, address);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
     const identity = parseRunLeaf(basename(candidate));

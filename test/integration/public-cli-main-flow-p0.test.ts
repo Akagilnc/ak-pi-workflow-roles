@@ -1,7 +1,7 @@
 /**
  * README main-flow P0 gates that were absent on main:
  *  1) first public judge with no --model and no seat fails before executeTurn
- *  2) escalate → resume "<ruling>" → same runId converged
+ *  2) escalate → resume <ticket> judge "<ruling>" → same leg converged
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";

@@ -87,6 +87,11 @@ import {
 } from "./instruction-seat-run.ts";
 import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../activation-ledger-topology.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import {
   locateTicketLeg,
@@ -1203,11 +1208,13 @@ export async function runAkRole(
     // legs filed under the ticket are in it.
     if (parsed.command === "resume") {
       const address = parseResumeAddress(parsed.args);
-      const runDirectory = locateTicketLeg({
-        ...address,
-        projectRoot: env.cwd ?? process.cwd(),
-        home,
-      });
+      const runDirectory = locateTicketLeg(
+        activationBookDirectory(
+          resolveActivationLedgerHome(home),
+          resolveBookKeyFromGit(env.cwd ?? process.cwd()),
+        ),
+        address,
+      );
       const resumeRequest: PublicResumeRequest = {
         runId: runIdFromRunDirectory(runDirectory)!,
         runDirectory,

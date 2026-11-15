@@ -239,12 +239,6 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
   await withTicketProject(async ({ home, ticketDirectory, turns, call }) => {
     await call(["judge", "--model", SEAT_MODEL, "leg A"], () => ruling());
     const legA = join(ticketDirectory, "runs", turns.at(-1)!.leg);
-    await call(["new", "judge", "--model", SEAT_MODEL, "leg B"], () => ruling());
-    const legB = join(ticketDirectory, "runs", turns.at(-1)!.leg);
-    assert.deepEqual(
-      seatRows(ticketDirectory, "judge").map((row) => [row.round, join(ticketDirectory, row.receipt).startsWith(legA)]),
-      [["1", true], ["2", false]],
-    );
 
     const boundTo = async (locator: string): Promise<string | undefined> => {
       const result = await call(
@@ -257,7 +251,20 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
       return argvFlagValue(turn.args, "--ak-notary-source-run");
     };
     assert.equal(await boundTo(`${TICKET}:judge#1`), legA);
+    assert.equal(await boundTo(`${TICKET}:judge#1`), legA);
+    // Rounds count per seat, so round numbers collide across seats: the notary's
+    // round 2 is on the ticket before the judge's. The address is seat and round together.
+    await call(["new", "judge", "--model", SEAT_MODEL, "leg B"], () => ruling());
+    const legB = join(ticketDirectory, "runs", turns.at(-1)!.leg);
+    assert.deepEqual(
+      readTicketProgressLines(ticketDirectory).map((row) => `${row.seat}#${row.round}`),
+      ["judge#1", "notary#1", "notary#2", "judge#2"],
+    );
     assert.equal(await boundTo(`${TICKET}:judge#2`), legB);
+    // The same locator serves resume: the judge's round, not the notary's.
+    await call(["resume", String(TICKET), "judge#2"]);
+    assert.equal(turns.at(-1)?.role, "judge");
+    assert.equal(join(ticketDirectory, "runs", turns.at(-1)!.leg), legB);
 
     const turnsBefore = turns.length;
     const legsBefore = await legCount(home);

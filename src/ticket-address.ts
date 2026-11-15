@@ -9,11 +9,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
-import {
-  activationBookDirectory,
-  resolveActivationLedgerHome,
-} from "./activation-ledger-topology.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
 import { parseTicketNumber } from "./run-ticket-number.ts";
@@ -52,7 +47,7 @@ export function parseTicketLegLocator(token: string): Required<TicketLegAddress>
 }
 
 /**
- * Run directory of the addressed leg.
+ * Run directory of the addressed leg under the caller's book directory.
  * With a round: the leg that sealed that progress row (the row's receipt
  * reference names it). Without: the seat's most recently active leg under the
  * ticket, read off the leg directories themselves — rows exist only for accepted
@@ -60,16 +55,8 @@ export function parseTicketLegLocator(token: string): Required<TicketLegAddress>
  * leg directory's mtime: every turn takes and releases the leg's writer lease
  * there. One `runs/` listing and one stat per leg of the seat.
  */
-export function locateTicketLeg(
-  input: TicketLegAddress & { readonly projectRoot: string; readonly home?: string },
-): string {
-  const ticketDirectory = join(
-    activationBookDirectory(
-      resolveActivationLedgerHome(input.home),
-      resolveBookKeyFromGit(input.projectRoot),
-    ),
-    String(input.ticketNumber),
-  );
+export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress): string {
+  const ticketDirectory = join(bookDirectory, String(input.ticketNumber));
   if (!existsSync(ticketDirectory)) {
     throw new CliUsageError(`ticket ${input.ticketNumber} has no records in this project's book: ${ticketDirectory}`);
   }

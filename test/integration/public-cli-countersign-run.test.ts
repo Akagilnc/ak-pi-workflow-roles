@@ -1,11 +1,11 @@
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
- * out via real runAkRole entry; #599 / #987 resume continues via explicit package
- * runId. #1111: court admission leaves diary refresh to the caller; countersign
+ * out via real runAkRole entry; #599 / #987 resume continues the addressed leg.
+ * #1111: court admission leaves diary refresh to the caller; countersign
  * asserts its own ticketNumber, never matching summons prose against book records.
  * Public re-summons mint a new run under the typed ticket (#505 / #987).
- * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
+ * Gate handoff resumes by parent run path. Explicit ak-role resume takes ticket + seat (#1201).
  * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
