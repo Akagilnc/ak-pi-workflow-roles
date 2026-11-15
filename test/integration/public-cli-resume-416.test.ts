@@ -31,7 +31,6 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
@@ -76,7 +75,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-terminal-ok-001";
     const {io}=captureIo();
-    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,boundTicketNumber:416,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -89,7 +88,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
     assert.equal(loaded.run.runId,runId);
     let dispatched=false;let seenSessionFile="";
     const {io:io2}=captureIo();
-    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
+    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high","416","judge"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -122,7 +121,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
     assert.equal(loaded.run.runId,runId);
     let calls=0;
     const {io:io2}=captureIo();
-    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
+    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high","1171","judge"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -145,7 +144,7 @@ test("S5: host-reported provider failure stays loadable for bare resume", async(
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-resumable-state-001";
     const {io}=captureIo();
-    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"429"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"429"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,boundTicketNumber:416,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -159,7 +158,7 @@ test("S5: host-reported provider failure stays loadable for bare resume", async(
     assert.equal(loaded.run.runId,runId);
     let calls=0;
     const {io:io2}=captureIo();
-    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
+    const resumed=await runAkRole(["resume", "--model", "test/caller-seat:high","416","judge"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -170,40 +169,25 @@ test("S5: host-reported provider failure stays loadable for bare resume", async(
   });
 });
 
-test("block1: unknown runId still rejects", async()=>{
-  await withTempHome(async(home)=>{
-    const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    await assert.rejects(() => loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),
-      (err: unknown) => err instanceof CliUsageError && err.code === "AK_ROLE_USAGE");
-    const {io}=captureIo();let dispatched=false;
-    const res=await runAkRole(["resume", "--model", "test/caller-seat:high","missing-416"],{packageRoot,home,cwd:project,io,roleTurnHost: roleTurnHostFromLegacyPiRunner({
-                                                                                          packageRoot,
-                                                                                          principalAuthority: piDurablePrincipalAuthority,
-                                                                                          piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
-                                                                                        })});
-    assert.equal(res.exitCode,2);assert.equal(dispatched,false);
-  });
-});
-
 test("block1: #1091 missing session file still loads; resume attempts host", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-no-principal-001";
     const {io}=captureIo();
-    await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,boundTicketNumber:416,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});return{code:1,stderr:"x\n",timedOut:false,args:[...args]};},
       })});
     const bookKey=resolveBookKeyFromGit(project);
-    const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
+    const runDir=join(home,".ak-roles","books",bookKey,"416","runs",`${runId}@judge`);
     await rm(sessionFileOf(runDir),{force:true});
     // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.runId,runId);
     const {io:io2}=captureIo();let dispatched=false;
-    const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
+    const res=await runAkRole(["resume", "--model", "test/caller-seat:high","416","judge"],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{
@@ -330,7 +314,7 @@ test("block2: count is call-local, manual resume exact once", async()=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-call-local-manual-001";let calls=0;
     const {io}=captureIo();
-    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const first=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"fail"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,boundTicketNumber:416,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -340,7 +324,7 @@ test("block2: count is call-local, manual resume exact once", async()=>{
     assert.equal(calls,3);assert.equal(first.terminal?.autoResumeCount,2);
     let manualCalls=0;
     const {io:io2}=captureIo();
-    const manual=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
+    const manual=await runAkRole(["resume", "--model", "test/caller-seat:high","416","judge"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},io:io2,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,

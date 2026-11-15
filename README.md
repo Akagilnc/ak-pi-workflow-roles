@@ -111,7 +111,7 @@ ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this re
 ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
 # notary — direct summons with a source-run locator; duties are in souls/notary.md
-ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
+ak-role notary --model <provider/model[:thinking]> --source-run <ticket:seat#round|path>
 
 # inspector
 ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
@@ -136,8 +136,8 @@ ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "�
 # analyst  (pending redesign — kept, not maintained as a ledger reader)
 ak-role analyst
 
-# Resume request example; audit continuation: ADR 0003
-ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
+# Resume request example (ticket number + seat); audit continuation: ADR 0003
+ak-role --model <provider/model[:thinking]> resume <ticket> <seat> "<ruling>"
 ```
 
 ## Tests

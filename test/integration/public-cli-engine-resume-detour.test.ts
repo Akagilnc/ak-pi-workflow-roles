@@ -374,6 +374,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          boundTicketNumber: 1201,
           io,
           roleTurnHost: withNestedTrueUnboundDiarist(
             createMinimalHost(async (request) => {
@@ -397,7 +398,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
       let resumedInvocationEngine: unknown;
       {
         const { io, stdout, stderr } = captureIo();
-        const resumed = await runAkRole(["resume", runId], {
+        const resumed = await runAkRole(["resume", "1201", seat], {
           packageRoot,
           home,
           cwd: project,
@@ -453,6 +454,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
+        boundTicketNumber: 1201,
         io,
         roleTurnHost: createMinimalHost(async (request) => {
           await seedPrincipalSession(request);
@@ -476,7 +478,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
     let invocationModel: unknown;
     {
       const { io, stdout, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "1201", "judge"], {
         packageRoot,
         home,
         cwd: project,
@@ -536,6 +538,7 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
+        boundTicketNumber: 1201,
         io,
         roleTurnHost: createMinimalHost(async (request) => {
           await seedPrincipalSession(request);
@@ -555,7 +558,7 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
     let resumedInvocationEngine: unknown = "sentinel";
     {
       const { io, stdout, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "1201", "judge"], {
         packageRoot,
         home,
         cwd: project,

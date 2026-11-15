@@ -578,6 +578,8 @@ test("#1132: an unreadable gate-child conclusion reasks only up to the configure
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
+        // Filed under a ticket so the public address reaches the officer leg.
+        boundTicketNumber: 1132,
         io: captureIo().io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -601,7 +603,7 @@ test("#1132: an unreadable gate-child conclusion reasks only up to the configure
 
       let calls = 0;
       const resumed = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", notaryRunId],
+        ["resume", "--model", "test/caller-seat:high", "1132", "notary"],
         {
           packageRoot,
           home,
@@ -797,7 +799,10 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
         volume.map((payload) => payload.revision),
         Array.from({ length: limit + 1 }, (_, index) => index + 1),
       );
-      assert.equal(typeof result.terminal.runId, "string");
+      // #1201: neither leg reported a ticket — the officer volume names its seat and receipts only.
+      assert.equal(result.terminal.ticket, undefined);
+      assert.equal(result.terminal.receipts?.length, result.terminal.roleOutcome.payloads?.length);
+      assert.equal(result.terminal.receipts?.every((filed) => filed.round === undefined), true);
     });
   }
 });
@@ -866,10 +871,9 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       // #1195: resume identity is the actual audit seat, not a parent-side copy field.
       assert.equal(opened.terminal?.roleOutcome.role, "countersign", `limit ${limit}`);
       assert.equal(opened.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true, `limit ${limit}`);
-      const officerRunId = opened.terminal?.runId;
-      assert.equal(typeof officerRunId, "string", `limit ${limit}`);
+      assert.equal(opened.terminal?.ticket, 1132, `limit ${limit}`);
       const beforeResume = calls.countersign ?? 0;
-      const resumed = await runAkRole(["resume", officerRunId!], env);
+      const resumed = await runAkRole(["resume", "1132", "countersign"], env);
       assert.equal((calls.countersign ?? 0) - beforeResume, limit + 1, `limit ${limit} resume`);
       assert.equal(calls.secretariat, 1, `limit ${limit} resume`);
       assert.equal(resumed.exitCode, 0, `limit ${limit} resume`);

@@ -33,7 +33,7 @@ import {
   readStateRows,
   readCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
-import { payloadFacts, payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 const silentIo = { stdout() {}, stderr() {} };
@@ -201,6 +201,7 @@ function runIdOf(runDirectory: string): string {
   return parsed.runId;
 }
 
+
 function durableErrorCode(runDirectory: string): unknown {
   const terminal = readRunTerminal(runDirectory);
   if (terminal.status !== "present" || terminal.face !== "error") return undefined;
@@ -282,8 +283,7 @@ test("#1253 direct summons mints once after session-id-missing and matches ak-ro
     const created = added(oldRuns, after);
     assert.equal(created.length, 1);
     const newRun = created[0]!;
-    assert.equal(minted.terminal?.runId, runIdOf(newRun));
-    assert.notEqual(minted.terminal?.runId, runIdOf(oldRun));
+    assert.equal(terminalLegDirectory(minted.terminal), newRun);
     assert.equal(durableErrorCode(oldRun), "session-id-missing");
     assert.equal(mintedLog.length, 1);
     assert.equal(mintedLog[0]?.binary, "codex");
@@ -324,7 +324,8 @@ test("#1253 direct summons mints once after session-id-missing and matches ak-ro
     await setControl(controlPath, []);
     const manual = captureIo();
     const manualResume = await runAkRole(
-      ["resume", runIdOf(manualRuns[0]!)],
+      // The seat's most recently active leg under the ticket is the one just born.
+      ["resume", String(TICKET), "notary"],
       callEnv(home, project, manual),
     );
     assert.notEqual(manualResume.exitCode, 0, explain(manual, await readHostLog(logPath)));
@@ -347,7 +348,8 @@ test("#1253 gate summons mints once after the in-place loop returns session-id-m
     const first = captureIo();
     const sealed = await runAkRole(
       ["countersign", "--project", project, "裁：本票是否足以开工。"],
-      callEnv(home, project, first),
+      // Filed under the ticket so the public address reaches the countersign leg.
+      { ...callEnv(home, project, first), boundTicketNumber: TICKET },
     );
     assert.equal(sealed.exitCode, 0, explain(first, await readHostLog(logPath)));
     const notaries = await roleRuns(home, project, "notary");
@@ -363,7 +365,7 @@ test("#1253 gate summons mints once after the in-place loop returns session-id-m
     ], { sticky: true });
     const resumed = captureIo();
     const result = await runAkRole(
-      ["resume", runIdOf(countersigns[0]!), "再核这一轮。"],
+      ["resume", String(TICKET), "countersign", "再核这一轮。"],
       callEnv(home, project, resumed),
     );
     const log = await readHostLog(logPath);
@@ -372,7 +374,7 @@ test("#1253 gate summons mints once after the in-place loop returns session-id-m
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     const created = added(notaries, await roleRuns(home, project, "notary"));
     assert.equal(created.length, 1, explain(resumed, log));
-    assert.equal(result.terminal?.runId, runIdOf(created[0]!));
+    assert.equal(terminalLegDirectory(result.terminal), created[0]);
     assert.equal(durableErrorCode(notaries[0]!), "session-id-missing");
     const codex = log.filter((row) => row.binary === "codex");
     const codexInitial = codex.filter((row) => row.kind === "initial");
@@ -421,7 +423,7 @@ test("#1253 same-host resume continues and a nonzero host exit does not mint", a
     );
     const log = await readHostLog(logPath);
     assert.equal(again.exitCode, 0, explain(continued, log));
-    assert.equal(again.terminal?.runId, runIdOf(runs[0]!));
+    assert.equal(terminalLegDirectory(again.terminal), runs[0]);
     assert.equal(log.some((row) => row.kind === "resume"), true);
     assert.equal(log.some((row) => row.kind === "initial"), false);
     assert.equal((await roleRuns(home, project, "notary")).length, 1);
@@ -549,7 +551,7 @@ test("#1253 a new run's own session-id-missing is returned and does not mint aga
     assert.notEqual(result.exitCode, 0, explain(failed, log));
     const created = added(before, await roleRuns(home, project, "notary"));
     assert.equal(created.length, 1, explain(failed, log));
-    assert.equal(result.terminal?.runId, runIdOf(created[0]!));
+    assert.equal(terminalLegDirectory(result.terminal), created[0]);
     assert.equal(payloadFacts(result.terminal!.roleOutcome).errorCode, "session-id-missing");
     assert.equal(durableErrorCode(created[0]!), "session-id-missing");
     assert.equal(durableErrorCode(before[0]!), "session-id-missing");

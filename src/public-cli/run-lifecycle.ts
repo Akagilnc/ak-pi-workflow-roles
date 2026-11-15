@@ -86,16 +86,15 @@ export type RoleRunRecord = {
   readonly phase?: CoderPhase | FixerPhase;
 };
 
-/** Public manual resume request after the unique CLI parser owns runId + optional message. */
+/** Resume request for one located leg: the public address (ticket + seat) or an internal re-summons. */
 export type PublicResumeRequest = {
   readonly runId: string;
   /**
-   * When already known (gate pass / same-ticket locator), load this directory
-   * instead of re-resolving runId across every book (#1195).
-   * Explicit public `ak-role resume <runId>` leaves this unset.
+   * When already known (public ticket address / gate pass / same-ticket locator),
+   * load this directory instead of re-resolving runId across every book (#1195).
    */
   readonly runDirectory?: string;
-  /** Present when the caller supplied the post-runId argv (including empty string). */
+  /** Present when the caller supplied the message argv (including empty string). */
   readonly message?: string;
   /**
    * Same-ticket re-summons materials (#637). Present only when a public seat
@@ -941,7 +940,7 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
  * parent run path (officer / gate seats, #747 / #987), narrowed to a supplied
  * typed ticket for same-ticket gate re-summons. runId is UUIDv7 — lexicographic
  * max is latest among runs that formed a session principal. No parallel index;
- * callers can use explicit `ak-role resume <runId>`.
+ * callers address a leg explicitly with `ak-role resume <ticket> <seat>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {

@@ -151,7 +151,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     assert.equal(result.exitCode, 0);
     assert.equal(dispatchedPrompt, domainProse);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal!.runId, "run-domain-001");
+    assert.equal(result.terminal!.ticket, undefined);
     assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
   });
 });
@@ -300,7 +300,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
-    assert.equal(result.terminal!.runId, "run-escalate-001");
+    assert.equal(result.terminal!.ticket, undefined);
   });
 });
 test("no lawful typed terminal result exits nonzero; unrecognized keeps identity", async () => {

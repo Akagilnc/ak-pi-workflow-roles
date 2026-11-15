@@ -199,7 +199,6 @@ test("#1214 A5: officer transport_failure returns honestly as typed outcome",
       },
       navigator: { disposition: "no-advice" as const },
       artifacts: [] as const,
-      runId: "01a01214-fail-7000-8000-000000000099",
     };
     const outcome = await requireSubmissionGate({
       context: {
@@ -237,7 +236,6 @@ test("#1214 F2: officer no_receipt returns as typed outcome without throw",
       },
       navigator: { disposition: "no-advice" as const },
       artifacts: [] as const,
-      runId: "01a01214-nore-7000-8000-000000000042",
     };
     const outcome = await requireSubmissionGate({
       context: {

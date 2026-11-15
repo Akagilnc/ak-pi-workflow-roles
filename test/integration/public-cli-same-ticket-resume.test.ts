@@ -55,12 +55,8 @@ import {
 } from "../helpers/hermes-fixture.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
-import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import {
-  CANONICAL_SOURCE_ROLE,
-  CANONICAL_SOURCE_RUN_ID,
-  seedCanonicalSourceRun,
-} from "../helpers/notary-fixtures.ts";
+import { payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
+import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import {
   packageRoot,
   seedRoleRepo as seedGitProject,
@@ -253,7 +249,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   const host = observingSealHost(inner, seen);
 
   // 1) First summons seals pass on a fresh run.
-  const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+  const first = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
     {
       home,
       packageRoot,
@@ -295,7 +291,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   assert.equal(notaryRunsAfterFirst.length, 1, "first summons creates exactly one notary run");
 
   // 2) Same-ticket distinct parent ordinary summons must mint (#747) — old ticket key would resume.
-  const crossParent = await runAkRole(["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+  const crossParent = await runAkRole(["notary", "--source-run", scratch.secondSourcePath],
     {
       home,
       packageRoot,
@@ -331,7 +327,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "another-book",
       "999",
       "runs",
-      `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      scratch.firstSourcePath,
     ),
     { recursive: true },
   );
@@ -348,7 +344,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   );
 
   // 4) Same parent (--source-run) court on the first leg: resume, no seal → not pass.
-  const second = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+  const second = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
     {
       home,
       packageRoot,
@@ -416,10 +412,9 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   );
 
   const openCourtAttemptId = seen[2]!.courtAttemptId!;
-  const runId = firstRunId;
 
   // 5) Bare manual resume continues the still-open no-seal court — not prior seal.
-  const resumed = await runAkRole(["resume", runId], {
+  const resumed = await runAkRole(["resume", "637", "notary"], {
     home,
     packageRoot,
     cwd: project,
@@ -457,7 +452,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   // 6) After open court seals non-pass, further bare resume still reaches the
   // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
   const turnsBeforeBare = turn;
-  const bareAfterSeal = await runAkRole(["resume", runId], {
+  const bareAfterSeal = await runAkRole(["resume", "637", "notary"], {
     home,
     packageRoot,
     cwd: project,
@@ -657,7 +652,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
 
     // 4) Resume with a caller message continues the still-open no-seal court
     // and this turn seals it.
-    const resumed = await runAkRole(["resume", runId, "caller-resume-message"], {
+    const resumed = await runAkRole(["resume", "637", "inspector", "caller-resume-message"], {
       home,
       packageRoot,
       cwd: project,
@@ -760,7 +755,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       "--subject",
       "judge",
       "--source-run",
-      `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      scratch.firstSourcePath,
       "审：本 run 是否合规。",
     ],
     {
@@ -811,7 +806,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       "--subject",
       "judge",
       "--source-run",
-      `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      scratch.firstSourcePath,
       "审：二次传召。",
     ],
     {
@@ -894,7 +889,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       "--subject",
       "judge",
       "--source-run",
-      `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      scratch.secondSourcePath,
       "审：换父腿。",
     ],
     {
@@ -936,7 +931,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
   const host = observingSealHost(inner, seen);
 
   // 1) Ordinary same-ticket summons mints the first run.
-  const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+  const first = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
     {
       home,
       packageRoot,
@@ -960,7 +955,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
       "new",
       "notary",
       "--source-run",
-      `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      scratch.firstSourcePath,
     ],
     {
       home,
@@ -990,7 +985,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
 
   // 3) Ordinary same-parent summons auto-resumes the latest leg under that parent
   // (ADR 0079: 显式派新腿入口 + #747 parent key — not the birth leg).
-  const third = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+  const third = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
     {
       home,
       packageRoot,
@@ -1036,7 +1031,8 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.kind, "initial");
   const priorChildRunId = seen[0]!.runId;
-  assert.equal(priorChild.terminal.runId, priorChildRunId);
+  // #1201: the terminal names its leg through its receipt path, not a run id.
+  assert.equal(terminalLegDirectory(priorChild.terminal), seen[0]!.runDirectory);
 
   const freshChild = await runAkRole(["new", "inspector", "--source-run", firstSourcePath], {
     home,
@@ -1052,7 +1048,7 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
   assert.equal(seen.length, 2);
   assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
   assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
-  assert.equal(freshChild.terminal.runId, seen[1]!.runId);
+  assert.equal(terminalLegDirectory(freshChild.terminal), seen[1]!.runDirectory);
 });
 
 test("#993 public coder: post-submission Inspector bounce resumes same run, then pass settles", async ({ home }) => {
@@ -1195,7 +1191,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
     });
     const host = observingSealHost(sealHost, seen);
 
-    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
       {
         home,
         packageRoot,
@@ -1219,7 +1215,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
     heldLease = await acquireRunWriterLease(runDirectory);
 
     // Same parent path so lookup resumes into the leased run (#747).
-    const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const resumed = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
       {
         home,
         packageRoot,
@@ -1323,7 +1319,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
       },
     };
 
-    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
       {
         home,
         packageRoot,
@@ -1337,10 +1333,9 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     assert.equal(first.exitCode, 0, "initial no-seal mint is still a lawful run");
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
-    const runId = seen[0]!.runId;
     currentJsonLocked = join(runDirectory, "current.json");
 
-    const opened = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const opened = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
       {
         home,
         packageRoot,
@@ -1366,7 +1361,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // Bare resume seals the open court through the real public entry —
     // dispatchPostAdmissionTurn runs with courtAttemptId set, so
     // clearCurrentCourt genuinely executes after settlement.
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "637", "notary"], {
       home,
       packageRoot,
       cwd: project,

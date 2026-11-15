@@ -91,6 +91,9 @@ export async function assertPublicFailureSettlement(input: {
     throw new Error("expected failure role outcome");
   }
   assert.equal(terminal.roleOutcome.cause, input.expectedCause);
+  // #1201: a failure files nothing — no round, no receipt — and carries no run id.
+  assert.equal(terminal.receipts, undefined);
+  assert.equal(Object.hasOwn(terminal, "runId"), false);
   if (input.diagnosticEquals !== undefined) {
     assert.equal(terminal.roleOutcome.diagnostic, input.diagnosticEquals);
   }

@@ -142,17 +142,24 @@ export type TerminalResult = {
   submissionToolCallId?: string;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
-} & (
-  | {
-      runId: string;
-      batch?: undefined;
-    }
-  | {
-      /** Deterministic public batch projection; no parent Role run exists. */
-      batch: "reviewer";
-      runId?: undefined;
-    }
-);
+  /**
+   * #1201 public identity: ticket + seat + round + receipt. The seat is
+   * roleOutcome.role. Absent while the leg has reported no ticket.
+   */
+  ticket?: number;
+  /** One per accepted submission in roleOutcome.payloads, in ledger order. */
+  receipts?: readonly TerminalReceiptRef[];
+  /** Deterministic public batch projection; no parent Role run exists. */
+  batch?: "reviewer";
+};
+
+/** One accepted receipt as the ticket's progress row names it (#1201). */
+export type TerminalReceiptRef = {
+  /** Seat-local round on the ticket; absent while the leg has reported no ticket. */
+  readonly round?: string;
+  /** Path of the receipt original: the row's reference under its subject directory. */
+  readonly receipt: string;
+};
 
 /**
  * Build an advice navigator fact (#959). Prose is presented as submitted;
@@ -229,8 +236,15 @@ export function formatTerminalResult(result: TerminalResult): string {
       }
     }
   }
-  if (result.runId !== undefined) {
-    lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  if (result.ticket !== undefined) {
+    lines.push(`ticket\t${result.ticket}`);
+  }
+  // Newest first, like the submission block below.
+  for (const filed of [...(result.receipts ?? [])].reverse()) {
+    const seat = result.roleOutcome.role;
+    lines.push(
+      `receipt\t${encodeTerminalField(filed.round === undefined ? seat : `${seat}#${filed.round}`)}\t${encodeTerminalField(filed.receipt)}`,
+    );
   }
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);

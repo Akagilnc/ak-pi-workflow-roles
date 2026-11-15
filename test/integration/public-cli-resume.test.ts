@@ -12,7 +12,7 @@ import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-paylo
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import { test } from "vitest";
@@ -270,7 +270,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
 
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-      assert.equal(typeof result.terminal!.runId, "string");
+      assert.equal(result.terminal!.ticket, 1171);
       // Publication is a package fault beside the accepted host terminal.
       // A lawful terminal stops the auto-resume loop.
       assert.equal(dispatches(), 1);
@@ -314,7 +314,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         },
       });
       const { io: rebuildIo } = captureIo();
-      const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
         packageRoot,
         home,
         cwd: project,
@@ -457,6 +457,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // Filed under a ticket so the public address reaches the leg.
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: {
             executeTurn: async (request) => {
@@ -479,7 +481,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         ".ak-roles",
         "books",
         resolveBookKeyFromGit(project),
-        "unbound", "runs",
+        "1171", "runs",
         `${runId}@judge`,
       );
       // Structured fault marker: current.unreadable names the authority error.
@@ -499,7 +501,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
-      const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
         packageRoot,
         home,
         cwd: project,
@@ -562,6 +564,8 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // Filed under a ticket so the public address reaches the leg.
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
@@ -594,7 +598,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1171", "runs",
       `${runId}@judge`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
@@ -602,11 +606,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const legacyState = readCurrentSection(runDirectory, "runState");
     delete legacyState.sessionFile;
     seedCurrentSection(runDirectory, "runState", legacyState);
-    // The persisted principal survives project relocation. Keep the original
-    // project coordinate reachable for the required post-submission audit.
-    const movedProject = join(home, "moved-non-git-project");
-    await rename(project, movedProject);
-    await symlink(movedProject, project);
     const admittedBefore = readCurrentSection(runDirectory, "admitted") as {
       instruction: string;
       attachments: Array<{ path: string }>;
@@ -618,11 +617,11 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     const { io, stderr } = captureIo();
     let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(
-      ["--model", "xai/grok-4.5:high", "resume", runId],
+      ["--model", "xai/grok-4.5:high", "resume", "1171", "judge"],
       {
         packageRoot,
         home,
-        cwd: movedProject,
+        cwd: project,
         credentials: { "openai-codex": true, xai: true },
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
@@ -671,7 +670,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.ok(resumeArgs, stderr.join(""));
     assert.equal(resumed.exitCode, 0, stderr.join(""));
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal!.runId, runId);
+    assert.equal(resumed.terminal!.ticket, 1171);
 
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
@@ -680,7 +679,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
 
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
-    // Resume reopens the pre-relocate principal; seal ticketNumber then relocates.
+    // Resume reopens the exact principal of the addressed leg.
     assert.equal(durable?.sessionFile, sessionFileOf(liveRunDirectory));
     assert.deepEqual([...openedPrincipals], [
       join(sessionDirectory, "session.jsonl"),
@@ -713,6 +712,7 @@ test("resume model override is temporary and does not rewrite persistent config"
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
+        boundTicketNumber: 1171,
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -736,7 +736,7 @@ test("resume model override is temporary and does not rewrite persistent config"
     }
 
     const { io } = captureIo();
-    await runAkRole(["--model", "xai/grok-4.5:medium", "resume", runId], {
+    await runAkRole(["--model", "xai/grok-4.5:medium", "resume", "1171", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -796,6 +796,8 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // Each probe leg is filed under the ticket; the latest one is the address default.
+          boundTicketNumber: 1171,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
@@ -833,7 +835,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
       const { io } = captureIo();
       let modelLessArgs: string[] | undefined;
       // Bare resume — no --model; live seat table (config set above) is the source.
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "1171", "judge"], {
         packageRoot,
         home,
         cwd: project,
@@ -889,7 +891,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
       const { io } = captureIo();
       let explicitArgs: string[] | undefined;
       const resumed = await runAkRole(
-        ["--model", "openai-codex/gpt-5.6-sol:off", "resume", runId],
+        ["--model", "openai-codex/gpt-5.6-sol:off", "resume", "1171", "judge"],
         {
           packageRoot,
           home,
@@ -940,7 +942,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
   });
 });
 
-test("unknown run id rejects; terminal run still reaches host (#416/#1091)", async () => {
+test("terminal run still reaches host on resume (#416/#1091)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -956,23 +958,6 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
       };
     };
 
-    {
-      const { io } = captureIo();
-      const unknown = await runAkRole(["resume", "--model", "test/caller-seat:high", "does-not-exist"], {
-        packageRoot,
-        home,
-        cwd: project,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: runner,
-        }),
-      });
-      assert.equal(unknown.exitCode, 2);
-      assert.equal(dispatches, 0);
-    }
-
     // Terminal failure run: #416/#1091 load does not gate on terminal state.
     const terminalId = "run-terminal-reject-001";
     {
@@ -983,6 +968,7 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => terminalId,
+        boundTicketNumber: 1171,
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -1003,7 +989,7 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
     dispatches = 0;
     {
       const { io } = captureIo();
-      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
         packageRoot,
         home,
         cwd: project,
@@ -1081,7 +1067,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
             throw new Error("stderr sink failed");
           },
         };
-        const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
           packageRoot,
           home,
           cwd: project,
@@ -1369,6 +1355,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          boundTicketNumber: 1171,
           principalAuthority,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
@@ -1403,7 +1390,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1171", "runs",
       `${runId}@judge`,
     );
     const durable = await readRoleRunState(runDirectory, principalAuthority);
@@ -1418,7 +1405,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
     // #1091: package no longer gates resume on local session files.
     const { io } = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -1486,7 +1473,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1171", "runs",
       `${runId}@judge`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
@@ -1517,7 +1504,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
 
     const { io } = captureIo();
     let dispatches = 0;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -1579,6 +1566,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         cwd: project,
         credentials: creds,
         createRunId: () => runId,
+        // Each case leg is filed under ticket 471 in its own project book.
+        boundTicketNumber: 471,
         io,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -1596,7 +1585,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         ".ak-roles",
         "books",
         resolveBookKeyFromGit(project),
-        "unbound", "runs",
+        "471", "runs",
         `${runId}@${role}`,
       );
       const sessionDirectory = sessionDirectoryOf(runDirectory);
@@ -1615,6 +1604,9 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       { role: "judge", runId: "471-j-ws", message: "  ruling with\nnewline  " },
       { role: "coder", runId: "471-c-envelope", message: '{"kind":"ak-user-dialogue","body":"ACTUAL"}' },
       { role: "judge", runId: "471-j-dd", message: "--" },
+      // #1201: a message that looks like a comment or a flag is still the message.
+      { role: "judge", runId: "471-j-hash", message: "#not-a-comment" },
+      { role: "judge", runId: "471-j-flag", message: "--model" },
       { role: "coder", runId: "471-c", message: "coder owner note" },
       { role: "fixer", runId: "471-f", message: "fixer owner note" },
       { role: "reviewer", runId: "471-r", message: "reviewer owner note" },
@@ -1631,8 +1623,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       // Resume needs a caller model (#178); message tests are orthogonal.
       const resumeArgv =
         c.message === undefined
-          ? ["resume", "--model", "xai/grok-4.5:high", c.runId]
-          : ["resume", "--model", "xai/grok-4.5:high", c.runId, c.message];
+          ? ["resume", "--model", "xai/grok-4.5:high", "471", c.role]
+          : ["resume", "--model", "xai/grok-4.5:high", "471", c.role, c.message];
       const { io, stderr } = captureIo();
       let seen: string[] | undefined;
       let seenStdin: string | undefined;
@@ -1658,6 +1650,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
+      // The seat flag between `resume` and the ticket took effect.
+      assert.equal(seen[seen.indexOf("--model") + 1], "grok-4.5");
       // Resume continues the existing method turn instead of invoking its Skill again.
       const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedBody = rawPrompt;
@@ -1673,8 +1667,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       const runId = "471-extra";
       await admit429("judge", runId, project);
       for (const bad of [
-        ["resume", runId, "one", "two"],
-        ["resume", runId, "--", "extra"],
+        ["resume", "471", "judge", "one", "two"],
+        ["resume", "471", "judge", "--", "extra"],
       ] as const) {
         const { io } = captureIo();
         let n = 0;
@@ -1716,16 +1710,17 @@ test("public resume failures persist structured diagnostics", async () => {
       seedGitProject(gone);
       const sourceRun = join(home, "audited-source");
       await mkdir(sourceRun, { recursive: true });
+      // Each scenario's legs are filed under their own ticket: the public address is ticket + seat.
       async function seed(input: {
         readonly runId: string;
         readonly role: "secretariat" | "auditor" | "judge";
         readonly session: boolean;
         readonly projectRoot: string;
-        readonly ticketNumber?: number;
+        readonly ticketNumber: number;
         readonly sourceRunPath?: string;
         readonly correlationId?: string;
       }) {
-        const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
+        const runDirectory = join(home, ".ak-roles", "books", bookKey, String(input.ticketNumber), "runs", `${input.runId}@${input.role}`);
         const sessionDirectory = sessionDirectoryOf(runDirectory);
         const sessionFile = join(sessionDirectory, "session.jsonl");
         await mkdir(sessionDirectory, { recursive: true });
@@ -1740,7 +1735,7 @@ test("public resume failures persist structured diagnostics", async () => {
           instruction: "x",
           instructionEmpty: false,
           attachments: [] as const,
-          ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+          ticketNumber: input.ticketNumber,
           ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
         };
@@ -1760,7 +1755,7 @@ test("public resume failures persist structured diagnostics", async () => {
         return { runDirectory, sessionFile, sessionDirectory };
       }
 
-      await seed({
+      const noWorkspace = await seed({
         runId: "1058-no-workspace",
         role: "secretariat",
         session: true,
@@ -1772,10 +1767,12 @@ test("public resume failures persist structured diagnostics", async () => {
         role: "auditor",
         session: true,
         projectRoot: project,
+        ticketNumber: 2001,
         sourceRunPath: sourceRun,
       });
       const unknownHost = await seed({
         runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project,
+        ticketNumber: 2002,
       });
       await rm(gone, { recursive: true, force: true });
 
@@ -1789,7 +1786,7 @@ test("public resume failures persist structured diagnostics", async () => {
         const result = await runAkRole([...argv], {
           packageRoot,
           home,
-          cwd: home,
+          cwd: project,
           credentials: { "openai-codex": true, xai: true },
           io: captured.io,
           hostAdapters: [
@@ -1829,7 +1826,7 @@ test("public resume failures persist structured diagnostics", async () => {
       const assertPreHostResumeDiagnostic = async (
         runDirectory: string,
         runId: string,
-        argv: readonly string[] = ["resume", "--model", "test/caller-seat:high", runId],
+        argv: readonly string[],
       ) => {
         const callsBefore = seen.length;
         const diagnosticsBefore = runLogPayloads(runDirectory, "resume-diagnostic");
@@ -1863,9 +1860,14 @@ test("public resume failures persist structured diagnostics", async () => {
         role: "secretariat",
         session: true,
         projectRoot: project,
+        ticketNumber: 2003,
       });
       seedCurrentSection(corruptRunState.runDirectory, "runState", {});
-      await assertPreHostResumeDiagnostic(corruptRunState.runDirectory, "1058-corrupt-run-state");
+      await assertPreHostResumeDiagnostic(
+        corruptRunState.runDirectory,
+        "1058-corrupt-run-state",
+        ["resume", "--model", "test/caller-seat:high", "2003", "secretariat"],
+      );
       assert.deepEqual(readCurrentSection(corruptRunState.runDirectory, "runState"), {});
 
       const seatSelectionFailure = await seed({
@@ -1873,10 +1875,11 @@ test("public resume failures persist structured diagnostics", async () => {
         role: "secretariat",
         session: true,
         projectRoot: project,
+        ticketNumber: 2004,
       });
       // First: real host-dispatched failure leaves terminal.face=error (#1161 T2 counterexample setup).
       const firstDispatched = await resume([
-        "resume", "--model", "test/caller-seat:high", "1058-seat-selection-failure",
+        "resume", "--model", "test/caller-seat:high", "2004", "secretariat",
       ]);
       assert.ok(seen.length > 0);
       const { record: oldTerminal } = assertThisCallDispatchedFailure(
@@ -1893,7 +1896,7 @@ test("public resume failures persist structured diagnostics", async () => {
       const { result: selectionFailureResult, record: thisCallDiagnostic } = await assertPreHostResumeDiagnostic(
         seatSelectionFailure.runDirectory,
         "1058-seat-selection-failure",
-        ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
+        ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "2004", "secretariat"],
       );
       assert.equal(selectionFailureResult.hostFailure?.kind, "host-unregistered");
       assert.notEqual(thisCallDiagnostic.diagnostic, oldTerminal.diagnostic);
@@ -1907,20 +1910,23 @@ test("public resume failures persist structured diagnostics", async () => {
         role: "secretariat",
         session: true,
         projectRoot: project,
+        ticketNumber: 2005,
       });
       const child = await seed({
         runId: "1058-child-success",
         role: "judge",
         session: true,
         projectRoot: project,
+        ticketNumber: 2005,
         correlationId: "1058-parent-preload-failure",
       });
       const dispatchedParent = await seed({
         runId: "1058-parent-dispatch-failure", role: "secretariat", session: true, projectRoot: project,
+        ticketNumber: 2006,
       });
       const dispatchedChild = await seed({
         runId: "1058-child-before-parent-dispatch", role: "judge", session: true,
-        projectRoot: project, correlationId: "1058-parent-dispatch-failure",
+        projectRoot: project, ticketNumber: 2006, correlationId: "1058-parent-dispatch-failure",
       });
       // The parent leg never had an admitted page: no row, no rendered section.
       clearCurrentSection(parent.runDirectory, "admitted");
@@ -1962,7 +1968,7 @@ test("public resume failures persist structured diagnostics", async () => {
       const parentDiagnosticsBefore = runLogPayloads(parent.runDirectory, "resume-diagnostic");
       const parentResume = captureIo();
       const parentResult = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", "1058-child-success"],
+        ["resume", "--model", "test/caller-seat:high", "2005", "judge"],
         {
           packageRoot,
           home,
@@ -1998,7 +2004,7 @@ test("public resume failures persist structured diagnostics", async () => {
 
       const dispatchedParentIo = captureIo();
       const dispatchedParentResult = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", "1058-child-before-parent-dispatch"],
+        ["resume", "--model", "test/caller-seat:high", "2006", "judge"],
         {
           packageRoot, home, cwd: project,
           credentials: { "openai-codex": true, xai: true },
@@ -2014,27 +2020,26 @@ test("public resume failures persist structured diagnostics", async () => {
         "1058-parent-dispatch-failure",
       );
 
-      const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
-      const relocatedDirectory = join(home, ".ak-roles", "books", bookKey, "1058", "runs", "1058-no-workspace@secretariat");
+      const deletedResult = await resume(["resume", "--model", "test/caller-seat:high", "1058", "secretariat"]);
       const { record: deletedRecord } = assertThisCallDispatchedFailure(
         deletedResult,
-        relocatedDirectory,
+        noWorkspace.runDirectory,
         "1058-no-workspace",
       );
       assert.equal(deletedRecord.diagnostic, "zeta-unique-host-diagnostic");
       assert.equal((deletedRecord as { details?: { exitCode?: unknown } }).details?.exitCode, 1);
 
       const callsBeforeSubject = seen.length;
-      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      await resume(["resume", "--model", "test/caller-seat:high", "2001", "auditor"]);
       assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
       assert.equal(seen.length, callsBeforeSubject + 1);
 
       process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      await resume(["resume", "--model", "test/caller-seat:high", "2001", "auditor"]);
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
 
-      const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
+      const unknown = await resume(["resume", "--model", "test/caller-seat:high", "2002", "secretariat"]);
       const { record: unknownRecord } = assertThisCallDispatchedFailure(
         unknown,
         unknownHost.runDirectory,

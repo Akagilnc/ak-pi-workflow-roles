@@ -43,7 +43,8 @@ export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as cons
 
 /**
  * Run-relative path of the log that holds one detour call's record.
- * Openable once the run directory is known from the terminal's run id.
+ * Openable once the leg directory is known from the paths the terminal reports
+ * (receipt, artifact, or the no-receipt run pointer).
  * Contains no runId bytes itself (#108 + #537).
  */
 export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = RUN_LOG_FILE;

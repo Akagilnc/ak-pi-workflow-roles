@@ -20,7 +20,8 @@ function resumedSessionIdMissing(result: unknown, runId: string): boolean {
   if (typeof result !== "object" || result === null) return false;
   const terminal = (result as { terminal?: unknown }).terminal;
   if (typeof terminal !== "object" || terminal === null) return false;
-  if ((terminal as { runId?: unknown }).runId !== runId) return false;
+  // The failure belongs to the resumed leg, not to another seat presented in its place.
+  if ((result as { admitted?: { runId?: unknown } }).admitted?.runId !== runId) return false;
   const outcome = (terminal as { roleOutcome?: unknown }).roleOutcome;
   if (typeof outcome !== "object" || outcome === null) return false;
   if ((outcome as { kind?: unknown }).kind !== "failure") return false;

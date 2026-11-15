@@ -63,6 +63,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 - 原续跑记录：`attempt-history`（每个派发的回合一行）。
 - `turn-delivery`：宿主每实际起跑一次，发出的系统提示与输出 schema 一行（催交回合各算一次；pi 取最后一个 `before_agent_start` 处理器留下的提示）。写失败只申报、不拦起跑。
 - `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）；不投影进父腿 `current.json`。
+- `progress`：本腿每写下一行进度（封存时、报号归位补轮时）追加一行，带那一行的 `round` 与 `receipt` 引用（封存行另带 `toolCallId`）。结算读它给终局报票、席、轮与回执，不在回合结束后回读票级 `current.jsonl`（#1201）。
 
 ### `state.jsonl`——状态事实行
 

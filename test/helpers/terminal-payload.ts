@@ -1,4 +1,24 @@
-import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+import assert from "node:assert/strict";
+import { dirname } from "node:path";
+
+import type { TerminalResult, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+
+/**
+ * The leg a terminal belongs to, read off the paths it reports (#1201: no run id):
+ * a receipt, else a published record, else the no-receipt run pointer.
+ */
+export function terminalLegDirectory(terminal: TerminalResult | undefined): string {
+  const receipt = terminal?.receipts?.[0]?.receipt;
+  const record = terminal?.artifacts[0]?.path;
+  const runPointer = terminal?.roleOutcome.decisiveFacts?.runPointer;
+  const leg = receipt !== undefined
+    ? dirname(dirname(receipt))
+    : record !== undefined
+      ? dirname(record)
+      : typeof runPointer === "string" ? runPointer : undefined;
+  assert.ok(leg, "terminal names no leg path");
+  return leg;
+}
 
 /** Object-root payloads in ledger order. Sequence, not a sole pick or merge. */
 export function objectPayloads(

@@ -18,6 +18,7 @@ import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -28,7 +29,9 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { withOutsideTempRoot, withTempHome } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
-const VERDICT = { status: "converged", mark: 1 } as const;
+const TICKET = 1057;
+// The verdict names its ticket: the judge leg and the officers it summons are filed under it.
+const VERDICT = { status: "converged", mark: 1, ticketNumber: TICKET } as const;
 const RULING = "ruling-1057";
 
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
@@ -51,8 +54,9 @@ type Observation = {
     readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
+  /** Resume the officer the first call presented, by its public address. */
   resume(message?: string): Promise<CliResult>;
-  resumeRun(runId: string, message?: string): Promise<CliResult>;
+  resumeSeat(seat: string, message?: string): Promise<CliResult>;
 };
 
 async function runJudge(
@@ -185,8 +189,8 @@ async function runJudge(
       parentMessages,
       judgeSubmissions,
       officerSessions,
-      async resumeRun(runId: string, message?: string) {
-        const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
+      async resumeSeat(seat: string, message?: string) {
+        const args = ["resume", String(TICKET), seat, ...(message === undefined ? [] : [message])];
         const resumeCapture = captureIo();
         return runAkRole(args, {
           packageRoot,
@@ -198,9 +202,8 @@ async function runJudge(
         });
       },
       async resume(message?: string) {
-        const officerRunId = first.terminal?.runId;
-        assert.equal(typeof officerRunId, "string");
-        return this.resumeRun(officerRunId!, message);
+        assert.equal(first.terminal?.ticket, TICKET);
+        return this.resumeSeat(first.terminal!.roleOutcome.role, message);
       },
     });
   }, { prefix: "ak-1057-resume-" });
@@ -225,7 +228,15 @@ function assertEscalationPresented(
   assert.equal(terminal.roleOutcome.kind, "accepted");
   if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted officer terminal");
   assert.deepEqual(terminal.roleOutcome.payloads?.at(-1), receipt);
-  assert.ok(typeof terminal.runId === "string" && terminal.runId.length > 0);
+  // #1201: the parent call points at the officer by ticket, seat and round — the officer's own row.
+  const officerRow = readTicketProgressLines(join(observed.parentRunDirectory, "..", ".."))
+    .filter((row) => row.seat === role).at(-1);
+  assert.ok(officerRow);
+  assert.equal(terminal.ticket, TICKET);
+  assert.deepEqual(
+    terminal.receipts?.map((filed) => [filed.round, filed.receipt]),
+    [[officerRow.round, join(observed.parentRunDirectory, "..", "..", officerRow.receipt)]],
+  );
   assert.ok(observed.firstStdout.length > 0, "the first escalation must emit its terminal on stdout");
 }
 
@@ -443,7 +454,7 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
-    const resumed = await observed.resumeRun(observed.parentRunId, "new review");
+    const resumed = await observed.resumeSeat("judge", "new review");
     assert.equal(resumed.exitCode, 0);
     assert.equal(notaryCalls, 2);
     assert.equal(auditorCalls, 2);
@@ -476,9 +487,8 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
     assertEscalationPresented(observed, "auditor", { status: "escalate", mark: 4 });
-    const oldAuditorRunId = observed.first.terminal?.runId;
     // New parent seal B while old auditor is still escalated.
-    const second = await observed.resumeRun(observed.parentRunId, "new review");
+    const second = await observed.resumeSeat("judge", "new review");
     assert.equal(second.exitCode, 0);
     assert.equal(notaryCalls, 2, "second seal must enter notary");
     assert.equal(second.terminal?.roleOutcome.role, "notary");
@@ -489,7 +499,7 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
       "escalate",
     );
     // Resume seal-1 auditor; must not settle seal-2 as fully audited (no judge accepted).
-    const afterOld = await observed.resumeRun(oldAuditorRunId!, RULING);
+    const afterOld = await observed.resumeSeat("auditor", RULING);
     assert.equal(afterOld.exitCode, 0);
     assert.equal(auditorCalls, 2, "old auditor resume converges once");
     assert.ok(notaryCalls >= 2, "seal-2 still has its own notary path");

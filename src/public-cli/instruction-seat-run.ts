@@ -796,6 +796,11 @@ async function runOmittedLensBatch(
       reason: "Reviewer batch has no parent-run Navigator attendance",
     },
     artifacts: terminals.flatMap((item) => item.artifacts),
+    // #1201: each lens reports its own round and receipt (lens is the round suffix).
+    ...(terminals[0]?.ticket === undefined ? {} : { ticket: terminals[0].ticket }),
+    ...(terminals.some((item) => item.receipts !== undefined)
+      ? { receipts: terminals.flatMap((item) => item.receipts ?? []) }
+      : {}),
   };
   const childRunDirectory = children.completeness.admitted?.runDirectory ?? children.correctness.admitted?.runDirectory;
   if (childRunDirectory !== undefined) await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, childRunDirectory);

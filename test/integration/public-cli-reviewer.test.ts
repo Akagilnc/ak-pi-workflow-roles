@@ -3,6 +3,7 @@ import { readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 /**
@@ -24,8 +25,9 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
@@ -413,7 +415,9 @@ test("default dual-lens admits both axes without a parent run", async () => {
     const captured: string[][] = [];
     const childHeads: string[] = [];
     const { io, stdout } = captureIo();
-    // #1199: first seal omits ticketNumber → unbound staging (empty round); report later.
+    // Each lens submits twice in its one turn: the first receipt names no ticket
+    // (staged on the still-unfiled leg), the second names it — the leg is filed
+    // and the staged row is published with its lens round (#1199).
     const result = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
       "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
@@ -429,7 +433,18 @@ test("default dual-lens admits both axes without a parent run", async () => {
           cwd: options.cwd,
           encoding: "utf8",
         }).trim());
-        return lawfulChildTurn(args, { omitTicketNumber: true });
+        const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await mkdir(dirname(sessionFile), { recursive: true });
+        await sealAcceptedSubmissionForSpawn({
+          cwd: options.cwd,
+          env: options.env,
+          sessionFile,
+          role: "reviewer",
+          details: lawfulReviewerReceipt(lens, "completed", { omitTicketNumber: true }),
+          toolCallId: `staged-${lens}`,
+        });
+        return lawfulChildTurn(args);
       }),
     });
 
@@ -456,119 +471,66 @@ test("default dual-lens admits both axes without a parent run", async () => {
     assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
 
+    // #1199: dual-lens rounds are independent (`<n>.<lens>`); no occupancy placeholders.
+    // #1201: each lens reports its own rounds and receipts — the rows it wrote, no run id.
     const bookKey = resolveBookKeyFromGit(project);
-    const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
-    // Query external structured receipts before cardinality asserts.
-    const completenessRunId = result.terminal?.reviewerChildren?.completeness?.runId;
-    const correctnessRunId = result.terminal?.reviewerChildren?.correctness?.runId;
-    if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
-      assert.fail("dual-lens children must disclose runId");
-    }
-    assert.equal(
-      readCurrentSection(
-        join(unboundDir, "runs", `${completenessRunId}@reviewer`),
-        "admitted",
-      ).lens as string,
-      "completeness",
-    );
-    assert.equal(
-      readCurrentSection(
-        join(unboundDir, "runs", `${correctnessRunId}@reviewer`),
-        "admitted",
-      ).lens as string,
-      "correctness",
-    );
-    const readLegReceipts = async (runId: string, root: string): Promise<readonly Record<string, unknown>[]> => {
-      const dir = join(root, "runs", `${runId}@reviewer`, "receipts");
-      const names = (await readdir(dir)).filter((name) => name.endsWith(".json")).sort(
-        (a, b) => Number(a.replace(/\.json$/, "")) - Number(b.replace(/\.json$/, "")),
+    const ticketDir = join(home, ".ak-roles", "books", bookKey, "1171");
+    const progress = readTicketProgressLines(ticketDir).filter((line) => line.seat === "reviewer");
+    const legByLens: Record<string, string> = {};
+    for (const lens of ["completeness", "correctness"] as const) {
+      const child: TerminalResult | undefined = result.terminal?.reviewerChildren?.[lens];
+      assert.ok(child);
+      assert.equal(child.ticket, 1171);
+      const lensRows = progress.filter((line) => line.round.endsWith(`.${lens}`));
+      assert.deepEqual(
+        lensRows.map((line) => line.round),
+        [`1.${lens}`, `2.${lens}`],
+        `${lens}: rounds must be continuous 1..n with no duplicates`,
       );
-      return Promise.all(
-        names.map(async (name) =>
-          JSON.parse(await readFile(join(dir, name), "utf8")) as Record<string, unknown>
-        ),
+      assert.deepEqual(
+        child.receipts?.map((filed) => [filed.round, filed.receipt]),
+        lensRows.map((line) => [line.round, join(ticketDir, line.receipt)]),
+        `${lens}: the lens reports the rows it wrote`,
       );
-    };
-    const batchByLens = {
-      completeness: await readLegReceipts(completenessRunId, unboundDir),
-      correctness: await readLegReceipts(correctnessRunId, unboundDir),
-    } as const;
-    const staged = readTicketProgressLines(unboundDir).filter((line) => line.seat === "reviewer");
-    assert.equal(
-      captured.length,
-      batchByLens.completeness.length + batchByLens.correctness.length,
-      `dispatch count must match queried sealed receipts; captured=${captured.length}`,
-    );
-    assert.equal(
-      staged.length,
-      batchByLens.completeness.length + batchByLens.correctness.length,
-      "staged progress rows must match queried sealed receipts",
-    );
-    assert.ok(staged.every((line) => line.round === ""), "unbound staging keeps round empty");
-    for (const [lens, runId] of [
-      ["completeness", completenessRunId],
-      ["correctness", correctnessRunId],
-    ] as const) {
-      const lensStaged = staged.filter((line) => line.receipt.includes(`${runId}@reviewer`));
-      const received = batchByLens[lens];
-      assert.equal(lensStaged.length, received.length, `${lens}: staged rows vs sealed receipts`);
-      for (let index = 0; index < received.length; index += 1) {
-        const body = JSON.parse(
-          await readFile(join(unboundDir, lensStaged[index]!.receipt), "utf8"),
-        ) as unknown;
-        assert.deepEqual(body, received[index], `${lens} staged receipt ${index + 1}`);
-      }
+      const legDirectory = terminalLegDirectory(child);
+      legByLens[lens] = legDirectory;
+      assert.equal(readCurrentSection(legDirectory, "admitted").lens as string, lens);
+      assert.deepEqual(
+        await Promise.all(lensRows.map(async (line) =>
+          JSON.parse(await readFile(join(ticketDir, line.receipt), "utf8")) as unknown)),
+        [
+          lawfulReviewerReceipt(lens, "completed", { omitTicketNumber: true }),
+          lawfulReviewerReceipt(lens),
+        ],
+        `${lens}: each round's receipt is the sealed submission`,
+      );
     }
+    assert.equal(result.terminal?.ticket, 1171);
+    assert.deepEqual(result.terminal?.receipts, [
+      ...result.terminal!.reviewerChildren!.completeness!.receipts!,
+      ...result.terminal!.reviewerChildren!.correctness!.receipts!,
+    ]);
 
-    // Report ticket on each unbound leg — publish must keep sealed lens suffixes.
-    for (const runId of [completenessRunId, correctnessRunId]) {
-      const { io: resumeIo, stdout: resumeStdout } = captureIo();
+    // #1201: a lens-suffixed round names that lens's leg.
+    for (const lens of ["correctness", "completeness"] as const) {
+      const before = captured.length;
       const resumed = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", runId],
+        ["resume", "--model", "test/caller-seat:high", "1171", `reviewer#1.${lens}`],
         {
           packageRoot,
           home,
           cwd: project,
-          io: resumeIo,
-          roleTurnHost: reviewerHost(async (args) => lawfulChildTurn(args)),
+          io: captureIo().io,
+          roleTurnHost: reviewerHost(async (args) => {
+            captured.push([...args]);
+            return lawfulChildTurn(args);
+          }),
         },
       );
-      assert.equal(resumed.exitCode, 0, resumeStdout.join("") || `resume ${runId} failed`);
-      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    }
-
-    // #1199: dual-lens rounds are independent (`<n>.<lens>`); no occupancy placeholders.
-    // Query ticket-leg sealed receipts (external structured) vs progress — 1:1, continuous, no dup.
-    const ticketDir = join(home, ".ak-roles", "books", bookKey, "1171");
-    const publishedByLens = {
-      completeness: await readLegReceipts(completenessRunId, ticketDir),
-      correctness: await readLegReceipts(correctnessRunId, ticketDir),
-    } as const;
-    const progress = readTicketProgressLines(ticketDir).filter((line) => line.seat === "reviewer");
-    for (const [lens, runId] of [
-      ["completeness", completenessRunId],
-      ["correctness", correctnessRunId],
-    ] as const) {
-      const received = publishedByLens[lens];
-      const lensRows = progress.filter((line) => line.round.endsWith(`.${lens}`));
-      assert.deepEqual(
-        lensRows.map((line) => line.round),
-        received.map((_, index) => `${index + 1}.${lens}`),
-        `${lens}: rounds must be continuous 1..n with no duplicates`,
-      );
-      for (let index = 0; index < received.length; index += 1) {
-        const row = lensRows[index]!;
-        assert.ok(
-          row.receipt.includes(`${runId}@reviewer`),
-          `${lens} round ${row.round}: receipt path must stay on this leg`,
-        );
-        const receiptBody = JSON.parse(await readFile(join(ticketDir, row.receipt), "utf8")) as unknown;
-        assert.deepEqual(
-          receiptBody,
-          received[index],
-          `${lens} round ${row.round}: progress receipt must equal sealed receipt`,
-        );
-      }
+      assert.equal(resumed.exitCode, 0, `resume reviewer#1.${lens}`);
+      assert.equal(captured.length, before + 1);
+      const resumedSession = captured.at(-1)![captured.at(-1)!.indexOf("--session") + 1]!;
+      assert.equal(dirname(dirname(resumedSession)), legByLens[lens]);
     }
     await assert.rejects(
       () => access(join(
@@ -970,6 +932,8 @@ test("ak-role resume continues reviewer with fixed base", async () => {
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
+        // Filed under the ticket from admission so the public address reaches the leg.
+        boundTicketNumber: 1171,
         io,
         roleTurnHost: reviewerHost(async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
@@ -983,7 +947,7 @@ test("ak-role resume continues reviewer with fixed base", async () => {
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
-      home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`,
+      home, ".ak-roles", "books", bookKey, "1171", "runs", `${runId}@reviewer`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as Record<string, unknown> & {
@@ -1002,7 +966,7 @@ test("ak-role resume continues reviewer with fixed base", async () => {
     let resumeStdin: string | undefined;
     let resumeCwd: string | undefined;
     const resumed = await runAkRole([
-      "resume", "--model", "test/caller-seat:high", "--engine", "agy", runId,
+      "resume", "--model", "test/caller-seat:high", "--engine", "agy", "1171", "reviewer",
       "调用者原话",
     ], {
       packageRoot,
@@ -1090,29 +1054,22 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
         if (args.includes("--provider")) {
           capturedProviders.push(args[args.indexOf("--provider") + 1]!);
         }
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
-        await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-        return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+        // Each lens files its receipt under ticket 1171.
+        return lawfulChildTurn(args);
       }),
     });
 
-    assert.equal(batch.exitCode, 1, stdout.join(""));
-    const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
-    const correctnessRunId = batch.terminal?.reviewerChildren?.correctness?.runId;
-    if (typeof completenessRunId !== "string" || typeof correctnessRunId !== "string") {
-      assert.fail("dual-lens children must disclose runId");
-    }
-    assert.notEqual(completenessRunId, correctnessRunId);
+    assert.equal(batch.exitCode, 0, stdout.join(""));
+    const completenessLeg = terminalLegDirectory(batch.terminal?.reviewerChildren?.completeness);
+    const correctnessLeg = terminalLegDirectory(batch.terminal?.reviewerChildren?.correctness);
+    assert.notEqual(completenessLeg, correctnessLeg);
     assert.equal(capturedProviders.length >= 2, true);
     for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
 
     // Durable identity matches the caller project (10a); one durable page is enough.
-    const bookKey = resolveBookKeyFromGit(project);
-    const admitted = readCurrentSection(
-      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${completenessRunId}@reviewer`),
-      "admitted",
-    ) as { projectRoot: string; baseRevision: string; lens: string };
+    const admitted = readCurrentSection(completenessLeg, "admitted") as {
+      projectRoot: string; baseRevision: string; lens: string;
+    };
     assert.equal(realpathSync(admitted.projectRoot), callerProjectRoot);
     assert.equal(admitted.baseRevision, "HEAD~1");
     assert.equal(admitted.lens, "completeness");
@@ -1121,7 +1078,7 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
     const { io: resumeIo, stdout: resumeStdout } = captureIo();
     let resumeCwd: string | undefined;
     const resumed = await runAkRole(
-      ["resume", "--model", "test/caller-seat:high", completenessRunId],
+      ["resume", "--model", "test/caller-seat:high", "1171", "reviewer#1.completeness"],
       {
         packageRoot,
         home,
@@ -1178,15 +1135,13 @@ test("default dual-lens relative --project and inline --base fail closed like si
         }),
       });
       assert.equal(batch.exitCode, 1, batchStdout.join(""));
-      const completenessRunId = batch.terminal?.reviewerChildren?.completeness?.runId;
-      if (typeof completenessRunId !== "string") {
-        assert.fail("completeness child must disclose runId");
-      }
-      const bookKey = resolveBookKeyFromGit(project);
+      // The failed child names its leg through its error record path (no run id).
       const admitted = readCurrentSection(
-        join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${completenessRunId}@reviewer`),
+        terminalLegDirectory(batch.terminal?.reviewerChildren?.completeness),
         "admitted",
-      ) as { projectRoot: string; baseRevision: string };
+      ) as {
+        projectRoot: string; baseRevision: string;
+      };
       assert.equal(realpathSync(admitted.projectRoot), expectedProjectRoot);
       assert.equal(admitted.baseRevision, "HEAD~1");
     });

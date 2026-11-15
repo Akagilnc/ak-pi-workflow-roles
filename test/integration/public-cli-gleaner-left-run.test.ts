@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -178,6 +179,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        boundTicketNumber: 1201,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -203,15 +205,22 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
       "timeout",
     );
 
-    const coords = issuePiDurablePrincipalCoordinates({
+    const issued = issuePiDurablePrincipalCoordinates({
       cwd: project,
       runId,
       role: "gleaner-left",
       home,
     });
+    // The leg is filed under ticket 1201 from admission.
+    const coords = roleRunPlacement(issued.ledgerHome, {
+      bookKey: issued.bookKey,
+      subject: { ticketNumber: 1201 },
+      runId,
+      role: "gleaner-left",
+    });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1201", "gleaner-left"], {
       home,
       packageRoot,
       cwd: project,
@@ -265,6 +274,7 @@ test("gleaner-left resume timeout is not masked by a prior-attempt residual", as
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        boundTicketNumber: 1201,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -282,7 +292,7 @@ test("gleaner-left resume timeout is not masked by a prior-attempt residual", as
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt");
 
     const { io, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1201", "gleaner-left"], {
       home,
       packageRoot,
       cwd: project,

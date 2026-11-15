@@ -71,8 +71,10 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     await savePublicCliConfig(config, home);
     const runId = "01a0esc471-0000-7000-8000-000000000001";
     const ruling = "owner ruling: accept the plan";
+    const TICKET = 471;
     const escalateDetails = {
       status: "escalate" as const,
+      ticketNumber: TICKET,
       decisionGate: {
         question: "Ship or hold?",
         options: ["ship", "hold"],
@@ -103,7 +105,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     );
     assert.equal(first.exitCode, 0, firstIo.stderr.join(""));
     assert.ok(first.terminal);
-    assert.equal(first.terminal.runId, runId);
+    assert.equal(first.terminal.ticket, TICKET);
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(first.terminal.roleOutcome), ["escalate"]);
     const recorded = await readRecordedSubmissionRows(project, runId, home);
@@ -128,7 +130,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
       },
     });
     const resumed = await runAkRole(
-      ["resume", "--model", "test/caller-seat:high", runId, ruling],
+      ["resume", "--model", "test/caller-seat:high", String(TICKET), "judge", ruling],
       {
         packageRoot,
         home,
@@ -176,7 +178,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     );
     assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
     assert.ok(resumed.terminal);
-    assert.equal(resumed.terminal.runId, runId);
+    assert.equal(resumed.terminal.ticket, TICKET);
     assert.equal(resumed.terminal.roleOutcome.kind, "accepted");
     const statuses = payloadStatusSequence(resumed.terminal.roleOutcome);
     assert.equal(statuses.at(-1), "converged");

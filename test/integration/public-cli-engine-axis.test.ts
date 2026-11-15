@@ -706,7 +706,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
  * wiring twice against one fixture parent, so mint via `new` (ADR 0079: 显式派新腿入口)
  * instead of resuming a prior probe that has no durable Pi principal.
  */
-function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
+function roleEngineProbeArgv(role: PublicCallableRole, project: string, sourceRun: string): string[] {
   // #178: caller-specified model on the probe argv (no package fill-in).
   const model = ["--model", "test/caller-seat:high"] as const;
   switch (role) {
@@ -727,7 +727,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
         role,
         ...model,
         "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        sourceRun,
         "--project",
         project,
       ];
@@ -749,7 +749,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
         "--subject",
         "judge",
         "--source-run",
-        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        sourceRun,
         "--project",
         project,
         "engine axis probe",
@@ -771,6 +771,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
         seedGitProject(baseProject);
+        let sourceRun = "";
         {
           const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
           const coords = issuePiDurablePrincipalCoordinates({
@@ -779,6 +780,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             role: "judge",
             home,
           });
+          sourceRun = coords.runDirectory;
           await mkdir(coords.sessionDirectory, { recursive: true });
           await writeFile(coords.sessionFile, "{}\n", "utf8");
           seedCurrentSection(coords.runDirectory, "admitted", { role: "judge", runId: sourceRunId });
@@ -827,7 +829,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             const runId = `engine-table-invoke-${role}`;
             const { io, stderr } = captureIo();
             const result = await runAkRole(
-              ["--engine", "table-engine", ...roleEngineProbeArgv(role, project)],
+              ["--engine", "table-engine", ...roleEngineProbeArgv(role, project, sourceRun)],
               {
                 packageRoot,
                 home,
@@ -891,7 +893,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             let capturedEnv: NodeJS.ProcessEnv | undefined;
             const runId = `engine-table-persist-${role}`;
             const { io, stderr } = captureIo();
-            const result = await runAkRole(roleEngineProbeArgv(role, project), {
+            const result = await runAkRole(roleEngineProbeArgv(role, project, sourceRun), {
               packageRoot,
               home,
               cwd: project,
