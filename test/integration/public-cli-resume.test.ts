@@ -2038,6 +2038,7 @@ test("public resume failures persist structured diagnostics", async () => {
       await resume(["resume", "--model", "test/caller-seat:high", "2001", "auditor"]);
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
+      assert.equal(seen.length, callsBeforeSubject + 2);
 
       const unknown = await resume(["resume", "--model", "test/caller-seat:high", "2002", "secretariat"]);
       const { record: unknownRecord } = assertThisCallDispatchedFailure(

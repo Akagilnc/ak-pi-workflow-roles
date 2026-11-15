@@ -177,8 +177,11 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
     assert.notEqual(legB, legA);
     assert.deepEqual(seatRows(ticketDirectory, "judge").map((row) => row.round), ["1"]);
 
-    // The later leg has no row yet and is still the default.
+    // The later leg has no row yet and is still the default. The last turn was
+    // already on that leg: the call has to start one more.
+    let turnsBefore = turns.length;
     await call(["resume", String(TICKET), "judge"]);
+    assert.equal(turns.length, turnsBefore + 1);
     assert.equal(turns.at(-1)?.leg, legB);
 
     // A round names the leg that filed it, though it is not the most recent.
@@ -186,7 +189,9 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
     assert.equal(turns.at(-1)?.leg, legA);
 
     // The earlier leg was active last, so it is now the default.
+    turnsBefore = turns.length;
     await call(["resume", String(TICKET), "judge"]);
+    assert.equal(turns.length, turnsBefore + 1);
     assert.equal(turns.at(-1)?.leg, legA);
 
     // A newer leg that reported no ticket is not in the address and is left alone.
@@ -202,7 +207,9 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
     // A worktree of the same repository addresses the same book.
     const worktree = join(home, "work-tree");
     execFileSync("git", ["worktree", "add", "-q", worktree], { cwd: project });
+    turnsBefore = turns.length;
     await call(["resume", String(TICKET), "judge"], undefined, { cwd: worktree });
+    assert.equal(turns.length, turnsBefore + 1);
     assert.equal(turns.at(-1)?.leg, legA);
   });
 });

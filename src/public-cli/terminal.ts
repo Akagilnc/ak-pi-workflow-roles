@@ -144,7 +144,8 @@ export type TerminalResult = {
   autoResumeCount?: number;
   /**
    * #1201 public identity: ticket + seat + round + receipt. The seat is
-   * roleOutcome.role. Absent while the leg has reported no ticket.
+   * roleOutcome.role. Absent while the leg has reported no ticket, and on a
+   * reviewer batch: a batch is no leg, each lens in reviewerChildren carries its own.
    */
   ticket?: number;
   /** One per accepted submission in roleOutcome.payloads, in ledger order. */
@@ -167,6 +168,16 @@ export type TerminalReceiptRef = {
  */
 export function adviceNavigatorFact(input: { prose: string }): TerminalNavigatorFact {
   return { disposition: "advice", prose: input.prose };
+}
+
+/** One leg's public identity rows (#1201): its ticket, then its receipts newest first. */
+function identityRows(leg: TerminalResult): string[] {
+  const seat = leg.roleOutcome.role;
+  return [
+    ...(leg.ticket === undefined ? [] : [`ticket\t${leg.ticket}`]),
+    ...[...(leg.receipts ?? [])].reverse().map((filed) =>
+      `receipt\t${encodeTerminalField(filed.round === undefined ? seat : `${seat}#${filed.round}`)}\t${encodeTerminalField(filed.receipt)}`),
+  ];
 }
 
 /**
@@ -234,18 +245,12 @@ export function formatTerminalResult(result: TerminalResult): string {
       if (child.stderr !== undefined && child.stderr !== "") {
         lines.push(`reviewer-child-diagnostic\t${axis}\t${encodeTerminalField(child.stderr)}`);
       }
+      // Each lens reports under its own ticket: the two may have reported different ones.
+      const lens = result.reviewerChildren?.[axis];
+      if (lens !== undefined) lines.push(...identityRows(lens));
     }
   }
-  if (result.ticket !== undefined) {
-    lines.push(`ticket\t${result.ticket}`);
-  }
-  // Newest first, like the submission block below.
-  for (const filed of [...(result.receipts ?? [])].reverse()) {
-    const seat = result.roleOutcome.role;
-    lines.push(
-      `receipt\t${encodeTerminalField(filed.round === undefined ? seat : `${seat}#${filed.round}`)}\t${encodeTerminalField(filed.receipt)}`,
-    );
-  }
+  lines.push(...identityRows(result));
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }

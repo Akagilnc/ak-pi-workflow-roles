@@ -27,7 +27,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { encodeTerminalField, type TerminalResult } from "../../src/public-cli/terminal.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
@@ -54,6 +54,8 @@ function lawfulReviewerReceipt(
     readonly report?: string;
     /** When true, omit ticketNumber so the leg stages under unbound (#1199). */
     readonly omitTicketNumber?: boolean;
+    /** The ticket this receipt reports; 1171 unless a case needs another. */
+    readonly ticketNumber?: number;
   },
 ) {
   // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓内 CLAUDE.md 开篇).
@@ -62,7 +64,7 @@ function lawfulReviewerReceipt(
   const amendments = { [axisKey]: report };
   // Progress and resume assertions below read the ticket subject; the explicit
   // omit option exercises unbound staging instead.
-  const ticket = options?.omitTicketNumber === true ? {} : { ticketNumber: 1171 as const };
+  const ticket = options?.omitTicketNumber === true ? {} : { ticketNumber: options?.ticketNumber ?? 1171 };
   if (status === "refused") {
     return {
       status: "refused" as const,
@@ -360,6 +362,7 @@ async function lawfulChildTurn(
     readonly empty?: boolean;
     readonly toolCallId?: string;
     readonly omitTicketNumber?: boolean;
+    readonly ticketNumber?: number;
   },
 ) {
   const sessionFile = args[args.indexOf("--session") + 1]!;
@@ -507,11 +510,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
         `${lens}: each round's receipt is the sealed submission`,
       );
     }
-    assert.equal(result.terminal?.ticket, 1171);
-    assert.deepEqual(result.terminal?.receipts, [
-      ...result.terminal!.reviewerChildren!.completeness!.receipts!,
-      ...result.terminal!.reviewerChildren!.correctness!.receipts!,
-    ]);
 
     // #1201: a lens-suffixed round names that lens's leg.
     for (const lens of ["correctness", "completeness"] as const) {
@@ -612,11 +610,12 @@ test("lawful no_receipt dual-lens child is not a batch failure", async () => {
     assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "no_receipt");
     assert.equal(noReceiptBatch.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
     assert.equal(noReceiptBatch.terminal?.reviewerChildOutcomes?.completeness.exitCode, 0);
-    // #1201: the lens that filed nothing reported no ticket; the batch names the
-    // ticket of the lens whose round and receipt it reports.
+    // #1201: the lens that filed nothing reported no ticket; the other lens
+    // reports its own ticket, round and receipt.
     assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.ticket, undefined);
-    assert.deepEqual(noReceiptBatch.terminal?.receipts?.map((filed) => filed.round), ["1.correctness"]);
-    assert.equal(noReceiptBatch.terminal?.ticket, 1171);
+    const filedLens = noReceiptBatch.terminal?.reviewerChildren?.correctness;
+    assert.equal(filedLens?.ticket, 1171);
+    assert.deepEqual(filedLens?.receipts?.map((filed) => filed.round), ["1.correctness"]);
   });
 });
 
@@ -780,7 +779,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
   });
 });
 
-test("default dual-lens keeps original child terminals despite dirty tree and mid-batch drift", async () => {
+test("default dual-lens keeps original child terminals despite dirty tree, mid-batch drift and lenses reporting different tickets", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -790,6 +789,8 @@ test("default dual-lens keeps original child terminals despite dirty tree and mi
     // Pre-dispatch dirt and mid-batch probes/HEAD drift must not kill the batch (#1133).
     await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
     let childTurns = 0;
+    // The ticket is each lens's own report (ADR 0081): the two need not agree.
+    const ticketOf = { completeness: 1171, correctness: 1172 } as const;
     const { io, stdout } = captureIo();
     const result = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
@@ -802,14 +803,14 @@ test("default dual-lens keeps original child terminals despite dirty tree and mi
       io,
       roleTurnHost: reviewerHost(async (args, options) => {
         childTurns += 1;
-        const lens = args[args.indexOf("--ak-review-lens") + 1]!;
+        const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
         await writeFile(join(options.cwd, `sibling-probe-${lens}.txt`), "probe\n", "utf8");
         if (lens === "correctness") {
           execFileSync("git", ["commit", "--allow-empty", "-m", "mid-batch-head-drift"], {
             cwd: options.cwd,
           });
         }
-        return lawfulChildTurn(args);
+        return lawfulChildTurn(args, { ticketNumber: ticketOf[lens] });
       }),
     });
 
@@ -820,6 +821,32 @@ test("default dual-lens keeps original child terminals despite dirty tree and mi
     assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.reviewerChildOutcomes?.completeness.exitCode, 0);
     assert.equal(result.terminal?.reviewerChildOutcomes?.correctness.exitCode, 0);
+
+    // #1201: each lens reports its receipt under the ticket it filed under, in
+    // the typed terminal and in the printed rows; the batch is no leg and names
+    // no ticket of its own.
+    const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    const printed = stdout.join("").split("\n").flatMap((row) => row.split("\t"));
+    const tickets = Object.values(ticketOf).map(String);
+    for (const lens of ["completeness", "correctness"] as const) {
+      const child: TerminalResult | undefined = result.terminal?.reviewerChildren?.[lens];
+      const ticketDir = join(book, String(ticketOf[lens]));
+      assert.equal(child?.ticket, ticketOf[lens], lens);
+      assert.deepEqual(
+        child?.receipts?.map((filed) => [filed.round, filed.receipt]),
+        readTicketProgressLines(ticketDir).map((line) => [line.round, join(ticketDir, line.receipt)]),
+        `${lens}: the receipt is the row under its own ticket`,
+      );
+      const at = printed.indexOf(encodeTerminalField(child!.receipts![0]!.receipt));
+      assert.notEqual(at, -1, `${lens}: the receipt path is printed`);
+      assert.equal(
+        printed.slice(0, at).filter((field) => tickets.includes(field)).at(-1),
+        String(ticketOf[lens]),
+        `${lens}: the ticket printed with a receipt is that receipt's own`,
+      );
+    }
+    assert.equal(result.terminal?.ticket, undefined);
+    assert.equal(result.terminal?.receipts, undefined);
   });
 });
 
