@@ -1,11 +1,11 @@
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
- * out via real runAkRole entry; #599 / #987 resume continues via explicit package
- * runId. #1111: court admission leaves diary refresh to the caller; countersign
+ * out via real runAkRole entry; #599 / #987 resume continues the addressed leg.
+ * #1111: court admission leaves diary refresh to the caller; countersign
  * asserts its own ticketNumber, never matching summons prose against book records.
  * Public re-summons mint a new run under the typed ticket (#505 / #987).
- * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
+ * Gate handoff resumes by parent run path. Explicit ak-role resume takes ticket + seat (#1201).
  * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
@@ -271,6 +271,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        boundTicketNumber: 582,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -296,16 +297,23 @@ test("ak-role resume continues countersign on the exact session", async () => {
       "timeout",
     );
 
-    const coords = issuePiDurablePrincipalCoordinates({
+    const issued = issuePiDurablePrincipalCoordinates({
       cwd: project,
       runId,
       role: "countersign",
       home,
     });
+    // The leg is filed under ticket 582 from admission.
+    const coords = roleRunPlacement(issued.ledgerHome, {
+      bookKey: issued.bookKey,
+      subject: { ticketNumber: 582 },
+      runId,
+      role: "countersign",
+    });
     const { io: resumeIo, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再裁一次"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "582", "countersign", "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
@@ -357,6 +365,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        boundTicketNumber: 582,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -381,7 +390,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
     const { io: resumeIo, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再裁一次"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "582", "countersign", "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
@@ -434,6 +443,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        boundTicketNumber: 582,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -453,7 +463,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt");
 
     const { io: resumeIo, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再试"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "582", "countersign", "再试"], {
       home,
       packageRoot,
       cwd: project,
@@ -612,7 +622,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           packageRoot,
           cwd: project,
           io: cap.io,
-          ...(createRunId === undefined ? {} : { createRunId }),
+          ...(createRunId === undefined ? {} : { createRunId, boundTicketNumber: 582 }),
           roleTurnHost: countersignScriptedHost(piRunner),
         }),
       };
@@ -635,7 +645,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     // Caller words are pass-through; they never mint an audit court (#1032 修订票).
     let sawCourtAttemptId = false;
     const { cap, done } = runScripted(
-      ["resume", ...seatModel, runId, "再裁"],
+      ["resume", ...seatModel, "582", "countersign", "再裁"],
       async (args, options) => {
         const courtAttemptId = options.env.AK_ROLE_COURT_ATTEMPT;
         if (typeof courtAttemptId === "string" && courtAttemptId.length > 0) {
@@ -783,7 +793,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         fix: { summary: caseSpec.summary },
       };
       const caseRun = runScripted(
-        ["resume", ...seatModel, runId],
+        ["resume", ...seatModel, "582", "countersign"],
         async (args, options) => {
           await appendResidualBounceTurn({
             sessionFile: args[args.indexOf("--session") + 1]!,

@@ -30,10 +30,10 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { withOutsideTempRoot, withTempHome } from "../helpers/environment-fixtures.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
-const VERDICT = { status: "converged", mark: 1 } as const;
-/** #1200: a verdict that reports its ticket seals with a round on the ticket's progress. */
-const TICKET = 1200;
-const BOUND_VERDICT = { ...VERDICT, ticketNumber: TICKET } as const;
+const TICKET = 1057;
+// The verdict names its ticket: the judge leg and the officers it summons are filed under it
+// (#1201), and it seals with a round on the ticket's progress (#1200).
+const VERDICT = { status: "converged", mark: 1, ticketNumber: TICKET } as const;
 const RULING = "ruling-1057";
 
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
@@ -56,8 +56,9 @@ type Observation = {
     readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
+  /** Resume the officer the first call presented, by its public address. */
   resume(message?: string): Promise<CliResult>;
-  resumeRun(runId: string, message?: string): Promise<CliResult>;
+  resumeSeat(seat: string, message?: string): Promise<CliResult>;
   /** A caller's own `ak-role notary --source-run <judge leg>`. */
   summonNotary(): Promise<CliResult>;
   /** Ticket progress rows of one seat, in order: `[round, for]`. */
@@ -206,7 +207,7 @@ async function runJudge(
       rounds(seat) {
         return this.rows(seat).map((line) => [line.round, line.for]);
       },
-      summonNotary: () => run(["notary", "--source-run", `${parent.runId}@judge`]),
+      summonNotary: () => run(["notary", "--source-run", parent.runDirectory]),
       first,
       firstStdout: capture.stdout,
       project,
@@ -216,12 +217,11 @@ async function runJudge(
       parentMessages,
       judgeSubmissions,
       officerSessions,
-      resumeRun: (runId: string, message?: string) =>
-        run(message === undefined ? ["resume", runId] : ["resume", runId, message]),
+      resumeSeat: (seat: string, message?: string) =>
+        run(["resume", String(TICKET), seat, ...(message === undefined ? [] : [message])]),
       async resume(message?: string) {
-        const officerRunId = first.terminal?.runId;
-        assert.equal(typeof officerRunId, "string");
-        return this.resumeRun(officerRunId!, message);
+        assert.equal(first.terminal?.ticket, TICKET);
+        return this.resumeSeat(first.terminal!.roleOutcome.role, message);
       },
     });
   }, { prefix: "ak-1057-resume-" });
@@ -246,7 +246,15 @@ function assertEscalationPresented(
   assert.equal(terminal.roleOutcome.kind, "accepted");
   if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted officer terminal");
   assert.deepEqual(terminal.roleOutcome.payloads?.at(-1), receipt);
-  assert.ok(typeof terminal.runId === "string" && terminal.runId.length > 0);
+  // #1201: the parent call points at the officer by ticket, seat and round — the officer's own row.
+  const officerRow = readTicketProgressLines(join(observed.parentRunDirectory, "..", ".."))
+    .filter((row) => row.seat === role).at(-1);
+  assert.ok(officerRow);
+  assert.equal(terminal.ticket, TICKET);
+  assert.deepEqual(
+    terminal.receipts?.map((filed) => [filed.round, filed.receipt]),
+    [[officerRow.round, join(observed.parentRunDirectory, "..", "..", officerRow.receipt)]],
+  );
   assert.ok(observed.firstStdout.length > 0, "the first escalation must emit its terminal on stdout");
 }
 
@@ -270,7 +278,7 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal(observed.judgeSubmissions.length, 2);
     assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
     assert.equal(observed.first.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), BOUND_VERDICT);
+    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     // #1200: the Judge sealed twice in one turn; both gates name the one they audited.
     assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
@@ -287,7 +295,7 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary").at(-1), ["3", undefined]);
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
-  }, [{ ...BOUND_VERDICT, mark: 0 }, BOUND_VERDICT]);
+  }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
 test("#1057 a notary escalation resumes into the remaining audit without Judge resubmission", async () => {
@@ -397,7 +405,7 @@ test("#1057 an auditor continue after escalation resumes the Judge for a revised
     assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#1"], ["2", "judge#2"]]);
     assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"], ["3", "judge#2"]]);
-  }, [BOUND_VERDICT]);
+  });
 });
 
 test("#1057 a non-three-state auditor conclusion resumes that officer", async () => {
@@ -421,13 +429,13 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
     assert.equal(auditorSessions[0]?.sessionFile, auditorSessions[1]?.sessionFile);
     assert.equal(auditorSessions[1]?.continuation, "resume");
     assert.deepEqual(auditorSessions[1]?.activation, auditorSessions[0]?.activation);
-    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), BOUND_VERDICT);
+    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
     // #1200: the unreadable receipt was accepted, so it and the re-asked one are
     // two rows and two rounds for the same audited round; the second row's
     // instruction is the re-ask.
     assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"]]);
     assert.equal(observed.rows("auditor")[1]?.instruction, auditorSessions[1]?.prompt);
-  }, [BOUND_VERDICT]);
+  });
 });
 
 test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
@@ -475,9 +483,11 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
 });
 
 test("#1057 a new judge verdict after acceptance runs the audits again", async () => {
+  const revised = { status: "converged", mark: 8, ticketNumber: TICKET } as const;
   const next = { status: "converged", mark: 9, ticketNumber: TICKET } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
+  let judgeResumes = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "notary") {
@@ -486,22 +496,31 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     }
     if (role === "auditor") {
       auditorCalls += 1;
-      return officer("auditor", { status: "converged", mark: auditorCalls })(args, options);
+      return officer("auditor", { status: auditorCalls === 1 ? "continue" : "converged", mark: auditorCalls })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
-  }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
-    const resumed = await observed.resumeRun(observed.parentRunId, "new review");
+  }, () => ({ code: 0, stderr: "", verdict: ++judgeResumes === 1 ? revised : next }), async (observed) => {
+    // #1200: the first verdict reported no ticket, so both officers were summoned
+    // with no round to name. The auditor's continue resumed the Judge inside the
+    // same call; the revised verdict reported the ticket and filed the leg. Filing
+    // does not fill those first rows in; the re-summons name the new round.
+    assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
+    assert.equal(observed.first.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), revised);
+    assert.deepEqual([notaryCalls, auditorCalls], [2, 2]);
+    assert.deepEqual(observed.rounds("notary"), [["1", undefined], ["2", "judge#2"]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", undefined], ["2", "judge#2"]]);
+    // The leg is now under its ticket, so the public address reaches it.
+    const resumed = await observed.resumeSeat("judge", "new review");
     assert.equal(resumed.exitCode, 0);
-    assert.equal(notaryCalls, 2);
-    assert.equal(auditorCalls, 2);
+    assert.equal(notaryCalls, 3);
+    assert.equal(auditorCalls, 3);
     assert.equal(resumed.terminal?.roleOutcome.role, "judge");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads?.at(-1), next);
-    // #1200: the first verdict reported no ticket, so its officers were summoned
-    // with no round to name; binding later does not fill those rows in.
-    assert.deepEqual(observed.rounds("notary"), [["1", undefined], ["2", "judge#2"]]);
-    assert.deepEqual(observed.rounds("auditor"), [["1", undefined], ["2", "judge#2"]]);
-  });
+    assert.deepEqual(observed.rounds("notary"), [["1", undefined], ["2", "judge#2"], ["3", "judge#3"]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", undefined], ["2", "judge#2"], ["3", "judge#3"]]);
+  }, [{ status: "converged", mark: 1 }]);
 });
 
 test("#1195 cross-submission resume of prior auditor does not skip new seal's notary", async () => {
@@ -527,9 +546,8 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: next }), async (observed) => {
     assertEscalationPresented(observed, "auditor", { status: "escalate", mark: 4 });
-    const oldAuditorRunId = observed.first.terminal?.runId;
     // New parent seal B while old auditor is still escalated.
-    const second = await observed.resumeRun(observed.parentRunId, "new review");
+    const second = await observed.resumeSeat("judge", "new review");
     assert.equal(second.exitCode, 0);
     assert.equal(notaryCalls, 2, "second seal must enter notary");
     assert.equal(second.terminal?.roleOutcome.role, "notary");
@@ -540,7 +558,7 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
       "escalate",
     );
     // Resume seal-1 auditor; must not settle seal-2 as fully audited (no judge accepted).
-    const afterOld = await observed.resumeRun(oldAuditorRunId!, RULING);
+    const afterOld = await observed.resumeSeat("auditor", RULING);
     assert.equal(afterOld.exitCode, 0);
     assert.equal(auditorCalls, 2, "old auditor resume converges once");
     assert.ok(notaryCalls >= 2, "seal-2 still has its own notary path");
@@ -559,12 +577,12 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
     assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
     const notaryLock = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../../writer.lock");
     await writeFile(notaryLock, `${process.pid}\n`, "utf8");
-    const refused = await observed.resumeRun(observed.parentRunId, "new review");
+    const refused = await observed.resumeSeat("judge", "new review");
     assert.notEqual(refused.exitCode, 0);
     assert.equal(notaryCalls, 3, "the refused summons must not reach the notary");
     assert.deepEqual(observed.rounds("judge").at(-1), ["3", undefined]);
     await rm(notaryLock);
-    assert.equal((await observed.resumeRun(second.terminal!.runId!, RULING)).exitCode, 0);
+    assert.equal((await observed.resumeSeat("notary", RULING)).exitCode, 0);
     assert.deepEqual(observed.rounds("notary").at(-1), ["4", "judge#2"]);
-  }, [BOUND_VERDICT]);
+  });
 });

@@ -43,7 +43,7 @@ export async function freshProject(home: string): Promise<string> {
 
 /**
  * A Secretariat court on the public entry. `host` serves every seat under the
- * configured limit; `open` starts a Secretariat run and `resume` continues one.
+ * configured limit; `open` starts a Secretariat run and `resume` continues a seat's leg under a ticket.
  */
 export async function withSecretariatCourt(
   limit: number,
@@ -52,7 +52,7 @@ export async function withSecretariatCourt(
     readonly home: string;
     readonly project: string;
     open(runId?: string): ReturnType<typeof runAkRole>;
-    resume(runId: string): ReturnType<typeof runAkRole>;
+    resume(ticket: number, seat: string): ReturnType<typeof runAkRole>;
   }) => Promise<void>,
 ): Promise<void> {
   await withSeatHome(async (home) => {
@@ -80,7 +80,7 @@ export async function withSecretariatCourt(
         ["secretariat", "--host", "grok-build", "--project", project, "go"],
         runId === undefined ? env : { ...env, createRunId: () => runId },
       ),
-      resume: (runId) => runAkRole(["resume", runId], env),
+      resume: (ticket, seat) => runAkRole(["resume", String(ticket), seat], env),
     });
   });
 }

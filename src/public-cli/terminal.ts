@@ -142,17 +142,25 @@ export type TerminalResult = {
   submissionToolCallId?: string;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
-} & (
-  | {
-      runId: string;
-      batch?: undefined;
-    }
-  | {
-      /** Deterministic public batch projection; no parent Role run exists. */
-      batch: "reviewer";
-      runId?: undefined;
-    }
-);
+  /**
+   * #1201 public identity: ticket + seat + round + receipt. The seat is
+   * roleOutcome.role. Absent while the leg has reported no ticket, and on a
+   * reviewer batch: a batch is no leg, each lens in reviewerChildren carries its own.
+   */
+  ticket?: number;
+  /** One per accepted submission in roleOutcome.payloads, in ledger order. */
+  receipts?: readonly TerminalReceiptRef[];
+  /** Deterministic public batch projection; no parent Role run exists. */
+  batch?: "reviewer";
+};
+
+/** One accepted receipt as the ticket's progress row names it (#1201). */
+export type TerminalReceiptRef = {
+  /** Seat-local round on the ticket; absent while the leg has reported no ticket. */
+  readonly round?: string;
+  /** Path of the receipt original: the row's reference under its subject directory. */
+  readonly receipt: string;
+};
 
 /**
  * Build an advice navigator fact (#959). Prose is presented as submitted;
@@ -160,6 +168,16 @@ export type TerminalResult = {
  */
 export function adviceNavigatorFact(input: { prose: string }): TerminalNavigatorFact {
   return { disposition: "advice", prose: input.prose };
+}
+
+/** One leg's public identity rows (#1201): its ticket, then its receipts newest first. */
+function identityRows(leg: TerminalResult): string[] {
+  const seat = leg.roleOutcome.role;
+  return [
+    ...(leg.ticket === undefined ? [] : [`ticket\t${leg.ticket}`]),
+    ...[...(leg.receipts ?? [])].reverse().map((filed) =>
+      `receipt\t${encodeTerminalField(filed.round === undefined ? seat : `${seat}#${filed.round}`)}\t${encodeTerminalField(filed.receipt)}`),
+  ];
 }
 
 /**
@@ -227,11 +245,12 @@ export function formatTerminalResult(result: TerminalResult): string {
       if (child.stderr !== undefined && child.stderr !== "") {
         lines.push(`reviewer-child-diagnostic\t${axis}\t${encodeTerminalField(child.stderr)}`);
       }
+      // Each lens reports under its own ticket: the two may have reported different ones.
+      const lens = result.reviewerChildren?.[axis];
+      if (lens !== undefined) lines.push(...identityRows(lens));
     }
   }
-  if (result.runId !== undefined) {
-    lines.push(`run\t${encodeTerminalField(result.runId)}`);
-  }
+  lines.push(...identityRows(result));
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }

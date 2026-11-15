@@ -16,6 +16,7 @@ import {
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { SitianRecord } from "./sitian-contracts.ts";
+import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
@@ -116,6 +117,12 @@ export type RecordedSubmissionRow = {
   readonly auditOfficer?: unknown;
   /** Present when the ledger row names the tool call — used to dedupe candidate+outcome. */
   readonly toolCallId?: string;
+  /**
+   * #1201: the ticket progress row written for this accepted submission — its
+   * receipt reference, and its round once the leg is filed under a ticket.
+   */
+  readonly receipt?: string;
+  readonly round?: string;
 };
 
 /** Closed-submission callback: original payload, no status/facts projection (#836). */
@@ -285,8 +292,23 @@ function rowFromPayload(
  */
 function mapOwnedToSubmissionRows(
   owned: readonly { kind?: unknown; subject?: unknown; payload?: unknown }[],
+  /** Whole-leg records: a round filled at bind carries no court attempt (#1201). */
+  leg: readonly { kind?: unknown; subject?: unknown; payload?: unknown }[] = owned,
 ): readonly RecordedSubmissionRow[] {
   const scoped = owned;
+  const receiptByCall = new Map<string, string>();
+  const roundByReceipt = new Map<string, string>();
+  for (const record of leg) {
+    if (record.kind !== PROGRESS_RECORD_KIND) continue;
+    const payload = record.payload as { toolCallId?: unknown; receipt?: unknown; round?: unknown } | undefined;
+    if (typeof payload?.receipt !== "string") continue;
+    if (typeof payload.toolCallId === "string") {
+      receiptByCall.set(submissionCallKey(recordAttemptId(record), payload.toolCallId), payload.receipt);
+    }
+    if (typeof payload.round === "string" && payload.round !== "") {
+      roundByReceipt.set(payload.receipt, payload.round);
+    }
+  }
   const out: RecordedSubmissionRow[] = [];
   const indexByCall = new Map<string, number>();
   // Recover seat identity for historical non-sealed rows that omitted role (#881).
@@ -359,7 +381,13 @@ function mapOwnedToSubmissionRows(
       ? submissionCallKey(recordAttemptId(record), payload.toolCallId)
       : undefined;
     const fallback = callKey === undefined ? undefined : roleByCall.get(callKey);
-    take(rowFromPayload(kind, payload, original, fallback), callKey);
+    const receipt = kind === "accepted" && callKey !== undefined ? receiptByCall.get(callKey) : undefined;
+    const round = receipt === undefined ? undefined : roundByReceipt.get(receipt);
+    take({
+      ...rowFromPayload(kind, payload, original, fallback),
+      ...(receipt === undefined ? {} : { receipt }),
+      ...(round === undefined ? {} : { round }),
+    }, callKey);
   }
   return out;
 }
@@ -394,7 +422,7 @@ export async function readAttemptScopedSubmissionRows(
   if (attemptId.length === 0) return [];
   const scope = resolveReadScope(homeOrScope);
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
-  return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
+  return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId), owned);
 }
 
 /** #1214 R2c: the court-turn attempt that recorded this tool call's submission, if any. */
@@ -511,6 +539,7 @@ export function sealAcceptedSubmission(options: {
     sealHead,
     sessionFile: undefined,
     instruction: options.instruction ?? "",
+    call: { attemptId, toolCallId: options.toolCallId },
   });
 }
 
@@ -668,6 +697,7 @@ export function createSubmissionLedgerHost(
               ...(rawLens === "completeness" || rawLens === "correctness"
                 ? { lens: rawLens }
                 : {}),
+              call: { attemptId, toolCallId },
             });
             // Native structured-output hosts have no tool-result reply to the model.
             // Keep the conversation open only after the receipt is durably sealed.

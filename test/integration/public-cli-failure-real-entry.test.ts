@@ -100,7 +100,7 @@ test("public report publication failure stays beside the accepted terminal", asy
       );
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(result.terminal?.runId, runId);
+      assert.equal(result.terminal?.ticket, 1171);
       const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
       const runDirectory =
         (await findRunDirectoryById(home, runId))

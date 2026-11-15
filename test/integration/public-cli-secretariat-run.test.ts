@@ -575,7 +575,9 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
     );
-    const resumed = await runAkRole(["resume", result.terminal.runId!], {
+    // #1201: the escalating officer is addressed by the ticket and seat its terminal names.
+    assert.equal(result.terminal.ticket, 924);
+    const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });

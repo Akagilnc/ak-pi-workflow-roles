@@ -434,7 +434,7 @@ const AUDITOR_OPTIONS = [
     owner: "auditor",
     canonical: "--source-run",
     aliases: [],
-    valueMetavar: "runId@role|path",
+    valueMetavar: "ticket:seat#round|path",
     required: true,
     repeatable: false,
     form: "option",
@@ -620,13 +620,13 @@ const NOTARY_OPTIONS = [
     owner: "notary",
     canonical: "--source-run",
     aliases: [],
-    valueMetavar: "runId@role|path",
+    valueMetavar: "ticket:seat#round|path",
     required: true,
     repeatable: false,
     form: "option",
     description: {
-      en: "Required source run locator (runId@role under the book home, or path to that run directory). Binds the audited identity; review dialogue is the fixed Notary dispatch (verdict stays in the ledger). Missing-ticket and unreadable-status reasks keep their existing diagnostic text.",
-      zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。绑定受审身份；审稿对话为符宝郎固定派单文（判词留在卷宗自行读取）。缺票号与读不出 status 的重交仍递既有诊断原文。",
+      en: "Required source run locator (<ticket>:<seat>#<round> as written on the ticket's progress row, or path to that run directory). Binds the audited identity; review dialogue is the fixed Notary dispatch (verdict stays in the ledger). Missing-ticket and unreadable-status reasks keep their existing diagnostic text.",
+      zh: "必填源 run 定位符（<票号>:<席>#<轮>，轮照进度行上的写法；或该 run 目录路径）。绑定受审身份；审稿对话为符宝郎固定派单文（判词留在卷宗自行读取）。缺票号与读不出 status 的重交仍递既有诊断原文。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -639,13 +639,13 @@ const INSPECTOR_OPTIONS = [
     owner: "inspector",
     canonical: "--source-run",
     aliases: [],
-    valueMetavar: "runId@role|path",
+    valueMetavar: "ticket:seat#round|path",
     required: false,
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional audited source-run locator (runId@role or path). Gate summons always supply it; identity rides startup materials.",
-      zh: "可选被审腿定位符（runId@role 或路径）。闸传召必带；身份在启动材料里。",
+      en: "Optional audited source-run locator (<ticket>:<seat>#<round> or path). Gate summons always supply it; identity rides startup materials.",
+      zh: "可选被审腿定位符（<票号>:<席>#<轮> 或路径）。闸传召必带；身份在启动材料里。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1241,10 +1241,10 @@ const ROLE_COMMAND_HELP = {
   auditor: {
     command: "auditor",
     summary: "Direct Auditor (审刑院) compliance audit: converged, continue, or escalate.",
-    usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
+    usage: ["ak-role auditor --subject <judge|doctor> --source-run <ticket:seat#round|path> [options] [instruction]"],
     examples: [
-      'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
-      'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
+      'ak-role auditor --subject judge --source-run 1201:judge#2 --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject doctor --source-run 1201:doctor#1 "审：太医候选是否合规。"',
     ],
   },
   diarist: {
@@ -1270,10 +1270,10 @@ const ROLE_COMMAND_HELP = {
     command: "notary",
     summary:
       "Direct Notary summons; duties: souls/notary.md. Review uses fixed dispatch — binds --source-run identity; does not accept caller review prompt; verdict stays in the ledger. Missing-ticket (#1171) and unreadable-status reasks deliver their existing diagnostic text on the same seat, not the review sentence.",
-    usage: ["ak-role notary --source-run <runId@role|path> [options]"],
+    usage: ["ak-role notary --source-run <ticket:seat#round|path> [options]"],
     examples: [
-      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@countersign",
+      "ak-role notary --source-run 1201:judge#2",
+      "ak-role notary --source-run 1201:countersign#1",
     ],
   },
   analyst: {
@@ -1332,14 +1332,15 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. Every callable seat accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary new/direct review calls use only --source-run plus the fixed review dispatch (no caller review prompt); public manual resume still passes the caller message. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
-    usage: ["ak-role resume <runId> [message]"],
+      "Resume one leg of a ticket under the live seat table (model/host/engine); session principal must still exist. The address is the ticket number and the seat: by default the seat's most recently active leg under that ticket; <seat>#<round> (round as written on the ticket's progress row, reviewer rounds carry the lens suffix) names the leg that filed that round. A leg that has reported no ticket is not in this address. Every callable seat accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary new/direct review calls use only --source-run plus the fixed review dispatch (no caller review prompt); public manual resume still passes the caller message. Global --model/--thinking/--host/--engine must be placed before <ticket> (either before `resume` or between `resume` and <ticket>); the one argv after <seat> is the opaque message, not a flag position (#471).",
+    usage: ["ak-role resume <ticket> <seat>[#<round>] [message]"],
     examples: [
-      "ak-role resume 01abc…",
-      "ak-role resume 01abc… \"owner ruling\"",
-      "ak-role --host grok-build resume 01abc…",
-      "ak-role --engine agy resume 01abc…",
-      "ak-role resume --model xai/grok-4.5 01abc… \"owner ruling\"",
+      "ak-role resume 1201 judge",
+      "ak-role resume 1201 judge \"owner ruling\"",
+      "ak-role resume 1201 'reviewer#2.correctness'",
+      "ak-role --host grok-build resume 1201 fixer",
+      "ak-role --engine agy resume 1201 fixer",
+      "ak-role resume --model xai/grok-4.5 1201 notary \"owner ruling\"",
     ],
   },
   new: {
@@ -1349,7 +1350,7 @@ const SUPPORT_COMMAND_HELP = {
     usage: ["ak-role new <role> [options] …"],
     examples: [
       'ak-role new countersign --attach ./ticket.md "裁：本票 #708 是否足以开工。"',
-      "ak-role new notary --source-run 01abc…@countersign",
+      "ak-role new notary --source-run 1201:countersign#1",
       "ak-role --host grok-build new inspector --attach ./change.patch",
     ],
   },

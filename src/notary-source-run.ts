@@ -13,8 +13,9 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import { findRunDirectoryById, resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
-import { formatRunLeaf, parseRunLeaf } from "./role-run-placement.ts";
+import { resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { parseRunLeaf } from "./role-run-placement.ts";
+import { locateTicketLeg, parseTicketLegLocator } from "./ticket-address.ts";
 
 async function readRetainedIdentity(runDirectory: string) {
   try {
@@ -70,8 +71,8 @@ async function requireRunDirectory(candidate: string, display: string): Promise<
 /**
  * Resolve `--source-run` to a machine-ledger retained run directory and typed identity.
  * Accepts:
- * - bare `<runId>@<role>` under the project's book runs home
- * - absolute/relative path that realpath's to that same book runs slot
+ * - `<ticket>:<seat>#<round>` — the leg that sealed that progress row (#1201)
+ * - absolute/relative path that realpath's to a run under the project's book
  *
  * Rejects project-tree projections and any path outside the project's ledger book runs.
  * Retained state.jsonl run-state must match basename identity and book binding.
@@ -92,10 +93,9 @@ export async function resolveNotarySourceRunLocator(options: {
   const bookRunsRoot = join(bookDirectory, "runs");
 
   let candidate: string;
-  const bare = parseRunLeaf(raw);
-  if (bare !== undefined && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey, bare.role))
-      ?? join(bookRunsRoot, formatRunLeaf(bare.runId, bare.role));
+  const address = parseTicketLegLocator(raw);
+  if (address !== undefined) {
+    candidate = locateTicketLeg(bookDirectory, address);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
     const identity = parseRunLeaf(basename(candidate));

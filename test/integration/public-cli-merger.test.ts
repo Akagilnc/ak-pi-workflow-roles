@@ -326,6 +326,8 @@ test("ak-role resume continues merger with exact session", async () => {
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // Filed under a ticket so the public address reaches the leg.
+          boundTicketNumber: 1201,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -353,18 +355,18 @@ test("ak-role resume continues merger with exact session", async () => {
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1201", "runs",
       `${runId}@merger`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     const admitted = readCurrentSection(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
-    assert.equal(admitted.ticketNumber, undefined);
+    assert.equal(admitted.ticketNumber, 1201);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1201", "merger"], {
       packageRoot,
       home,
       cwd: project,

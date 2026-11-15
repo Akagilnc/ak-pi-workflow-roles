@@ -4,10 +4,11 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
-import { sessionFileOf } from "../role-run-placement.ts";
+import { sessionFileOf, subjectDirectoryOfRun } from "../role-run-placement.ts";
+import { parseTicketNumber } from "../run-ticket-number.ts";
 
 import { sitianReport, type RecordPointer } from "../sitian-facade.ts";
 import {
@@ -186,7 +187,33 @@ type SealedLedgerSettle = {
   readonly outcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>;
   /** Tool-call identity of the latest this-settle terminal row (#1171 F2-R8). */
   readonly submissionToolCallId?: string;
+  /** Progress rows written for this settle's accepted submissions (#1201). */
+  readonly filed: readonly FiledReceipt[];
 };
+
+/** Receipt reference and round as the progress row carries them. */
+type FiledReceipt = { readonly receipt: string; readonly round?: string };
+
+/**
+ * #1201 public identity of a leg's terminal: the ticket it is filed under and
+ * the receipts this settle accepted. Row references resolve under the leg's
+ * subject directory as it stands now; a leg that has reported no ticket names
+ * no ticket and no round.
+ */
+export function filedIdentity(
+  runDirectory: string,
+  filed: readonly FiledReceipt[] = [],
+): Pick<TerminalResult, "ticket" | "receipts"> {
+  const subjectDirectory = subjectDirectoryOfRun(runDirectory);
+  if (subjectDirectory === undefined) return {};
+  const ticket = parseTicketNumber(basename(subjectDirectory));
+  return {
+    ...(ticket === undefined ? {} : { ticket }),
+    ...(filed.length === 0 ? {} : {
+      receipts: filed.map((row) => ({ ...row, receipt: join(subjectDirectory, row.receipt) })),
+    }),
+  };
+}
 
 function roleOutcomeFromRows(
   role: TerminalRoleName,
@@ -197,6 +224,8 @@ function roleOutcomeFromRows(
     readonly auditReceipt?: unknown;
     readonly auditOfficer?: unknown;
     readonly toolCallId?: string;
+    readonly receipt?: string;
+    readonly round?: string;
   }[],
 ): SealedLedgerSettle | undefined {
   const mine = rows.filter((row) => row.role === role);
@@ -215,8 +244,13 @@ function roleOutcomeFromRows(
     typeof latest.toolCallId === "string" && latest.toolCallId.length > 0
       ? latest.toolCallId
       : undefined;
-  const belonging =
-    submissionToolCallId === undefined ? {} : { submissionToolCallId };
+  const filed = mine.flatMap((row): FiledReceipt[] => row.receipt === undefined
+    ? []
+    : [{ receipt: row.receipt, ...(row.round === undefined ? {} : { round: row.round }) }]);
+  const belonging = {
+    ...(submissionToolCallId === undefined ? {} : { submissionToolCallId }),
+    filed,
+  };
   if (latest.kind === "audit-escalation") {
     return {
       outcome: {
@@ -468,7 +502,7 @@ async function settleNoReceiptTerminal(
         scope,
       ),
     artifacts: [],
-    runId: admitted.runId,
+    ...filedIdentity(admitted.runDirectory),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
 }
 
@@ -1449,6 +1483,7 @@ async function settleSealedSeat(
     settled.outcome,
     scope,
     settled.submissionToolCallId,
+    settled.filed,
   );
 }
 
@@ -1459,6 +1494,7 @@ async function finishLawfulSeat(
   roleOutcome: TerminalRoleOutcome,
   scope: SettlementCourtScope | undefined,
   submissionToolCallId?: string,
+  filed?: readonly FiledReceipt[],
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
@@ -1467,7 +1503,7 @@ async function finishLawfulSeat(
     roleOutcome,
     navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
     artifacts,
-    runId: admitted.runId,
+    ...filedIdentity(admitted.runDirectory, filed),
     ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
       ? {}
       : { submissionToolCallId }),
@@ -1714,7 +1750,7 @@ export async function settleFailureTerminalResult(
     decisiveFacts,
   };
   return attachEngineDetourToolUsage(
-    { roleOutcome, navigator, artifacts, runId: admitted.runId },
+    { roleOutcome, navigator, artifacts, ...filedIdentity(admitted.runDirectory) },
     sessionDirectory,
     detourUsageContext(admitted, options),
   );

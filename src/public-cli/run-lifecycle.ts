@@ -86,16 +86,15 @@ export type RoleRunRecord = {
   readonly phase?: CoderPhase | FixerPhase;
 };
 
-/** Public manual resume request after the unique CLI parser owns runId + optional message. */
+/** Resume request for one located leg: the public address (ticket + seat) or an internal re-summons. */
 export type PublicResumeRequest = {
   readonly runId: string;
   /**
-   * When already known (gate pass / same-ticket locator), load this directory
-   * instead of re-resolving runId across every book (#1195).
-   * Explicit public `ak-role resume <runId>` leaves this unset.
+   * When already known (public ticket address / gate pass / same-ticket locator),
+   * load this directory instead of re-resolving runId across every book (#1195).
    */
   readonly runDirectory?: string;
-  /** Present when the caller supplied the post-runId argv (including empty string). */
+  /** Present when the caller supplied the message argv (including empty string). */
   readonly message?: string;
   /**
    * Same-ticket re-summons materials (#637). Present only when a public seat
@@ -860,7 +859,7 @@ export async function findRunDirectoryById(
     const parsed = parseRunLeaf(basename(knownRunDirectory));
     if (parsed === undefined || parsed.runId !== runId) {
       throw new CliUsageError(
-        `run directory does not match run id ${runId}: ${knownRunDirectory}`,
+        `run directory is not the expected role run: ${knownRunDirectory}`,
       );
     }
     return knownRunDirectory;
@@ -941,7 +940,7 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
  * parent run path (officer / gate seats, #747 / #987), narrowed to a supplied
  * typed ticket for same-ticket gate re-summons. runId is UUIDv7 — lexicographic
  * max is latest among runs that formed a session principal. No parallel index;
- * callers can use explicit `ak-role resume <runId>`.
+ * callers address a leg explicitly with `ak-role resume <ticket> <seat>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
@@ -1068,19 +1067,20 @@ async function loadResumableRunRecord(
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
   const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
+  // Diagnostics name the leg by its directory; the run id is not a caller-facing identity (#1201).
   if (runDirectory === undefined) {
-    throw new CliUsageError(`unknown role run id: ${runId}`);
+    throw new CliUsageError(`unknown role run: no run directory found under ${home}`);
   }
   const disk = await readRoleRunStateDisk(runDirectory);
   if (disk === undefined) {
-    throw new CliUsageError(`unknown role run id: ${runId}`);
+    throw new CliUsageError(`role run has no readable state: ${runDirectory}`);
   }
   // #416 / #1091: removed terminal/resumable and local session-file gates.
   // The load seam locates the run and recovers identity; host CLI answers continuation.
   // One authority.decode of the uninterpreted wire yields both principal and record.
   const materialized = materializeRoleRunFromDisk(disk, authority);
   if (materialized === undefined) {
-    throw new CliUsageError(`unknown role run id: ${runId}`);
+    throw new CliUsageError(`role run has no readable state: ${runDirectory}`);
   }
   const { run, principal } = materialized;
   // Reconstruct admitted identity from durable run record + the admitted section.
@@ -1249,7 +1249,7 @@ async function loadResumableRunRecord(
     // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
     if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(
-      `role run admitted request is unreadable: ${runId}`,
+      `role run admitted request is unreadable: ${run.runDirectory}`,
       { cause: error },
     );
   }
@@ -1280,7 +1280,7 @@ async function loadResumableRunRecord(
     }
     if (!isEnoent(error)) {
       throw new CliUsageError(
-        `role run invocation identity is unreadable: ${runId}`,
+        `role run invocation identity is unreadable: ${run.runDirectory}`,
         { cause: error },
       );
     }
@@ -1408,7 +1408,7 @@ function admitResumedRole(loaded: {
   readonly admittedFields: LoadedAdmittedRequestFields;
 }): AdmittedRoleInvocation {
   const role = loaded.run.role;
-  const runId = loaded.run.runId;
+  const leg = loaded.run.runDirectory;
   const record = packagedRoleMetadata(role);
   if (record === undefined) {
     throw new CliUsageError(`unknown role: ${role}`);
@@ -1446,10 +1446,10 @@ function admitResumedRole(loaded: {
       return admitted;
     }
     case "worker-task": {
-      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, leg);
       if (fields.instruction.trim() === "") {
         throw new CliUsageError(
-          `role run admitted coder task is blank: ${runId}`,
+          `role run admitted coder task is blank: ${leg}`,
         );
       }
       const admitted: AdmittedCoderInvocation = {
@@ -1461,10 +1461,10 @@ function admitResumedRole(loaded: {
       return admitted;
     }
     case "worker-packet": {
-      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, leg);
       if (fields.instruction.trim() === "") {
         throw new CliUsageError(
-          `role run admitted fixer instruction is blank: ${runId}`,
+          `role run admitted fixer instruction is blank: ${leg}`,
         );
       }
       const admitted: AdmittedFixerInvocation = {
@@ -1484,20 +1484,20 @@ function admitResumedRole(loaded: {
       if (baseFault !== undefined || rawBase === undefined) {
         throw new CliUsageError(
           baseFault === "damaged"
-            ? `role run admitted reviewer base revision is damaged: ${runId}`
-            : `role run admitted reviewer base revision is missing: ${runId}`,
+            ? `role run admitted reviewer base revision is damaged: ${leg}`
+            : `role run admitted reviewer base revision is missing: ${leg}`,
         );
       }
       const lens = fields.lens;
       if (!isReviewerLens(lens)) {
         throw new CliUsageError(
-          `role run admitted reviewer lens is missing: ${runId}`,
+          `role run admitted reviewer lens is missing: ${leg}`,
         );
       }
       const authorityRefs = Object.freeze([...(fields.authorityRefs ?? [])]);
       if (authorityRefs.length === 0) {
         throw new CliUsageError(
-          `role run admitted reviewer authority refs are missing: ${runId}`,
+          `role run admitted reviewer authority refs are missing: ${leg}`,
         );
       }
       const admitted: AdmittedReviewerInvocation = {
@@ -1513,7 +1513,7 @@ function admitResumedRole(loaded: {
       const baseRevision = fields.baseRevision;
       if (baseRevision === undefined || baseRevision.trim() === "") {
         throw new CliUsageError(
-          `role run admitted gleaner-left base revision is missing: ${runId}`,
+          `role run admitted gleaner-left base revision is missing: ${leg}`,
         );
       }
       const admitted: AdmittedGleanerLeftInvocation = {
@@ -1527,18 +1527,18 @@ function admitResumedRole(loaded: {
       const mergerInputPath = fields.mergerInputPath;
       if (mergerInputPath === undefined) {
         throw new CliUsageError(
-          `role run admitted merger input path is missing: ${runId}`,
+          `role run admitted merger input path is missing: ${leg}`,
         );
       }
       const derived = fields.derived;
       if (derived === undefined) {
         throw new CliUsageError(
-          `role run admitted merger envelope is missing: ${runId}`,
+          `role run admitted merger envelope is missing: ${leg}`,
         );
       }
       if (fields.instruction.trim() === "") {
         throw new CliUsageError(
-          `role run admitted merger task is blank: ${runId}`,
+          `role run admitted merger task is blank: ${leg}`,
         );
       }
       const admitted: AdmittedMergerInvocation = {
@@ -1554,7 +1554,7 @@ function admitResumedRole(loaded: {
       const { prNumber, repository, repositoryDisplay } = fields;
       if (repository === undefined || repositoryDisplay === undefined) {
         throw new CliUsageError(
-          `role run admitted collector repository identity is missing: ${runId}`,
+          `role run admitted collector repository identity is missing: ${leg}`,
         );
       }
       let parsedRepository;
@@ -1566,7 +1566,7 @@ function admitResumedRole(loaded: {
       }
       if (parsedRepository.canonical !== repository) {
         throw new CliUsageError(
-          `role run admitted collector repository does not match its canonical form: ${runId}`,
+          `role run admitted collector repository does not match its canonical form: ${leg}`,
         );
       }
       const admitted: AdmittedCollectorInvocation = {
@@ -1589,7 +1589,7 @@ function admitResumedRole(loaded: {
         caseIdentity === undefined
       ) {
         throw new CliUsageError(
-          `role run admitted doctor case identity is missing: ${runId}`,
+          `role run admitted doctor case identity is missing: ${leg}`,
         );
       }
       const admitted: AdmittedDoctorInvocation = {
@@ -1605,7 +1605,7 @@ function admitResumedRole(loaded: {
       const { sourceRunPath, sourceRun } = fields;
       if (sourceRunPath === undefined || sourceRun === undefined) {
         throw new CliUsageError(
-          `role run admitted notary source-run locator is missing: ${runId}`,
+          `role run admitted notary source-run locator is missing: ${leg}`,
         );
       }
       const admitted: AdmittedNotaryInvocation = {
@@ -1624,12 +1624,12 @@ function resumedWorkerPhase(
   phase: string | undefined,
   phases: readonly (string | null)[],
   role: string,
-  runId: string,
+  leg: string,
 ): "plan" | "apply" {
   if (phase === "plan" || phase === "apply") {
     if (phases.some((item) => item === phase)) {
       return phase;
     }
   }
-  throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
+  throw new CliUsageError(`role run admitted ${role} phase is missing: ${leg}`);
 }

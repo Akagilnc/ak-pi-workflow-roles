@@ -65,7 +65,6 @@ test("#1028 secretariat_verdict reads the shared review status",
             },
             navigator: { disposition: "no-advice" },
             artifacts: [],
-            runId: "countersign-run",
           },
         }),
       });
@@ -97,7 +96,6 @@ test("#1028 secretariat_verdict reads the shared review status",
           roleOutcome: { kind: "accepted", role: "countersign", status: "other" },
           navigator: { disposition: "no-advice" },
           artifacts: [],
-          runId: "01a0cs969-compat-7000-8000-000000000001",
         },
       }),
     });
@@ -137,7 +135,6 @@ test("#969 secretariat_verdict returns escalation for direct officer resume",
           },
           navigator: { disposition: "no-advice" },
           artifacts: [],
-          runId: "01a0cs969-esc-7000-8000-000000000099",
         },
       }),
     });
@@ -177,7 +174,6 @@ test("#969 requireSubmissionGate pass returns receipt + nested runId",
           },
           navigator: { disposition: "no-advice" },
           artifacts: [],
-          runId: "01a0cs969-pass-7000-8000-000000000042",
         },
       }),
     });
@@ -199,7 +195,6 @@ test("#1214 A5: officer transport_failure returns honestly as typed outcome",
       },
       navigator: { disposition: "no-advice" as const },
       artifacts: [] as const,
-      runId: "01a01214-fail-7000-8000-000000000099",
     };
     const outcome = await requireSubmissionGate({
       context: {
@@ -237,7 +232,6 @@ test("#1214 F2: officer no_receipt returns as typed outcome without throw",
       },
       navigator: { disposition: "no-advice" as const },
       artifacts: [] as const,
-      runId: "01a01214-nore-7000-8000-000000000042",
     };
     const outcome = await requireSubmissionGate({
       context: {

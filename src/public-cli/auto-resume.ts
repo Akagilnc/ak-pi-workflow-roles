@@ -29,6 +29,7 @@ import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
+  filedIdentity,
   presentFailureTerminal,
   retainPackageFault,
 } from "./settlement.ts";
@@ -249,7 +250,7 @@ async function attachDispatchExceptionTerminal(
  */
 function dispatchExceptionFailureTerminal(input: {
   role: TerminalRoleName;
-  runId: string;
+  runDirectory: string;
   causeError: unknown;
   errorFiles: readonly string[];
   autoResumeAttempts: number;
@@ -291,7 +292,7 @@ function dispatchExceptionFailureTerminal(input: {
     },
     navigator: { disposition: "no-advice" },
     artifacts,
-    runId: input.runId,
+    ...filedIdentity(input.runDirectory),
     autoResumeCount: input.autoResumeAttempts,
   };
 }
@@ -472,7 +473,7 @@ export async function runWithAutoResumeLoop<
         options.admitted,
         dispatchExceptionFailureTerminal({
           role: options.admitted.role,
-          runId: options.admitted.runId,
+          runDirectory: options.admitted.runDirectory,
           causeError: lastThrownError,
           errorFiles: retainedErrorFiles,
           autoResumeAttempts,

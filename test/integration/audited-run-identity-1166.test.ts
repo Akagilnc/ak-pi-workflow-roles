@@ -412,7 +412,7 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
     for (const seat of [
       {
         role: "notary" as const,
-        argv: ["notary", "--model", "test/caller-seat:high", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+        argv: ["notary", "--model", "test/caller-seat:high", "--source-run", parentRun],
         runId: "01a0116600007000800000000000dn01",
       },
       {
@@ -424,7 +424,7 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
           "--subject",
           "judge",
           "--source-run",
-          `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+          parentRun,
         ],
         runId: "01a0116600007000800000000000da01",
       },
@@ -572,7 +572,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     if (notaryPrompts.length < 2) {
       const resumeIo = captureIo();
       finalResult = await runAkRole(
-        ["resume", "--model", "test/caller-seat:high", runId, "rewrite after bounce"],
+        ["resume", "--model", "test/caller-seat:high", "1195", "countersign", "rewrite after bounce"],
         {
           packageRoot,
           home,

@@ -244,6 +244,8 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // Filed under a ticket so the public address reaches the leg.
+          boundTicketNumber: 1201,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
@@ -271,7 +273,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1201", "runs",
       `${runId}@fixer`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
@@ -280,11 +282,11 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     };
     assert.equal(admitted.role, "fixer");
     assert.equal(admitted.phase, "plan");
-    assert.equal(admitted.ticketNumber, undefined);
+    assert.equal(admitted.ticketNumber, 1201);
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1201", "fixer"], {
       packageRoot,
       home,
       cwd: project,

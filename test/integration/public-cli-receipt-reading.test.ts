@@ -61,7 +61,7 @@ test("#1289: a Secretariat session opened before the rename still reads by its o
     // Escalate does not enter the 给事中 gate.
     assert.deepEqual(await courtRows(court), [{ seat: "secretariat", status: "escalate", receipt: escalated }]);
 
-    const resumed = await court.resume(opened.terminal!.runId!);
+    const resumed = await court.resume(TICKET, "secretariat");
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");

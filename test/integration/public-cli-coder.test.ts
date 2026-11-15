@@ -174,6 +174,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
           home,
           cwd: project,
           createRunId: () => "run-coder-resume-typed",
+          boundTicketNumber: 1003,
           io: captureIo().io,
           credentials: { "openai-codex": true, xai: true },
           roleTurnHost: createMinimalHost(async (request) => {
@@ -187,7 +188,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
       );
 
       captured.current = undefined;
-      const result = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-coder-resume-typed"],
+      const result = await runAkRole(["resume", "--model", "test/caller-seat:high", "1003", "coder"],
         {
           packageRoot,
           home,
@@ -548,7 +549,7 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "1003", "coder"], {
       packageRoot,
       home,
       cwd: project,

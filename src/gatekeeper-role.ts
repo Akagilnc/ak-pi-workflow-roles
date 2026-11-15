@@ -36,8 +36,8 @@ export type GatekeeperSubject =
  * Code only reads the conclusion field for queueing. Officer words ride as
  * `receipt` unchanged — no findings rewrite, no unreadable/unusable label,
  * no next-step selection for the parent.
- * `runId` is the nested officer run id when known (summoned.runDirectory /
- * terminal.runId) so callers resume that seat; parent public finals do not
+ * `runId` is the nested officer run id when known (from summoned.runDirectory)
+ * so callers resume that seat; parent public finals do not
  * project other-seat tables (#1195).
  */
 export type GatekeeperResult =
@@ -215,21 +215,9 @@ function projectOfficerPayloads(
   return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
-/** Nested officer runId from summoned.runDirectory, else terminal.runId (resume identity). */
+/** Nested officer runId from the summoned leg's run directory (package-internal resume identity). */
 export function officerRunIdFromSummoned(summoned: PublicSummonResult): string | undefined {
-  if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
-    const fromDir = runIdFromRunDirectory(summoned.runDirectory);
-    if (fromDir !== undefined) return fromDir;
-  }
-  const terminal = summoned.terminal;
-  if (
-    terminal !== undefined
-    && typeof terminal.runId === "string"
-    && terminal.runId.trim() !== ""
-  ) {
-    return terminal.runId;
-  }
-  return undefined;
+  return summoned.runDirectory === undefined ? undefined : runIdFromRunDirectory(summoned.runDirectory);
 }
 
 function withOfficerRunId(
@@ -303,8 +291,7 @@ function projectOfficerTerminal(
   }
   if (outcome.kind === "accepted") {
     // Nested / prior incomplete (directionUnsettled) is not a gate pass (ADR 0055).
-    // Receipt stays this-court or retained; runId comes from the summoned volume
-    // (public-role-summons already prefers nested terminal.runId when roles differ).
+    // Receipt stays this-court or retained; runId comes from the summoned volume.
     // No parent-side officerPayloads / officerRunId copies (#1195).
     if (outcome.decisiveFacts?.directionUnsettled === true) {
       const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);

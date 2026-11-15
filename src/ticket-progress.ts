@@ -34,6 +34,9 @@ import {
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
 import { readPageSync } from "./run-dossier.ts";
+import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
+import { sitianReport } from "./sitian-facade.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { errorText, isRecord } from "./unknown-value.ts";
 
@@ -260,6 +263,40 @@ export function captureWorktreeHead(projectRoot: string): WorktreeHeadCapture {
   }
 }
 
+/** The sealing tool call a progress row belongs to, as the submission ledger names it. */
+export type ProgressRowCall = {
+  readonly attemptId: string;
+  readonly toolCallId: string;
+};
+
+/**
+ * #1201: the row just written rides the leg's submission ledger to the process
+ * that prints the terminal — settlement reads round and receipt beside the
+ * sealed payload, and never picks rows out of current.jsonl after the turn.
+ * A seal names its tool call; a publish (round filled at bind) names the receipt.
+ */
+function carryProgressRow(
+  runDirectory: string,
+  line: TicketProgressLine,
+  call?: ProgressRowCall,
+): void {
+  const runId = runIdFromRunDirectory(runDirectory);
+  if (runId === undefined) return;
+  sitianReport({
+    level: "event",
+    kind: PROGRESS_RECORD_KIND,
+    subject: { runId, ...(call === undefined ? {} : { attemptId: call.attemptId }) },
+    payload: {
+      type: PROGRESS_RECORD_KIND,
+      ...(call === undefined ? {} : { toolCallId: call.toolCallId }),
+      receipt: line.receipt,
+      round: line.round,
+    },
+    source: "ticket-progress",
+    sessionParent: sessionFileOf(runDirectory),
+  });
+}
+
 function progressSessionAbsolute(runDirectory: string, context: HostContext): string {
   const host = typeof context.host === "string" ? context.host.trim() : "";
   const sessionDirectory = sessionDirectoryOf(runDirectory);
@@ -292,6 +329,7 @@ export function landTicketProgressForSealedSubmission(input: {
   readonly accepted: unknown;
   readonly sealHead: WorktreeHeadCapture;
   readonly lens?: string;
+  readonly call: ProgressRowCall;
 }): TicketProgressLine | undefined {
   const runDirectory = runDirectoryFromHostContext(input.context);
   if (runDirectory === undefined) return undefined;
@@ -300,6 +338,7 @@ export function landTicketProgressForSealedSubmission(input: {
     role: input.role,
     accepted: input.accepted,
     sealHead: input.sealHead,
+    call: input.call,
     ...(input.lens === undefined ? {} : { lens: input.lens }),
     sessionFile: progressSessionAbsolute(runDirectory, input.context),
     instruction: typeof input.context.summonsInstruction === "string"
@@ -321,6 +360,7 @@ export function landTicketProgress(input: {
   readonly lens?: string;
   readonly sessionFile: string | undefined;
   readonly instruction: string;
+  readonly call: ProgressRowCall;
 }): TicketProgressLine | undefined {
   const { runDirectory } = input;
 
@@ -379,6 +419,7 @@ export function landTicketProgress(input: {
 
   mkdirSync(dirname(progressPath), { recursive: true });
   appendFileSync(progressPath, `${JSON.stringify(line)}\n`, "utf8");
+  carryProgressRow(runDirectory, line, input.call);
   // HEAD capture fault: keep the raw cause on stderr. Do not invent a second
   // dossier custom-frame channel beside post-admission's existing retain path.
   if (input.sealHead.fault !== undefined) {
@@ -450,4 +491,5 @@ export function relocateTicketProgressForLeg(input: {
   );
   // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
   rmSync(stagedPath, { force: true });
+  for (const moved of movedLines) carryProgressRow(input.runDirectory, moved);
 }

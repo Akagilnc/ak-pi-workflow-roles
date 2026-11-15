@@ -10,12 +10,15 @@ export const RUN_STATE_FILE = "state.jsonl" as const;
 /**
  * Record kinds that make a leg's history: they land in `history.jsonl`. The
  * original submission ledger and attempt history, the prompt/schema each turn was
- * started with, and officer pointers.
+ * started with, officer pointers, and the ticket progress rows a leg wrote.
  */
 export const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
   "candidate", "roundContext", "outcome", "sealed", "post-seal-anomaly",
-  "attempt-history", "turn-delivery", "officer-pointer",
+  "attempt-history", "turn-delivery", "officer-pointer", "progress",
 ]);
+
+/** History record kind of a ticket progress row carried to settlement (#1201). */
+export const PROGRESS_RECORD_KIND = "progress" as const;
 
 /** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
 export const OFFICER_POINTER_RECORD_KIND = "officer-pointer" as const;

@@ -260,7 +260,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
   });
 });
 
-test("notary admits canonical ledger source-run and bare runId@role; rejects project projection", async () => {
+test("notary admits canonical ledger source-run by path; rejects project projection", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -277,17 +277,9 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     assert.equal(byPath.runId, CANONICAL_SOURCE_RUN_ID);
     assert.equal(byPath.role, CANONICAL_SOURCE_ROLE);
 
-    const bare = `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`;
-    const byBare = await resolveNotarySourceRunLocator({
-      projectRoot: project,
-      sourceRun: bare,
-      home,
-    });
-    assert.equal(byBare.runDirectory, sourceRunPath);
-
-    // Real public entry: bare locator admits; project projection is exit 2.
+    // Real public entry: the run path admits; project projection is exit 2.
     const { io } = captureIo();
-    const admittedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", bare],
+    const admittedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
       {
         home,
         packageRoot,
@@ -319,7 +311,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     seedCurrentSection(sourceRunPath, "runState", state);
     const identityOnly = await resolveNotarySourceRunLocator({
       projectRoot: project,
-      sourceRun: bare,
+      sourceRun: sourceRunPath,
       home,
     });
     assert.equal(identityOnly.runDirectory, sourceRunPath);

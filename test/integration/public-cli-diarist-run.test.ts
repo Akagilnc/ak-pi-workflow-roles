@@ -2143,13 +2143,14 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
   });
 });
 
-test("ak-role resume persists an after-dispatch diarist relocation at the ticket placement", async () => {
+// #1201: a leg that has reported no ticket is resumed only inside the call that started it.
+test("an in-call resume persists an after-dispatch diarist relocation at the ticket placement", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     await mkdir(join(home, ".ak-roles"), { recursive: true });
-    await writeFile(join(home, ".ak-roles", "public-cli.json"), '{"autoResumeLimit":0}\n');
+    await writeFile(join(home, ".ak-roles", "public-cli.json"), '{"autoResumeLimit":1}\n');
 
     const runId = "01a0diar00-0000-7000-8000-000000000005";
     const bookKey = resolveBookKeyFromGit(project);
@@ -2174,25 +2175,6 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
       principalAuthority: immutablePrincipalAuthority,
     };
 
-    const interrupted = await runAkRole(
-      ["diarist", "--model", "test/caller-seat:high", "--project", project, "resume fixture"],
-      {
-        ...baseOptions,
-        createRunId: () => runId,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: immutablePrincipalAuthority,
-          piRunner: async (args) => {
-            const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(join(sessionDirectory, "session.jsonl"), "\n", "utf8");
-            return { code: 1, stderr: "", timedOut: false, args: [...args] };
-          },
-        }),
-      },
-    );
-    assert.equal(interrupted.exitCode, 1);
-
     const reaskThen429 = diaristEnvelopeRunner(
       { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
       {
@@ -2206,17 +2188,28 @@ test("ak-role resume persists an after-dispatch diarist relocation at the ticket
         },
       },
     );
+    let turns = 0;
     const resumed = await runAkRole(
-      ["resume", "--model", "test/caller-seat:high", runId],
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, "resume fixture"],
       {
         ...baseOptions,
+        createRunId: () => runId,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: immutablePrincipalAuthority,
-          piRunner: reaskThen429,
+          piRunner: async (args, options) => {
+            turns += 1;
+            if (turns > 1) return reaskThen429(args, options);
+            // First turn is interrupted before any ticket is reported.
+            const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(join(sessionDirectory, "session.jsonl"), "\n", "utf8");
+            return { code: 1, stderr: "", timedOut: false, args: [...args] };
+          },
         }),
       },
     );
+    assert.ok(turns >= 2, "the interrupted leg must be resumed in the same call");
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
     const currentPath = join(ticketPlacement.runDirectory, "current.json");

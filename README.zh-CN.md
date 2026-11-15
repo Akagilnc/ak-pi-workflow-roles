@@ -102,7 +102,7 @@ ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this re
 ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
 # 符宝郎——以 source-run locator 直调；职掌见 souls/notary.md
-ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
+ak-role notary --model <provider/model[:thinking]> --source-run <票号:席#轮|path>
 
 # 台院
 ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
@@ -130,8 +130,8 @@ ak-role gleaner-left --model <provider/model[:thinking]> --base main
 # 太史
 ak-role analyst
 
-# 续跑请求示例；审核续跑归属见 ADR 0003
-ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
+# 续跑请求示例（票号＋席）；审核续跑归属见 ADR 0003
+ak-role --model <provider/model[:thinking]> resume <票号> <席> "<裁定>"
 ```
 
 ## 测试

@@ -297,7 +297,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     if (terminal.navigator.disposition === "advice") {
       assert.equal(terminal.navigator.prose, "review next → reviewer");
     }
-    assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
 
     // Artifacts are openable paths under the run directory.

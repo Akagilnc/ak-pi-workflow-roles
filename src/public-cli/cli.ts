@@ -87,9 +87,20 @@ import {
 } from "./instruction-seat-run.ts";
 import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../activation-ledger-topology.ts";
+import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
+import {
+  locateTicketLeg,
+  parseAddressTicket,
+  parseSeatRound,
+  type TicketLegAddress,
+} from "../ticket-address.ts";
 import {
   AUTO_RESUME_LIMIT,
-  findRunDirectoryById,
   peekRoleRunRole,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -441,9 +452,9 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
   // Grammar authority: shared typed consumer over PUBLIC_OPTION_TABLE.global.
-  // #471: after `resume <runId>`, remaining argv is the opaque message segment
-  // and must not re-enter the global-option consumer — including bare `--`,
-  // which is a legal opaque message token, not an argv delimiter here.
+  // #471 / #1201: after `resume <ticket>`, remaining argv is the seat and the
+  // opaque message and must not re-enter the global-option consumer — including
+  // bare `--`, which is a legal opaque message token, not an argv delimiter here.
   while (args.length > 0) {
     if (positional[0] === "resume" && positional.length >= 2) {
       positional.push(...args);
@@ -507,24 +518,30 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
 }
 
 /**
- * Unique public resume request parser (#471).
- * One optional argv after runId is the opaque message; no further positionals.
+ * Unique public resume address parser (#471 / #1201): ticket, seat (optionally
+ * `#<round>`), then one optional opaque message argv; no further positionals.
  */
 const RESUME_USAGE_ERROR =
-  "usage: ak-role resume <runId> [message] (put --model/--thinking/--host/--engine before <runId>; the one argv after <runId> is the opaque message, #471)";
+  "usage: ak-role resume <ticket> <seat>[#<round>] [message] (ticket is the bare number; put --model/--thinking/--host/--engine before <ticket>; the one argv after <seat> is the opaque message)";
 
-function parseResumeRequest(args: readonly string[]): PublicResumeRequest {
-  const runId = args[0];
-  if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
+function parseResumeAddress(
+  args: readonly string[],
+): TicketLegAddress & { readonly seat: PublicCallableRole; readonly message?: string } {
+  const [ticketToken, seatToken, ...rest] = args;
+  const ticketNumber = ticketToken === undefined ? undefined : parseAddressTicket(ticketToken);
+  if (ticketNumber === undefined || seatToken === undefined || rest.length > 1) {
     throw new CliUsageError(RESUME_USAGE_ERROR);
   }
-  if (args.length > 2) {
-    throw new CliUsageError(RESUME_USAGE_ERROR);
+  const { seat, round } = parseSeatRound(seatToken);
+  if (!isPublicCallableRole(seat) || round === "") {
+    throw new CliUsageError(`${RESUME_USAGE_ERROR}; not a callable seat: ${seatToken}`);
   }
-  if (args.length === 2) {
-    return { runId, message: args[1]! };
-  }
-  return { runId };
+  return {
+    ticketNumber,
+    seat,
+    ...(round === undefined ? {} : { round }),
+    ...(rest.length === 0 ? {} : { message: rest[0]! }),
+  };
 }
 
 function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | undefined {
@@ -670,7 +687,7 @@ function renderHelp(): string {
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Model resolution: --model → persistent seat → officer inherit (#620); still none → error (#178)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
-    "Resume flag position: --model/--thinking/--host/--engine go before <runId> (before `resume` or between `resume` and <runId>); the one argv after <runId> is always the opaque message, never a flag (#471)",
+    "Resume address: ak-role resume <ticket> <seat>[#<round>] [message]; --model/--thinking/--host/--engine go before <ticket> (before `resume` or between `resume` and <ticket>); the one argv after <seat> is always the opaque message, never a flag (#471)",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -1186,34 +1203,38 @@ export async function runAkRole(
       env = { ...env, freshSummons: true };
     }
 
-    // Resume reopens an exact Role run (#416): caller decides; session principal
-    // must still exist. Seat and dispatch follow the durable admitted role.
-    // #471: unique parser owns {runId, message?}; five role paths only consume it.
+    // Resume reopens one leg of a ticket (#416 / #1201): caller decides; session
+    // principal must still exist. The address is ticket + seat (+ round); only
+    // legs filed under the ticket are in it.
     if (parsed.command === "resume") {
-      let resumeRequest = parseResumeRequest(parsed.args);
+      const address = parseResumeAddress(parsed.args);
+      const runDirectory = locateTicketLeg(
+        activationBookDirectory(
+          resolveActivationLedgerHome(home),
+          resolveBookKeyFromGit(env.cwd ?? process.cwd()),
+        ),
+        address,
+      );
+      const resumeRequest: PublicResumeRequest = {
+        runId: runIdFromRunDirectory(runDirectory)!,
+        runDirectory,
+        ...(address.message === undefined ? {} : { message: address.message }),
+      };
       resumeFailureContext = {
         home,
         runId: resumeRequest.runId,
+        runDirectory,
         authority: env.principalAuthority ?? piDurablePrincipalAuthority,
       };
-      const runDirectory = await findRunDirectoryById(home, resumeRequest.runId);
-      if (runDirectory !== undefined) {
-        resumeRequest = { ...resumeRequest, runDirectory };
-        resumeFailureContext = { ...resumeFailureContext, runDirectory };
-      }
       const parts = await loadPublicRoleDispatchParts(env, home);
-      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId, resumeRequest);
-      // Missing durable role keeps the judge seat table. The resume entry
-      // itself is one function; it reads the stored run.
-      const seatRole = resumeRole ?? "judge";
       const seat = resolveEffectiveSeat(
         parts.config,
-        seatRole,
+        address.seat,
         parts.credentials,
         invocationFromParsed(parsed),
       );
       const resumeEnv = createRoleEnvironment(env, {
-        role: seatRole,
+        role: address.seat,
         home,
         agentDir: parts.agentDir,
         cwd: parts.cwd,

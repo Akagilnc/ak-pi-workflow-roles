@@ -192,7 +192,11 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
-      { role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first" },
+      // #1201: the row carries its progress receipt reference (no round while unbound).
+      {
+        role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first",
+        receipt: "runs/run-ledger@judge/receipts/1.json",
+      },
     ]);
     // #1199: each seal lands progress immediately — no post-turn history pick.
     const unbound = join(f.root, ".ak-roles", "books", "fixture", "unbound");
@@ -307,6 +311,7 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
       kind: "accepted",
       accepted: params,
       toolCallId: "review-escalate",
+      receipt: "runs/run-ledger@judge/receipts/1.json",
     });
     assert.deepEqual(publicNavigatorSettlement("judge", null, {
       toolName: JUDGE_OUTPUT_TOOL_NAME,

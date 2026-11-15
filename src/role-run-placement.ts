@@ -143,7 +143,7 @@ export async function findRoleRunDirectory(
   }
   if (matches.length === 0) return undefined;
   if (matches.length === 1) return matches[0];
-  throw new Error(`ambiguous role run id ${runId}: ${matches.join(", ")}`);
+  throw new Error(`ambiguous role run: ${matches.join(", ")}`);
 }
 
 /** The single authority for every path belonging to an admitted role run. */

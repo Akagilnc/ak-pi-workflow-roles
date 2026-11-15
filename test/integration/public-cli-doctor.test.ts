@@ -581,13 +581,14 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
     });
     const first = await runAkRole(
       ["doctor", "--model", "test/caller-seat:high", "--issue", "43", "--project", project, "review"],
-      { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host },
+      { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host, boundTicketNumber: 43 },
     );
     assert.equal(first.exitCode, 0);
     assert.equal(first.terminal?.roleOutcome.role, "auditor");
+    assert.equal(first.terminal?.ticket, 43);
     assert.ok(auditorRunId);
     const resumed = await runAkRole(
-      ["resume", "--model", "test/caller-seat:high", auditorRunId!, "Owner answer"],
+      ["resume", "--model", "test/caller-seat:high", "43", "auditor", "Owner answer"],
       { packageRoot, home, cwd: project, io: captureIo().io, roleTurnHost: host },
     );
     assert.equal(resumed.exitCode, 0);

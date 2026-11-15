@@ -77,7 +77,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
       instruction: "original admitted gatekeeper instruction",
       attachmentPaths: [],
     }, {
-      home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId,
+      home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId, boundTicketNumber: TICKET,
     }),
     originalInstruction: "original admitted gatekeeper instruction",
     sealedDetails: () => ({ status: "pass", findings: [] }),
@@ -94,7 +94,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        createRunId: () => runId,
+        createRunId: () => runId, boundTicketNumber: TICKET,
       }),
     originalInstruction: "original admitted collector instruction",
     sealedDetails: (admitted) =>
@@ -120,7 +120,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        createRunId: () => runId,
+        createRunId: () => runId, boundTicketNumber: TICKET,
       });
     },
     originalInstruction: "original admitted doctor instruction",
@@ -143,7 +143,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        createRunId: () => runId,
+        createRunId: () => runId, boundTicketNumber: TICKET,
       });
     },
     sealedDetails: () => ({ status: "converged", findings: [] }),
@@ -159,12 +159,15 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        createRunId: () => runId,
+        createRunId: () => runId, boundTicketNumber: TICKET,
       }),
     sealedDetails: () => ({ status: "converged", findings: [] }),
     originalInstruction: "original admitted inspector instruction",
   },
 ];
+
+/** Every seat's leg is filed under this ticket, so the public address reaches it. */
+const TICKET = 1201;
 
 for (const spec of SEAT_SPECS) {
   test(`resume continues the exact ${spec.role} session and settles its typed terminal`, async () => {
@@ -233,7 +236,8 @@ for (const spec of SEAT_SPECS) {
         "test/caller-seat:high",
         "--engine",
         "agy",
-        runId,
+        String(TICKET),
+        spec.role,
         "调用者原话",
       ], {
         packageRoot,
@@ -252,7 +256,7 @@ for (const spec of SEAT_SPECS) {
       assert.equal(resumed.exitCode, 0, stderr.join(""));
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.roleOutcome.role, spec.role);
-      assert.equal(resumed.terminal!.runId, runId);
+      assert.equal(resumed.terminal!.ticket, TICKET);
 
       // Durable run-state reaches terminal for the resumed run.
       const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);

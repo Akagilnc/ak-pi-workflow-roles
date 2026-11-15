@@ -686,9 +686,21 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
         const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
         assert.equal(existsSync(leaf), true);
         assert.equal(readCurrentSection(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
-        const progress = readTicketProgressLines(join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound"));
+        const subject = join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound");
+        const progress = readTicketProgressLines(subject);
         const rows = progress.filter((row) => row.receipt.startsWith(`runs/${formatRunLeaf(runId, "reviewer")}/`));
         assert.equal(rows.length, action === "resubmit" ? 2 : 1);
+        // #1201: the terminal reports each receipt it accepted as its progress row names it.
+        // A leg filed after its receipt reports the round it was given at filing; a leg that
+        // reported no ticket reports the seat and the receipt path only.
+        assert.equal(result.terminal?.ticket, bound ? TICKET : undefined, `${hostName}/${action}`);
+        assert.deepEqual(
+          result.terminal?.receipts,
+          rows.map((row) => ({ ...(bound ? { round: row.round } : {}), receipt: join(subject, row.receipt) })),
+          `${hostName}/${action}`,
+        );
+        assert.equal(result.terminal!.receipts!.every((filed) => existsSync(filed.receipt)), true);
+        assert.equal(Object.hasOwn(result.terminal!, "runId"), false);
       }
     }
   });

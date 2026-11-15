@@ -522,21 +522,9 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // Nested escalate may present a lower terminal; prefer that seat's admitted
-  // runDirectory when already in hand — do not re-resolve bare runId across books (#1195).
-  let runDirectory = result.admitted?.runDirectory;
-  if (
-    result.terminal !== undefined
-    && result.terminal.roleOutcome.role !== options.role
-    && typeof result.terminal.runId === "string"
-    && result.admitted?.runId !== result.terminal.runId
-  ) {
-    // Compatibility surface with no admitted locator for that terminal.
-    runDirectory = await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
-      home,
-      result.terminal.runId,
-    ) ?? runDirectory;
-  }
+  // Nested escalate returns the officer's terminal with that officer's admitted
+  // leg beside it — the run directory in hand is the one that terminal belongs to (#1195).
+  const runDirectory = result.admitted?.runDirectory;
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),

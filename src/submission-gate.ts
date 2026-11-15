@@ -21,6 +21,7 @@ import { persistAdmittedAuditedSubmissionToolCallId } from "./public-cli/invocat
 import { readRunParentPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import {
   officerConclusionReask,
+  officerRunIdFromSummoned,
   projectGatekeeperRun,
   type GatekeeperSubject,
   type GateOfficer,
@@ -262,7 +263,7 @@ export async function requireSubmissionGate(options: {
         officer: projected.officer,
         receipt: gatekeeper.submission ?? { reason: gatekeeper.reason },
         reason: gatekeeper.reason,
-        runId: projected.summoned?.terminal?.runId,
+        runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
         runDirectory: projected.summoned?.runDirectory,
         terminal: projected.summoned?.terminal,
       });
@@ -285,7 +286,7 @@ export async function requireSubmissionGate(options: {
       officer: projected.officer,
       receipt: gatekeeper.facts ?? { reason: gatekeeper.reason },
       reason: gatekeeper.reason,
-      runId: projected.summoned?.terminal?.runId,
+      runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
       runDirectory: projected.summoned?.runDirectory,
       terminal: projected.summoned?.terminal,
     });

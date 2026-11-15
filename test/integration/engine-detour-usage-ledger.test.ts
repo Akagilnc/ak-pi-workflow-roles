@@ -29,7 +29,6 @@ import type { RoleTurnRequest, RoleTurnResult } from "../../src/host-contracts.t
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -37,21 +36,22 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 
-/** Reopen the volume named by the delivered run id and record pointer. */
+/**
+ * Reopen the volume a delivered record pointer names. The pointer is relative to
+ * the leg; the terminal names the leg through the paths it already reports
+ * (#1201: receipt, artifact, or the no-receipt run pointer — no run id).
+ */
 async function readDeliveredDetourVolume(
-  home: string,
-  runId: string,
+  terminal: TerminalResult,
   recordFile: string,
 ) {
-  const runDirectory = await findRunDirectoryById(home, runId);
-  assert.ok(runDirectory, runId);
-  return readSitianRecords(join(runDirectory, recordFile));
+  return readSitianRecords(join(terminalLegDirectory(terminal), recordFile));
 }
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
-import { objectPayloads } from "../helpers/terminal-payload.ts";
+import { objectPayloads, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 
 const ENGINE = "kimi";
 const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
@@ -522,10 +522,8 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         // UTF-8 non-ASCII byte length through the real tool → sitian → decisiveFacts path
         assert.equal(usage.calls[0]?.stdoutByteLength, ECHO_STDOUT_BYTES);
         assert.equal(typeof usage.calls[0]?.durationMs, "number");
-        assert.ok(result.terminal.runId, row.label);
         const opened = await readDeliveredDetourVolume(
-          home,
-          result.terminal.runId,
+          result.terminal,
           usage.calls[0]!.recordPointer.recordFile,
         );
         assert.ok(
@@ -626,10 +624,9 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       assert.equal(result.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
       const usage = usageOf(result.terminal);
       assert.equal(usage?.callCount, 1);
-      assert.ok(result.terminal?.runId);
+      assert.ok(result.terminal);
       const openedHost = await readDeliveredDetourVolume(
-        home,
-        result.terminal.runId,
+        result.terminal,
         usage!.calls[0]!.recordPointer.recordFile,
       );
       const hostRow = openedHost.records.find(
@@ -780,6 +777,8 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           io,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          // The leg is filed under a ticket so the public address reaches it.
+          boundTicketNumber: 537,
           principalAuthority: piDurablePrincipalAuthority,
           roleTurnHost: reviewReadyHost(async (request) => {
             const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
@@ -803,10 +802,9 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           }),
         },
       );
-      // #537: openable relative pointer; runId lives on the terminal.
+      // #537: openable relative pointer; the terminal names the leg by its paths.
       assert.equal(first.exitCode, 1);
       assert.equal(first.terminal?.roleOutcome.kind, "failure");
-      assert.equal(first.terminal?.runId, runId);
       const firstUsage = usageOf(first.terminal);
       assert.equal(firstUsage?.callCount, 1);
       assert.equal(firstUsage?.calls[0]?.toolCallId, sharedId);
@@ -824,16 +822,11 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
         false,
         "engineDetourToolUsage decisiveFacts must not re-disclose runId",
       );
-      // Relative pointer reopens from the delivered run id and record file.
-      const deliveredRunId = first.terminal?.runId;
+      // Relative pointer reopens from the delivered terminal and record file.
       const deliveredRecord = firstUsage?.calls[0]?.recordPointer.recordFile;
-      assert.ok(deliveredRunId);
+      assert.ok(first.terminal);
       assert.ok(deliveredRecord);
-      const reopened = await readDeliveredDetourVolume(
-        home,
-        deliveredRunId,
-        deliveredRecord,
-      );
+      const reopened = await readDeliveredDetourVolume(first.terminal, deliveredRecord);
       assert.ok(
         reopened.records.some(
           (r) => r.identity === firstUsage?.calls[0]?.recordPointer.identity,
@@ -858,7 +851,7 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
 
     const { io, stdout, stderr } = captureIo();
     let resumeScope: string | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "537", "judge"], {
       packageRoot,
       home,
       cwd: project,

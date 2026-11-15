@@ -170,7 +170,7 @@ test("resume accepts --host and selects that host adapter", async () => {
 
     const selected: string[] = [];
     const { io } = captureIo();
-    await runAkRole(["resume", "--host", "grok-build", runId], {
+    await runAkRole(["resume", "--host", "grok-build", "1201", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -228,6 +228,8 @@ test("explicit resume hands the stored host session id to the selected host", as
         io: seedIo.io,
         principalAuthority: piDurablePrincipalAuthority,
         createRunId: () => `01a05051-0000-7000-8000-${String(++seq).padStart(12, "0")}`,
+        // Every seat's leg is filed under the source run's ticket.
+        boundTicketNumber: 505,
         hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: seedHost }) }],
       });
       if (seatRunId === undefined) {
@@ -286,8 +288,8 @@ test("explicit resume hands the stored host session id to the selected host", as
         },
       };
       const resumeArgs = record.role === "notary"
-        ? ["resume", "--host", "grok-build", runId]
-        : ["resume", "--host", "grok-build", runId, "caller words"];
+        ? ["resume", "--host", "grok-build", "505", record.role]
+        : ["resume", "--host", "grok-build", "505", record.role, "caller words"];
       const { io, stderr } = captureIo();
       const resumed = await runAkRole(resumeArgs, {
         packageRoot,
@@ -700,6 +702,8 @@ async function seedResumableJudge(input: {
     cwd: input.project,
     credentials,
     createRunId: () => input.runId,
+    // Filed under a ticket so the public address reaches the leg.
+    boundTicketNumber: 1201,
     io,
     principalAuthority,
     hostAdapters: input.hostAdapters ?? [
@@ -734,7 +738,7 @@ test("bare resume follows live seat table host when it drifts from birth host", 
     await seedResumableJudge({ home, project, runId });
 
     const books = await readdir(join(home, ".ak-roles", "books"));
-    const judgeRun = join(home, ".ak-roles", "books", books[0]!, "unbound", "runs", `${runId}@judge`);
+    const judgeRun = join(home, ".ak-roles", "books", books[0]!, "1201", "runs", `${runId}@judge`);
     const inv = readCurrentSection(judgeRun, "invocation") as { host?: unknown };
     assert.equal(inv.host, "pi");
 
@@ -756,7 +760,7 @@ test("bare resume follows live seat table host when it drifts from birth host", 
     // Contract under test: which host adapter resume selects — not terminal success.
     const selected: string[] = [];
     const { io } = captureIo();
-    await runAkRole(["resume", runId], {
+    await runAkRole(["resume", "1201", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -827,7 +831,7 @@ test("#822 coder apply non-pi hosts: prompt carries the assignment; planned rece
       await runAkRole(["config", "set-host", "coder", "grok-build"], productionBase(home));
       const grokIo = captureIo();
       const result = await runAkRole(["coder", "--project", project, assignment],
-        { ...productionBase(home), io: grokIo.io, cwd: project, createRunId: () => "run-822-coder-grok" },
+        { ...productionBase(home), io: grokIo.io, cwd: project, createRunId: () => "run-822-coder-grok", boundTicketNumber: 822 },
       );
       assert.equal(result.exitCode, 0, `${grokIo.stdout.join("")}\n${grokIo.stderr.join("")}`);
 
@@ -844,7 +848,7 @@ test("#822 coder apply non-pi hosts: prompt carries the assignment; planned rece
       // Resume: load bound session, set_model bare id again, then prompt — no argv model.
       await writeFile(framesPath, "", "utf8");
       const resumeIo = captureIo();
-      const resumed = await runAkRole(["resume", "run-822-coder-grok", "continue after plan"], {
+      const resumed = await runAkRole(["resume", "822", "coder", "continue after plan"], {
         ...productionBase(home),
         io: resumeIo.io,
         cwd: project,
