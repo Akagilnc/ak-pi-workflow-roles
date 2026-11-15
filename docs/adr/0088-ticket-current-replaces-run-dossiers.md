@@ -1,10 +1,10 @@
 # 票一张 current，腿只留宿主原件
 
-Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197）
+Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件留腿内 2026-10-10，源卷 e4b50c8e，uuid `14b58f6c-a8b2-4a39-abda-c9c637cfff13`；轮的界定与票号写法 2026-11-15，源卷 d634a8d9，uuid `d91600ab-45d6-42e0-a3cc-ed5fd9ad2778`）
 
-名词三个：**进度**＝`current.jsonl`，**回执**＝`receipts/`，**会话**＝`sessions/`。
+名词三个：**进度**＝票目录下的 `current.jsonl`，**回执**＝腿目录里的 `receipts/`，**会话**＝腿目录里的 `session/`。
 
-一张票的进度只有一处：票目录下的 `current.jsonl`，每收下一次交卷追加一行，八个字段——`at`、`seat`、`round`、`for`（审／修的是谁#轮，只审官与修内司行有）、`status`、`summary`（20–50 字）、`receipt`（`receipts/<席>#<轮>.json`）、`session`（`sessions/` 下的会话原件）。回执是席位交卷的结构化 JSON（findings、decisionGate……，几 KB），一次交卷一份放 `receipts/`——结论一目了然，不在大文件里翻。会话是宿主原件，一段对话一份放 `sessions/`（[ADR 0086](0086-host-dossier-is-native-file-copy-sitian-append-only.md) 不变：宿主会清理，原件必须复制；pi 的会话文件本身就落在这里），名字只是落点。腿目录不再存在，每腿一份 `current.json`／`history.jsonl`／`state.jsonl`／`log.jsonl` 全部不再写。跑完的票目录只有 `current.jsonl`、`records.jsonl`（起居录）、`receipts/`、`sessions/`。对外地址是「票＋席＋轮」（`ak-role resume #N judge`），runId 退出用户面。轮＝一次被收下的交卷，按席在票上累计；审官行在传召那一刻钉死「审 谁#轮」，催交重交不进轮，续同一段会话再交卷即下一轮。父腿不记子腿指针、不投影他席结论——谁审了谁，只在审官自己那一行。
+一张票的进度只有一处：票目录下的 `current.jsonl`，每收下一次交卷追加一行，八个字段——`at`、`seat`、`round`、`for`（审／修的是谁#轮，只审官与修内司行有）、`status`、`summary`（20–50 字）、`receipt`（本腿 `receipts/` 里那一份的引用）、`session`（本腿 `session/` 下会话原件的引用）。回执是席位交卷的结构化 JSON（findings、decisionGate……，几 KB），一次交卷一份放本腿的 `receipts/`——结论一目了然，不在大文件里翻。会话是宿主原件，一段对话一份放本腿的 `session/`（[ADR 0086](0086-host-dossier-is-native-file-copy-sitian-append-only.md) 不变：宿主会清理，原件必须复制；pi 的会话文件本身就落在这里），名字只是落点。腿目录只留这两样原件，每腿一份 `current.json`／`history.jsonl`／`state.jsonl`／`log.jsonl` 全部不再写。跑完的票目录只有 `current.jsonl`、`records.jsonl`（起居录）与各腿目录。对外地址是「票＋席＋轮」（`ak-role resume 1201 judge`，票号写裸数字），runId 退出用户面。轮＝一次被收下的交卷，按席在票上累计；审官行在传召那一刻钉死「审 谁#轮」，没被收下的交卷（没交卷被催、被闸打回后重交）不落行、不进轮，已收下的每一份各一行各一轮，续同一段会话再交卷即下一轮。父腿不记子腿指针、不投影他席结论——谁审了谁，只在审官自己那一行。
 
 ## Considered Options
 
