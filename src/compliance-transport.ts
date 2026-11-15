@@ -5,7 +5,7 @@ import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { officerConclusionReask } from "./gatekeeper-role.ts";
-import { receivedDiscriminator } from "./submission-errors.ts";
+import { receiptStatus } from "./packaged-role-registry.ts";
 import { currentReplyRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
@@ -68,7 +68,7 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
     return undefined;
   }
   const args = arguments_ as Record<string, unknown>;
-  const status = args.status;
+  const status = receiptStatus(arguments_);
   if (status === "converged") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "continue") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
@@ -234,7 +234,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     if (decision.status === "received") {
       if (reasksSpent >= reaskLimit) return decision;
       reasksSpent += 1;
-      reask = officerConclusionReask(receivedDiscriminator(decision.reply, "status"));
+      reask = officerConclusionReask(receiptStatus(decision.reply));
       continue;
     }
     return decision;

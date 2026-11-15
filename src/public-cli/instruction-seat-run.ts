@@ -9,7 +9,6 @@ import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
 import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from "../gatekeeper-role.ts";
-import { receivedDiscriminator } from "../submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "../review-submission.ts";
 import { JUDGE_GATES, runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
@@ -36,6 +35,7 @@ import {
   packagedBindsBoardTicket,
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
+  receiptStatus,
 } from "../packaged-role-registry.ts";
 import { readAuditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -108,7 +108,7 @@ import {
   type CountersignRunEnv,
 } from "./countersign-run.ts";
 import { readAuditedRound } from "../ticket-progress.ts";
-import { isRecord, errorText } from "../unknown-value.ts";
+import { errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
@@ -122,7 +122,7 @@ type SeatRunResult = {
 };
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
-const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，secretariatStatus 写明其一。";
+const SECRETARIAT_STATUS_REASK = "status 不是 converged、escalate 之一。请重新交卷，status 写明其一。";
 const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set([
   "planned", "completed", "refused", "partially_completed", "unfinished",
 ]);
@@ -180,7 +180,7 @@ function unreadablePostSubmissionStatus(
   const route = POST_SUBMISSION_ROUTING[admitted.role];
   if (route === undefined) return undefined;
   const payload = terminal.roleOutcome.payloads?.at(-1);
-  const status = receivedDiscriminator(payload, "status");
+  const status = receiptStatus(payload);
   return typeof status === "string" && route.statuses.has(status)
     ? undefined
     : route.reask ?? officerConclusionReask(status);
@@ -1617,9 +1617,7 @@ async function auditSubmittedRole(
     || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
   const accepted = turn.terminal.roleOutcome.payloads?.at(-1);
   if (accepted === undefined) throw new Error("accepted submission has no payload");
-  const record = isRecord(accepted)
-    ? accepted as Record<string, unknown> : undefined;
-  const status = admitted.role === "secretariat" ? record?.secretariatStatus : record?.status;
+  const status = receiptStatus(accepted);
   // A gate summon already owns this conclusion's reasks. The seat must not
   // start another budget on the same run (parentRunPath is that summon).
   const gateOwnsStatusReask = typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== "";

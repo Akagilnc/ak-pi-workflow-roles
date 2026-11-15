@@ -43,7 +43,6 @@ export function payloadStatusSequence(outcome: TerminalRoleOutcome): readonly st
   const statuses: string[] = [];
   for (const facts of objectPayloads(outcome)) {
     if (typeof facts.status === "string") statuses.push(facts.status);
-    else if (typeof facts.secretariatStatus === "string") statuses.push(facts.secretariatStatus);
   }
   return statuses;
 }

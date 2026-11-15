@@ -435,11 +435,11 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ...(firstTicket === undefined ? {} : { ticketNumber: firstTicket }) },
+          details: { status: "converged", ...(firstTicket === undefined ? {} : { ticketNumber: firstTicket }) },
         },
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924, note: "已按封驳改" },
+          details: { status: "converged", ticketNumber: 924, note: "已按封驳改" },
         },
       ],
     });
@@ -470,17 +470,17 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["converged"]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
     const facts = payloads[payloads.length - 1] as {
-      secretariatStatus: string;
+      status: string;
       ticketNumber?: number;
     };
-    assert.equal(facts.secretariatStatus, "converged");
+    assert.equal(facts.status, "converged");
     assert.equal(facts.ticketNumber, 924);
     assert.deepEqual(result.terminal.submissions, [
       {
-        secretariatStatus: "converged",
+        status: "converged",
         ...(firstTicket === undefined ? {} : { ticketNumber: firstTicket }),
       },
-      { secretariatStatus: "converged", ticketNumber: 924, note: "已按封驳改" },
+      { status: "converged", ticketNumber: 924, note: "已按封驳改" },
     ]);
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
       join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
@@ -535,7 +535,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924 },
+          details: { status: "converged", ticketNumber: 924 },
         },
       ],
     });
@@ -614,7 +614,7 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
         roleTurnHost: secretariatHostDrivingRealTools({
           packageRoot, home, gateCalls: [], submissionGateHost: "codex",
           countersignSequence: [{ details: { status: "converged", ticketNumber: 924 }, notaryEscalation: receipt }],
-          steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+          steps: [{ kind: "output", details: { status: "converged", ticketNumber: 924 } }],
         }),
       },
     );
@@ -649,7 +649,7 @@ test("public Secretariat gate reads the shared status field from Countersign", a
           gateCalls,
           submissionGateHost: "codex",
           countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924} }],
-          steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+          steps: [{ kind: "output", details: { status: "converged", ticketNumber: 924 } }],
         }),
       },
     );
@@ -681,12 +681,12 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924 },
+          details: { status: "converged", ticketNumber: 924 },
         },
         {
           kind: "output",
           details: {
-            secretariatStatus: "escalate",
+            status: "escalate",
             decisionGate: {
               question: "是否拆席？",
               options: ["暂不", "拆"],
@@ -719,10 +719,10 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     const payloads = objectPayloads(result.terminal.roleOutcome);
     const facts = payloads[payloads.length - 1] as {
-      secretariatStatus: string;
+      status: string;
       decisionGate?: { question?: string };
     };
-    assert.equal(facts.secretariatStatus, "escalate");
+    assert.equal(facts.status, "escalate");
     assert.equal(facts.decisionGate?.question, "是否拆席？");
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
@@ -750,7 +750,7 @@ test("#1165 secretariat --attach hands caller path to court diarist as-is", asyn
       submissionGateHost: "codex",
       parentDiaristRunner: courtDiaristFor924(),
       countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924} }],
-      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+      steps: [{ kind: "output", details: { status: "converged", ticketNumber: 924 } }],
     });
     const result = await runAkRole(
       [
@@ -817,7 +817,7 @@ for (const preliminaryTicket of [null, 923] as const) {
         })(args, options);
       },
       countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924 } }],
-      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+      steps: [{ kind: "output", details: { status: "converged", ticketNumber: 924 } }],
     });
     const result = await runAkRole(
       ["secretariat", "--model", "test/caller-seat:high", "--project", project, "请辨认并建立本票。"],
@@ -853,7 +853,7 @@ test("diarist escalation pauses only the diarist; Secretariat proceeds and does 
       packageRoot, home, gateCalls, submissionGateHost: "codex",
       parentDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }),
       countersignSequence: [{ details: { status: "converged", note: "署", ticketNumber: 924} }],
-      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+      steps: [{ kind: "output", details: { status: "converged", ticketNumber: 924 } }],
     });
     const result = await runAkRole(
       ["secretariat", "--model", "test/caller-seat:high", "--project", project, "请建立本票。"],
@@ -1095,8 +1095,8 @@ async function adapterBoundaryCase(input: {
 for (const hostName of ["codex", "claude", "grok-build"] as const) {
   test(`adapter boundary ${hostName}: original receipt files without a nested gate`, async () => {
     for (const receipt of [
-      { secretariatStatus: "converged", ticketNumber: 924 },
-      { secretariatStatus: "escalate", decisionGate: { question: "q", options: ["a"] } },
+      { status: "converged", ticketNumber: 924 },
+      { status: "escalate", decisionGate: { question: "q", options: ["a"] } },
     ]) {
       const { gateEntered, submitted } = await adapterBoundaryCase({ hostName, receipt });
       assert.equal(gateEntered, false);

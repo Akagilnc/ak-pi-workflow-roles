@@ -28,7 +28,7 @@ import {
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
-import { receivedDiscriminator } from "./submission-errors.ts";
+import { receiptStatus } from "./packaged-role-registry.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
@@ -64,11 +64,8 @@ export function latestQueueStatus(terminal: TerminalResult | undefined): unknown
   if (outcome === undefined) return undefined;
   if (outcome.kind === "audit_escalation") return "escalate";
   if (outcome.kind !== "accepted") return undefined;
-  const latest = outcome.payloads?.[outcome.payloads.length - 1];
-  if (isRecord(latest) && Object.hasOwn(latest, "status")) {
-    return receivedDiscriminator(latest, "status");
-  }
-  return outcome.status;
+  const received = receiptStatus(outcome.payloads?.[outcome.payloads.length - 1]);
+  return received === undefined ? outcome.status : received;
 }
 
 export function latestQueuePayload(terminal: TerminalResult | undefined): unknown {
@@ -78,7 +75,6 @@ export function latestQueuePayload(terminal: TerminalResult | undefined): unknow
   const payloads = outcome.payloads ?? [];
   return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
 }
-import { isRecord } from "./unknown-value.ts";
 
 /**
  * Shared-envelope default officer summon (ADR 0018).
