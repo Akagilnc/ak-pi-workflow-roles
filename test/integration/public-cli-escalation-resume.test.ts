@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { appendFile, mkdir, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -553,5 +553,18 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
     // no gate summoned that auditor again — resumed, it still names round 1.
     assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
     assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"]]);
+    // A summons the notary leg's writer lease refuses is not an admission: the
+    // Judge seals round 3 while another writer holds that leg, the notary never
+    // runs, and resumed directly afterwards it still names round 2.
+    assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
+    const notaryLock = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../../writer.lock");
+    await writeFile(notaryLock, `${process.pid}\n`, "utf8");
+    const refused = await observed.resumeRun(observed.parentRunId, "new review");
+    assert.notEqual(refused.exitCode, 0);
+    assert.equal(notaryCalls, 3, "the refused summons must not reach the notary");
+    assert.deepEqual(observed.rounds("judge").at(-1), ["3", undefined]);
+    await rm(notaryLock);
+    assert.equal((await observed.resumeRun(second.terminal!.runId!, RULING)).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["4", "judge#2"]);
   }, [BOUND_VERDICT]);
 });

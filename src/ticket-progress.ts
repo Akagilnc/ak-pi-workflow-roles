@@ -38,7 +38,7 @@ import {
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { readPageSync, updateSectionSync } from "./run-dossier.ts";
+import { readPageSync } from "./run-dossier.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { errorText, isRecord } from "./unknown-value.ts";
 
@@ -197,42 +197,30 @@ function statusAndSummaryFromPayload(seat: string, payload: unknown): {
 }
 
 /**
- * #1200 pin「审 谁#轮」on the officer's admitted page at admission, before the
- * officer runs: the audited leg's latest row on the ticket at this moment.
- * A re-summons replaces the value; rows already appended keep theirs. An audited
- * leg with no round yet (unbound, or no accepted receipt) clears the pin. A
- * progress file that cannot be read or has malformed rows also clears it and
- * returns the cause for the caller to retain — the officer still runs.
+ * #1200「审 谁#轮」as the ticket has it now: the audited leg's latest row. Read
+ * at the officer's admission, before the officer runs. An audited leg with no
+ * round yet (unbound, or no accepted receipt) has none. A progress file that
+ * cannot be read or has malformed rows has none either and returns the cause
+ * for the caller to retain — the officer still runs.
  */
-export function pinAuditedRound(input: {
-  readonly officerRunDirectory: string;
-  readonly auditedRunDirectory: string;
-}): { readonly fault?: string } {
-  let pinned: string | undefined;
-  let fault: string | undefined;
+export function readAuditedRound(auditedRunDirectory: string): {
+  readonly for?: string;
+  readonly fault?: string;
+} {
   try {
-    const subjectDirectory = subjectDirectoryOfRun(input.auditedRunDirectory);
-    if (subjectDirectory !== undefined && !isUnboundRunDirectory(input.auditedRunDirectory)) {
-      const path = join(subjectDirectory, CURRENT_FILENAME);
-      const { lines, malformed } = decodeProgressFile(path);
-      if (malformed.length > 0) {
-        throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
-      }
-      const receipts = `runs/${basename(input.auditedRunDirectory)}/`;
-      const latest = lines
-        .filter((line) => typeof line.receipt === "string" && line.receipt.startsWith(receipts))
-        .at(-1);
-      if (latest !== undefined) pinned = `${latest.seat}#${latest.round}`;
+    const subjectDirectory = subjectDirectoryOfRun(auditedRunDirectory);
+    if (subjectDirectory === undefined) return {};
+    const path = join(subjectDirectory, CURRENT_FILENAME);
+    const { lines, malformed } = decodeProgressFile(path);
+    if (malformed.length > 0) {
+      throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
     }
+    const receipts = `runs/${basename(auditedRunDirectory)}/`;
+    const latest = lines.filter((line) => line.receipt.startsWith(receipts)).at(-1);
+    return latest === undefined ? {} : { for: `${latest.seat}#${latest.round}` };
   } catch (error) {
-    fault = `audited round unavailable for ${input.auditedRunDirectory}: ${errorText(error)}`;
+    return { fault: `audited round unavailable for ${auditedRunDirectory}: ${errorText(error)}` };
   }
-  updateSectionSync(input.officerRunDirectory, "admitted", (current) => {
-    if (current.for === pinned) return undefined;
-    const { for: _replaced, ...rest } = current;
-    return pinned === undefined ? rest : { ...rest, for: pinned };
-  });
-  return fault === undefined ? {} : { fault };
 }
 
 /**
