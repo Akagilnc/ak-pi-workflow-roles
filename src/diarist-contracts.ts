@@ -58,22 +58,6 @@ export type DiaristSinceLast =
   | { readonly lastRecorded: null; readonly swept: null; readonly found: "本卷尚无成录（本票没有起居录，或起居录里没有本卷），本轮从本卷开头收" }
   | { readonly lastRecorded: null; readonly swept: null; readonly found: "无法扫：起居录或源卷读不出，本轮 status 只能是 escalate，reason 写明读不出什么" };
 
-export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
-  if (!isRecord(value)) {
-    throw new Error("Diarist output has no execution discriminator");
-  }
-  let status: unknown;
-  try {
-    status = (value as Record<string, unknown>).status;
-  } catch {
-    throw new Error("Diarist output has no execution discriminator");
-  }
-  if (status === "completed" || status === "escalate") {
-    return value as DiaristOutput;
-  }
-  throw new Error("Diarist output has no execution discriminator");
-}
-
 /**
  * Project sessions from a completed diarist payload.
  * Null / absent key → empty (lawful). Non-null but unusable → undefined (caller reasks).

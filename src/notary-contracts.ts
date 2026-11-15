@@ -5,8 +5,6 @@
  */
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
-import { isRecord } from "./unknown-value.ts";
-
 export const NOTARY_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const NOTARY_SOURCE_RUN_FLAG = {
   name: "ak-notary-source-run",
@@ -40,14 +38,3 @@ export type NotaryOutput =
       readonly reason?: unknown;
       readonly findings?: unknown;
     };
-
-/**
- * Settlement/recording path: only lawful recorded converged/continue/escalate.
- * Does not gate role admission — callers must not use this to reject a submission.
- */
-export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
-  if (!isRecord(value)) {
-    throw new Error("Notary output is not an object");
-  }
-  return value as NotaryOutput;
-}

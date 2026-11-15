@@ -2,9 +2,11 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
-import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
@@ -168,6 +170,42 @@ export async function sealAcceptedSubmission(input: {
       ? {}
       : { summonsInstruction: input.summonsInstruction }),
   });
+}
+
+/**
+ * A host whose every turn seals `receiptFor(role, call)` through the production
+ * ledger. `calls` counts the turns each seat ran (the call number is 1-based).
+ */
+export function sealingCourtHost(receiptFor: (role: TerminalRoleName, call: number) => unknown): {
+  readonly calls: Partial<Record<string, number>>;
+  readonly host: RoleTurnHost;
+} {
+  const calls: Partial<Record<string, number>> = {};
+  const host: RoleTurnHost = {
+    async executeTurn(request) {
+      const role = request.activation.role;
+      const call = calls[role] = (calls[role] ?? 0) + 1;
+      const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(coordinates.sessionDirectory, { recursive: true });
+      await writeFile(
+        coordinates.sessionFile,
+        `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+        "utf8",
+      );
+      await sealAcceptedSubmission({
+        cwd: request.cwd,
+        runId: runIdFromRunDirectory(request.runDirectory)!,
+        runDirectory: request.runDirectory,
+        role,
+        details: receiptFor(role, call),
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+        toolCallId: `${role}-${call}`,
+        home: request.home,
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  };
+  return { calls, host };
 }
 
 /** Spawn-env convenience for public-cli faux runners that already own typed details. */

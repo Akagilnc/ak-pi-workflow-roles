@@ -15,6 +15,7 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts"
 import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
+import { isRecord } from "./unknown-value.ts";
 
 /** Historical durable session names; these are read aliases, never registered tools. */
 export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
@@ -24,6 +25,38 @@ export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
   ["ak_inspector_output", "inspector"],
   ["ak_auditor_output", "auditor"],
 ]);
+
+/** Conclusion keys in reading order: `status`, then the keys older receipts used. */
+const RECEIPT_STATUS_KEYS = ["status", "secretariatStatus", "judgeStatus", "countersignStatus"] as const;
+
+/**
+ * The conclusion word a receipt carries, as written. Absent when no key holds one.
+ * The only reader of that word: a live submission and a ledger row read the same.
+ */
+export function receiptStatus(receipt: unknown): unknown {
+  if (!isRecord(receipt)) return undefined;
+  for (const key of RECEIPT_STATUS_KEYS) {
+    if (Object.hasOwn(receipt, key)) return receipt[key];
+  }
+  return undefined;
+}
+
+/**
+ * The seat a receipt belongs to, from the tool that carried it. A historical
+ * name or a name one seat owns names that seat. The name several seats share
+ * names none, and the run's own seat is asked.
+ */
+export function receiptSeat(
+  toolName: string,
+  runSeat: () => string | undefined,
+): { readonly seat: string; readonly source: "tool" | "invocation" } | undefined {
+  const legacy = LEGACY_REVIEW_OUTPUT_ROLES.get(toolName);
+  if (legacy !== undefined) return { seat: legacy, source: "tool" };
+  const owners = PACKAGED_ROLE_REGISTRY.filter((entry) => entry.outputTool === toolName);
+  if (owners.length === 1) return { seat: owners[0]!.role, source: "tool" };
+  const seat = owners.length === 0 ? undefined : runSeat();
+  return seat === undefined ? undefined : { seat, source: "invocation" };
+}
 
 /** Success-terminal facts that still differ by seat. */
 export type PackagedArtifactFace = {
@@ -88,7 +121,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
     activationStage: "load-and-install",
-    receiptStatusKey: "status",
     sessionMaterials: [
       "CLAUDE.md",
       "souls/judge.md",
@@ -319,7 +351,6 @@ export const PUBLIC_ROLE_RECORDS = [
       { field: "ticketNumber" },
     ],
     activationStage: "load-and-install",
-    receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "souls/design-law.md", "souls/audit-law.md", "souls/quality-law.md", "resources/countersign-ticket-issue.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
   },
@@ -337,7 +368,6 @@ export const PUBLIC_ROLE_RECORDS = [
       { field: "ticketNumber" },
     ],
     activationStage: "load-and-install",
-    receiptStatusKey: "secretariatStatus",
     // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
     sessionMaterials: [
       "CLAUDE.md",

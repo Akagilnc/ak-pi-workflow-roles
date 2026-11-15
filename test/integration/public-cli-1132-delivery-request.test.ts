@@ -42,7 +42,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission, sealingCourtHost } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -812,38 +812,12 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
         { packageRoot, home, io: { stdout() {}, stderr() {} } },
       );
       const project = await freshProject(home);
-      const calls: Record<string, number> = {};
-      const host = {
-        async executeTurn(request: RoleTurnRequest) {
-          const role = request.activation.role;
-          calls[role] = (calls[role] ?? 0) + 1;
-          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
-          await mkdir(coordinates.sessionDirectory, { recursive: true });
-          await writeFile(
-            coordinates.sessionFile,
-            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
-            "utf8",
-          );
-          const details = role === "secretariat"
-            ? { secretariatStatus: "converged", ticketNumber: 1132 }
-            : role === "countersign"
-              ? { status: "sideways", ticketNumber: 1132 }
-              : role === "diarist"
-                ? { status: "completed", ticketNumber: 1132, sessions: [] }
-                : { status: "converged", ticketNumber: 1132 };
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            runId: runIdFromRunDirectory(request.runDirectory)!,
-            runDirectory: request.runDirectory,
-            role,
-            details,
-            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
-            toolCallId: `${role}-${calls[role]}`,
-            home: request.home,
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        },
-      };
+      // The first conclusion has no status at all; later ones carry a word outside the three states.
+      const { calls, host } = sealingCourtHost((role, call) => role === "countersign"
+        ? { ...(call === 1 ? {} : { status: "sideways" }), ticketNumber: 1132 }
+        : role === "diarist"
+          ? { status: "completed", ticketNumber: 1132, sessions: [] }
+          : { status: "converged", ticketNumber: 1132 });
       const env = {
         packageRoot,
         home,

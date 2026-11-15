@@ -91,10 +91,6 @@ function read(value: unknown, key: string): unknown { if (!isRecord(value)) retu
 export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
   return value as DoctorSubmission;
 }
-export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
-  return value as DoctorOutput;
-}
-
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly coverage = new Map<string, Array<[number, number]>>();
   constructor(readonly patient: DoctorCase) { this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry])); }

@@ -26,12 +26,7 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { resolveHostDossierLandingPath } from "./host-session-record.ts";
 import type { HostContext } from "./host-contracts.ts";
 import { runDirectoryFromHostContext } from "./host-contracts.ts";
-import {
-  acceptedFacts,
-  isTerminatingToolName,
-  type AcceptedDetails,
-} from "./package-contracts/terminating-tools.ts";
-import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
+import { receiptStatus } from "./packaged-role-registry.ts";
 import {
   isUnboundRunDirectory,
   sessionDirectoryOf,
@@ -155,24 +150,16 @@ function nextLegReceiptIndex(runDirectory: string): number {
 
 /**
  * Copy structured status/summary from the seat receipt.
- * Status leaves reuse acceptedFacts (terminating-tools authority) via the seat's
- * current output tool — legacy judgeStatus/countersignStatus keys are unreachable
- * at this seal seam (tool is the live registry name, not ak_judge_output).
- * summary is seat-authored prose on the receipt and is not part of AcceptedFacts.
+ * summary is seat-authored prose on the receipt.
  * Missing fields stay absent — never invent "" or "accepted".
- *
- * Not receiptStatusFromRegistry: that scans every registry key for navigator
- * projection when the seat is unknown; here the seal already knows the seat.
  */
-function statusAndSummaryFromPayload(seat: string, payload: unknown): {
+function statusAndSummaryFromPayload(payload: unknown): {
   readonly status?: string;
   readonly summary?: string;
 } {
   if (!isRecord(payload)) return {};
-  const toolName = packagedRoleOutputTool(seat);
-  const status = toolName !== undefined && isTerminatingToolName(toolName)
-    ? acceptedFacts(toolName, payload as AcceptedDetails).status
-    : undefined;
+  const received = receiptStatus(payload);
+  const status = typeof received === "string" ? received : undefined;
   const summary = typeof payload.summary === "string" ? payload.summary : undefined;
   return {
     ...(status === undefined ? {} : { status }),
@@ -320,7 +307,7 @@ export function landTicketProgress(input: {
   const sessionRelative = input.sessionFile === undefined
     ? ""
     : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
-  const { status, summary } = statusAndSummaryFromPayload(input.role, input.accepted);
+  const { status, summary } = statusAndSummaryFromPayload(input.accepted);
   const instruction = input.instruction;
   const line: TicketProgressLine = {
     at: new Date().toISOString(),

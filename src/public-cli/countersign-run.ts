@@ -9,7 +9,7 @@ import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { CliIo } from "./cli-io.ts";
 import { currentReplyRows, type TerminalResult, type TerminalRoleOutcome } from "./terminal.ts";
 
-import { isRecord } from "../unknown-value.ts";
+import { receiptStatus } from "../packaged-role-registry.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -54,10 +54,7 @@ export type CourtDiaristInvocationResult = {
 };
 
 function isEscalatePayload(payload: unknown): boolean {
-  if (!isRecord(payload)) return false;
-  return (
-    payload.status === "escalate"
-  );
+  return receiptStatus(payload) === "escalate";
 }
 
 /**

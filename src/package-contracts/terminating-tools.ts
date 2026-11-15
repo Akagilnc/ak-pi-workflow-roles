@@ -13,22 +13,27 @@ import {
 } from "./judge-output.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
-  validateReviewerIntent,
   type ReviewerIntent,
 } from "./reviewer-output.ts";
-import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
+import {
+  LEGACY_REVIEW_OUTPUT_ROLES,
+  PACKAGED_ROLE_REGISTRY,
+  packagedRoleMetadata,
+  receiptSeat,
+  receiptStatus,
+} from "../packaged-role-registry.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
-import { AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
-import { MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
-import { NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
+import { validateDoctorSubmissionShape, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
+import type { GatekeeperDirectOutput } from "./gatekeeper-output.ts";
+import type { NavigatorAdvice } from "./navigator-output.ts";
+import type { AuditorOutput } from "./auditor-output.ts";
+import { MERGER_OUTPUT_TOOL_NAME, type MergerOutput } from "../merger-contracts.ts";
+import type { NotaryOutput } from "../notary-contracts.ts";
 import type { CountersignVerdict } from "../countersign-contracts.ts";
 import type { GleanerLeftOutput } from "../gleaner-left-contracts.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
-import { DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
-import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "../secretariat-contracts.ts";
+import type { InspectorOutput } from "../inspector-contracts.ts";
+import type { DiaristOutput } from "../diarist-contracts.ts";
+import type { SecretariatVerdict } from "../secretariat-contracts.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -45,17 +50,8 @@ export {
   JUDGE_OUTPUT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
-  validateReviewerIntent,
   validateAcceptedWorkerDetails,
   validateDoctorSubmissionShape,
-  validateRecordedDoctorOutput,
-  validateMergerOutput,
-  validateRecordedNotaryOutput,
-  validateRecordedInspectorOutput,
-  validateRecordedGatekeeperOutput,
-  validateRecordedNavigatorOutput,
-  validateRecordedAuditorOutput,
-  validateRecordedDiaristOutput,
 };
 export type {
   CollectorReceipt,
@@ -129,17 +125,6 @@ export function validateAcceptedDetails(
   return {} as AcceptedDetails;
 }
 
-/**
- * #836: args↔details equality rejection deleted. Details are recorded as submitted.
- */
-export function validateAcceptedLifecycle(
-  toolName: TerminatingToolName,
-  _argumentsValue: unknown,
-  detailsValue: unknown,
-): AcceptedDetails {
-  return validateAcceptedDetails(toolName, detailsValue);
-}
-
 /** Machine-facing facts from an accepted terminating receipt. No presentation joins. */
 export type AcceptedFacts = {
   status?: string;
@@ -149,12 +134,11 @@ export type AcceptedFacts = {
 /** Read status/commit leaves the role wrote — never invent defaults (#836). */
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   const record = details as Record<string, unknown>;
-  const entry = PACKAGED_ROLE_REGISTRY.find((candidate) => candidate.outputTool === toolName);
-  const legacyRole = LEGACY_REVIEW_OUTPUT_ROLES.get(toolName);
-  const statusKey = legacyRole === "judge" || legacyRole === "countersign"
-    ? `${legacyRole}Status`
-    : entry !== undefined && "receiptStatusKey" in entry ? entry.receiptStatusKey : "status";
-  const status = typeof record[statusKey] === "string" ? record[statusKey] : undefined;
+  const received = receiptStatus(details);
+  const status = typeof received === "string" ? received : undefined;
+  // The commit leaf is one seat's own. The shared tool name carries none.
+  const seat = receiptSeat(toolName, () => undefined)?.seat;
+  const entry = seat === undefined ? undefined : packagedRoleMetadata(seat);
   const commitKey = entry !== undefined && "receiptCommitKey" in entry ? entry.receiptCommitKey : undefined;
   const commitWhen = entry !== undefined && "receiptCommitWhen" in entry ? entry.receiptCommitWhen : undefined;
   const commit = commitKey !== undefined
