@@ -70,7 +70,3 @@ export function validateMergerInput(value: unknown): MergerInput {
   const authorizedChecks = Array.isArray(value.authorizedChecks) ? value.authorizedChecks.filter((check): check is Record<string, unknown> => isRecord(check)).map(c => ({ name: asString(c.name), argv: asStringArray(c.argv).filter(a => a.trim().length > 0) })).filter(c => c.name.trim().length > 0 && c.argv.length > 0) : [];
   return deepFreeze(structuredClone({ attemptId: (value.attemptId as string).trim(), targetObjectId: asString(value.targetObjectId), sourceObjectId: asString(value.sourceObjectId), materials, expectedConflictPaths: asStringArray(value.expectedConflictPaths), resolutionScope: asStringArray(value.resolutionScope), authorizedChecks }) as MergerInput);
 }
-
-export function validateMergerOutput(value: unknown): MergerOutput {
-  return value as MergerOutput;
-}

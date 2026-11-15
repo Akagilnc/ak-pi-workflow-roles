@@ -78,40 +78,6 @@ function byStatusFromUnknown(value: unknown): Map<string, string> {
 }
 
 /**
- * Project one Navigator advice receipt as prose (display / single-advice path).
- * Accepts { prose }, a bare string, or any object — objects stringify as the
- * prose body so historical / free-form submissions still present. Shape is not
- * an admission gate (ADR 0055 / 仓内 CLAUDE.md 开篇 / #959).
- */
-export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return { prose: value };
-  if (isRecord(value)) {
-    if (typeof value.prose === "string") return { prose: value.prose };
-    if (value.prose !== undefined && value.prose !== null) {
-      const serialized = nonEmptyProse(value.prose);
-      if (serialized !== undefined) return { prose: serialized };
-    }
-    // Free-form object submission: present the whole body as prose when it has content.
-    const keys = Object.keys(value);
-    if (keys.length === 0) return { prose: "" };
-    return { prose: JSON.stringify(value) };
-  }
-  return { prose: String(value) };
-}
-
-/**
- * Settlement/recording path: project prose. Does not gate role admission.
- */
-export function validateRecordedNavigatorOutput(value: unknown): NavigatorAdvice {
-  const projected = projectLawfulNavigatorOutput(value);
-  if (projected === undefined) {
-    throw new Error("Navigator output is empty");
-  }
-  return projected;
-}
-
-/**
  * Extract parallel-prepare advice. Empty / missing → undefined.
  * Never a rejection — shape is not an admission gate.
  */

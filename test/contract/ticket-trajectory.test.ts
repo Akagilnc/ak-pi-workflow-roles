@@ -177,6 +177,42 @@ test("auxiliary fixtures at authentic issue coords cover invocation-unknown stat
   );
 });
 
+test("old-key receipts and the shared output tool keep their seat and conclusion on the page", async () => {
+  await withTempRoot("ticket-trajectory-receipts-", async (workspace) => {
+    const ledger = join(workspace, "ledger");
+    const leg = async (runId: string, receipts: readonly [toolName: string, details: object][], invocationRole?: string) => {
+      const runDir = join(ledger, "issues", "1289", "runs", runId);
+      await mkdir(join(runDir, "session"), { recursive: true });
+      await writeFile(
+        join(runDir, "session", "session.jsonl"),
+        receipts.map(([toolName, details]) =>
+          `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName, isError: false, details } })}\n`).join(""),
+        "utf8",
+      );
+      if (invocationRole !== undefined) {
+        await writeFile(join(runDir, "current.json"), JSON.stringify({ invocation: { role: invocationRole } }), "utf8");
+      }
+    };
+    await leg("old-secretariat", [["ak_secretariat_output", { secretariatStatus: "escalate" }]]);
+    await leg("old-countersign", [["ak_countersign_output", { countersignStatus: "continue" }]]);
+    // A judge leg that spans the rename: its later receipt rides the shared tool name.
+    await leg(
+      "spanning-judge",
+      [["ak_judge_output", { judgeStatus: "continue" }], ["ak_submission_output", { status: "converged" }]],
+      "judge",
+    );
+
+    const html = await renderTicketTrajectoryHtml(ledger, { issueNumber: 1289 }, new Date("2026-11-15T12:00:00.000Z"));
+    const shown = (runId: string) => {
+      const run = runById(html, runId);
+      return [run["data-station"], run["data-station-source"], run["data-result-status"]];
+    };
+    assert.deepEqual(shown("old-secretariat"), ["secretariat", "tool", "escalate"]);
+    assert.deepEqual(shown("old-countersign"), ["countersign", "tool", "continue"]);
+    assert.deepEqual(shown("spanning-judge"), ["judge", "invocation", "converged"]);
+  });
+});
+
 test("each run evidence link resolves to the run ledger path, with typed data-ledger-coord", async () => {
   const html = await renderTicketTrajectoryHtml(fixtureLedger, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z"));
   const links = elementsWith(html, "data-ledger-link");

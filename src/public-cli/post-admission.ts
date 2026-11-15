@@ -42,7 +42,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
+import { isOfficerReviewSeat, receiptStatus } from "../packaged-role-registry.ts";
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
   if (error instanceof Error) {
@@ -1088,7 +1088,7 @@ export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvo
   );
   for (const row of rows) {
     if (row.role !== admitted.role || !isRecord(row.accepted)) continue;
-    if (row.accepted.status !== "completed" || !("ticketNumber" in row.accepted)) continue;
+    if (receiptStatus(row.accepted) !== "completed" || !("ticketNumber" in row.accepted)) continue;
     const ticketNumber = parseTicketNumber(row.accepted.ticketNumber);
     if (ticketNumber !== undefined) {
       await bindAdmittedTicketNumber(admitted, ticketNumber);

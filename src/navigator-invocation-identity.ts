@@ -17,7 +17,8 @@
  *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
  */
 
-import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
+import { isTerminatingToolName } from "./package-contracts/terminating-tools.ts";
+import { LEGACY_REVIEW_OUTPUT_ROLES, receiptSeat } from "./packaged-role-registry.ts";
 import { isUuidV7, uuidv7 } from "./uuidv7.ts";
 import { isRecord } from "./unknown-value.ts";
 import { workSubjectKeysEqual } from "./work-subject-identity.ts";
@@ -105,11 +106,6 @@ export function isNavigatorInfrastructureFailureFact(
   if (!hasNavigatorInfrastructureFailureBase(value)) return false;
   return Object.keys(value as object).length === NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length;
 }
-
-const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlyMap<string, string> = new Map(
-  [...PACKAGED_ROLE_REGISTRY.filter((entry) => entry.outputTool !== "ak_submission_output")
-    .map((entry) => [entry.outputTool, entry.role] as const), ...LEGACY_REVIEW_OUTPUT_ROLES],
-);
 
 export type NavigatorInvocationEntryLike = {
   readonly type?: string;
@@ -224,9 +220,7 @@ export function packagedRoleOutputRejectionReason(message: {
   readonly content?: unknown;
 }): string | undefined {
   if (typeof message.toolName !== "string") return undefined;
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName) && message.toolName !== "ak_submission_output") {
-    return undefined;
-  }
+  if (!isTerminatingToolName(message.toolName)) return undefined;
   if (message.isError !== true) return undefined;
   if (classifyPackagedRoleTerminalResult(message).kind !== "nonterminal") return undefined;
   const content = message.content;
@@ -252,7 +246,7 @@ export function classifyPackagedRoleTerminalResult(
   message: PackagedRoleTerminalMessage,
 ): PackagedRoleTerminalClassification {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName) && message.toolName !== "ak_submission_output") return { kind: "nonterminal" };
+  if (!isTerminatingToolName(message.toolName)) return { kind: "nonterminal" };
 
   // Base identity is enough; durable details may carry typed failure evidence (#475).
   const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
@@ -311,12 +305,11 @@ function durableTerminalAt(
       ? entry.message
       : undefined;
   if (typeof message?.toolName !== "string") return undefined;
-  const marker = message.toolName === "ak_submission_output"
-    ? entries.slice(0, index).reverse().find(isInvocationMarkerEntry)
-    : undefined;
-  const role = message.toolName === "ak_submission_output"
-    ? parseInvocationMarkerIdentity(marker?.data)?.role ?? "unknown"
-    : PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  // The shared tool name takes its seat from the invocation marker before it.
+  const role = receiptSeat(message.toolName, () => {
+    const marker = entries.slice(0, index).reverse().find(isInvocationMarkerEntry);
+    return parseInvocationMarkerIdentity(marker?.data)?.role ?? "unknown";
+  })?.seat;
   if (role === undefined) return undefined;
   const classification = classifyPackagedRoleTerminalResult(message);
   if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {

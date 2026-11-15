@@ -3,7 +3,6 @@ import { inspectorSubmissionSchema } from "./review-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import {
   INSPECTOR_OUTPUT_TOOL_NAME,
-  validateRecordedInspectorOutput,
   type InspectorOutput,
 } from "./inspector-contracts.ts";
 
@@ -12,7 +11,6 @@ export {
 };
 export { INSPECTOR_OUTPUT_TOOL_NAME as INSPECTOR_OUTPUT_TOOL };
 export type { InspectorOutput };
-export { validateRecordedInspectorOutput };
 
 /** 台院事后察举交卷形状。 */
 export type InspectorOutputParameters = Static<typeof inspectorSubmissionSchema>;

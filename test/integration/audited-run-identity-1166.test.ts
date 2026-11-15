@@ -298,7 +298,7 @@ test("#1166 public gate: four seats share identity; peer reviewers receive ledge
         ],
         runId: "01a0116600007000800000000000s001",
         details: {
-          secretariatStatus: "converged" as const,
+          status: "converged" as const,
           ticketNumber: 1166,
           findings: [{ id: "S1", path: PEER_PATH }],
         },

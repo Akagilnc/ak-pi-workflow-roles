@@ -74,7 +74,7 @@ test("secretariat activation exposes only the terminating package tool (G6)", as
 
 test("secretariat output records any status without shape reject (仓内 CLAUDE.md 开篇)", async () => {
   const { tools } = await activateSecretariat();
-  const convergedReceipt: SecretariatVerdictParameters = { secretariatStatus: "converged", ticketNumber: "#924" };
+  const convergedReceipt: SecretariatVerdictParameters = { status: "converged", ticketNumber: "#924" };
   const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c1",
     convergedReceipt,
@@ -86,7 +86,7 @@ test("secretariat output records any status without shape reject (仓内 CLAUDE.
   assert.deepEqual(converged.details, convergedReceipt);
 
   const receipt: SecretariatVerdict = {
-    secretariatStatus: "escalate",
+    status: "escalate",
     ticketNumber: "#924",
     decisionGate: [
       { question: "拆不拆席？", options: ["暂不", "拆"] },
@@ -109,7 +109,7 @@ test("secretariat output records any status without shape reject (仓内 CLAUDE.
   assert.deepEqual(escalated.details, receipt);
 
   // 仓内 CLAUDE.md 开篇 / #924: tool only records; non-canonical status is not code-rejected.
-  const otherReceipt: SecretariatVerdictParameters = { secretariatStatus: "unexpected" };
+  const otherReceipt: SecretariatVerdictParameters = { status: "unexpected" };
   const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c3",
     otherReceipt,
@@ -119,7 +119,7 @@ test("secretariat output records any status without shape reject (仓内 CLAUDE.
   );
   assert.equal(other.terminate, true);
   assert.equal(
-    (other.details as { secretariatStatus: string }).secretariatStatus,
+    (other.details as { status: string }).status,
     "unexpected",
   );
 });

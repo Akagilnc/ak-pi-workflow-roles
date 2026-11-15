@@ -3,7 +3,6 @@ import type { Static } from "typebox";
 import {
   DIARIST_OUTPUT_TOOL_NAME,
   diaristOutputSchema,
-  validateRecordedDiaristOutput,
   type DiaristOutput,
 } from "./diarist-contracts.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
@@ -13,7 +12,6 @@ export {
   diaristOutputSchema,
 } from "./diarist-contracts.ts";
 export type { DiaristOutput };
-export { validateRecordedDiaristOutput };
 
 export type DiaristOutputParameters = Static<typeof diaristOutputSchema>;
 

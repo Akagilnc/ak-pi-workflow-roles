@@ -134,6 +134,8 @@ import {
   packagedRoleMetadata,
   packagedRoleOutputTool,
   packagedRolePhaseFlag,
+  receiptSeat,
+  receiptStatus,
   type PackagedRole,
 } from "./packaged-role-registry.ts";
 import {
@@ -368,7 +370,7 @@ export { COLLECTOR_OUTPUT_TOOL } from "./collector-role.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export * from "./navigator-attendance.ts";
 export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
-export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
+export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
 export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState } from "./merger-git-state.ts";
@@ -511,16 +513,6 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-/** Status leaves that are not the shared `status` key, in registry order. */
-function receiptStatusFromRegistry(details: Record<string, unknown>): string | undefined {
-  for (const entry of PACKAGED_ROLE_REGISTRY) {
-    if (!("receiptStatusKey" in entry)) continue;
-    const value = details[entry.receiptStatusKey];
-    if (typeof value === "string") return value;
-  }
-  return undefined;
-}
-
 export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
   // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
@@ -530,13 +522,9 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     return { kind: "role_infrastructure_failure", role, phase };
   }
   // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const details = isRecord(event.details)
-    ? event.details as Record<string, unknown>
-    : {};
-  const status = typeof details.status === "string"
-    ? details.status
-    : receiptStatusFromRegistry(details);
-  if (status !== undefined && status === "escalate") {
+  const received = receiptStatus(event.details);
+  const status = typeof received === "string" ? received : undefined;
+  if (status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
@@ -811,8 +799,7 @@ export function createDiaristRoleRuntime(
         // Routing belongs to the public seam after this tool call has returned.
         // Only completed receipts need local diary projection; other statuses
         // pass through verbatim for that seam to route.
-        const status = submitted?.status;
-        if (status !== "completed") return parameters;
+        if (receiptStatus(parameters) !== "completed") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
@@ -938,15 +925,15 @@ export function createRoleRuntimeExtension(
     };
     const roleHost = createSubmissionLedgerHost(
       envelopeHost.host,
-      new Map(PACKAGED_ROLE_REGISTRY.reduce<(readonly [string, import("./public-cli/terminal.ts").TerminalRoleName | readonly import("./public-cli/terminal.ts").TerminalRoleName[]])[]>((entries, { role, outputTool }) => {
-        const existingIndex = entries.findIndex(([name]) => name === outputTool);
-        if (existingIndex < 0) entries.push([outputTool, role]);
-        else {
-          const previous = entries[existingIndex]![1];
-          entries[existingIndex] = [outputTool, [...(Array.isArray(previous) ? previous : [previous]), role]];
-        }
-        return entries;
-      }, [])),
+      {
+        get(toolName) {
+          const seat = receiptSeat(toolName, () => {
+            const active = envelopeHost.host.getFlag(ROLE_FLAG.name);
+            return typeof active === "string" ? active : undefined;
+          })?.seat;
+          return seat === undefined ? undefined : packagedRoleMetadata(seat)?.role;
+        },
+      },
       (error, ctx, toolCallId) => hostActions.failInfrastructure(error, ctx, toolCallId),
       async (closed, context, toolCallId) => projectClosedSubmission(closed, context, toolCallId),
     );

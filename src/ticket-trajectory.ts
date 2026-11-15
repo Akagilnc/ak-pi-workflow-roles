@@ -52,7 +52,7 @@ import {
   validateAcceptedDetails,
   type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
-import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, receiptSeat } from "./packaged-role-registry.ts";
 
 import { isRecord, isMissingPathError } from "./unknown-value.ts";
 
@@ -134,17 +134,7 @@ async function realpathOrLexicalIfMissing(path: string): Promise<string> {
   }
 }
 
-const TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map([
-  ...PACKAGED_ROLE_REGISTRY.filter((entry) => entry.outputTool !== "ak_submission_output")
-    .map((entry) => [entry.outputTool, entry.role] as const),
-  ...LEGACY_REVIEW_OUTPUT_ROLES,
-]);
-
 const NAME_PREFIX_ROLES: readonly string[] = PACKAGED_ROLE_REGISTRY.map((entry) => entry.role);
-
-function roleFromToolName(toolName: string): string | undefined {
-  return TOOL_TO_ROLE.get(toolName);
-}
 
 function roleFromRunName(runId: string): string | undefined {
   const base = runId.split("@")[0] ?? runId;
@@ -319,13 +309,10 @@ function resolveStation(input: {
   invocationRole?: string;
   runId: string;
 }): { station: string; stationSource: StationSource } {
-  if (input.invocationRole && input.toolNames.includes("ak_submission_output")) {
-    return { station: input.invocationRole, stationSource: "invocation" };
-  }
-  for (const toolName of input.toolNames) {
-    const role = roleFromToolName(toolName);
-    if (role) return { station: role, stationSource: "tool" };
-  }
+  const seats = input.toolNames.flatMap((toolName) => receiptSeat(toolName, () => input.invocationRole) ?? []);
+  // A receipt on the shared tool name places the run before any seat-owned name does.
+  const placed = seats.find((seat) => seat.source === "invocation") ?? seats[0];
+  if (placed !== undefined) return { station: placed.seat, stationSource: placed.source };
   // Also accept tool names observed only via accepted results order
   if (input.invocationRole) {
     return { station: input.invocationRole, stationSource: "invocation" };

@@ -14,8 +14,7 @@ export const SECRETARIAT_OUTPUT_TOOL_NAME = "ak_secretariat_output";
 
 /**
  * 中书省终局回执形状。
- * #1134: `secretariatStatus` alone is the trajectory field
- * (src/packaged-role-registry.ts receiptStatusKey; the public settlement reads
+ * #1134: `status` alone is the trajectory field (the public settlement reads
  * converged | escalate to route); its words ride the description. note/evidence/
  * decisionGate are declared name + semantic description only — the string type, the
  * number type, the nested question/options object shape and the required constraint
@@ -26,7 +25,7 @@ export const SECRETARIAT_OUTPUT_TOOL_NAME = "ak_secretariat_output";
 export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
-      secretariatStatus: Type.Unknown({
+      status: Type.Unknown({
         description: "converged | escalate",
       }),
       ticketNumber: Type.Optional(

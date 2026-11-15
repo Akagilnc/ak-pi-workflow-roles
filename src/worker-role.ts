@@ -23,7 +23,7 @@ import {
   matchFixerBashForbiddenLiteral,
 } from "./fixer-bash-seatbelt.ts";
 
-import { isRecord } from "./unknown-value.ts";
+import { receiptStatus } from "./packaged-role-registry.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -69,9 +69,8 @@ export type WorkerRoleRuntime = {
 
 /** Read only the field that selects the worker's next package-owned path. */
 function workerStatusOf(output: WorkerOutput): string | undefined {
-  return isRecord(output) && typeof output.status === "string"
-    ? output.status
-    : undefined;
+  const status = receiptStatus(output);
+  return typeof status === "string" ? status : undefined;
 }
 
 function deepFreeze<T>(value: T): T {

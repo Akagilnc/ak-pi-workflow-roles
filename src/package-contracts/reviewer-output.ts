@@ -34,7 +34,3 @@ export type ReviewerAmendments = Readonly<
 export type ReviewerIntent =
   | Readonly<{ status: "completed"; amendments?: ReviewerAmendments }>
   | Readonly<{ status: "refused"; diagnostic: string; amendments?: ReviewerAmendments }>;
-
-export function validateReviewerIntent(output: unknown): ReviewerIntent {
-  return output as ReviewerIntent;
-}
