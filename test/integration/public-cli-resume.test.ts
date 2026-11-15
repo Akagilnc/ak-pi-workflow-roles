@@ -736,7 +736,8 @@ test("resume model override is temporary and does not rewrite persistent config"
     }
 
     const { io } = captureIo();
-    await runAkRole(["--model", "xai/grok-4.5:medium", "resume", "1171", "judge"], {
+    let overrideArgs: string[] | undefined;
+    const resumed = await runAkRole(["--model", "xai/grok-4.5:medium", "resume", "1171", "judge"], {
       packageRoot,
       home,
       cwd: project,
@@ -746,6 +747,7 @@ test("resume model override is temporary and does not rewrite persistent config"
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args) => {
+        overrideArgs = [...args];
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await writeFile(
           join(sessionDir, "session.jsonl"),
@@ -770,7 +772,11 @@ test("resume model override is temporary and does not rewrite persistent config"
       }),
     });
 
-    // Persistent config unchanged — temporary override only.
+    // The resumed turn ran on the override…
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(overrideArgs?.[overrideArgs.indexOf("--provider") + 1], "xai");
+    assert.equal(overrideArgs?.[overrideArgs.indexOf("--model") + 1], "grok-4.5");
+    // …and the persistent config is unchanged — temporary override only.
     assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
       provider: "openai-codex",
       model: "gpt-5.6-sol",
