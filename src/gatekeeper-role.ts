@@ -2,9 +2,9 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./role-run-placement.ts";
-import { packagedGateStageLabel } from "./packaged-role-registry.ts";
+import { packagedGateStageLabel, receiptStatus } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
@@ -12,7 +12,6 @@ import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { isRecord } from "./unknown-value.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
@@ -177,10 +176,8 @@ function projectOfficerDecision(
   fallbackStatus?: string,
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
-  const record = isRecord(decision) ? decision : undefined;
-  const status = record !== undefined && Object.hasOwn(record, "status")
-    ? receivedDiscriminator(record, "status")
-    : fallbackStatus;
+  const received = receiptStatus(decision);
+  const status = received === undefined ? fallbackStatus : received;
   const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
   if (queueStatus === "converged") {
     return { status: "converged", officer, receipt };
@@ -303,7 +300,7 @@ function projectOfficerTerminal(
           status: "needs_reask",
           officer,
           receipt,
-          receivedStatus: receivedDiscriminator(receipt, "status"),
+          receivedStatus: receiptStatus(receipt),
         },
         summoned,
       );
@@ -323,7 +320,7 @@ function projectOfficerTerminal(
       officer,
       // This-court receipt only (#879).
       receipt,
-      receivedStatus: receivedDiscriminator(receipt, "status"),
+      receivedStatus: receiptStatus(receipt),
     },
     summoned,
   );

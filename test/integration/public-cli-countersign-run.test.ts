@@ -36,6 +36,7 @@ import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -1228,5 +1229,19 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
     assert.equal(seen.length, 3);
     assert.equal(seen[2]!.kind, "resume");
     assert.equal(seen[2]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    // #1200: 给事中 called by the caller audits no leg — its rows name no round.
+    // Each 符宝郎 row names the 给事中 round the gate summoned it for: the
+    // resumed 给事中 seals round 3, the same 符宝郎 leg is summoned again and
+    // names round 3, and its first row still names round 1.
+    const rows = readTicketProgressLines(join(second.admitted!.runDirectory, "../.."));
+    assert.deepEqual(rows.map((line) => [line.seat, line.round, line.for]), [
+      ["countersign", "1", undefined],
+      ["notary", "1", "countersign#1"],
+      ["countersign", "2", undefined],
+      ["notary", "2", "countersign#2"],
+      ["countersign", "3", undefined],
+      ["notary", "3", "countersign#3"],
+    ]);
+    assert.equal(dirname(rows[5]!.receipt), dirname(rows[1]!.receipt));
   });
 });

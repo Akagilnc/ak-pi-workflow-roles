@@ -36,6 +36,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -44,10 +45,10 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
+import { withPassingReviewHost } from "../helpers/passing-review-host.ts";
+import { freshProject, setConfiguredLimit, withSeatHome, withSecretariatCourt } from "../helpers/seat-court-fixture.ts";
 
-import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { captureIo } from "../helpers/failure-settlement-kit.ts";
 
 /**
  * Prepared-role-turn binding entry (same resolveBoundHostSessionId headless/ACP use).
@@ -62,27 +63,6 @@ async function loadBoundHostSessionLikeAdapter(request: RoleTurnRequest): Promis
     request,
     createSessionIdentityAuthority(piDurablePrincipalAuthority, hostName),
   );
-}
-
-async function withSeatHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-1132-", async (home) => {
-    await runAkRole(
-      ["config", "set", "judge", "test/caller-seat:high", "diarist", "test/caller-seat:high", "countersign", "test/caller-seat:high"],
-      { packageRoot, home, io: { stdout() {}, stderr() {} } },
-    );
-    // The review seats must resolve for 不跳审核 to be observable at all.
-    await configurePassingReviewSeats(home);
-    return fn(home);
-  });
-}
-
-/** #1132 怎么验: drive the one configured value through the public config entry. */
-async function setConfiguredLimit(home: string, limit: number): Promise<void> {
-  await runAkRole(["config", "set-auto-resume-limit", String(limit)], {
-    packageRoot,
-    home,
-    io: { stdout() {}, stderr() {} },
-  });
 }
 
 type Turn = {
@@ -106,6 +86,8 @@ async function runExternalJudge(
     readonly limit: number;
     readonly sealOnCall?: number;
     readonly failOnCall?: number;
+    /** The receipt `sealOnCall` seals. */
+    readonly details?: Record<string, unknown>;
 }): Promise<{
   readonly turns: readonly Turn[];
   /** Every seat this run dispatched, in order — audit continuation shows up here. */
@@ -154,7 +136,7 @@ async function runExternalJudge(
           runId: runIdFromRunDirectory(request.runDirectory)!,
           runDirectory: request.runDirectory,
           role: "judge",
-          details: { status: "converged" },
+          details: options.details ?? { status: "converged" },
           toolCallId: `judge-call-${call}`,
           home: request.home,
           ...(request.courtAttemptId === undefined
@@ -201,22 +183,17 @@ async function runExternalJudge(
   };
 }
 
-async function freshProject(home: string): Promise<string> {
-  const project = join(home, `proj-${Math.random().toString(36).slice(2)}`);
-  await mkdir(project, { recursive: true });
-  seedGitProject(project);
-  return project;
-}
-
 // 催交取得卷后走既有审核，不跳审核、不转父席。
 test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", async () => {
   await withSeatHome(async (home) => {
     const project = await freshProject(home);
+    const receipt = { status: "converged", ticketNumber: 1132 };
     const run = await runExternalJudge(home, {
       runId: "1132-external-accepted",
       project,
       limit: 2,
       sealOnCall: 2,
+      details: receipt,
     });
 
     // One initial turn plus one催交 turn; the second sealed.
@@ -248,12 +225,18 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.deepEqual(
       sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
-      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ type: "sealed", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
     );
     assert.deepEqual(
       (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
         .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
-      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ kind: "accepted", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
+    );
+    // #1200: the turn that submitted nothing is not a round — one row, round 1.
+    assert.deepEqual(
+      readTicketProgressLines(join(run.runDirectory!, "../.."))
+        .filter((line) => line.seat === "judge").map((line) => line.round),
+      ["1"],
     );
   });
 });
@@ -810,60 +793,39 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
 // 同一不可读会签结论只由门召唤计次。直召会签仍用席位自己的额度。
 test("#1132: one unreadable countersign conclusion spends one budget", async () => {
   for (const limit of [0, 1]) {
-    await withSeatHome(async (home) => {
-      await setConfiguredLimit(home, limit);
-      await runAkRole(
-        ["config", "set", "secretariat", "test/caller-seat:high", "notary", "test/caller-seat:high", "auditor", "test/caller-seat:high"],
-        { packageRoot, home, io: { stdout() {}, stderr() {} } },
-      );
-      const project = await freshProject(home);
-      const calls: Record<string, number> = {};
-      const host = {
-        async executeTurn(request: RoleTurnRequest) {
-          const role = request.activation.role;
-          calls[role] = (calls[role] ?? 0) + 1;
-          const coordinates = piDurablePrincipalAuthority.decode(request.principal);
-          await mkdir(coordinates.sessionDirectory, { recursive: true });
-          await writeFile(
-            coordinates.sessionFile,
-            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
-            "utf8",
-          );
-          const details = role === "secretariat"
-            ? { secretariatStatus: "converged", ticketNumber: 1132 }
-            : role === "countersign"
-              ? { status: "sideways", ticketNumber: 1132 }
-              : role === "diarist"
-                ? { status: "completed", ticketNumber: 1132, sessions: [] }
-                : { status: "converged", ticketNumber: 1132 };
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            runId: runIdFromRunDirectory(request.runDirectory)!,
-            runDirectory: request.runDirectory,
-            role,
-            details,
-            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
-            toolCallId: `${role}-${calls[role]}`,
-            home: request.home,
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        },
-      };
-      const env = {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true as const, xai: true as const },
-        io: captureIo().io,
-        roleTurnHost: host,
-        hostAdapters: packagedExternalHostNames()
-          .concat("pi")
-          .map((name) => ({ name, create: () => ({ ok: true as const, host }) })),
-      };
-      const opened = await runAkRole(
-        ["secretariat", "--host", "grok-build", "--project", project, "go"],
-        { ...env, createRunId: () => `1132-secretariat-countersign-${limit}` },
-      );
+    // The first conclusion has no status at all; later ones carry a word outside the three states.
+    const calls: Record<string, number> = {};
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        const role = request.activation.role;
+        calls[role] = (calls[role] ?? 0) + 1;
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        await writeFile(
+          coordinates.sessionFile,
+          `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } })}\n`,
+          "utf8",
+        );
+        const details = role === "countersign"
+          ? { ...(calls[role] === 1 ? {} : { status: "sideways" }), ticketNumber: 1132 }
+          : role === "diarist"
+            ? { status: "completed", ticketNumber: 1132, sessions: [] }
+            : { status: "converged", ticketNumber: 1132 };
+        await sealAcceptedSubmission({
+          cwd: request.cwd,
+          runId: runIdFromRunDirectory(request.runDirectory)!,
+          runDirectory: request.runDirectory,
+          role,
+          details,
+          ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+          toolCallId: `${role}-${calls[role]}`,
+          home: request.home,
+        });
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    await withSecretariatCourt(limit, host, async (court) => {
+      const opened = await court.open(`1132-secretariat-countersign-${limit}`);
       assert.equal(calls.secretariat, 1, `limit ${limit}`);
       assert.equal(calls.countersign, limit + 1, `limit ${limit}`);
       assert.equal(opened.exitCode, 0, `limit ${limit}`);
@@ -873,7 +835,7 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
       assert.equal(opened.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true, `limit ${limit}`);
       assert.equal(opened.terminal?.ticket, 1132, `limit ${limit}`);
       const beforeResume = calls.countersign ?? 0;
-      const resumed = await runAkRole(["resume", "1132", "countersign"], env);
+      const resumed = await court.resume(1132, "countersign");
       assert.equal((calls.countersign ?? 0) - beforeResume, limit + 1, `limit ${limit} resume`);
       assert.equal(calls.secretariat, 1, `limit ${limit} resume`);
       assert.equal(resumed.exitCode, 0, `limit ${limit} resume`);

@@ -4,8 +4,6 @@
  */
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
 
-import { isRecord } from "../unknown-value.ts";
-
 export const AUDITOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
 export type AuditorOutput =
@@ -16,13 +14,3 @@ export type AuditorOutput =
       readonly conflicts?: unknown;
       readonly decisionGate?: unknown;
     };
-
-/** #836: no field drop — original object is the receipt. */
-export function projectLawfulAuditorOutput(value: unknown): AuditorOutput | undefined {
-  return isRecord(value) ? (value as AuditorOutput) : undefined;
-}
-
-export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
-  if (!isRecord(value)) throw new Error("Auditor output is not an object");
-  return value as AuditorOutput;
-}

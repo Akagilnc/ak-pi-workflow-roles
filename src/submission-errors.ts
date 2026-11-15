@@ -1,5 +1,4 @@
 import { readableGateItem } from "./readable-gate-item.ts";
-import { isRecord } from "./unknown-value.ts";
 
 export class WorkerCommitReminderError extends Error {
   readonly code = "worker_commit_reminder" as const;
@@ -43,13 +42,6 @@ export class WorkerUnfinishedReasonReminderError extends Error {
 export function unreadableDiscriminatorNotice(field: string, received: unknown): string {
   if (received === undefined) return `读不出 ${field}`;
   return `读不出 ${field}：${readableGateItem(received)}`;
-}
-
-/** The received discriminator only — never the rest of the receipt. */
-export function receivedDiscriminator(receipt: unknown, field: string): unknown {
-  if (!isRecord(receipt)) return undefined;
-  if (!Object.hasOwn(receipt, field)) return undefined;
-  return (receipt as Record<string, unknown>)[field];
 }
 
 /**

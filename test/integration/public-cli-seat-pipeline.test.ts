@@ -72,9 +72,8 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           const written = await scriptedTerminatingToolSession({
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
-            details: seat.role === "secretariat" ? { secretariatStatus: "converged" }
-              : seat.role === "judge" || seat.role === "countersign" || seat.role === "inspector" || seat.role === "notary" || seat.role === "auditor"
-                ? { status: "converged" } : { status: "completed" },
+            details: seat.role === "secretariat" || seat.role === "judge" || seat.role === "countersign" || seat.role === "inspector" || seat.role === "notary" || seat.role === "auditor"
+              ? { status: "converged" } : { status: "completed" },
           })(args, options);
           if (seat.role === "doctor") {
             const sessionFile = argvFlagValue(args, "--session");

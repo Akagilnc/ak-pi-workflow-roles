@@ -167,11 +167,11 @@ test("#969 secretariat_verdict routes to countersign and maps status",
         } as never,
         subject: { kind: "secretariat_verdict" },
         runDirectory: "/tmp/runs/01parent@secretariat",
-        submission: { secretariatStatus: "converged", ticketNumber: 969 },
+        submission: { status: "converged", ticketNumber: 969 },
         summonOfficer: async (officer, _source, _signal, _reask, submission) => {
           assert.equal(officer, "countersign");
           assert.deepEqual(submission, {
-            secretariatStatus: "converged",
+            status: "converged",
             ticketNumber: 969,
           });
           return {

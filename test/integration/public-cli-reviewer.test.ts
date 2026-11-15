@@ -476,6 +476,8 @@ test("default dual-lens admits both axes without a parent run", async () => {
     const bookKey = resolveBookKeyFromGit(project);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, "1171");
     const progress = readTicketProgressLines(ticketDir).filter((line) => line.seat === "reviewer");
+    // #1200: 御史台 audits no leg — neither lens's rows name a round.
+    assert.equal(progress.some((line) => "for" in line), false);
     const legByLens: Record<string, string> = {};
     for (const lens of ["completeness", "correctness"] as const) {
       const child: TerminalResult | undefined = result.terminal?.reviewerChildren?.[lens];

@@ -551,7 +551,8 @@ export function sealAcceptedSubmission(options: {
  */
 export function createSubmissionLedgerHost(
   host: RoleHost,
-  outputTools: ReadonlyMap<string, TerminalRoleName | readonly TerminalRoleName[]>,
+  /** The seat an output tool's submissions belong to. Absent for any other tool. */
+  outputTools: { get(toolName: string): TerminalRoleName | undefined },
   failInfrastructure: (error: unknown, context: HostContext, toolCallId?: string) => never = (error) => { throw error; },
   projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string) => void | Promise<void> = () => undefined,
   options?: { home?: string },
@@ -601,16 +602,7 @@ export function createSubmissionLedgerHost(
   return {
     ...host,
     registerTool(tool) {
-      const registeredRole = outputTools.get(tool.name);
-      let role: TerminalRoleName | undefined;
-      if (typeof registeredRole === "string") {
-        role = registeredRole;
-      } else if (registeredRole !== undefined) {
-        const activeRole = host.getFlag("ak-role");
-        role = typeof activeRole === "string" && registeredRole.includes(activeRole as TerminalRoleName)
-          ? activeRole as TerminalRoleName
-          : undefined;
-      }
+      const role = outputTools.get(tool.name);
       if (role === undefined) return host.registerTool(tool);
       host.registerTool({
         ...tool,

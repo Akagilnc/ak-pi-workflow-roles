@@ -8,8 +8,6 @@ import { Type } from "typebox";
 import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
-import { isRecord } from "../unknown-value.ts";
-
 export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 
 /** Same open decision shape the province uses inside audit sessions. */
@@ -39,10 +37,3 @@ function asStringArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
 }
-
-/** #836: no status allowlist rejection — pass object through. */
-export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDirectOutput {
-  if (!isRecord(value)) throw new Error("Gatekeeper output is not an object");
-  return value as GatekeeperDirectOutput;
-}
-
