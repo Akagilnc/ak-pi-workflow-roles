@@ -478,29 +478,44 @@ async function mergeInvocationIdentityPage(
 }
 
 /**
- * Persist parent --source-run path onto the admitted section for officer resume lookup (#747).
- * Reuses the existing notary sourceRunPath key; does not invent a new field name.
+ * What this officer audits, on its admitted section in one page write.
+ * `for` (#1200) is the audited leg's「席#轮」at this admission: a new value
+ * replaces the old one, none clears it. `sourceRunPath` (#747) is the parent
+ * --source-run path kept for officer resume lookup, given only by the admission
+ * that first records it; it reuses the existing notary key and is never replaced.
  */
-export async function persistAdmittedSourceRunPath(
-  admitted: AdmittedRoleInvocation,
-  sourceRunPath: string,
-  auditorSubject?: "judge" | "doctor",
-): Promise<void> {
-  if (sourceRunPath.trim() === "") {
-    throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
+export function persistAdmittedAuditedLeg(
+  runDirectory: string,
+  audited: {
+    readonly for: string | undefined;
+    readonly sourceRunPath?: string;
+    readonly auditorSubject?: "judge" | "doctor" | undefined;
+  },
+): void {
+  const { sourceRunPath, auditorSubject } = audited;
+  if (sourceRunPath !== undefined && sourceRunPath.trim() === "") {
+    throw new Error("persistAdmittedAuditedLeg requires a non-empty sourceRunPath");
   }
-  updateSectionSync(admitted.runDirectory, "admitted", (current) => {
-    if (typeof current.sourceRunPath === "string" && current.sourceRunPath !== sourceRunPath) {
+  updateSectionSync(runDirectory, "admitted", (current) => {
+    if (
+      sourceRunPath !== undefined
+      && typeof current.sourceRunPath === "string"
+      && current.sourceRunPath !== sourceRunPath
+    ) {
       throw new Error(
-        `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
+        `persistAdmittedAuditedLeg refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
       );
     }
-    const sameSubject = auditorSubject === undefined || current.auditorSubject === auditorSubject;
-    if (current.sourceRunPath === sourceRunPath && sameSubject) return undefined;
+    const unchanged = current.for === audited.for
+      && (sourceRunPath === undefined || current.sourceRunPath === sourceRunPath)
+      && (auditorSubject === undefined || current.auditorSubject === auditorSubject);
+    if (unchanged) return undefined;
+    const { for: _replaced, ...rest } = current;
     return {
-      ...current,
-      sourceRunPath,
+      ...rest,
+      ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       ...(auditorSubject === undefined ? {} : { auditorSubject }),
+      ...(audited.for === undefined ? {} : { for: audited.for }),
     };
   });
 }

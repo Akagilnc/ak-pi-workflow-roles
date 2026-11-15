@@ -711,6 +711,7 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       summary: "direct bind short summary text here ok",
       ticketNumber: TICKET,
       classResults: FIXER_DONE.classResults,
+      for: "judge#5",
       unexpectedExtra: { kept: true, n: 3 },
     } as const;
     let transportPrompt = "";
@@ -743,6 +744,14 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(fixerLines[0]!.instruction, transportPrompt);
     assert.equal(fixerLines[0]!.head, headAtSeal);
     assert.equal(fixerLines[0]!.round, "1");
+    // #1200: the fixer's own `for` is copied to its row; 台院 summoned by the
+    // gate names the fixer round it reviews.
+    assert.equal(fixerLines[0]!.for, "judge#5");
+    assert.deepEqual(
+      readTicketProgressLines(ticketDir).filter((line) => line.seat === "inspector")
+        .map((line) => [line.round, line.for]),
+      [["1", "fixer#1"]],
+    );
     assert.equal(fixerLines[0]!.status, "completed");
     assert.equal(fixerLines[0]!.summary, submit.summary);
     assert.equal(existsSync(join(ticketDir, fixerLines[0]!.receipt)), true);
@@ -785,6 +794,8 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     const after = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(after.length, 2);
     assert.equal(after[1]!.round, "2");
+    // #1200: a receipt that reports no `for` leaves the row without one.
+    assert.equal("for" in after[1]!, false);
     assert.equal(after[1]!.instruction, secondInstruction);
     assert.notEqual(after[0]!.session, after[1]!.session);
   });
@@ -1030,6 +1041,7 @@ test("#1199 same-envelope 催交原文 is the progress instruction (not first mi
                   report: sealed ? "sealed after commit reminder" : "first completed without commit",
                   summary: "summary after envelope retry text ok",
                   classResults: FIXER_DONE.classResults,
+                  for: "judge#99",
                 });
                 sealed = true;
                 return { status: "delivered" as const };
@@ -1057,6 +1069,10 @@ test("#1199 same-envelope 催交原文 is the progress instruction (not first mi
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
+    // #1200: the receipt the gate sent back is not a round; `for` is copied
+    // as written even though this ticket has no such judge round.
+    assert.equal(lines[0]!.round, "1");
+    assert.equal(lines[0]!.for, "judge#99");
     assert.notEqual(lines[0]!.instruction, firstInstruction);
     assert.equal(lines[0]!.instruction, seenPrompts[1]);
     assert.equal(existsSync(join(ticketDir, lines[0]!.receipt)), true);
@@ -1098,6 +1114,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
             summary: `summary for round ${fixerTurns} text here ok`,
             ticketNumber: TICKET,
             classResults: FIXER_DONE.classResults,
+            for: "大理寺第五轮",
           },
           toolCallId: `call_head_${fixerTurns}`,
           sessionWriteMode: "append",
@@ -1128,6 +1145,9 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
     const lines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(lines.length, 1);
+    // #1200: any string is copied as written; a non-string (below) is accepted
+    // and left off the row.
+    assert.equal(lines[0]!.for, "大理寺第五轮");
     // #1208 resends current dialogue; #1199 records those same actual bytes.
     assert.equal(lines[0]!.instruction, firstInstruction);
     assert.equal(autoSummons, firstInstruction);
@@ -1156,6 +1176,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
           summary: "resume round summary text here ok",
           ticketNumber: TICKET,
           classResults: FIXER_DONE.classResults,
+          for: 5,
         },
         sessionWriteMode: "append",
       })(args, options),
@@ -1168,6 +1189,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     assert.equal(resumed.exitCode, 0, `${resumed.terminal?.roleOutcome.kind}`);
     const after = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(after.length, 2);
+    assert.equal("for" in after[1]!, false);
     assert.equal(after[0]!.head, head1);
     assert.equal(after[1]!.instruction, resumeInstruction);
     assert.equal(after[1]!.head, head2);
@@ -1203,6 +1225,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
           summary: "worktree B summary text here ok",
           ticketNumber: TICKET,
           classResults: FIXER_DONE.classResults,
+          for: { seat: "judge", round: 5 },
         },
       })(args, options),
     }));
@@ -1220,6 +1243,7 @@ test("#1199 public resume/auto-resume: instruction/head; same session; distinct 
     const withB = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     const rowB = withB.find((line) => line.session.includes(runB));
     assert.equal(rowB!.head, headB);
+    assert.equal("for" in rowB!, false);
   });
 });
 

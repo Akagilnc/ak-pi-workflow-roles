@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -18,6 +18,8 @@ import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
+import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -29,6 +31,9 @@ import { withOutsideTempRoot, withTempHome } from "../helpers/environment-fixtur
 
 const packageRoot = join(import.meta.dirname, "../..");
 const VERDICT = { status: "converged", mark: 1 } as const;
+/** #1200: a verdict that reports its ticket seals with a round on the ticket's progress. */
+const TICKET = 1200;
+const BOUND_VERDICT = { ...VERDICT, ticketNumber: TICKET } as const;
 const RULING = "ruling-1057";
 
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
@@ -53,12 +58,20 @@ type Observation = {
   }[];
   resume(message?: string): Promise<CliResult>;
   resumeRun(runId: string, message?: string): Promise<CliResult>;
+  /** A caller's own `ak-role notary --source-run <judge leg>`. */
+  summonNotary(): Promise<CliResult>;
+  /** Ticket progress rows of one seat, in order: `[round, for]`. */
+  rounds(seat: string): [string, string | undefined][];
+  rows(seat: string): TicketProgressLine[];
+  readonly ticketDirectory: string;
 };
 
 async function runJudge(
   officerRunner: LegacyFauxPiRunner,
   onParentResume: (prompt: string) => { code: number; stderr: string; verdict?: unknown },
   assertIn: (observed: Observation) => Promise<void>,
+  /** Every verdict the Judge submits in its first turn, in order. */
+  firstVerdicts: readonly unknown[] = [VERDICT],
 ): Promise<void> {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -101,8 +114,8 @@ async function runJudge(
         return officerHost.executeTurn(request);
       },
     };
-    const submitVerdict = async (request: RoleTurnRequest, verdict: unknown) => {
-      judgeSubmissions.push(verdict);
+    const submitVerdict = async (request: RoleTurnRequest, ...verdicts: readonly unknown[]) => {
+      judgeSubmissions.push(...verdicts);
       const coords = piDurablePrincipalAuthority.decode(request.principal);
       return withOutsideTempRoot("ak-1057-judge-", async (socketDir) => {
         const prepared = await prepareRoleEnvelope({
@@ -117,8 +130,11 @@ async function runJudge(
           principalAuthority: piDurablePrincipalAuthority,
     });
         try {
-          await prepared.ingestStructuredOutput(verdict);
-          const closed = await prepared.closeRound();
+          let closed!: Awaited<ReturnType<typeof prepared.closeRound>>;
+          for (const verdict of verdicts) {
+            await prepared.ingestStructuredOutput(verdict);
+            closed = await prepared.closeRound();
+          }
           judgeSubmissionFinished = true;
           if (!closed.accepted) {
             if ("retry" in closed) return { code: 0, stderr: "", timedOut: false as const };
@@ -145,7 +161,7 @@ async function runJudge(
           }
           return { code: resumed.code, stderr: resumed.stderr, timedOut: false };
         }
-        return submitVerdict(request, VERDICT);
+        return submitVerdict(request, ...firstVerdicts);
       },
     };
     const routed: RoleTurnHost = {
@@ -175,7 +191,22 @@ async function runJudge(
       .filter((identity) => identity !== undefined);
     const parent = identities.find((identity) => identity.role === "judge");
     assert.ok(parent);
+    const ticketDirectory = join(home, ".ak-roles", "books", books[0]!, String(TICKET));
+    const run = (args: string[]) => runAkRole(args, {
+      packageRoot,
+      home,
+      cwd: project,
+      io: captureIo().io,
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [adapter("pi", routed)],
+    });
     await assertIn({
+      ticketDirectory,
+      rows: (seat) => readTicketProgressLines(ticketDirectory).filter((line) => line.seat === seat),
+      rounds(seat) {
+        return this.rows(seat).map((line) => [line.round, line.for]);
+      },
+      summonNotary: () => run(["notary", "--source-run", `${parent.runId}@judge`]),
       first,
       firstStdout: capture.stdout,
       project,
@@ -185,18 +216,8 @@ async function runJudge(
       parentMessages,
       judgeSubmissions,
       officerSessions,
-      async resumeRun(runId: string, message?: string) {
-        const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
-        const resumeCapture = captureIo();
-        return runAkRole(args, {
-          packageRoot,
-          home,
-          cwd: project,
-          io: resumeCapture.io,
-          principalAuthority: piDurablePrincipalAuthority,
-          hostAdapters: [adapter("pi", routed)],
-        });
-      },
+      resumeRun: (runId: string, message?: string) =>
+        run(message === undefined ? ["resume", runId] : ["resume", runId, message]),
       async resume(message?: string) {
         const officerRunId = first.terminal?.runId;
         assert.equal(typeof officerRunId, "string");
@@ -246,12 +267,27 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
     assert.equal(notaryCalls, 1);
     assert.equal(auditorCalls, 1);
-    assert.equal(observed.judgeSubmissions.length, 1);
+    assert.equal(observed.judgeSubmissions.length, 2);
     assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
     assert.equal(observed.first.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
+    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), BOUND_VERDICT);
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
-  });
+    // #1200: the Judge sealed twice in one turn; both gates name the one they audited.
+    assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
+    assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", "judge#2"]]);
+    // A caller's own --source-run pins through the same admission.
+    assert.equal((await observed.summonNotary()).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
+    // The audited leg's row cannot be read at admission: the officer still runs
+    // and seals, its row names no round, and the cause stays on the officer run.
+    const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
+    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
+    await appendFile(join(observed.ticketDirectory, "current.jsonl"), "{malformed\n", "utf8");
+    assert.equal((await observed.summonNotary()).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["3", undefined]);
+    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
+  }, [{ ...BOUND_VERDICT, mark: 0 }, BOUND_VERDICT]);
 });
 
 test("#1057 a notary escalation resumes into the remaining audit without Judge resubmission", async () => {
@@ -355,7 +391,13 @@ test("#1057 an auditor continue after escalation resumes the Judge for a revised
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 2);
     assert.deepEqual(rows.at(-1)?.accepted, revised);
-  });
+    // #1200: the ruling resumed the auditor directly — still the round it was
+    // summoned for; the re-summons after the revised verdict name the new round
+    // and leave earlier rows as they were.
+    assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
+    assert.deepEqual(observed.rounds("notary"), [["1", "judge#1"], ["2", "judge#2"]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"], ["3", "judge#2"]]);
+  }, [BOUND_VERDICT]);
 });
 
 test("#1057 a non-three-state auditor conclusion resumes that officer", async () => {
@@ -379,8 +421,13 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
     assert.equal(auditorSessions[0]?.sessionFile, auditorSessions[1]?.sessionFile);
     assert.equal(auditorSessions[1]?.continuation, "resume");
     assert.deepEqual(auditorSessions[1]?.activation, auditorSessions[0]?.activation);
-    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
-  });
+    assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), BOUND_VERDICT);
+    // #1200: the unreadable receipt was accepted, so it and the re-asked one are
+    // two rows and two rounds for the same audited round; the second row's
+    // instruction is the re-ask.
+    assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"]]);
+    assert.equal(observed.rows("auditor")[1]?.instruction, auditorSessions[1]?.prompt);
+  }, [BOUND_VERDICT]);
 });
 
 test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
@@ -428,7 +475,7 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
 });
 
 test("#1057 a new judge verdict after acceptance runs the audits again", async () => {
-  const next = { status: "converged", mark: 9 } as const;
+  const next = { status: "converged", mark: 9, ticketNumber: TICKET } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
@@ -450,6 +497,10 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     assert.equal(resumed.terminal?.roleOutcome.role, "judge");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads?.at(-1), next);
+    // #1200: the first verdict reported no ticket, so its officers were summoned
+    // with no round to name; binding later does not fill those rows in.
+    assert.deepEqual(observed.rounds("notary"), [["1", undefined], ["2", "judge#2"]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", undefined], ["2", "judge#2"]]);
   });
 });
 
@@ -498,5 +549,22 @@ test("#1195 cross-submission resume of prior auditor does not skip new seal's no
       "judge",
       "prior auditor must not finish a foreign parent seal as accepted",
     );
-  });
+    // #1200: the Judge sealed round 2 after the first auditor was admitted and
+    // no gate summoned that auditor again — resumed, it still names round 1.
+    assert.deepEqual(observed.rounds("judge"), [["1", undefined], ["2", undefined]]);
+    assert.deepEqual(observed.rounds("auditor"), [["1", "judge#1"], ["2", "judge#1"]]);
+    // A summons the notary leg's writer lease refuses is not an admission: the
+    // Judge seals round 3 while another writer holds that leg, the notary never
+    // runs, and resumed directly afterwards it still names round 2.
+    assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
+    const notaryLock = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../../writer.lock");
+    await writeFile(notaryLock, `${process.pid}\n`, "utf8");
+    const refused = await observed.resumeRun(observed.parentRunId, "new review");
+    assert.notEqual(refused.exitCode, 0);
+    assert.equal(notaryCalls, 3, "the refused summons must not reach the notary");
+    assert.deepEqual(observed.rounds("judge").at(-1), ["3", undefined]);
+    await rm(notaryLock);
+    assert.equal((await observed.resumeRun(second.terminal!.runId!, RULING)).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["4", "judge#2"]);
+  }, [BOUND_VERDICT]);
 });

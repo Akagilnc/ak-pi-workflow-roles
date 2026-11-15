@@ -46,8 +46,8 @@ import {
   appendCallerFileFlagPaths,
   buildInstructionTransportPrompt,
   materializeCountersignInvocation,
+  persistAdmittedAuditedLeg,
   persistAdmittedAuditedSubmissionToolCallId,
-  persistAdmittedSourceRunPath,
   readAdmittedAuditedSubmissionToolCallId,
   recordAdmittedCorrelation,
   recordChildDiaristRun,
@@ -85,6 +85,7 @@ import {
   ledgerReadScope,
   presentStructuralRejection,
   readBoundSessionEntries,
+  retainPackageFault,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -106,6 +107,7 @@ import {
   latestPayloadEscalated,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
+import { readAuditedRound } from "../ticket-progress.ts";
 import { errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
@@ -804,6 +806,30 @@ async function runOmittedLensBatch(
 }
 
 /**
+ * #1200: every officer admission that names an audited leg — gate summons and
+ * a caller's own `--source-run`, first mint and re-summons alike — pins
+ *「审 谁#轮」before the officer runs, in the same page write as the source
+ * path when this admission is the one that records it. A row that cannot be
+ * read keeps its cause on the officer run; the officer still runs and its rows
+ * carry no `for`.
+ */
+async function pinAuditedLegAtAdmission(
+  officerRunDirectory: string,
+  auditedRunDirectory: string,
+  io: CliIo,
+  source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
+): Promise<void> {
+  const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory);
+  persistAdmittedAuditedLeg(officerRunDirectory, { for: auditedRound, ...source });
+  if (fault === undefined) return;
+  await retainPackageFault({
+    runDirectory: officerRunDirectory,
+    diagnostic: fault,
+    stderr: (text) => io.stderr(text),
+  });
+}
+
+/**
  * One same-parent lookup. Seat branches still build their own summons.
  * A found child resumes that child. No prior run, explicit new, or a typed
  * session-id-missing resume (失败照记，记完再起新) returns undefined so the caller mints.
@@ -839,6 +865,7 @@ function resumeSameParentInstructionSeat(input: {
         },
         input.env,
         input.io,
+        input.parentRunPath,
       );
     },
   });
@@ -945,7 +972,9 @@ async function runCountersignBody(
       );
       await markRunAdmitted(admitted, env.principalAuthority);
       if (gateParentRunPath !== undefined) {
-        await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
+        await pinAuditedLegAtAdmission(admitted.runDirectory, gateParentRunPath, io, {
+          sourceRunPath: gateParentRunPath,
+        });
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
       }
       // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
@@ -1169,12 +1198,22 @@ export async function runPublicInstructionSeat(
   }
 
   if (instructionSourceRunPath !== undefined) {
-    await persistAdmittedSourceRunPath(admitted, instructionSourceRunPath);
+    await pinAuditedLegAtAdmission(admitted.runDirectory, instructionSourceRunPath, io, {
+      sourceRunPath: instructionSourceRunPath,
+    });
     admitted = { ...admitted, sourceRunPath: instructionSourceRunPath } as AdmittedRoleInvocation;
-  }
-  if (record.sameParent === "subject-source" && auditorSource !== undefined) {
-    await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
+  } else if (record.sameParent === "subject-source" && auditorSource !== undefined) {
+    await pinAuditedLegAtAdmission(admitted.runDirectory, auditorSource, io, {
+      sourceRunPath: auditorSource,
+      auditorSubject,
+    });
     admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
+  } else {
+    // The admission itself already recorded the source (source-locator seats).
+    const auditedRunDirectory = admittedSourceRunPath(admitted);
+    if (auditedRunDirectory !== undefined) {
+      await pinAuditedLegAtAdmission(admitted.runDirectory, auditedRunDirectory, io);
+    }
   }
   // #1208 C2: same helper as resume — inherit the audited source's known ticket.
   admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
@@ -1249,6 +1288,8 @@ export async function runPublicInstructionSeatResume(
   request: PublicResumeRequest,
   env: InstructionSeatRunEnv,
   io: CliIo,
+  /** #1200: the audited leg a same-parent re-summons names; absent on every other resume. */
+  resummonedFor?: string,
 ): Promise<SeatRunResult> {
   let selectedRequest = request;
   const resume = async () => {
@@ -1286,6 +1327,12 @@ export async function runPublicInstructionSeatResume(
       return { ...loaded, admitted };
     },
     buildTurnRequest: async (admitted, effective) => {
+      // #1200: the turn is built once this leg has taken the summons — inside
+      // its writer lease wherever the resume holds one — and before the host
+      // turn. A summons the lease refuses never gets here and pins nothing.
+      if (resummonedFor !== undefined) {
+        await pinAuditedLegAtAdmission(admitted.runDirectory, resummonedFor, io);
+      }
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
       const projection = resumeTurnRequestProjectionOptions(
         admitted, effective, env, summonsPrepared,

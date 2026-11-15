@@ -19,6 +19,7 @@ import {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import type {
   HostContext,
@@ -582,6 +583,20 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    // #1200: each gate officer's row names the round it was summoned for. The
+    // ruling resumed 给事中 directly, so its second row keeps that round; 符宝郎
+    // names the 给事中 round the gate handed it.
+    assert.deepEqual(
+      readTicketProgressLines(join(home, ".ak-roles", "books", "project", "924"))
+        .map((line) => [line.seat, line.round, line.for]),
+      [
+        ["diarist", "1", undefined],
+        ["secretariat", "1", undefined],
+        ["countersign", "1", "secretariat#1"],
+        ["countersign", "2", "secretariat#1"],
+        ["notary", "1", "countersign#2"],
+      ],
+    );
   });
 });
 
