@@ -210,10 +210,7 @@ export function filedIdentity(
   return {
     ...(ticket === undefined ? {} : { ticket }),
     ...(filed.length === 0 ? {} : {
-      receipts: filed.map((row) => ({
-        ...(ticket === undefined || row.round === undefined ? {} : { round: row.round }),
-        receipt: join(subjectDirectory, row.receipt),
-      })),
+      receipts: filed.map((row) => ({ ...row, receipt: join(subjectDirectory, row.receipt) })),
     }),
   };
 }

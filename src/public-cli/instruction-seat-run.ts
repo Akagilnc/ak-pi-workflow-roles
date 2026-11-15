@@ -769,6 +769,7 @@ async function runOmittedLensBatch(
       .map((child) => child.stderr)
       .filter((text): text is string => typeof text === "string" && text !== ""),
   )];
+  const batchTicket = terminals.find((item) => item.ticket !== undefined)?.ticket;
   const terminal: TerminalResult = {
     batch: "reviewer",
     roleOutcome: failed
@@ -796,8 +797,9 @@ async function runOmittedLensBatch(
       reason: "Reviewer batch has no parent-run Navigator attendance",
     },
     artifacts: terminals.flatMap((item) => item.artifacts),
-    // #1201: each lens reports its own round and receipt (lens is the round suffix).
-    ...(terminals[0]?.ticket === undefined ? {} : { ticket: terminals[0].ticket }),
+    // #1201: each lens reports its own round and receipt (lens is the round suffix);
+    // the batch's ticket is the one a lens reported.
+    ...(batchTicket === undefined ? {} : { ticket: batchTicket }),
     ...(terminals.some((item) => item.receipts !== undefined)
       ? { receipts: terminals.flatMap((item) => item.receipts ?? []) }
       : {}),

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
@@ -19,7 +19,7 @@ import { runAkRole, type CliResult } from "../../src/public-cli/cli.ts";
 import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { withHermeticHome, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
-import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { seedPublicSeat } from "../helpers/passing-review-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -51,6 +51,8 @@ async function withTicketProject(
     readonly project: string;
     readonly ticketDirectory: string;
     readonly turns: Turn[];
+    /** Everything the calls wrote to stdout and stderr, in order. */
+    readonly printed: string[];
     call(argv: readonly string[], script?: Script, env?: { cwd?: string; boundTicketNumber?: number }): Promise<CliResult>;
   }) => Promise<void>,
 ): Promise<void> {
@@ -60,6 +62,7 @@ async function withTicketProject(
     seedGitProject(project);
     for (const seat of ["judge", "notary", "fixer", "diarist"]) await seedPublicSeat(home, seat);
     const turns: Turn[] = [];
+    const printed: string[] = [];
     const ticketDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET));
     let seals = 0;
     await body({
@@ -67,11 +70,12 @@ async function withTicketProject(
       project,
       ticketDirectory,
       turns,
+      printed,
       call: (argv, script = () => undefined, env = {}) => runAkRole(argv, {
         packageRoot,
         home,
         cwd: env.cwd ?? project,
-        io: captureIo().io,
+        io: { stdout: (text) => { printed.push(text); }, stderr: (text) => { printed.push(text); } },
         credentials: { "openai-codex": true, xai: true },
         principalAuthority: piDurablePrincipalAuthority,
         ...(env.boundTicketNumber === undefined ? {} : { boundTicketNumber: env.boundTicketNumber }),
@@ -204,7 +208,7 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
 });
 
 test("#1201 an address that names no leg fails loudly and starts nothing", async () => {
-  await withTicketProject(async ({ home, turns, call }) => {
+  await withTicketProject(async ({ home, ticketDirectory, turns, printed, call }) => {
     await call(["judge", "--model", SEAT_MODEL, "leg A"], () => ruling());
     // The only fixer leg reported no ticket.
     await call(["new", "fixer", "--model", SEAT_MODEL, "unfiled"]);
@@ -229,6 +233,17 @@ test("#1201 an address that names no leg fails loudly and starts nothing", async
       const result = await call(argv);
       assert.notEqual(result.exitCode, 0, argv.join(" "));
       assert.equal(result.terminal, undefined, argv.join(" "));
+    }
+    // The address names a leg, but the leg can no longer be read: the failure
+    // points at the leg by its directory, never by a bare run id.
+    const legA = turns[0]!.leg;
+    await rename(join(ticketDirectory, "runs", legA, "state.jsonl"), join(ticketDirectory, "runs", legA, "state.gone"));
+    for (const argv of [["resume", String(TICKET), "judge"], ["resume", String(TICKET), "judge#1"]]) {
+      printed.length = 0;
+      const result = await call(argv);
+      assert.notEqual(result.exitCode, 0, argv.join(" "));
+      assert.equal(result.terminal, undefined, argv.join(" "));
+      assert.equal(printed.join("").replaceAll(legA, "").includes(runId), false, argv.join(" "));
     }
     assert.equal(turns.length, turnsBefore);
     assert.equal(await legCount(home), legsBefore);

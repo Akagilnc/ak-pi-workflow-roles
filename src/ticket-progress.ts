@@ -34,13 +34,13 @@ import {
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
   isUnboundRunDirectory,
-  parseRunLeaf,
   sessionDirectoryOf,
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
 import { readPageSync } from "./run-dossier.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isRecord } from "./unknown-value.ts";
@@ -239,7 +239,7 @@ function carryProgressRow(
   line: TicketProgressLine,
   call?: ProgressRowCall,
 ): void {
-  const runId = parseRunLeaf(basename(runDirectory))?.runId;
+  const runId = runIdFromRunDirectory(runDirectory);
   if (runId === undefined) return;
   sitianReport({
     level: "event",

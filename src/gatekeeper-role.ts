@@ -220,10 +220,7 @@ function projectOfficerPayloads(
 
 /** Nested officer runId from the summoned leg's run directory (package-internal resume identity). */
 export function officerRunIdFromSummoned(summoned: PublicSummonResult): string | undefined {
-  const runDirectory = summoned.runDirectory ?? summoned.admitted?.runDirectory;
-  return typeof runDirectory === "string" && runDirectory.trim() !== ""
-    ? runIdFromRunDirectory(runDirectory)
-    : undefined;
+  return summoned.runDirectory === undefined ? undefined : runIdFromRunDirectory(summoned.runDirectory);
 }
 
 function withOfficerRunId(

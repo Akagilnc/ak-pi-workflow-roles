@@ -600,16 +600,21 @@ test("lawful no_receipt dual-lens child is not a batch failure", async () => {
       io,
       roleTurnHost: reviewerHost(async (args) => {
         const lens = args[args.indexOf("--ak-review-lens") + 1];
-        if (lens === "correctness") return lawfulChildTurn(args, { empty: true });
+        if (lens === "completeness") return lawfulChildTurn(args, { empty: true });
         return lawfulChildTurn(args, { toolCallId: "no-receipt-sibling" });
       }),
     });
 
     assert.equal(noReceiptBatch.exitCode, 0, stdout.join(""));
     assert.equal(noReceiptBatch.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
-    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "no_receipt");
-    assert.equal(noReceiptBatch.terminal?.reviewerChildOutcomes?.correctness.exitCode, 0);
+    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "no_receipt");
+    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+    assert.equal(noReceiptBatch.terminal?.reviewerChildOutcomes?.completeness.exitCode, 0);
+    // #1201: the lens that filed nothing reported no ticket; the batch names the
+    // ticket of the lens whose round and receipt it reports.
+    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.ticket, undefined);
+    assert.deepEqual(noReceiptBatch.terminal?.receipts?.map((filed) => filed.round), ["1.correctness"]);
+    assert.equal(noReceiptBatch.terminal?.ticket, 1171);
   });
 });
 
