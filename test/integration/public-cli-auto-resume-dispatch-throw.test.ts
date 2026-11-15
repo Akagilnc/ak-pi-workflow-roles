@@ -268,7 +268,7 @@ test("a lawful final turn still returns preceding failed attempts", async () => 
                 diagnostic: "first-failure", decisiveFacts: { errorCode: "first" } }
               : { kind: "accepted" as const, role: "judge" as const },
             navigator: { disposition: "no-advice" as const },
-            artifacts: [], runId: "failure-then-accepted",
+            artifacts: [],
           },
         };
       },
@@ -308,7 +308,7 @@ test("three failed turns retain every cause when the final result stops dispatch
             roleOutcome: { kind: "failure" as const, role: "judge" as const,
               diagnostic: `failure-${attempts}`, decisiveFacts: { errorCode: `err-${attempts}` } },
             navigator: { disposition: "no-advice" as const },
-            artifacts: [], runId: "stop-after-three",
+            artifacts: [],
           },
         };
       },

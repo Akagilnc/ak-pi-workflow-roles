@@ -147,8 +147,6 @@ try {
     if (cause === undefined) cause = errorBody.cause;
     if (diagnostic === undefined) diagnostic = errorBody.diagnostic;
   }
-  const settledRunId =
-    typeof result.terminal?.runId === "string" ? result.terminal.runId : runId;
   // Unbound placement under book runs/ — same as production admit before ticket bind.
   const { resolveBookKeyFromGit } = await import(
     join(packageRoot, "src/activation-ledger-git.ts")
@@ -161,7 +159,7 @@ try {
     bookKey,
     "unbound",
     "runs",
-    `${settledRunId}@judge`,
+    `${runId}@judge`,
   );
   try {
     const { readFile } = await import("node:fs/promises");

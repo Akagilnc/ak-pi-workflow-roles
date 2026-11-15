@@ -1799,8 +1799,7 @@ async function auditSubmittedRole(
       const pass = chain.passes.at(-1);
       const officerTerminal = pass?.terminal;
       const officerRunDirectory = pass?.runDirectory;
-      const officerRunId = pass?.runId
-        ?? (officerRunDirectory === undefined ? undefined : runIdFromRunDirectory(officerRunDirectory));
+      const officerRunId = pass?.runId;
       if (officerTerminal !== undefined && officerRunId !== undefined) {
         // #1214 F1: present audited original and officer scene separately.
         await presentAuditedOriginalVolume(turn, io);
@@ -1849,9 +1848,7 @@ async function auditSubmittedRole(
     if (chain.status === "escalate") {
       const escalation = chain.passes.at(-1);
       const escalatedRunDirectory = escalation?.runDirectory;
-      const escalatedRunId = escalation?.runId
-        ?? (escalatedRunDirectory === undefined
-          ? undefined : runIdFromRunDirectory(escalatedRunDirectory));
+      const escalatedRunId = escalation?.runId;
       if (escalatedRunId === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
