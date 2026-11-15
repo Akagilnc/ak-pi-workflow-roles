@@ -36,6 +36,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -106,6 +107,8 @@ async function runExternalJudge(
     readonly limit: number;
     readonly sealOnCall?: number;
     readonly failOnCall?: number;
+    /** The receipt `sealOnCall` seals. */
+    readonly details?: Record<string, unknown>;
 }): Promise<{
   readonly turns: readonly Turn[];
   /** Every seat this run dispatched, in order — audit continuation shows up here. */
@@ -154,7 +157,7 @@ async function runExternalJudge(
           runId: runIdFromRunDirectory(request.runDirectory)!,
           runDirectory: request.runDirectory,
           role: "judge",
-          details: { status: "converged" },
+          details: options.details ?? { status: "converged" },
           toolCallId: `judge-call-${call}`,
           home: request.home,
           ...(request.courtAttemptId === undefined
@@ -212,11 +215,13 @@ async function freshProject(home: string): Promise<string> {
 test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", async () => {
   await withSeatHome(async (home) => {
     const project = await freshProject(home);
+    const receipt = { status: "converged", ticketNumber: 1132 };
     const run = await runExternalJudge(home, {
       runId: "1132-external-accepted",
       project,
       limit: 2,
       sealOnCall: 2,
+      details: receipt,
     });
 
     // One initial turn plus one催交 turn; the second sealed.
@@ -248,12 +253,18 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     );
     assert.deepEqual(
       sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
-      [{ type: "sealed", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ type: "sealed", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
     );
     assert.deepEqual(
       (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
         .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
-      [{ kind: "accepted", accepted: { status: "converged" }, toolCallId: "judge-call-2", role: "judge" }],
+      [{ kind: "accepted", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
+    );
+    // #1200: the turn that submitted nothing is not a round — one row, round 1.
+    assert.deepEqual(
+      readTicketProgressLines(join(run.runDirectory!, "../.."))
+        .filter((line) => line.seat === "judge").map((line) => line.round),
+      ["1"],
     );
   });
 });

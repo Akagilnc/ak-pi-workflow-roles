@@ -545,6 +545,8 @@ test("default dual-lens admits both axes without a parent run", async () => {
       correctness: await readLegReceipts(correctnessRunId, ticketDir),
     } as const;
     const progress = readTicketProgressLines(ticketDir).filter((line) => line.seat === "reviewer");
+    // #1200: 御史台 audits no leg — neither lens's rows name a round.
+    assert.equal(progress.some((line) => "for" in line), false);
     for (const [lens, runId] of [
       ["completeness", completenessRunId],
       ["correctness", correctnessRunId],

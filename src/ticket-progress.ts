@@ -31,16 +31,16 @@ import {
   isTerminatingToolName,
   type AcceptedDetails,
 } from "./package-contracts/terminating-tools.ts";
-import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
+import { packagedGateStageLabel, packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
   isUnboundRunDirectory,
   sessionDirectoryOf,
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { readPageSync } from "./run-dossier.ts";
+import { readPageSync, updateSectionSync } from "./run-dossier.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
-import { isRecord } from "./unknown-value.ts";
+import { errorText, isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
 const RECEIPTS_DIRNAME = "receipts" as const;
@@ -52,6 +52,11 @@ export type TicketProgressLine = {
   readonly seat: string;
   /** Seat-local round; reviewer dual-lens uses `<n>.<lens>`. Empty while unbound. */
   readonly round: string;
+  /**
+   * #1200 `<seat>#<round>` this row reviews or fixes. Officer rows copy the value
+   * pinned at admission; fixer rows copy the receipt's own `for`. Absent otherwise.
+   */
+  readonly for?: string;
   /** This-round summons instruction bytes; empty string when none. */
   readonly instruction: string;
   /** `git rev-parse HEAD` at seal from the seat worktree; empty on failure. */
@@ -67,18 +72,17 @@ export type TicketProgressLine = {
 };
 
 /**
- * Append-only progress JSONL — same posture as run-dossier row files:
- * sole Sitian decoder keeps reachable rows; malformed lines leave diagnostics
- * on stderr and do not abort seal/relocate.
+ * Append-only progress JSONL through the sole Sitian decoder: reachable rows
+ * plus one diagnostic per malformed line.
  */
-function parseProgressText(text: string, pathForDiagnostic: string): TicketProgressLine[] {
-  if (text.trim() === "") return [];
+function decodeProgressFile(path: string): {
+  readonly lines: TicketProgressLine[];
+  readonly malformed: readonly string[];
+} {
+  if (!existsSync(path)) return { lines: [], malformed: [] };
+  const text = readFileSync(path, "utf8");
+  if (text.trim() === "") return { lines: [], malformed: [] };
   const { records, diagnostics } = parseSitianRecordText(text);
-  for (const diagnostic of diagnostics) {
-    process.stderr.write(
-      `[ticket-progress] ${pathForDiagnostic} has malformed row(s); keeps reachable rows and retains the diagnostic: line ${diagnostic.line}: ${diagnostic.error}\n`,
-    );
-  }
   const lines: TicketProgressLine[] = [];
   for (const record of records) {
     const parsed: unknown = record;
@@ -86,12 +90,24 @@ function parseProgressText(text: string, pathForDiagnostic: string): TicketProgr
     if (typeof parsed.seat !== "string" || typeof parsed.round !== "string") continue;
     lines.push(parsed as unknown as TicketProgressLine);
   }
-  return lines;
+  return {
+    lines,
+    malformed: diagnostics.map((diagnostic) => `line ${diagnostic.line}: ${diagnostic.error}`),
+  };
 }
 
+/**
+ * Same posture as run-dossier row files: malformed lines leave diagnostics on
+ * stderr and do not abort seal/relocate.
+ */
 function readProgressFile(path: string): TicketProgressLine[] {
-  if (!existsSync(path)) return [];
-  return parseProgressText(readFileSync(path, "utf8"), path);
+  const { lines, malformed } = decodeProgressFile(path);
+  for (const diagnostic of malformed) {
+    process.stderr.write(
+      `[ticket-progress] ${path} has malformed row(s); keeps reachable rows and retains the diagnostic: ${diagnostic}\n`,
+    );
+  }
+  return lines;
 }
 
 /**
@@ -178,6 +194,56 @@ function statusAndSummaryFromPayload(seat: string, payload: unknown): {
     ...(status === undefined ? {} : { status }),
     ...(summary === undefined ? {} : { summary }),
   };
+}
+
+/**
+ * #1200 pin「审 谁#轮」on the officer's admitted page at admission, before the
+ * officer runs: the audited leg's latest row on the ticket at this moment.
+ * A re-summons replaces the value; rows already appended keep theirs. An audited
+ * leg with no round yet (unbound, or no accepted receipt) clears the pin. A
+ * progress file that cannot be read or has malformed rows also clears it and
+ * returns the cause for the caller to retain — the officer still runs.
+ */
+export function pinAuditedRound(input: {
+  readonly officerRunDirectory: string;
+  readonly auditedRunDirectory: string;
+}): { readonly fault?: string } {
+  let pinned: string | undefined;
+  let fault: string | undefined;
+  try {
+    const subjectDirectory = subjectDirectoryOfRun(input.auditedRunDirectory);
+    if (subjectDirectory !== undefined && !isUnboundRunDirectory(input.auditedRunDirectory)) {
+      const path = join(subjectDirectory, CURRENT_FILENAME);
+      const { lines, malformed } = decodeProgressFile(path);
+      if (malformed.length > 0) {
+        throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
+      }
+      const receipts = `runs/${basename(input.auditedRunDirectory)}/`;
+      const latest = lines
+        .filter((line) => typeof line.receipt === "string" && line.receipt.startsWith(receipts))
+        .at(-1);
+      if (latest !== undefined) pinned = `${latest.seat}#${latest.round}`;
+    }
+  } catch (error) {
+    fault = `audited round unavailable for ${input.auditedRunDirectory}: ${errorText(error)}`;
+  }
+  updateSectionSync(input.officerRunDirectory, "admitted", (current) => {
+    if (current.for === pinned) return undefined;
+    const { for: _replaced, ...rest } = current;
+    return pinned === undefined ? rest : { ...rest, for: pinned };
+  });
+  return fault === undefined ? {} : { fault };
+}
+
+/**
+ * The row's `for`: gate officers copy the admission pin; the fixer's receipt
+ * reports its own (copied when it is a string, never checked). No other seat has one.
+ */
+function forOfSealedRow(runDirectory: string, seat: string, payload: unknown): string | undefined {
+  const reported = packagedGateStageLabel(seat) !== undefined
+    ? readPageSync(runDirectory, "admitted")?.for
+    : seat === "fixer" && isRecord(payload) ? payload.for : undefined;
+  return typeof reported === "string" ? reported : undefined;
 }
 
 export type WorktreeHeadCapture = {
@@ -321,11 +387,13 @@ export function landTicketProgress(input: {
     ? ""
     : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
   const { status, summary } = statusAndSummaryFromPayload(input.role, input.accepted);
+  const reviewed = forOfSealedRow(runDirectory, input.role, input.accepted);
   const instruction = input.instruction;
   const line: TicketProgressLine = {
     at: new Date().toISOString(),
     seat: input.role,
     round,
+    ...(reviewed === undefined ? {} : { for: reviewed }),
     instruction,
     head: input.sealHead.head,
     ...(status === undefined ? {} : { status }),

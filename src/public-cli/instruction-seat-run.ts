@@ -85,6 +85,7 @@ import {
   ledgerReadScope,
   presentStructuralRejection,
   readBoundSessionEntries,
+  retainPackageFault,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -106,6 +107,7 @@ import {
   latestPayloadEscalated,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
+import { pinAuditedRound } from "../ticket-progress.ts";
 import { isRecord, errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
@@ -804,6 +806,26 @@ async function runOmittedLensBatch(
 }
 
 /**
+ * #1200: every officer admission that names an audited leg — gate summons and
+ * a caller's own `--source-run`, first mint and re-summons alike — pins
+ *「审 谁#轮」before the officer runs. A row that cannot be read keeps its
+ * cause on the officer run; the officer still runs and its rows carry no `for`.
+ */
+async function pinAuditedRoundAtAdmission(
+  officerRunDirectory: string,
+  auditedRunDirectory: string,
+  io: CliIo,
+): Promise<void> {
+  const { fault } = pinAuditedRound({ officerRunDirectory, auditedRunDirectory });
+  if (fault === undefined) return;
+  await retainPackageFault({
+    runDirectory: officerRunDirectory,
+    diagnostic: fault,
+    stderr: (text) => io.stderr(text),
+  });
+}
+
+/**
  * One same-parent lookup. Seat branches still build their own summons.
  * A found child resumes that child. No prior run, explicit new, or a typed
  * session-id-missing resume (失败照记，记完再起新) returns undefined so the caller mints.
@@ -825,7 +847,8 @@ function resumeSameParentInstructionSeat(input: {
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
     freshSummons: input.env.freshSummons,
     summons: input.summons,
-    resume: (runId, materials, runDirectory) => {
+    resume: async (runId, materials, runDirectory) => {
+      await pinAuditedRoundAtAdmission(runDirectory, input.parentRunPath, input.io);
       // Named operational reask on this summon: explicit message seam.
       // Review dialogue stays on summons → shared resolver (notary: fixed).
       // Do not stuff reask into summons.instruction for later passthrough.
@@ -947,6 +970,7 @@ async function runCountersignBody(
       if (gateParentRunPath !== undefined) {
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
+        await pinAuditedRoundAtAdmission(admitted.runDirectory, gateParentRunPath, io);
       }
       // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
       const turnProjection = roleTurnOptions(env, admitted, {
@@ -1175,6 +1199,10 @@ export async function runPublicInstructionSeat(
   if (record.sameParent === "subject-source" && auditorSource !== undefined) {
     await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
     admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
+  }
+  const auditedRunDirectory = admittedSourceRunPath(admitted);
+  if (auditedRunDirectory !== undefined) {
+    await pinAuditedRoundAtAdmission(admitted.runDirectory, auditedRunDirectory, io);
   }
   // #1208 C2: same helper as resume — inherit the audited source's known ticket.
   admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
