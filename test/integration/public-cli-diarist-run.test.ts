@@ -4,12 +4,11 @@
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { historyPayloads, readCurrentJson, readCurrentSection, seedCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
   mkdir,
-  readdir,
   readFile,
   writeFile,
 } from "node:fs/promises";
@@ -30,10 +29,6 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { roleRunPlacement, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
-import { migrateBookTopology } from "../../src/book-topology-migration.ts";
-import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
-import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
-import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
@@ -49,46 +44,10 @@ import {
   seedGitProject,
 } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withTempHome, withTempRoot } from "../helpers/environment-fixtures.ts";
+import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 
 const TICKET = 708;
-
-test("worker gate topology migration ignores the retired current-session pointer", async () => {
-  await withTempRoot("ak-book-topology-gate-", async (home) => {
-    const ledgerHome = join(home, ".ak-roles");
-    const sourceDir = join(
-      ledgerHome,
-      "books",
-      "demo-book",
-      "worker-submission-gate",
-    );
-    const volume = join(sourceDir, "gate-session.jsonl");
-    await mkdir(sourceDir, { recursive: true });
-    await writeFile(volume, `${JSON.stringify({ type: "session" })}\n`, "utf8");
-    await writeFile(
-      join(sourceDir, "current-session.json"),
-      `${JSON.stringify({ sessionFile: volume })}\n`,
-      "utf8",
-    );
-
-    const report = await migrateBookTopology({
-      ledgerHome,
-      migrators: BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS,
-      env: {},
-      now: new Date("2026-09-22T00:00:00.000Z"),
-    });
-
-    const destination = join(
-      report.booksDirectory,
-      "demo-book",
-      "unbound",
-      "worker-submission-gate",
-    );
-    assert.equal(existsSync(join(destination, "gate-session.jsonl")), true);
-    assert.equal(existsSync(join(destination, "current-session.json")), false);
-  });
-});
 
 const immutablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request) {
@@ -1118,8 +1077,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       true,
       "unique diary file must exist",
     );
-    assert.ok(volume.header, "legacy snapshot header must remain");
-    assert.equal(volume.header.ticket, TICKET);
     assert.equal(volume.appends.length, 1, "one pure-append commit");
     assert.equal(volume.appends[0]?.sessions.length, 1);
     assert.equal(volume.appends[0]?.sessions[0]?.path, fixture.path);
@@ -1365,236 +1322,6 @@ test("ak-role dialogue refuses a missing argument, an unreadable session and one
     assert.equal(stray.stdout.join(""), "");
   });
 });
-
-test("migrateBookTopology preserves legacy and prior bare under unbound when later bare wins", async () => {
-  await withTempRoot("ak-book-topology-mig-", async (home) => {
-    const ledgerHome = join(home, ".ak-roles");
-    const bookKey = "demo-book";
-    const books = join(ledgerHome, "books");
-    const legacyDir = join(books, bookKey, "ticket-provenance");
-    // Walk order per ticket: partial-nest then ticket root — two bares, second wins.
-    const bareFirstDir = join(
-      books,
-      bookKey,
-      String(TICKET),
-      "ticket-provenance",
-    );
-    const bareSecondDir = join(books, bookKey, String(TICKET));
-    await mkdir(legacyDir, { recursive: true });
-    await mkdir(bareFirstDir, { recursive: true });
-    await mkdir(bareSecondDir, { recursive: true });
-    const legacyRaw = JSON.stringify({
-      kind: "ticket-provenance",
-      subject: String(TICKET),
-      identity: "legacy-1",
-      payload: { note: "old" },
-    });
-    // Two source rows share identity — second skips physical write but must still
-    // claim dest so bare replace flips both outcomes (no phantom placed).
-    const legacyRawDup = JSON.stringify({
-      kind: "ticket-provenance",
-      subject: String(TICKET),
-      identity: "legacy-1",
-      payload: { note: "old-dup-source" },
-    });
-    await writeFile(
-      join(legacyDir, "records.jsonl"),
-      `${legacyRaw}\n${legacyRawDup}\n`,
-      "utf8",
-    );
-    const bareHeaderFirst = JSON.stringify({
-      repo: bookKey,
-      ticket: TICKET,
-      createdAt: "t0",
-      updatedAt: "t0",
-      sessions: [],
-    });
-    const bareLineFirst = JSON.stringify({
-      speaker: "owner",
-      s: 0,
-      text: "bare-first",
-    });
-    await writeFile(
-      join(bareFirstDir, "records.jsonl"),
-      `${bareHeaderFirst}\n${bareLineFirst}\n`,
-      "utf8",
-    );
-    const bareHeaderSecond = JSON.stringify({
-      repo: bookKey,
-      ticket: TICKET,
-      createdAt: "t1",
-      updatedAt: "t1",
-      sessions: [],
-    });
-    const bareLineSecond = JSON.stringify({
-      speaker: "owner",
-      s: 0,
-      text: "bare-second-wins",
-    });
-    await writeFile(
-      join(bareSecondDir, "records.jsonl"),
-      `${bareHeaderSecond}\n${bareLineSecond}\n`,
-      "utf8",
-    );
-
-    const report = await migrateBookTopology({
-      ledgerHome,
-      migrators: BOOK_TOPOLOGY_PARTITION_MIGRATORS,
-      env: {},
-      now: new Date("2026-09-14T00:00:00.000Z"),
-    });
-
-    const tp = report.partitions.find(
-      (p) => p.partition === "ticket-provenance",
-    );
-    assert.ok(tp, "ticket-provenance partition report present");
-    // 2 same-identity legacy + 2 bare volumes × 2 lines each = 6 source lines.
-    assert.equal(tp.before, 6);
-    assert.equal(tp.placed, 2, "only winning bare header+body stay placed");
-    assert.equal(
-      tp.unbound,
-      4,
-      "both legacy claims + first bare header+body rehomed (identity dup still counted)",
-    );
-    assert.equal(tp.discarded, 0);
-
-    const destVolume = join(
-      report.booksDirectory,
-      bookKey,
-      String(TICKET),
-      "records.jsonl",
-    );
-    const migrated = await readFile(destVolume, "utf8");
-    const migratedLines = migrated
-      .split("\n")
-      .filter((line) => line.trim() !== "");
-    assert.equal(JSON.parse(migratedLines[0]!).ticket, TICKET);
-    assert.equal(JSON.parse(migratedLines[0]!).updatedAt, "t1");
-    assert.equal(JSON.parse(migratedLines[0]!).kind, undefined);
-    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-second-wins");
-    assert.equal(
-      migratedLines.some(
-        (line) => line.includes("bare-first") || line.includes("legacy-1"),
-      ),
-      false,
-      "superseded bare/legacy must not remain under winning header",
-    );
-
-    const unboundRoot = join(
-      report.booksDirectory,
-      bookKey,
-      "unbound",
-      "ticket-provenance",
-    );
-    async function collectRaw(
-      dir: string,
-      acc: string[] = [],
-    ): Promise<string[]> {
-      let entries;
-      try {
-        entries = await readdir(dir, { withFileTypes: true });
-      } catch {
-        return acc;
-      }
-      for (const entry of entries) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) await collectRaw(path, acc);
-        else if (entry.isFile()) acc.push(await readFile(path, "utf8"));
-      }
-      return acc;
-    }
-    const unboundBodies = (await collectRaw(unboundRoot)).join("\n");
-    assert.equal(
-      unboundBodies.includes(legacyRaw),
-      true,
-      "legacy bytes in unbound",
-    );
-    assert.equal(
-      unboundBodies.includes("old-dup-source"),
-      true,
-      "duplicate-identity legacy source row also preserved in unbound",
-    );
-    assert.equal(
-      unboundBodies.includes("bare-first"),
-      true,
-      "first bare body in unbound",
-    );
-    assert.equal(
-      unboundBodies.includes('"updatedAt":"t0"'),
-      true,
-      "first bare header in unbound",
-    );
-  });
-});
-
-test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket and rewrites peers", async () => {
-  // #863 stock batch: same migration-suite entry shape as migrateBookTopology —
-  // InBooks is the real flag body; no parallel helper/unit tracer.
-  await withTempRoot("ak-book-topology-board-bound-", async (home) => {
-    const ledgerHome = join(home, ".ak-roles");
-    const booksDirectory = join(ledgerHome, "books");
-    const bookDir = join(booksDirectory, "demo-book");
-    const boundLeaf = "01a086300-0000-7000-8000-00000000judge@judge";
-    const freeLeaf = "01a086300-0000-7000-8000-00000000free@fixer";
-    const peerLeaf = "01a086300-0000-7000-8000-0000000peer@coder";
-    const boundSource = join(bookDir, "unbound", "runs", boundLeaf);
-    const freeSource = join(bookDir, "unbound", "runs", freeLeaf);
-    const peerSource = join(bookDir, "unbound", "runs", peerLeaf);
-
-    async function seedRun(
-      runDir: string,
-      page: Record<string, unknown>,
-    ): Promise<void> {
-      await mkdir(sessionDirectoryOf(runDir), { recursive: true });
-      seedCurrentSection(runDir, "admitted", page);
-      seedCurrentSection(runDir, "invocation", { runDirectory: runDir });
-    }
-
-    await seedRun(boundSource, {
-      runDirectory: boundSource,
-      ticketNumber: 863,
-    });
-    await seedRun(freeSource, { runDirectory: freeSource });
-    await seedRun(peerSource, {
-      runDirectory: peerSource,
-      sourceRun: { runDirectory: boundSource },
-    });
-
-    const relocated = await relocateBoardBoundUnboundRunsInBooks(booksDirectory);
-    const boundTarget = join(bookDir, "863", "runs", boundLeaf);
-    assert.deepEqual(relocated, [
-      {
-        from: boundSource,
-        to: boundTarget,
-        ticketNumber: 863,
-      },
-    ]);
-    assert.equal(
-      existsSync(boundSource),
-      false,
-      "stock relocate must remove the unbound leaf",
-    );
-    assert.equal(existsSync(boundTarget), true);
-    assert.equal(
-      existsSync(freeSource),
-      true,
-      "true-unbound without board ticket stays under unbound",
-    );
-    assert.equal(existsSync(peerSource), true);
-
-    const boundAdmitted = readCurrentSection(boundTarget, "admitted") as { runDirectory?: string; ticketNumber?: number };
-    assert.equal(boundAdmitted.ticketNumber, 863);
-    assert.equal(boundAdmitted.runDirectory, boundTarget);
-
-    const peerAdmitted = readCurrentSection(peerSource, "admitted") as { sourceRun?: { runDirectory?: string } };
-    assert.equal(
-      peerAdmitted.sourceRun?.runDirectory,
-      boundTarget,
-      "batch cross-run rewrite must retarget peers before rename",
-    );
-  });
-});
-
 
 /**
  * #1090：起居录纯追加——同一区间再交新增记录；先前字节不改写；空 sessions 不追加；

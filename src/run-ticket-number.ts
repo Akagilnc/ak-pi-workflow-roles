@@ -1,7 +1,6 @@
 /**
  * Typed ticketNumber reader for a retained run's durable pages.
- * Production board reads use state.jsonl rows only (admitted, then invocation).
- * Pre-#1161 page files are readable only via readMigrationBoardTicketNumber.
+ * Board reads use state.jsonl rows only (admitted, then invocation).
  * Migration derivation page last so worktree-derived placement stays readable
  * without forging a board assertion. Missing page (ENOENT) → try next / undefined;
  * damage and non-ENOENT IO failures propagate.
@@ -13,7 +12,7 @@ import { join } from "node:path";
 import { isEnoent, isRecord } from "./unknown-value.ts";
 
 /** Sole on-disk page for worktree-basename ticket derivation (#865). */
-export const MIGRATION_TICKET_DERIVATION_PAGE =
+const MIGRATION_TICKET_DERIVATION_PAGE =
   "migration-ticket-derivation.json" as const;
 
 /** Positive-integer contract for display / snapshot inputs; binding uses the safe subset below. */
@@ -32,7 +31,7 @@ export function isTicketNumberString(value: unknown): value is string {
 }
 
 /**
- * Ticket spelling shared by placement, migration, and sitian subject routing.
+ * Ticket spelling shared by placement and sitian subject routing.
  * A number, or a digit string with no sign, zero-pad, decimal, or `#`.
  * Unsafe integers are unidentified. Leading `#N` stays on readDeclaredTicketNumber.
  */
@@ -113,27 +112,12 @@ async function readJsonObject(
   }
 }
 
-/** Pre-#1161 separate board pages — migration input only, not a runtime fact path. */
-const LEGACY_BOARD_PAGE: Readonly<Record<"admitted" | "invocation", string>> = {
-  admitted: "admitted-request.json",
-  invocation: "invocation.json",
-};
-
 function readBoardPageTicketNumberFromRows(
   runDirectory: string,
   section: "admitted" | "invocation",
 ): number | undefined {
   const fromRows = readPageSync(runDirectory, section);
   return fromRows === undefined ? undefined : ticketFromRecord(fromRows);
-}
-
-async function readBoardPageTicketNumberFromLegacy(
-  runDirectory: string,
-  section: "admitted" | "invocation",
-): Promise<number | undefined> {
-  const record = await readJsonObject(join(runDirectory, LEGACY_BOARD_PAGE[section]));
-  if (record === undefined) return undefined;
-  return ticketFromRecord(record);
 }
 
 /**
@@ -149,25 +133,8 @@ export async function readBoardTicketNumber(
   );
 }
 
-/**
- * Migration-boundary board ticket: fact rows first, then pre-#1161 page files.
- * Only #852 migrators and placement may call this; runtime identity must not.
- */
-export async function readMigrationBoardTicketNumber(
-  runDirectory: string,
-): Promise<number | undefined> {
-  return (
-    (await readBoardTicketNumber(runDirectory)) ??
-    (await readBoardPageTicketNumberFromLegacy(runDirectory, "admitted")) ??
-    (await readBoardPageTicketNumberFromLegacy(runDirectory, "invocation"))
-  );
-}
-
-/**
- * Worktree-derivation ticket only — never a board assertion. Callers that must
- * distinguish board vs derived use this; effective readers use readRunTicketNumber.
- */
-export async function readMigrationDerivedTicketNumber(
+/** Worktree-derivation ticket only — never a board assertion. */
+async function readMigrationDerivedTicketNumber(
   runDirectory: string,
 ): Promise<number | undefined> {
   const record = await readJsonObject(

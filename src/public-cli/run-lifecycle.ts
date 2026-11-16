@@ -1114,10 +1114,7 @@ async function loadResumableRunRecord(
         typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
           ? record.runDirectory
           : run.runDirectory;
-      rewriteAdmittedRoleRunPage(record, [{
-        oldRunDirectory: storedRunDirectory,
-        newRunDirectory: run.runDirectory,
-      }]);
+      rewriteAdmittedRoleRunPage(record, storedRunDirectory, run.runDirectory);
       if (typeof record.instruction === "string") {
         instruction = record.instruction;
       }

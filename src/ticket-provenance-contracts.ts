@@ -39,15 +39,6 @@ export type TicketProvenanceSession = {
   readonly ranges: readonly TicketProvenanceRange[];
 };
 
-/** 旧 snapshot 册子头形状（存量可读；#1090 后新提交不再维护折叠头）。 */
-export type TicketProvenanceHeader = {
-  readonly repo: string;
-  readonly ticket: number | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly sessions: readonly TicketProvenanceSession[];
-};
-
 /**
  * 一条对话（存于不可变投影提交；旧 snapshot 中也可为裸行）。
  * `id` 按源事实存在则记、不存在不编；`s` 为本轮 sessions 下标。
@@ -105,27 +96,4 @@ export function projectTicketProvenanceSessions(
     sessions.push({ path, ranges });
   }
   return sessions;
-}
-
-/** 读回册子头（文件第一行）。形状不成立即 undefined——按无册处理，不猜。 */
-export function projectTicketProvenanceHeader(
-  value: unknown,
-): TicketProvenanceHeader | undefined {
-  if (!isRecord(value)) return undefined;
-  const ticket = value.ticket === null ? null : positiveInteger(value.ticket);
-  if (ticket === undefined) return undefined;
-  if (typeof value.repo !== "string") return undefined;
-  if (typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") {
-    return undefined;
-  }
-  // Malformed sessions stay unusable — do not wash into lawful empty (失败诚实).
-  const sessions = projectTicketProvenanceSessions(value.sessions);
-  if (sessions === undefined) return undefined;
-  return {
-    repo: value.repo,
-    ticket,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-    sessions,
-  };
 }

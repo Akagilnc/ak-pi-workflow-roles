@@ -5,10 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import {
-  projectTicketProvenanceHeader,
-  projectTicketProvenanceSessions,
-} from "../../src/ticket-provenance-contracts.ts";
+import { projectTicketProvenanceSessions } from "../../src/ticket-provenance-contracts.ts";
 import {
   projectDiaristSessions,
 } from "../../src/diarist-contracts.ts";
@@ -40,51 +37,6 @@ test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", ()
       ranges: [{ from: { id: "a" }, to: { line: 9 } }],
     },
   ]);
-});
-
-test("projectTicketProvenanceHeader round-trips the diary shape", () => {
-  const header = projectTicketProvenanceHeader({
-    repo: "demo",
-    ticket: 900,
-    createdAt: "t0",
-    updatedAt: "t1",
-    sessions: [{ path: "/s", ranges: [{ from: { line: 1 }, to: { line: 2 } }] }],
-  });
-  assert.ok(header);
-  assert.equal(header.ticket, 900);
-  assert.equal(header.sessions.length, 1);
-  // Lawful empty sessions stay empty — distinct from malformed below.
-  const emptySessions = projectTicketProvenanceHeader({
-    repo: "demo",
-    ticket: 900,
-    createdAt: "t0",
-    updatedAt: "t1",
-    sessions: [],
-  });
-  assert.ok(emptySessions);
-  assert.deepEqual(emptySessions.sessions, []);
-  // Damaged sessions metadata is not washed into lawful empty (失败诚实).
-  assert.equal(
-    projectTicketProvenanceHeader({
-      repo: "demo",
-      ticket: 900,
-      createdAt: "t0",
-      updatedAt: "t1",
-      sessions: "not-an-array",
-    }),
-    undefined,
-  );
-  assert.equal(
-    projectTicketProvenanceHeader({
-      repo: "demo",
-      ticket: 900,
-      createdAt: "t0",
-      updatedAt: "t1",
-      sessions: [{ path: "", ranges: [{ from: { line: 1 }, to: { line: 2 } }] }],
-    }),
-    undefined,
-  );
-
 });
 
 test("projectDiaristSessions: absent field is empty, not rejection", () => {

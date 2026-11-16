@@ -178,7 +178,8 @@ export async function refreshAdmittedPlacementAfterHostTurn(
     const principal = authority.seal(coords);
     rewriteAdmittedRoleRunPage(
       admitted as unknown as Record<string, unknown>,
-      [{ oldRunDirectory, newRunDirectory: found }],
+      oldRunDirectory,
+      found,
     );
     (admitted as { principal: typeof principal }).principal = principal;
     heldLease?.relocate(found);
