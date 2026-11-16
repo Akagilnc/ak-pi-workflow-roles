@@ -277,6 +277,8 @@ const mcpIdx = process.argv.indexOf("--mcp-config");
 if (mcpIdx < 0) throw new Error("missing --mcp-config");
 const cfg = JSON.parse(readFileSync(process.argv[mcpIdx + 1], "utf8"));
 const server = Object.values(cfg.mcpServers)[0];
+// Hand the config this host was given back to the test.
+writeFileSync(join(process.env.HOME, "delivered-mcp-config.json"), JSON.stringify(cfg));
 
 await callMcpTool({
   socketPath: server.env.AK_ACP_MCP_SOCKET,
@@ -343,6 +345,15 @@ process.stdout.write(JSON.stringify({
       assert.equal(existsSync(unboundDir), false, "unbound must not revive after exit-copy");
       assert.equal(existsSync(ticketDir), true);
       assert.equal(result.admitted?.runDirectory, ticketDir);
+      // #1295: the package's own tool server is delivered to Claude with the host's
+      // load-with-session field, so its tool definitions need no search step.
+      const delivered = JSON.parse(
+        await readFile(join(home, "delivered-mcp-config.json"), "utf8"),
+      ) as { mcpServers: Record<string, { alwaysLoad?: unknown }> };
+      assert.deepEqual(
+        Object.entries(delivered.mcpServers).map(([name, server]) => [name, server.alwaysLoad]),
+        [["ak-fixer", true]],
+      );
       const landing = resolveHostDossierLandingPath({
         host: "claude",
         sessionDirectory: sessionDirectoryOf(ticketDir),

@@ -1,34 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { headlessMcpConfigDocument } from "../../src/headless-host/description.ts";
 import { parseHeadlessCliStdout } from "../../src/headless-host/role-turn-host.ts";
-
-test("headless MCP config projects ACP env rows into Claude object shape", () => {
-  const doc = headlessMcpConfigDocument([
-    {
-      name: "ak-fixer",
-      command: "/usr/bin/node",
-      args: ["/path/mcp-relay.mjs"],
-      env: [
-        { name: "AK_ACP_MCP_SOCKET", value: "/tmp/s.sock" },
-        { name: "AK_ACP_MCP_TOKEN", value: "tok" },
-      ],
-    },
-  ]);
-  assert.deepEqual(doc, {
-    mcpServers: {
-      "ak-fixer": {
-        command: "/usr/bin/node",
-        args: ["/path/mcp-relay.mjs"],
-        env: {
-          AK_ACP_MCP_SOCKET: "/tmp/s.sock",
-          AK_ACP_MCP_TOKEN: "tok",
-        },
-      },
-    },
-  });
-});
 
 test("parseHeadlessCliStdout reads one json result envelope", () => {
   const doc = JSON.stringify({
