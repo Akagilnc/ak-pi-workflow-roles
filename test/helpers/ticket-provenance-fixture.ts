@@ -2,11 +2,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type {
-  TicketProvenanceHeader,
   TicketProvenanceLine,
   TicketProvenanceSession,
 } from "../../src/ticket-provenance-contracts.ts";
-import { projectTicketProvenanceHeader } from "../../src/ticket-provenance-contracts.ts";
 
 /** Test-only fixture helper to ensure a ticket volume directory and file exist. */
 export function ensureTicketProvenanceVolume(
@@ -31,8 +29,6 @@ export type TicketProvenanceAppendRecord = {
 export type ReadTicketProvenanceRecordsResult = {
   readonly recordFile: string;
   readonly volumeDir: string;
-  /** Legacy snapshot header if present; otherwise undefined (#1090 has no folded header). */
-  readonly header: TicketProvenanceHeader | undefined;
   /** Dialogue lines from every append (+ legacy bare rows), in file order. */
   readonly lines: readonly TicketProvenanceLine[];
   /** Unprojected source bytes preserved inside append payloads (+ legacy bad rows). */
@@ -61,7 +57,6 @@ export async function readTicketProvenanceRecords(
   const lines: TicketProvenanceLine[] = [];
   const unprojectedRaw: string[] = [];
   const appends: TicketProvenanceAppendRecord[] = [];
-  let header: TicketProvenanceHeader | undefined;
 
   const text = existsSync(recordFile) ? readFileSync(recordFile, "utf8") : "";
   const physical = text.split("\n");
@@ -72,10 +67,6 @@ export async function readTicketProvenanceRecords(
       const parsed: unknown = JSON.parse(raw);
       if (isRecord(parsed) && typeof parsed.identity === "string") {
         identityToRaw.set(parsed.identity, raw);
-      }
-      if (header === undefined) {
-        const projected = projectTicketProvenanceHeader(parsed);
-        if (projected !== undefined) header = projected;
       }
       if (
         isRecord(parsed) &&
@@ -131,7 +122,6 @@ export async function readTicketProvenanceRecords(
   return {
     recordFile,
     volumeDir,
-    header,
     lines,
     unprojectedRaw,
     appends,

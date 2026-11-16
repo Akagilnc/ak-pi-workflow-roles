@@ -156,7 +156,7 @@ export async function rehomeUnboundTicketProvenance(
 
   // Live staging: ticket-provenance rows in the run's history.jsonl. Append-only
   // history keeps the staging rows; the ticket-root diary is the home.
-  // Old run/records.jsonl is not a runtime input (#1161); only migration tools read it.
+  // Old run/records.jsonl is not a runtime input (#1161).
   let history: string;
   try {
     history = await readFile(join(runDirectory, RUN_HISTORY_FILE), "utf8");

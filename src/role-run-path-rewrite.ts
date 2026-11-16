@@ -1,7 +1,7 @@
 /**
  * Sole pure authority for typed run-directory path rewrite / projection.
- * No dossier I/O — run-dossier render and role-run-relocation durable walks
- * both consume this module (avoids a cycle through page readers).
+ * No dossier I/O — run-dossier render and role-run-relocation both consume
+ * this module (avoids a cycle through page readers).
  *
  * Scope is typed machine-consumed path fields only — never free text, never
  * caller file-flag path strings.
@@ -22,19 +22,6 @@ export const ADMITTED_PAGE_PATH_FIELDS = [
   // #1165/#1168: caller file-flag paths stay as given.
   "mergerInputPath",
   "sourceRunPath",
-] as const;
-
-export const INVOCATION_PAGE_PATH_FIELDS = [
-  "runDirectory",
-  "sessionDirectory",
-  "sessionFile",
-] as const;
-
-export const RUN_STATE_PAGE_PATH_FIELDS = [
-  "runDirectory",
-  "admittedRequestPath", // pre-#1161 pages only
-  "sessionDirectory",
-  "sessionFile",
 ] as const;
 
 /** Typed principal session coordinates rewritten when the owning run leaf moves. */
@@ -179,7 +166,7 @@ export function rewriteSourceRunLocator(
 }
 
 /** Same-ticket summons materials: typed source-run; caller attach paths stay as-is (#1165). */
-export function rewriteSummonsMaterials(
+function rewriteSummonsMaterials(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): void {

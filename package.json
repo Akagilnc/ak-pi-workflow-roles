@@ -48,8 +48,7 @@
     "test:fast": "pnpm test",
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "migrate:book-topology": "node dist/migrate-book-topology.js"
+    "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": []
