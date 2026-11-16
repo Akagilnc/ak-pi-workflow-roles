@@ -737,7 +737,8 @@ export async function relocateAdmittedRunToTicket(
 
   rewriteAdmittedRoleRunPage(
     admitted as unknown as Record<string, unknown>,
-    [{ oldRunDirectory, newRunDirectory: target.runDirectory }],
+    oldRunDirectory,
+    target.runDirectory,
   );
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
