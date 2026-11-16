@@ -152,9 +152,6 @@ export function rewriteAdmittedRoleRunPage(
   );
   rewriteSourceRunLocator(page.sourceRun, oldRunDirectory, newRunDirectory);
   // #1165: admitted attachments are caller paths outside the run directory — do not rewrite.
-  if (isRecord(page.principal)) {
-    rewritePrincipalSessionPaths(page.principal, oldRunDirectory, newRunDirectory);
-  }
 }
 
 /**
@@ -172,8 +169,8 @@ export function projectRenderedPagePaths(
       : undefined;
   if (stored === undefined || stored === actualRunDirectory) return page;
   const projected = structuredClone(page);
-  // Admitted field set is the location-field superset of invocation; runState adds
-  // principal (covered) and optional currentCourt summons under this run.
+  // Admitted field set is the location-field superset of invocation and runState;
+  // runState adds optional currentCourt summons under this run.
   rewriteAdmittedRoleRunPage(projected, stored, actualRunDirectory);
   if (isRecord(projected.currentCourt)) {
     rewriteSummonsMaterials(projected.currentCourt.summons, stored, actualRunDirectory);
