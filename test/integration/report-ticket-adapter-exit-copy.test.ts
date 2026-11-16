@@ -277,6 +277,8 @@ const mcpIdx = process.argv.indexOf("--mcp-config");
 if (mcpIdx < 0) throw new Error("missing --mcp-config");
 const cfg = JSON.parse(readFileSync(process.argv[mcpIdx + 1], "utf8"));
 const server = Object.values(cfg.mcpServers)[0];
+// Hand the config this host was given back to the test.
+writeFileSync(join(process.env.HOME, "delivered-mcp-config.json"), JSON.stringify(cfg));
 
 await callMcpTool({
   socketPath: server.env.AK_ACP_MCP_SOCKET,
@@ -312,20 +314,25 @@ process.stdout.write(JSON.stringify({
     return withOutsideTempRoot("ak-1171-headless-", async (socketDir) => {
       const socketPath = join(socketDir, "mcp.sock");
       const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
+      let preparedToken = "";
       const host = createHeadlessRoleTurnHost({
         description: claudeDescription,
         hostName: "claude",
         binary: fakeBin,
         env: { HOME: home, PATH: process.env.PATH },
         sessionIdentity,
-        prepare: (req) => prepareRoleEnvelope({
-          request: req,
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          listTerminatingToolOnMcp: false,
-          sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
-          principalAuthority: piDurablePrincipalAuthority,
-        }),
+        prepare: async (req) => {
+          const prepared = await prepareRoleEnvelope({
+            request: req,
+            dependencies: createRoleRuntimeDependencies(packageRoot),
+            socketPath,
+            listTerminatingToolOnMcp: false,
+            sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
+          });
+          preparedToken = mcpTokenFromPrepared(prepared);
+          return prepared;
+        },
       });
 
       const firstInstruction = "Repair #1171 via headless adapter.";
@@ -343,6 +350,22 @@ process.stdout.write(JSON.stringify({
       assert.equal(existsSync(unboundDir), false, "unbound must not revive after exit-copy");
       assert.equal(existsSync(ticketDir), true);
       assert.equal(result.admitted?.runDirectory, ticketDir);
+      // The config Claude was given: the package's one tool server, launchable
+      // (command/args/env) and carrying the host's load-with-session field (#1295)
+      // so its tool definitions need no search step.
+      const delivered = JSON.parse(
+        await readFile(join(home, "delivered-mcp-config.json"), "utf8"),
+      ) as unknown;
+      assert.deepEqual(delivered, {
+        mcpServers: {
+          "ak-fixer": {
+            command: process.execPath,
+            alwaysLoad: true,
+            args: [join(packageRoot, "src", "mcp-relay.mjs")],
+            env: { AK_ACP_MCP_SOCKET: socketPath, AK_ACP_MCP_TOKEN: preparedToken },
+          },
+        },
+      });
       const landing = resolveHostDossierLandingPath({
         host: "claude",
         sessionDirectory: sessionDirectoryOf(ticketDir),

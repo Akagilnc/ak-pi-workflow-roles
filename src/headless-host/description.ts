@@ -500,6 +500,9 @@ export function codexTurnArgs(options: {
 /**
  * Project shared-envelope MCP server rows into Claude `--mcp-config` JSON.
  * Env stays a plain object (Claude CLI shape); ACP rows use `{name,value}[]`.
+ * Each server carries Claude's `alwaysLoad` (#1295): Claude otherwise defers MCP
+ * tool definitions until searched, so a leg would not see "when to call" in the
+ * report-ticket tool's description at session start.
  */
 export function headlessMcpConfigDocument(
   mcpServers: readonly Readonly<Record<string, unknown>>[],
@@ -509,7 +512,7 @@ export function headlessMcpConfigDocument(
     const name = typeof row.name === "string" ? row.name : undefined;
     const command = typeof row.command === "string" ? row.command : undefined;
     if (name === undefined || name === "" || command === undefined || command === "") continue;
-    const entry: Record<string, unknown> = { command };
+    const entry: Record<string, unknown> = { command, alwaysLoad: true };
     if (Array.isArray(row.args)) entry.args = row.args;
     const env = stringEnvironment(row.env);
     if (env !== undefined) entry.env = env;
