@@ -314,20 +314,25 @@ process.stdout.write(JSON.stringify({
     return withOutsideTempRoot("ak-1171-headless-", async (socketDir) => {
       const socketPath = join(socketDir, "mcp.sock");
       const sessionIdentity = createSessionIdentityAuthority(piDurablePrincipalAuthority, "claude");
+      let preparedToken = "";
       const host = createHeadlessRoleTurnHost({
         description: claudeDescription,
         hostName: "claude",
         binary: fakeBin,
         env: { HOME: home, PATH: process.env.PATH },
         sessionIdentity,
-        prepare: (req) => prepareRoleEnvelope({
-          request: req,
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath,
-          listTerminatingToolOnMcp: false,
-          sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
-          principalAuthority: piDurablePrincipalAuthority,
-        }),
+        prepare: async (req) => {
+          const prepared = await prepareRoleEnvelope({
+            request: req,
+            dependencies: createRoleRuntimeDependencies(packageRoot),
+            socketPath,
+            listTerminatingToolOnMcp: false,
+            sessionFile: piDurablePrincipalAuthority.decode(req.principal).sessionFile,
+            principalAuthority: piDurablePrincipalAuthority,
+          });
+          preparedToken = mcpTokenFromPrepared(prepared);
+          return prepared;
+        },
       });
 
       const firstInstruction = "Repair #1171 via headless adapter.";
@@ -345,15 +350,22 @@ process.stdout.write(JSON.stringify({
       assert.equal(existsSync(unboundDir), false, "unbound must not revive after exit-copy");
       assert.equal(existsSync(ticketDir), true);
       assert.equal(result.admitted?.runDirectory, ticketDir);
-      // #1295: the package's own tool server is delivered to Claude with the host's
-      // load-with-session field, so its tool definitions need no search step.
+      // The config Claude was given: the package's one tool server, launchable
+      // (command/args/env) and carrying the host's load-with-session field (#1295)
+      // so its tool definitions need no search step.
       const delivered = JSON.parse(
         await readFile(join(home, "delivered-mcp-config.json"), "utf8"),
-      ) as { mcpServers: Record<string, { alwaysLoad?: unknown }> };
-      assert.deepEqual(
-        Object.entries(delivered.mcpServers).map(([name, server]) => [name, server.alwaysLoad]),
-        [["ak-fixer", true]],
-      );
+      ) as unknown;
+      assert.deepEqual(delivered, {
+        mcpServers: {
+          "ak-fixer": {
+            command: process.execPath,
+            alwaysLoad: true,
+            args: [join(packageRoot, "src", "mcp-relay.mjs")],
+            env: { AK_ACP_MCP_SOCKET: socketPath, AK_ACP_MCP_TOKEN: preparedToken },
+          },
+        },
+      });
       const landing = resolveHostDossierLandingPath({
         host: "claude",
         sessionDirectory: sessionDirectoryOf(ticketDir),
