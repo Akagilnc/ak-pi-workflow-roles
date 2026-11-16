@@ -25,7 +25,7 @@ export const ADMITTED_PAGE_PATH_FIELDS = [
 ] as const;
 
 /** Typed principal session coordinates rewritten when the owning run leaf moves. */
-export const PRINCIPAL_SESSION_PATH_FIELDS = [
+const PRINCIPAL_SESSION_PATH_FIELDS = [
   "sessionDirectory",
   "sessionFile",
 ] as const;
@@ -33,7 +33,7 @@ export const PRINCIPAL_SESSION_PATH_FIELDS = [
 const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
 const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 
-export type RunDirectoryPathRewrite = {
+type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
   readonly newRunDirectory: string;
 };
@@ -57,7 +57,7 @@ export function rewriteRunDirectoryPathValue(
  * Apply the longest matching oldRunDirectory rewrite. Longer keys win so a
  * nested run path is not partially claimed by a shorter sibling prefix.
  */
-export function rewriteRunDirectoryPathValueAgainstRewrites(
+function rewriteRunDirectoryPathValueAgainstRewrites(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): unknown {
@@ -85,7 +85,7 @@ export function rewriteRunDirectoryPathValueAgainstRewrites(
 }
 
 /** In-place rewrite of selected fields on one record (single pair). */
-export function rewriteRunDirectoryPathFields(
+function rewriteRunDirectoryPathFields(
   record: Record<string, unknown>,
   fields: readonly string[],
   oldRunDirectory: string,
@@ -97,7 +97,7 @@ export function rewriteRunDirectoryPathFields(
 }
 
 /** In-place rewrite of selected fields against a rewrite set. */
-export function rewriteRunDirectoryPathFieldsAgainstRewrites(
+function rewriteRunDirectoryPathFieldsAgainstRewrites(
   record: Record<string, unknown>,
   fields: readonly string[],
   rewrites: readonly RunDirectoryPathRewrite[],

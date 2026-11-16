@@ -11,14 +11,10 @@ import { rewriteRunDirectoryPathValue } from "./role-run-path-rewrite.ts";
 
 // Re-export the pure path API so existing import sites stay on this module path.
 export {
-  PRINCIPAL_SESSION_PATH_FIELDS,
   projectTurnRequestLiveRunDirectory,
   rewriteAdmittedRoleRunPage,
   rewritePrincipalSessionPaths,
-  rewriteRunDirectoryPathFields,
-  rewriteRunDirectoryPathFieldsAgainstRewrites,
   rewriteRunDirectoryPathValue,
-  rewriteRunDirectoryPathValueAgainstRewrites,
 } from "./role-run-path-rewrite.ts";
 
 /** Match physical aliases or a normal unbound→ticket bind, never historical migration layouts. */
