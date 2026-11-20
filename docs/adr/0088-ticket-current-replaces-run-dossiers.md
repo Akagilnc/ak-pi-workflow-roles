@@ -1,6 +1,6 @@
 # 票一张 current，腿只留宿主原件
 
-Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件留腿内 2026-10-10，源卷 e4b50c8e，uuid `14b58f6c-a8b2-4a39-abda-c9c637cfff13`；轮的界定、票号写法与续跑默认 2026-11-15，源卷 d634a8d9，uuid `d91600ab-45d6-42e0-a3cc-ed5fd9ad2778`；无票腿不续同日，uuid `25afaa98-84f4-480c-9cd2-ddf394c50e4d`；腿目录三样与回执按到达存 2026-11-20，源卷 d634a8d9，uuid `7bdb2d8f-7173-4c94-9bdd-566371f98b13`、`e70ed947-2dc5-49ba-b050-0fac8bf9b7df`）
+Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件留腿内 2026-10-10，源卷 e4b50c8e，uuid `14b58f6c-a8b2-4a39-abda-c9c637cfff13`；轮的界定、票号写法与续跑默认 2026-11-15，源卷 d634a8d9，uuid `d91600ab-45d6-42e0-a3cc-ed5fd9ad2778`；无票腿不续同日，uuid `25afaa98-84f4-480c-9cd2-ddf394c50e4d`；腿目录三样、回执按到达存、三个内部编号 #1298 暂不删 2026-11-20，源卷 d634a8d9，uuid `7bdb2d8f-7173-4c94-9bdd-566371f98b13`、`e70ed947-2dc5-49ba-b050-0fac8bf9b7df`）
 
 名词三个：**进度**＝票目录下的 `current.jsonl`，**回执**＝腿目录里的 `receipts/`，**会话**＝腿目录里的 `session/`。
 
