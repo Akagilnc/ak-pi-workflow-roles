@@ -1,6 +1,6 @@
 # 票一张 current，腿只留宿主原件
 
-Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件留腿内 2026-10-10，源卷 e4b50c8e，uuid `14b58f6c-a8b2-4a39-abda-c9c637cfff13`；轮的界定、票号写法与续跑默认 2026-11-15，源卷 d634a8d9，uuid `d91600ab-45d6-42e0-a3cc-ed5fd9ad2778`；无票腿不续同日，uuid `25afaa98-84f4-480c-9cd2-ddf394c50e4d`；腿目录三样与回执按到达存 2026-11-20，源卷 d634a8d9，uuid `7bdb2d8f-7173-4c94-9bdd-566371f98b13`、`e70ed947-2dc5-49ba-b050-0fac8bf9b7df`）
+Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件留腿内 2026-10-10，源卷 e4b50c8e，uuid `14b58f6c-a8b2-4a39-abda-c9c637cfff13`；轮的界定、票号写法与续跑默认 2026-11-15，源卷 d634a8d9，uuid `d91600ab-45d6-42e0-a3cc-ed5fd9ad2778`；无票腿不续同日，uuid `25afaa98-84f4-480c-9cd2-ddf394c50e4d`；腿目录三样、回执按到达存、三个内部编号 #1298 暂不删 2026-11-20，源卷 d634a8d9，uuid `7bdb2d8f-7173-4c94-9bdd-566371f98b13`、`e70ed947-2dc5-49ba-b050-0fac8bf9b7df`）
 
 名词三个：**进度**＝票目录下的 `current.jsonl`，**回执**＝腿目录里的 `receipts/`，**会话**＝腿目录里的 `session/`。
 
@@ -18,7 +18,7 @@ Status: accepted（2026-10-08，源卷 d634a8d9，各项 uuid 见 #1197；原件
 
 ## Consequences
 
-- 三个内部编号的去留不随卷宗自动定：`courtAttemptId`／`invocationScopeId` 在分清哪些交卷、哪些催办属于这一次调用，`attemptHistoryIdentity` 指向每次结算重抄交卷的记录；三步做完后按那时的读者再定（#1202）。太史（analyst）与太医署（doctor）留着、待重新设计（2026-10-08 陛下：「太史留着吧。以后重新设计」），不作读者保护，读不到旧文件是预期。
+- 三个内部编号的去留不随卷宗自动定：`courtAttemptId`／`invocationScopeId` 在分清哪些交卷、哪些催办属于这一次调用，`attemptHistoryIdentity` 指向每次结算重抄交卷的记录；#1298 不删它们，做完后按那时的读者再定（#1202）。太史（analyst）与太医署（doctor）留着、待重新设计（2026-10-08 陛下：「太史留着吧。以后重新设计」），不作读者保护，读不到旧文件是预期。
 - 对外地址与续跑默认由 #1201 实现，行上的 `for` 由 #1200 实现。
 - 冻结重放改从票级行＋宿主原件重组起跑材料，不再依赖 `turn-delivery`。
 - 还没报票号的腿，行与原件先落 `unbound/`，报号后搬到票下（[ADR 0081](0081-diarist-case-context-and-delivery.md) 的角色自报票号不变）。
