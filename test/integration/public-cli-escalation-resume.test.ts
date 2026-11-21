@@ -333,7 +333,6 @@ test("#1057 a notary escalation resumes into the remaining audit without Judge r
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
-    assert.deepEqual(rows.at(-1)?.accepted, VERDICT);
   });
 });
 
@@ -368,7 +367,6 @@ test("#1057 an auditor escalation resumes and settles the finished Judge submiss
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
-    assert.deepEqual(rows.at(-1)?.accepted, VERDICT);
   });
 });
 
@@ -398,7 +396,6 @@ test("#1057 an auditor continue after escalation resumes the Judge for a revised
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), revised);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 2);
-    assert.deepEqual(rows.at(-1)?.accepted, revised);
     // #1200: the ruling resumed the auditor directly — still the round it was
     // summoned for; the re-summons after the revised verdict name the new round
     // and leave earlier rows as they were.

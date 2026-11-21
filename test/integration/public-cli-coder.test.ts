@@ -30,7 +30,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
@@ -66,12 +66,13 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
         runDirectory = request.runDirectory;
         if (second && missing === 1) await unlink(join(runDirectory, "receipts/1.json"));
         const turn = await structuredHost.executeTurn(request);
-        if (second && missing === 2) await writeFile(join(runDirectory, "receipts/2.json"), "{");
+        if (second && missing === 2) await writeFile(join(runDirectory, "receipts/2.json"),
+          Buffer.concat([Buffer.from('{"status":"planned","report":"'), Buffer.from([0xff]), Buffer.from('"}') ]));
         return turn;
       },
     };
 
-    const { io, stderr } = captureIo();
+    const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
       {
@@ -90,8 +91,13 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
       assert.equal(result.terminal?.roleOutcome.kind, missing === 2 ? "failure" : "accepted");
       assert.deepEqual(result.terminal?.submissions, missing === 2 ? [unreadable] : [corrected]);
       assert.deepEqual(result.terminal?.receiptErrors?.map(({ receipt, identity }) => [receipt, identity?.code ?? identity?.name]),
-        [[join(runDirectory, `receipts/${missing}.json`), missing === 2 ? "SyntaxError" : "ENOENT"]]);
-      assert.ok(stderr.length > 0);
+        [[join(runDirectory, `receipts/${missing}.json`), missing === 2 ? "Error" : "ENOENT"]]);
+      if (missing === 1) {
+        const delivered = stdout.join("").split("\n").filter(line => line.startsWith("receipt-error\t"))
+          .map(line => JSON.parse(line.split("\t")[1]!));
+        assert.deepEqual(delivered, result.terminal!.receiptErrors);
+        assert.equal(stderr.join("").includes(join(runDirectory, "receipts/1.json")), false);
+      }
       return;
     }
     assert.equal(result.exitCode, 0);
@@ -112,7 +118,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
     assertRunDirectoryHoldsOnlyDossier(runDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
-    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+    assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);

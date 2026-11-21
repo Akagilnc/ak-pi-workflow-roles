@@ -27,7 +27,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost, readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { roleRunPlacement, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
@@ -938,7 +938,7 @@ test("public diarist accepts unreadable status before routing it back, and escal
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     const submissions = await readRecordedSubmissionRows(project, runId, home);
-    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+    assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
@@ -1739,7 +1739,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
-      assert.equal((submissions.at(-1)?.accepted as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
+      assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
       const admitted = readCurrentSection(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);
     });

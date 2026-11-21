@@ -33,7 +33,7 @@ import {
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
 async function acceptThroughTypedRoundClosure(input: {
@@ -66,7 +66,7 @@ async function acceptThroughTypedRoundClosure(input: {
   const sealed = rows.at(-1);
   assert.ok(sealed, "terminating submission must be recorded on the ledger");
   assert.ok(typeof sealed.role === "string" && sealed.role.length > 0, "sealed row must carry role");
-  return { sealed: { role: sealed.role, accepted: sealed.accepted }, pending };
+  return { sealed: { role: sealed.role, accepted: readReceipt(sealed) }, pending };
 }
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 

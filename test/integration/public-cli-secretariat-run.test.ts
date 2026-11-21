@@ -18,7 +18,7 @@ import {
 } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import type {
@@ -968,7 +968,7 @@ async function adapterBoundaryCase(input: {
       };
       const submitted = async () => (await readRecordedSubmissionRows(
         project, "01a0adp969-0000-7000-8000-000000000001", home,
-      )).map((row) => row.accepted);
+      )).map(readReceipt);
 
       const prepare = () =>
         prepareRoleEnvelope({

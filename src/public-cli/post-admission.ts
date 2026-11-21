@@ -22,7 +22,7 @@ import {
   bindAdmittedTicketNumber,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
-import { ReceiptReadError } from "../submission-ledger.ts";
+import { readReceipt, ReceiptReadError } from "../submission-ledger.ts";
 import { parseTicketNumber, readBoardTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
@@ -484,7 +484,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
-    scope?: { readonly courtAttemptId?: string; readonly recordAttemptHistory?: true; readonly previewOnly?: true },
+    scope?: SettlementCourtScope,
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -505,6 +505,7 @@ export type PostAdmissionAdapters<
 };
 
 export type ControlledFailureInput = {
+  receiptHistory?: Pick<TerminalResult, "receiptErrors" | "submissions">;
   timedOut: boolean;
   code: number | null;
   stderr: string;
@@ -697,7 +698,9 @@ export async function presentControlledFailure<
         : { invocationScopeId: failureInput.invocationScopeId }),
       onErrorPublished: (path) => { publishedErrorPath = path; },
     });
-    terminal = await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault });
+    terminal = failureInput.receiptHistory
+      ? { ...settled, ...failureInput.receiptHistory }
+      : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault });
   } catch (error) {
     if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
       writeResumeFailurePointer(io, publishedErrorPath);
@@ -875,9 +878,6 @@ async function settleCompletedHostTurn<
   const finishAfterTurn = input.finishAfterTurn;
 
   const courtScope = input.courtScope;
-  // A delivery turn may have added submissions. Preview and publication of THIS
-  // return share originals, but no cache crosses a dispatch.
-  if (courtScope.originals) delete courtScope.originals.rows;
   // `result.stderr` stays live in memory for host-failure settlement
   // whether or not this mirror write succeeds. A write failure is noted.
   // It does not replace the host terminal or an already-sealed acceptance.
@@ -933,7 +933,7 @@ async function settleCompletedHostTurn<
   const hostReportedFailure = result.knownFailure;
   try {
     if (!hostSignalFailed) {
-      settled = await adapters.trySettle(admitted, env.principalAuthority, { ...courtScope, previewOnly: true });
+      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
       const cancelAfterSettle = processCancelSignalName(env.signal);
       if (
         settled !== undefined
@@ -951,7 +951,8 @@ async function settleCompletedHostTurn<
   } catch (error) {
     if (error instanceof ReceiptReadError && processCancelSignalName(env.signal) === undefined) {
       const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
-        timedOut: false, code: result.code, stderr: result.stderr, thrown: error,
+        timedOut: false, code: result.code, stderr: result.stderr, thrown: error.cause,
+        knownDiagnostic: error.message, ...(error.history ? { receiptHistory: error.history } : {}),
       }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState,
       courtScope.notePackageFault, courtScope.courtAttemptId);
       return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
@@ -1058,18 +1059,10 @@ async function settleCompletedHostTurn<
  * does not adjudicate a ticket change. Runs in the public call's own process
  * (no role leg writes the run's current.json).
  */
-export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, scope?: SettlementCourtScope): Promise<void> {
+async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, payloads: readonly unknown[]): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
-  const rows = await settlementRows(admitted, scope);
   let ticketNumber: number | undefined;
-  for (const row of rows) {
-    if (
-      row.role !== admitted.role
-      || row.kind !== "accepted"
-    ) {
-      continue;
-    }
-    const payload = row.accepted;
+  for (const payload of payloads) {
     if (!isRecord(payload)) continue;
     ticketNumber = readDeclaredTicketNumber(
       (payload as { ticketNumber?: unknown }).ticketNumber,
@@ -1089,9 +1082,10 @@ export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvo
   if (admitted.ticketNumber !== undefined) return;
   const rows = await settlementRows(admitted);
   for (const row of rows) {
-    if (row.role !== admitted.role || !isRecord(row.accepted)) continue;
-    if (receiptStatus(row.accepted) !== "completed" || !("ticketNumber" in row.accepted)) continue;
-    const ticketNumber = parseTicketNumber(row.accepted.ticketNumber);
+    if (row.role !== admitted.role) continue;
+    const original = readReceipt(row);
+    if (!isRecord(original) || receiptStatus(original) !== "completed") continue;
+    const ticketNumber = parseTicketNumber(original.ticketNumber);
     if (ticketNumber !== undefined) {
       await bindAdmittedTicketNumber(admitted, ticketNumber);
       return;
@@ -1126,9 +1120,11 @@ export async function dispatchPostAdmissionTurn<
    * lease release — success and failure alike. When a primary failure terminal already
    * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
    */
+  let publish: Parameters<NonNullable<SettlementCourtScope["deferPublication"]>>[0] | undefined;
   const courtScope = {
     ...settlementScopeForTurn(request),
-    originals: {},
+    recordAttemptHistory: true as const,
+    deferPublication: (commit: NonNullable<typeof publish>) => { publish = commit; },
     notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
       admitted,
       env,
@@ -1136,7 +1132,6 @@ export async function dispatchPostAdmissionTurn<
       io,
     ),
   };
-  let pendingSettlement: "sealed" | "no_receipt" | undefined;
   /**
    * The terminal this pending publication belongs to. A later real failure
    * (e.g. a cancel re-read) replaces `result.terminal` with its own settled
@@ -1201,22 +1196,14 @@ export async function dispatchPostAdmissionTurn<
     // `result.terminal === pendingTerminal` is what makes the publication this
     // turn's own rather than a superseded one.
     if (
-      pendingSettlement !== undefined &&
+      publish !== undefined &&
       pendingTerminal !== undefined &&
       result.terminal === pendingTerminal
     ) {
       try {
-        const noSealScope = { ...courtScope, recordAttemptHistory: true as const };
-        const terminal = pendingSettlement === "sealed"
-          ? await adapters.trySettle(admitted, env.principalAuthority,
-              { ...courtScope, recordAttemptHistory: true })
-          : await attachRecordedSubmissions(admitted,
-              await settleHostEndedNoReceipt(admitted, env.principalAuthority,
-                noSealScope, receiptDelivery.issuedDeliveryRequests()) as T,
-              noSealScope);
-        if (terminal === undefined) throw new Error("settled host attempt vanished before publication");
-        result = { ...result, terminal, exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome) };
-        if (pendingSettlement === "sealed" && terminal.roleOutcome.kind === "accepted"
+        const terminal = { ...pendingTerminal, artifacts: await publish() };
+        result = { ...result, terminal };
+        if (terminal.roleOutcome.kind === "accepted"
           && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
           try {
             await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
@@ -1242,7 +1229,9 @@ export async function dispatchPostAdmissionTurn<
       // an escalated submission still carries the original role params.
       // Later receipts remain untouched; prose note/report is never consulted;
       // this seam does not adjudicate a ticket change.
-      await bindSealedTicketNumber(admitted, courtScope);
+      if (result.terminal?.roleOutcome.kind === "accepted") {
+        await bindSealedTicketNumber(admitted, result.terminal.roleOutcome.payloads ?? []);
+      }
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
@@ -1423,7 +1412,7 @@ export async function dispatchPostAdmissionTurn<
       deferredPersist,
       finishAfterTurn,
       courtScope,
-      markPending: (terminal) => { pendingSettlement = "sealed"; pendingTerminal = terminal; },
+      markPending: (terminal) => { pendingTerminal = terminal; },
     });
     if (settledTurn.kind === "settled") return settledTurn.outcome;
 
@@ -1522,7 +1511,7 @@ export async function dispatchPostAdmissionTurn<
         deferredPersist,
         finishAfterTurn,
         courtScope,
-        markPending: (terminal) => { pendingSettlement = "sealed"; pendingTerminal = terminal; },
+        markPending: (terminal) => { pendingTerminal = terminal; },
       });
       // The delivery turn's own outcome IS the run's outcome, except when it
       // simply still has no receipt — that is the loop's own case to keep going.
@@ -1549,16 +1538,15 @@ export async function dispatchPostAdmissionTurn<
       }
     }
 
-    const noReceiptScope = { ...courtScope, previewOnly: true as const };
     const noReceipt = await attachRecordedSubmissions(
       admitted,
       await settleHostEndedNoReceipt(
         admitted,
         env.principalAuthority,
-        noReceiptScope,
+        courtScope,
         receiptDelivery.issuedDeliveryRequests(),
       ) as T,
-      noReceiptScope,
+      courtScope,
     );
     // #855: cancel during no_receipt settlement window is not lawful success.
     const noReceiptCancel = processCancelSignalName(env.signal);
@@ -1594,7 +1582,6 @@ export async function dispatchPostAdmissionTurn<
       }
     }
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
-    pendingSettlement = "no_receipt";
     pendingTerminal = noReceipt;
     return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),

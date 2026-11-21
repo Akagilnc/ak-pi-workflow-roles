@@ -117,7 +117,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
     auditTool: JUDGE_AUDIT_TOOL_NAME,
-    settlement: "sealed",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
     activationStage: "load-and-install",
@@ -142,7 +141,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
-    settlement: "sealed",
     artifactFace: {
       reportPhase: true,
     },
@@ -171,7 +169,6 @@ export const PUBLIC_ROLE_RECORDS = [
     boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
-    settlement: "sealed",
     artifactFace: {
       reportPhase: true,
     },
@@ -203,9 +200,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
-    settlement: "sealed",
-    /** Publish only an accepted ledger outcome; audit escalation stays unsettled here. */
-    sealedAcceptedOnly: true,
     artifactFace: {
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
@@ -237,7 +231,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
-    settlement: "sealed",
     artifactFace: {
     },
     boardPlacement: "collector",
@@ -266,7 +259,6 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     auditTool: DOCTOR_AUDIT_TOOL_NAME,
-    settlement: "sealed",
     artifactFace: {
       doctorReportFacts: true,
     },
@@ -290,7 +282,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
-    settlement: "sealed",
     artifactFace: {
     },
     activationFlags: [
@@ -319,7 +310,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** Dialogue via shared resolveReviewSeatDialogueBody (review = fixed dispatch). */
     reaskPrompt: true,
     gateStageLabel: "符宝郎",
@@ -341,7 +331,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** Same shared dialogue resolver as other review seats (#1208 C1). */
     reaskPrompt: true,
     gateStageLabel: "给事中",
@@ -363,7 +352,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     activationFlags: [
       { field: "ticketNumber" },
     ],
@@ -391,7 +379,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** Bound comparison base is the initial prompt; instruction follows. */
     transportPrompt: "baseline",
     activationFlags: [
@@ -420,7 +407,6 @@ export const PUBLIC_ROLE_RECORDS = [
     modelInheritsFrom: "gatekeeper",
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     gateStageLabel: "台院",
@@ -451,7 +437,6 @@ export const PUBLIC_ROLE_RECORDS = [
     provinceConfig: true,
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
@@ -465,7 +450,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** #1192: structured target seat for the lookup run; no host flag (no host runs it). */
     activationFlags: [{ field: "forRole" }],
     activationStage: "load-and-install",
@@ -487,7 +471,6 @@ export const PUBLIC_ROLE_RECORDS = [
     soulSource: "subject",
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     gateStageLabel: "审刑院",
@@ -507,7 +490,6 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "board-ticket",
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -588,18 +570,6 @@ export type PackagedActivationFlag = {
   readonly flag?: string;
   readonly binds?: "input" | "phase";
 };
-
-/**
- * Output tool for seats whose settlement leaf is the accepted ledger.
- * Any other settlement leaf names that seat's own reader.
- */
-export function packagedRoleAcceptedOutputTool(role: string): string | undefined {
-  const record = packagedRoleMetadata(role);
-  if (record === undefined || !("settlement" in record) || record.settlement !== "accepted") {
-    return undefined;
-  }
-  return record.outputTool;
-}
 
 /** Host flags for one seat. Absent means this seat publishes only `ak-role`. */
 export function packagedRoleActivationFlags(role: string): readonly PackagedActivationFlag[] {

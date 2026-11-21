@@ -12,7 +12,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, test } from "vitest";
 
@@ -173,17 +173,19 @@ function hostNeutralTypedTurn(options: {
 }
 
 /** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
-test.each(["accept", "bounce", "interrupt"])("the caller sees the Pi child's originals after %s", async (mode) => {
+test.each(["accept", "bounce", "missing-bounce", "interrupt"])("the caller sees the Pi child's originals after %s", async (mode) => {
   await withSharedHome(async (home, project) => {
     const runId = "run-multi-submit-836";
-    const { io } = captureIo();
+    const { io, stdout, stderr } = captureIo();
+    const bounced = mode === "bounce" || mode === "missing-bounce";
     // Frozen originals: ticket 1080, 01a1e312-f3cd-7b18-8594-295d3c0ce377@judge.
     const payloads = await Promise.all([1, 2, 3].map(async (n) => JSON.parse(await readFile(
       join(packageRoot, `test/fixtures/1080-judge-receipts/${n}.json`), "utf8"))));
-    const originals = payloads.slice(0, mode === "interrupt" ? 1 : mode === "bounce" ? 2 : 3);
+    const originals = payloads.slice(0, mode === "interrupt" ? 1 : bounced ? 2 : 3);
     const host = roleTurnHostFromLegacyPiRunner({ packageRoot, principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
-        submitInPiChild(project, options.env, "judge", originals, mode);
+        submitInPiChild(project, options.env, "judge", originals, bounced ? "bounce" : mode);
+        if (mode === "missing-bounce") await unlink(join((await findRunDirectoryById(home, runId))!, "receipts/1.json"));
         return { args: [...args], code: 0, stderr: "", timedOut: false };
       },
     });
@@ -200,15 +202,22 @@ test.each(["accept", "bounce", "interrupt"])("the caller sees the Pi child's ori
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
     const terminal = result.terminal!;
-    assert.deepEqual(terminal.submissions, originals);
+    const readable = mode === "missing-bounce" ? originals.slice(1) : originals;
+    assert.deepEqual(terminal.submissions, readable);
     if (mode === "interrupt") assert.equal(terminal.roleOutcome.kind, "no_receipt");
-    else assert.deepEqual(terminal.roleOutcome.kind === "accepted" && terminal.roleOutcome.payloads, mode === "bounce" ? originals.slice(1) : originals);
+    else assert.deepEqual(terminal.roleOutcome.kind === "accepted" && terminal.roleOutcome.payloads, bounced ? originals.slice(1) : originals);
     const leg = (await findRunDirectoryById(home, runId))!;
-    const filed = (mode === "interrupt" ? [] : mode === "bounce" ? [2] : [1, 2, 3]).map((n, i) => ({ receipt: join(leg, `receipts/${n}.json`), round: String(i + 1) }));
+    if (mode === "missing-bounce") {
+      const delivered = stdout.join("").split("\n").filter(line => line.startsWith("receipt-error\t"))
+        .map(line => JSON.parse(line.split("\t")[1]!));
+      assert.deepEqual(delivered.map(({ receipt, identity }) => [receipt, identity.code]), [[join(leg, "receipts/1.json"), "ENOENT"]]);
+      assert.equal(stderr.join("").includes(join(leg, "receipts/1.json")), false);
+    }
+    const filed = (mode === "interrupt" ? [] : bounced ? [2] : [1, 2, 3]).map((n, i) => ({ receipt: join(leg, `receipts/${n}.json`), round: String(i + 1) }));
     assert.deepEqual(terminal.receipts ?? [], filed);
     const subject = join(leg, "../..");
     assert.deepEqual(readTicketProgressLines(subject).filter(row => row.seat === "judge").map(({receipt, round}) => ({receipt: join(subject, receipt), round})), filed);
-    assert.deepEqual(await Promise.all(originals.map(async (_, i) => JSON.parse(await readFile(join(leg, `receipts/${i+1}.json`), "utf8")))), originals);
+    assert.deepEqual(await Promise.all(readable.map(async (_, i) => JSON.parse(await readFile(join(leg, `receipts/${i+(mode === "missing-bounce" ? 2 : 1)}.json`), "utf8")))), readable);
     // Compare complete JSON values at every depth, regardless of the event's shape.
     JSON.stringify(readHistoryRows(leg), (_, value) => {
       if (value && typeof value === "object") assert.ok(!originals.some(original => isDeepStrictEqual(value, original)));

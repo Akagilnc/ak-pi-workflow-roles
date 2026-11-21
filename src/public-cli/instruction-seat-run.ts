@@ -16,7 +16,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readRecordedSubmissionRows, readSubmissionAttemptId } from "../submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows, readSubmissionAttemptId } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   latestQueuePayload,
@@ -489,7 +489,7 @@ async function loadLedgerPeerBody(
   // terminal outcome kind (that resurrects a prior sealed draft).
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
-  return readableGateItem(latest.accepted);
+  return readableGateItem(readReceipt(latest));
 }
 
 /** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */

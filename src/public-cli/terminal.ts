@@ -253,6 +253,7 @@ export function formatTerminalResult(result: TerminalResult): string {
     }
   }
   lines.push(...identityRows(result));
+  for (const fault of result.receiptErrors ?? []) lines.push(`receipt-error\t${JSON.stringify(fault)}`);
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }

@@ -10,7 +10,7 @@
  * `autoResumeLimit`) — including 0, which must send nothing. `deliveryTurns`
  * must equal the delivery requests actually issued.
  */
-import { assertRunDirectoryHoldsOnlyDossier, historyPayloads } from "../helpers/run-dossier-fixture.ts";
+import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
 import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
 import { runDirectoryFromSessionDirectory } from "../../src/role-run-placement.ts";
 import assert from "node:assert/strict";
@@ -35,7 +35,7 @@ import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -219,17 +219,9 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     // Structured ledger surface for this public催交 case (kinds/contents).
     // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
     // sealed↔reader mirror that would not prove the old ledger path.
-    const sealed = historyPayloads<{ type?: string; accepted?: unknown; toolCallId?: string; role?: string }>(
-      run.runDirectory!,
-      "sealed",
-    );
-    assert.deepEqual(
-      sealed.map(({ type, accepted, toolCallId, role }) => ({ type, accepted, toolCallId, role })),
-      [{ type: "sealed", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
-    );
     assert.deepEqual(
       (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
-        .map(({ kind, accepted, toolCallId, role }) => ({ kind, accepted, toolCallId, role })),
+        .map(row => ({ kind: row.kind, accepted: readReceipt(row), toolCallId: row.toolCallId, role: row.role })),
       [{ kind: "accepted", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
     );
     // #1200: the turn that submitted nothing is not a round — one row, round 1.

@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import { readFileSync } from "node:fs";
+import { exactUtf8 } from "./exact-utf8.ts";
 import { isUnboundRunDirectory, sessionFileIn, sessionFileOf } from "./role-run-placement.ts";
 import { readPackageMaterial } from "./session-opening-materials.ts";
 import { resolveActivationLedgerHome, tryHomeFromAkRolesPath } from "./activation-ledger-topology.ts";
@@ -11,7 +12,7 @@ import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport } from "./sitian-facade.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
-import type { TerminalRoleName } from "./public-cli/terminal.ts";
+import type { TerminalResult, TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
@@ -24,9 +25,9 @@ type SubmissionKind = "accepted" | "correctable-rejection" | "infrastructure" | 
 export type RecordedSubmissionRow = {
   readonly role?: TerminalRoleName;
   readonly kind: SubmissionKind;
-  readonly accepted: unknown;
+  readonly path: string;
   readonly toolCallId?: string;
-  readonly receipt?: string;
+  readonly receipt: string;
   readonly round?: string;
   readonly attemptId?: string;
 };
@@ -39,11 +40,10 @@ export type ClosedSubmission = {
 export type SubmissionLedgerReadScope = {
   readonly home?: string;
   readonly sessionParent?: string;
-  readonly attemptId?: string;
 };
 
 export class ReceiptReadError extends Error {
-  constructor(readonly receipt: string, cause: unknown) {
+  constructor(readonly receipt: string, cause: unknown, readonly history?: Pick<TerminalResult, "submissions" | "receiptErrors">) {
     super(`${receipt}: ${errorText(cause)}`, { cause });
   }
 }
@@ -61,7 +61,7 @@ export async function readRecordedSubmissionRows(
   }
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
     subject: { runId }, cwd, sessionParent: parent }, resolveActivationLedgerHome(scope.home));
-  const facts = new Map<string, Omit<RecordedSubmissionRow, "accepted">>();
+  const facts = new Map<string, Omit<RecordedSubmissionRow, "path" | "receipt">>();
   const rounds = new Map<string, string>();
   // Directory discovery recovers unjournalled arrivals. If listing fails, the
   // named originals can still be opened: diagnose discovery, not a false empty court.
@@ -83,14 +83,7 @@ export async function readRecordedSubmissionRows(
   }
   return [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
     const round = rounds.get(receipt);
-    // Only open originals a consumer actually asks for (a review seat needs just the latest).
-    let original: unknown;
-    return { ...fact, receipt, ...(round === undefined ? {} : { round }), get accepted() {
-      if (original !== undefined) return original;
-      const path = join(sessionDir, "receipts", basename(receipt));
-      try { return original = JSON.parse(readFileSync(path, "utf8")); }
-      catch (error) { throw new ReceiptReadError(path, error); }
-    } };
+    return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round === undefined ? {} : { round }) };
   });
 }
 
@@ -103,8 +96,9 @@ export async function readSubmissionAttemptId(cwd: string, runId: string, toolCa
   return undefined;
 }
 
-export async function readRecordedSubmissions(cwd: string, runId: string, scope?: string | SubmissionLedgerReadScope): Promise<readonly unknown[]> {
-  return (await readRecordedSubmissionRows(cwd, runId, scope)).map(row => row.accepted);
+export function readReceipt({ path }: RecordedSubmissionRow): unknown {
+  try { return JSON.parse(exactUtf8(readFileSync(path), "receipt")); }
+  catch (error) { throw new ReceiptReadError(path, error); }
 }
 
 function runIdentity(context: HostContext): string {
@@ -180,7 +174,7 @@ export function createSubmissionLedgerHost(
         const receipt = writeArrivingReceipt(sessionDir, params);
         const append = (type: string, extra: Record<string, unknown> = {}) => sitianReport({ ...source(context), subject: origin.subject, kind: type,
           payload: { type, attemptId, toolCallId, role, receipt, ...extra } });
-        append("candidate", { toolName: tool.name, sequence: parseInt(basename(receipt)) });
+        append("candidate", { toolName: tool.name });
         if (ticket !== undefined) await reportTicketFromHostContext(context, ticket);
         try { result = await tool.execute(toolCallId, params, signal, update, context); }
         catch (error) {

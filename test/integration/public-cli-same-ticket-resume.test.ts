@@ -14,7 +14,7 @@
  * only, not real host volume memory.
  */
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   historyPayloads,
   statePayloads,
@@ -1151,7 +1151,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     { runId: "run-worker-gate-resume-993", role: "coder" },
   );
   assert.deepEqual(
-    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(({ kind, accepted }) => ({ kind, accepted })),
+    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(row => ({ kind: row.kind, accepted: readReceipt(row) })),
     [
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
