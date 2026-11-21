@@ -83,6 +83,8 @@ export type SitianMalformedDiagnostic = {
 
 /** Canonical Reader result surfacing both valid records and non-destructive diagnostics. */
 export type SitianReadResult = {
+  /** An absent volume has no records; callers that saw it earlier also need the actual read error. */
+  readonly missing?: unknown;
   /** Valid-record offset of the last gap, when traversal skipped a malformed line. */
   readonly lastGap?: number;
   readonly records: readonly SitianRecord[];

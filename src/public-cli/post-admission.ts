@@ -1323,9 +1323,9 @@ export async function dispatchPostAdmissionTurn<
     let result: RoleTurnResult;
     let hostTurnCompleted = false;
     if (input.manualResume && !request.courtAttemptId) {
-      const { lastCourt, discoveryFault, rows } = await settlementRows(admitted);
-      courtScope.beforeResume = discoveryFault ?? { lastCourt, unassigned: new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
-      const issue = discoveryFault ?? (typeof lastCourt === "object" ? lastCourt : undefined);
+      const { lastSeal, discoveryFault, rows } = await settlementRows(admitted);
+      courtScope.beforeResume = { lastSeal, unassigned: discoveryFault ?? new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
+      const issue = discoveryFault ?? (lastSeal && "cause" in lastSeal ? lastSeal : undefined);
       if (issue) await courtScope.notePackageFault(issue.diagnostic);
     }
     try {
