@@ -1345,7 +1345,8 @@ export async function preparePublicSeat(
     }
   }
   current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
-  if (malformed && rows.some(row => row.uncertain && (pin ? matchesAuditedSeal(pin, admitted.role, row) : row.attemptId === attempt))) unknownCourt ??= malformed;
+  unknownCourt ??= rows.find(row => row.dispositionFault && (pin
+    ? matchesAuditedSeal(pin, admitted.role, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
   for (const issue of [discoveryFault, malformed]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
   }
