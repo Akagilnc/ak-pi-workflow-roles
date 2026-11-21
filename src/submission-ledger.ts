@@ -45,7 +45,6 @@ export type SubmissionLedgerReadScope = {
 };
 
 export type LedgerFault = { diagnostic: string; cause: unknown };
-export type RecordedSeal = { receipt: string; attemptId: string };
 
 /** File order is arrival order. An original without any subsequent ledger fact is still a draft. */
 export async function readRecordedSubmissionRows(
@@ -55,7 +54,7 @@ export async function readRecordedSubmissionRows(
   let parent = scope.sessionParent;
   if (parent === undefined) {
     const run = await findRunDirectoryById(scope.home, runId);
-    if (run === undefined) return { rows: [], fault: undefined, malformed: undefined, lastSeal: undefined };
+    if (run === undefined) return { rows: [], fault: undefined, malformed: undefined, lastCourt: undefined };
     parent = sessionFileOf(run);
   }
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
@@ -71,7 +70,7 @@ export async function readRecordedSubmissionRows(
     discoveryFault = { diagnostic: `${join(sessionDir, "receipts")}: ${errorText(cause)}`, cause };
   }
   // Journal order names the last seal; receipt numbering only orders arrivals.
-  let lastSeal: RecordedSeal | LedgerFault | undefined;
+  let lastCourt: string | LedgerFault | undefined;
   let journal;
   let fault: LedgerFault | undefined;
   try { journal = await readSitianRecords(recordFile); }
@@ -81,7 +80,7 @@ export async function readRecordedSubmissionRows(
   for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
     if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
     const { receipt } = payload;
-    if (kind === "sealed") { lastSealIndex = index; lastSeal = { receipt, attemptId: subject.attemptId as string }; }
+    if (kind === "sealed") { lastSealIndex = index; lastCourt = subject.attemptId as string; }
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
       rounds.set(receipt, payload.round);
       if (journal?.lastGap !== undefined && !facts.get(receipt)?.attemptId && typeof subject.attemptId === "string") {
@@ -100,8 +99,8 @@ export async function readRecordedSubmissionRows(
   const reasons = journal?.diagnostics.map(d => `line ${d.line}: ${d.error}`).join("; ");
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   // A later readable seal proves the latest court despite an earlier gap.
-  if (malformed && gap > lastSealIndex && rows.some(row => row.uncertain)) lastSeal = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, malformed, lastSeal: fault ?? lastSeal };
+  if (malformed && gap > lastSealIndex && rows.some(row => row.uncertain)) lastCourt = malformed;
+  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

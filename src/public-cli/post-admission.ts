@@ -1323,9 +1323,13 @@ export async function dispatchPostAdmissionTurn<
     let result: RoleTurnResult;
     let hostTurnCompleted = false;
     if (input.manualResume && !request.courtAttemptId) {
-      const { lastSeal, discoveryFault, rows } = await settlementRows(admitted);
-      courtScope.beforeResume = { lastSeal, unassigned: discoveryFault ?? new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
-      const issue = discoveryFault ?? (lastSeal && "cause" in lastSeal ? lastSeal : undefined);
+      const { lastCourt, discoveryFault, rows } = await settlementRows(admitted);
+      courtScope.beforeResume = {
+        lastCourt,
+        seals: new Set(typeof lastCourt === "string" ? rows.filter(row => row.kind === "accepted" && row.role === admitted.role && row.attemptId === lastCourt).map(row => row.receipt) : []),
+        seen: discoveryFault ?? new Set(rows.map(row => row.receipt)),
+      };
+      const issue = discoveryFault ?? (typeof lastCourt === "object" ? lastCourt : undefined);
       if (issue) await courtScope.notePackageFault(issue.diagnostic);
     }
     try {

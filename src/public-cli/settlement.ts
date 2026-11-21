@@ -21,7 +21,6 @@ import {
   readRecordedSubmissionRows,
   readReceipt,
   type LedgerFault,
-  type RecordedSeal,
   type RecordedSubmissionRow,
 } from "../submission-ledger.ts";
 
@@ -81,8 +80,8 @@ export type SettlementCourtScope = {
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
   readonly seal?: "latest" | { readonly for?: string; readonly receipt?: string };
-  /** Before a bare dispatch: the seal to replay and originals already lacking a court. */
-  readonly beforeResume?: { readonly lastSeal: RecordedSeal | LedgerFault | undefined; readonly unassigned: ReadonlySet<string> | LedgerFault } | undefined;
+  /** Before a bare dispatch: the replayable court's seals, and receipts already seen (even if their attribution later vanishes). */
+  readonly beforeResume?: { readonly lastCourt: string | LedgerFault | undefined; readonly seals: ReadonlySet<string>; readonly seen: ReadonlySet<string> | LedgerFault } | undefined;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -1313,37 +1312,40 @@ export async function preparePublicSeat(
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] }> {
-  const { rows, recordFile, missing, fault, discoveryFault, malformed, lastSeal } = await settlementRows(admitted);
+  const { rows, recordFile, missing, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
   let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
-  const before = scope?.beforeResume;
-  // An arrival not yet journalled could belong to this call or another one. It proves neither silence nor acceptance.
-  const prior = before?.lastSeal;
-  const priorArrivals = before?.unassigned;
-  const unassigned = priorArrivals && "has" in priorArrivals ? rows.filter(row => row.attemptId === undefined && !priorArrivals.has(row.receipt)) : undefined;
-  if (unassigned?.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${unassigned.map(row => row.path).join(", ")}`);
-  const resumed = before && !unassigned?.length && !rows.some(row => row.attemptId === attempt)
-    ? discoveryFault ?? ("cause" in before.unassigned ? before.unassigned : prior) : undefined;
-  const binding = scope?.seal;
-  const pin = binding === "latest" ? undefined : binding;
-  const seal = pin && accepted.find(row => matchesAuditedSeal(pin, admitted.role, row));
-  if (binding) {
-    attempt = binding === "latest" && lastSeal && "receipt" in lastSeal ? lastSeal.attemptId : seal?.attemptId;
-    if (attempt) scope = { ...scope, courtAttemptId: attempt };
-  } else if (resumed && "receipt" in resumed) {
-    attempt = resumed.attemptId;
-  }
-  const current = pin ? (seal ? [seal] : [])
-    : accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
-  const disputed = malformed && rows.some(row => row.uncertain && (pin
-    ? matchesAuditedSeal(pin, admitted.role, row) : row.attemptId === attempt));
-  const reopened = binding === "latest" ? lastSeal : resumed;
   let unknownCourt = fault;
-  if (!unknownCourt && prior && "receipt" in prior && !accepted.some(row => row.receipt === prior.receipt && row.attemptId === prior.attemptId)) {
-    const cause = missing ?? `previously observed seal ${prior.receipt} for ${prior.attemptId} is no longer recorded`;
-    unknownCourt = { diagnostic: `${recordFile}: ${errorText(cause)}`, cause };
+  let current: RecordedSubmissionRow[] | undefined;
+  const pin = scope?.seal === "latest" ? undefined : scope?.seal;
+  if (scope?.seal) {
+    const seal = pin && accepted.find(row => matchesAuditedSeal(pin, admitted.role, row));
+    if (pin) current = seal ? [seal] : [];
+    attempt = !pin && typeof lastCourt === "string" ? lastCourt : seal?.attemptId;
+    if (!pin && typeof lastCourt === "object") unknownCourt ??= lastCourt;
+    if (attempt) scope = { ...scope, courtAttemptId: attempt };
+  } else if (scope?.beforeResume) {
+    const { lastCourt: prior, seals, seen } = scope.beforeResume;
+    const own = rows.some(row => attempt !== undefined && row.attemptId === attempt);
+    const arrivals = "has" in seen ? rows.filter(row => row.attemptId === undefined && !seen.has(row.receipt)) : [];
+    if (arrivals.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${arrivals.map(row => row.path).join(", ")}`);
+    // Replay only the complete court observed before dispatch, using today's readable seal rows.
+    const witnessed = accepted.filter(row => row.attemptId === prior && seals.has(row.receipt));
+    if (witnessed.length !== seals.size && !fault) {
+      const verified = new Set(witnessed.map(row => row.receipt));
+      const absent = [...seals].filter(ref => !verified.has(ref));
+      const cause = missing ?? `previously observed seals for ${prior} no longer recorded: ${absent.join(", ")}`;
+      const diagnostic = `${recordFile}: ${errorText(cause)}`;
+      if (own) await noteSettlementFault(admitted.runDirectory, scope, diagnostic);
+      else unknownCourt = { cause, diagnostic };
+    }
+    if (!own && !arrivals.length) {
+      unknownCourt ??= discoveryFault ?? ("cause" in seen ? seen : typeof prior === "object" ? prior : undefined);
+      if (typeof prior === "string") { attempt = prior; current = witnessed; }
+    }
   }
-  unknownCourt ??= (reopened && "cause" in reopened ? reopened : undefined) ?? (disputed ? malformed : undefined);
+  current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
+  if (malformed && rows.some(row => row.uncertain && (pin ? matchesAuditedSeal(pin, admitted.role, row) : row.attemptId === attempt))) unknownCourt ??= malformed;
   for (const issue of [discoveryFault, malformed]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
   }
