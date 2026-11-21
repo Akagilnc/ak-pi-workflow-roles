@@ -60,7 +60,7 @@ export async function readRecordedSubmissionRows(
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
     subject: { runId }, cwd, sessionParent: parent }, resolveActivationLedgerHome(scope.home));
   const facts = new Map<string, Omit<RecordedSubmissionRow, "path" | "receipt">>();
-  const rounds = new Map<string, string>();
+  const publications = new Map<string, { round: string; index: number }>();
   // Directory discovery recovers unjournalled arrivals. If listing fails, the
   // named originals can still be opened: diagnose discovery, not a false empty court.
   let discoveryFault: LedgerFault | undefined;
@@ -69,7 +69,7 @@ export async function readRecordedSubmissionRows(
   } catch (cause) {
     discoveryFault = { diagnostic: `${join(sessionDir, "receipts")}: ${errorText(cause)}`, cause };
   }
-  // Journal order names the last seal; receipt numbering only orders arrivals.
+  // Choose the replay court by journal order, never by receipt number.
   let lastCourt: string | LedgerFault | undefined;
   let journal;
   let fault: LedgerFault | undefined;
@@ -78,13 +78,14 @@ export async function readRecordedSubmissionRows(
   const reasons = journal?.diagnostics.map(d => `line ${d.line}: ${d.error}`).join("; ");
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
-  let lastSealIndex = -1;
+  let latestIndex = -1;
   for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
     if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
     const { receipt } = payload;
-    if (kind === "sealed") { lastSealIndex = index; lastCourt = subject.attemptId as string; }
+    if (kind === "sealed") { latestIndex = index; lastCourt = subject.attemptId as string; }
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
-      rounds.set(receipt, payload.round);
+      // Binding can fill the round later; it doesn't make the original publication newer.
+      publications.set(receipt, { round: payload.round, index: publications.get(receipt)?.index ?? index });
       if (!facts.get(receipt)?.attemptId && typeof subject.attemptId === "string") {
         facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, ...(malformed && { dispositionFault: malformed }) });
       }
@@ -94,17 +95,18 @@ export async function readRecordedSubmissionRows(
     facts.set(receipt, { kind: disposition, role: payload.role as TerminalRoleName, toolCallId: payload.toolCallId as string,
       ...(disposition === "candidate" && index < gap && malformed && { dispositionFault: malformed }), attemptId: subject.attemptId as string });
   }
-  // A later readable seal proves the latest court despite an earlier gap.
-  if (malformed && gap > lastSealIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
   const rows = [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
-    const round = rounds.get(receipt);
+    const published = publications.get(receipt);
+    const round = published?.round;
     let dispositionFault = fact.dispositionFault;
-    if (round !== undefined && fact.kind !== "accepted") {
+    if (published && fact.kind !== "accepted") {
       const cause = `progress for ${receipt} without a corresponding sealed record`;
       dispositionFault = { cause: dispositionFault?.cause ?? cause, diagnostic: `${dispositionFault?.diagnostic ?? recordFile}: ${cause}` };
+      if (published.index > latestIndex) { latestIndex = published.index; lastCourt = dispositionFault; }
     }
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
+  if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
   return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, malformed, lastCourt: fault ?? lastCourt };
 }
 
