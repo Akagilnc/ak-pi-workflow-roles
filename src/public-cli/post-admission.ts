@@ -42,7 +42,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat, receiptStatus } from "../packaged-role-registry.ts";
+import { isOfficerReviewSeat, packagedBindsBoardTicket, receiptStatus } from "../packaged-role-registry.ts";
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
   if (error instanceof Error) {
@@ -492,18 +492,6 @@ export type PostAdmissionAdapters<
   shouldPresentSettled?: (terminal: T) => boolean;
   /** A child office may pause this run with its unchanged terminal before a host turn starts. */
   beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<T | void> | T | void;
-  /**
-   * After the host turn settles and before any held writer lease is released.
-   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so a
-   * held lease (when present) follows the run directory and failures stay
-   * controlled. Public manual resume (#987) may omit the lease.
-   */
-  afterDispatch?: (
-    admitted: A,
-    lease?: RunWriterLease,
-  ) => Promise<RunDirectoryRelocation | undefined>
-    | RunDirectoryRelocation
-    | void;
 };
 
 export type ControlledFailureInput = {
@@ -1064,19 +1052,22 @@ async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, payloads
  * ticket). Before this ran in the leg's accept hook; the leg now only appends its
  * ledger rows and the public call's own process binds the ticket from them.
  */
-export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, submissions?: readonly unknown[]): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
-  const rows = await settlementRows(admitted);
-  for (const row of rows) {
-    if (row.role !== admitted.role) continue;
-    const original = readReceipt(row);
-    if (!isRecord(original) || receiptStatus(original) !== "completed") continue;
-    const ticketNumber = parseTicketNumber(original.ticketNumber);
-    if (ticketNumber !== undefined) {
-      await bindAdmittedTicketNumber(admitted, ticketNumber);
-      return;
-    }
+  let ticket: number | undefined;
+  const asserted = (original: unknown) => {
+    if (!isRecord(original) || receiptStatus(original) !== "completed") return false;
+    ticket = parseTicketNumber(original.ticketNumber);
+    return ticket !== undefined;
+  };
+  if (submissions !== undefined) {
+    // The host-return refresh already picked up a board declaration; reuse settlement's drafts.
+    submissions.some(asserted);
+  } else {
+    (await settlementRows(admitted)).some(row => row.role === admitted.role && asserted(readReceipt(row)));
+    ticket ??= await readBoardTicketNumber(admitted.runDirectory);
   }
+  if (ticket !== undefined) await bindAdmittedTicketNumber(admitted, ticket);
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -1206,15 +1197,12 @@ export async function dispatchPostAdmissionTurn<
       }
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
+      if (packagedBindsBoardTicket(admitted.role)) {
+        await bindDiaristBoardTicket(admitted, result.terminal ? result.terminal.submissions ?? [] : undefined);
+      }
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
       if (relocation !== undefined) {
         projectRelocatedTurnIdentity(request, result, admitted, relocation);
-      }
-      const afterDispatchRelocation = adapters.afterDispatch === undefined
-        ? undefined
-        : await adapters.afterDispatch(admitted, lease);
-      if (afterDispatchRelocation !== undefined) {
-        projectRelocatedTurnIdentity(request, result, admitted, afterDispatchRelocation);
       }
       return result;
     } catch (error) {

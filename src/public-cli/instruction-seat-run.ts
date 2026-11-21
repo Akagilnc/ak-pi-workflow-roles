@@ -55,10 +55,9 @@ import {
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
-  type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
-  bindDiaristAssertedTicketNumber,
+  bindDiaristBoardTicket,
   presentControlledFailure,
   presentResumeFailurePointer,
   packageFaultNoteFor,
@@ -548,27 +547,6 @@ async function resolveInitialTurnPrompt(
   return buildInstructionTransportPrompt(admitted);
 }
 
-function isBoardTicketSeat(
-  seat: AdmittedRoleInvocation,
-): seat is AdmittedRoleInvocation & { role: "diarist" } {
-  return packagedBindsBoardTicket(seat.role);
-}
-
-async function bindAndRelocateDiarist(
-  admitted: AdmittedRoleInvocation & { role: "diarist" },
-  authority: DurablePrincipalAuthority,
-  lease?: RunWriterLease,
-): Promise<RunDirectoryRelocation | undefined> {
-  // The diarist's asserted ticketNumber binds here, in the public call's process.
-  await bindDiaristAssertedTicketNumber(admitted);
-  const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
-  if (boardTicket === undefined) return undefined;
-  if (admitted.ticketNumber === undefined) {
-    await bindAdmittedTicketNumber(admitted, boardTicket);
-  }
-  return await relocateAdmittedRunToTicket(admitted, authority, lease);
-}
-
 /** Restore this leg's volume, including a read failure. The caller decides whose result to return. */
 async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: InstructionSeatRunEnv, io: CliIo,
   review?: Pick<SettlementCourtScope, "seal" | "previewOnly">): Promise<TerminalResult | undefined> {
@@ -599,15 +577,11 @@ function seatAdapters(
     ...(packagedBindsBoardTicket(admitted.role)
       ? {
         beforeDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (!isBoardTicketSeat(seat)) return;
           if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
             await recordAdmittedCorrelation(seat, env.correlationId);
           }
-          await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
-        },
-        afterDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (!isBoardTicketSeat(seat)) return undefined;
-          return await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
+          await bindDiaristBoardTicket(seat);
+          await relocateAdmittedRunToTicket(seat, env.principalAuthority, lease);
         },
       }
       : {}),
