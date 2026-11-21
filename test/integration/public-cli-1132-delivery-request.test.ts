@@ -221,7 +221,7 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
     // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
     // sealed↔reader mirror that would not prove the old ledger path.
     assert.deepEqual(
-      (await readRecordedSubmissionRows(project, "1132-external-accepted", home))
+      (await readRecordedSubmissionRows(project, "1132-external-accepted", home)).rows
         .map(row => ({ kind: row.kind, accepted: readReceipt(row), toolCallId: row.toolCallId, role: row.role })),
       [{ kind: "accepted", accepted: receipt, toolCallId: "judge-call-2", role: "judge" }],
     );

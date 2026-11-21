@@ -988,7 +988,7 @@ async function adapterBoundaryCase(input: {
       };
       const submitted = async () => (await readRecordedSubmissionRows(
         project, "01a0adp969-0000-7000-8000-000000000001", home,
-      )).map(readReceipt);
+      )).rows.map(readReceipt);
 
       const prepare = () =>
         prepareRoleEnvelope({

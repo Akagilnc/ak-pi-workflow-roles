@@ -500,7 +500,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
         packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io,
         roleTurnHost: createMinimalHost(async (request) => {
           if (request.activation.role === "auditor") {
-            const rows = await readRecordedSubmissionRows(project, runId, home);
+            const { rows } = await readRecordedSubmissionRows(project, runId, home);
             assert.equal(rows.filter((row) => row.kind === "accepted").length, reviewCalls + 1);
             return auditorHost.executeTurn(request);
           }
@@ -564,7 +564,7 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "auditor") {
         auditorRunId = runIdFromRunDirectory(request.runDirectory);
-        assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
+        assert.equal((await readRecordedSubmissionRows(project, runId, home)).rows.at(-1)?.kind, "accepted");
         return auditorHost.executeTurn(request);
       }
       doctorCalls++;
@@ -793,7 +793,7 @@ test(mode === "rows"
       .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
       ?.data?.diagnostic;
     assert.equal(typeof noteText, "string");
-    assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
+    assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
 });
 }

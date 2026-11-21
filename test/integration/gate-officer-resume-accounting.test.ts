@@ -28,10 +28,8 @@ import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
   runPublicInstructionSeat,
 } from "../../src/public-cli/instruction-seat-run.ts";
-import {
-  attachRecordedSubmissions,
-  trySettlePublicSeat,
-} from "../../src/public-cli/settlement.ts";
+import { attachRecordedSubmissions } from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";

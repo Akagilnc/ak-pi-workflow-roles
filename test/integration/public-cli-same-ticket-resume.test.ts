@@ -42,9 +42,8 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE, trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,
@@ -1157,7 +1156,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     { runId: "run-worker-gate-resume-993", role: "coder" },
   );
   assert.deepEqual(
-    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(row => ({ kind: row.kind, accepted: readReceipt(row) })),
+    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).rows.map(row => ({ kind: row.kind, accepted: readReceipt(row) })),
     [
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },

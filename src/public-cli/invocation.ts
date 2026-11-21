@@ -522,11 +522,11 @@ export function persistAdmittedAuditedLeg(
   });
 }
 
-/** The officer's admission pins the reviewed round; an unfiled seal has only its leg-local reference. */
+/** Gate admissions name the original directly; direct summons may name only its public round. */
 export function readAdmittedAuditedSeal(runDirectory: string) {
   const page = readPageSync(runDirectory, "admitted");
-  return typeof page?.for === "string" ? { for: page.for }
-    : typeof page?.auditedReceipt === "string" ? { receipt: page.auditedReceipt } : {};
+  return typeof page?.auditedReceipt === "string" ? { receipt: page.auditedReceipt }
+    : typeof page?.for === "string" ? { for: page.for } : {};
 }
 
 /**

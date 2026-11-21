@@ -22,7 +22,7 @@ import {
   bindAdmittedTicketNumber,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
-import { readReceipt, ReceiptReadError, type RecordedSubmissionRow } from "../submission-ledger.ts";
+import { readReceipt, type RecordedSubmissionRow } from "../submission-ledger.ts";
 import { parseTicketNumber, readBoardTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
@@ -100,7 +100,9 @@ import {
   type ControlledFailure,
   type PackageSideFact,
   type SettlementCourtScope,
+  preparePublicSeat,
   type PreparedSeat,
+  type SeatReadFailure,
   publishSeatSettlement,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -487,7 +489,7 @@ export type PostAdmissionAdapters<
     authority: DurablePrincipalAuthority,
     /** Current host attempt; only this invocation records history (#419). */
     scope?: SettlementCourtScope,
-  ) => Promise<PreparedSeat<T> | { rows: readonly RecordedSubmissionRow[] } | undefined>;
+  ) => Promise<PreparedSeat<T> | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] } | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
   /** A child office may pause this run with its unchanged terminal before a host turn starts. */
@@ -920,17 +922,9 @@ async function settleCompletedHostTurn<
   try {
     if (!hostSignalFailed) {
       const read = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      if (read && ("rows" in read || (shouldPresent(read.terminal) && !processCancelSignalName(env.signal)))) prepared = read;
+      if (read && (!("terminal" in read) || (shouldPresent(read.terminal) && !processCancelSignalName(env.signal)))) prepared = read;
     }
   } catch (error) {
-    if (error instanceof ReceiptReadError && processCancelSignalName(env.signal) === undefined) {
-      const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
-        timedOut: false, code: result.code, stderr: result.stderr, thrown: error,
-        ...(error.history ? { receiptHistory: error.history } : {}),
-      }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState,
-      courtScope.notePackageFault, courtScope.courtAttemptId);
-      return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
-    }
     // The host did not fail. A settlement read here is a package fault and
     // must not become the terminal.
     await recordBestEffortPostDispatchDiagnostic(
@@ -939,6 +933,12 @@ async function settleCompletedHostTurn<
       `settlement read failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
       io,
     );
+  }
+  if (prepared && "failure" in prepared && !processCancelSignalName(env.signal)) {
+    const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
+      timedOut: false, code: result.code, stderr: result.stderr, knownFailure: prepared.failure, receiptHistory: prepared.history,
+    }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState, courtScope.notePackageFault, courtScope.courtAttemptId);
+    return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
   }
   if (prepared && "terminal" in prepared) {
     // #855: final cancel re-read before lawful seal — settlement window may
@@ -1066,12 +1066,13 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
     submissions.some(asserted);
   } else {
     // Old manuscripts are optional evidence for placement, not prerequisites to a reask.
-    const { rows, fault } = await settlementRows(admitted);
-    if (fault) await note(fault.message);
+    const { rows, fault, malformed } = await settlementRows(admitted);
+    const issue = fault ?? malformed;
+    if (issue) await note(issue.diagnostic);
     for (const row of rows) {
       if (row.role !== admitted.role) continue;
       try { if (asserted(readReceipt(row))) break; }
-      catch (error) { await note(describeErrorIdentity(error)); }
+      catch (error) { await note(`${row.path}: ${describeErrorIdentity(error)}`); }
     }
     ticket ??= await readBoardTicketNumber(admitted.runDirectory);
   }
@@ -1323,9 +1324,8 @@ export async function dispatchPostAdmissionTurn<
     let hostTurnCompleted = false;
     if (input.manualResume && !request.courtAttemptId) {
       // Freeze the seal being resumed, not one a different invocation might publish during this turn.
-      const { rows, fault } = await settlementRows(admitted);
-      courtScope.resumedAttempt = fault ?? rows.find(row => row.latestSeal)?.attemptId;
-      if (fault) await courtScope.notePackageFault(fault.message);
+      courtScope.resumedAttempt = (await settlementRows(admitted)).lastCourt;
+      if (typeof courtScope.resumedAttempt === "object") await courtScope.notePackageFault(courtScope.resumedAttempt.diagnostic);
     }
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
@@ -2056,17 +2056,22 @@ export function showResumeErrorPointer(
   if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
 }
 
+export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority, scope?: SettlementCourtScope, io?: CliIo): Promise<TerminalResult | undefined> {
+  scope = scope?.courtAttemptId || scope?.invocationScopeId || scope?.seal ? scope : { ...scope, seal: "latest" };
+  const prepared = await preparePublicSeat(admitted, authority, scope);
+  if ("failure" in prepared) {
+    if (io) presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure);
+    return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
+  }
+  return "terminal" in prepared ? publishSeatSettlement(admitted, authority, scope, prepared) : undefined;
+}
+
 export function presentResumeFailurePointer(
   { runDirectory, runId, role }: { runDirectory: string; runId: string; role?: AdmittedRoleInvocation["role"] },
   io: CliIo,
   thrown: unknown,
+  failure = classifyPostAdmissionFailure({ timedOut: false, code: null, stderr: "", thrown }),
 ): ControlledFailure {
-  const failure = classifyPostAdmissionFailure({
-    timedOut: false,
-    code: null,
-    stderr: "",
-    thrown,
-  });
   try {
     const { diagnostic, cause, identity, details } = failure;
     writeResumeFailurePointer(io, reportRunRecord(runDirectory, "resume-diagnostic", {

@@ -229,8 +229,8 @@ export function readAuditedRound(auditedRunDirectory: string, receiptName?: stri
       throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
     }
     const receipts = `runs/${basename(auditedRunDirectory)}/`;
-    const latest = lines.filter((line) => receiptName === undefined ? line.receipt.startsWith(receipts)
-      : line.receipt === `${receipts}receipts/${receiptName}`).at(-1);
+    const ref = receiptName && receiptReference(auditedRunDirectory, receiptName);
+    const latest = lines.filter(line => ref === undefined ? line.receipt.startsWith(receipts) : line.receipt === ref).at(-1);
     return latest === undefined ? {} : { for: `${latest.seat}#${latest.round}` };
   } catch (error) {
     return { fault: `audited round unavailable for ${auditedRunDirectory}: ${errorText(error)}` };

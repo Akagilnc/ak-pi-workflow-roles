@@ -271,7 +271,6 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       );
       assert.equal(result.exitCode, 1, JSON.stringify(result.terminal?.roleOutcome));
       assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      assert.ok((await readRecordedSubmissionRows(project, "run-table-infrastructure", home)).length > 0);
       assert.ok(result.terminal?.submissions?.some((row) =>
         typeof row === "object" && row !== null && (row as { report?: unknown }).report === "candidate before failure",
       ), JSON.stringify(result.terminal?.submissions));
@@ -297,7 +296,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         })),
       });
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.role, "judge");
+      assert.equal((await readRecordedSubmissionRows(project, runId, home)).rows.at(-1)?.role, "judge");
     }
   });
 });

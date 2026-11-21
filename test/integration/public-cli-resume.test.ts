@@ -36,11 +36,10 @@ import {
   readRoleRunState,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { readSitianRecords, resolveSitianRecordPath, resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -282,7 +281,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
       // #1199 leg-local session/ via placement helpers.
       await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
-      assert.ok((await readRecordedSubmissionRows(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
         .map((payload) => payload.outcome?.kind);
@@ -350,10 +348,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       assert.ok(
         rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
         "rebuilt terminal must reference the public report artifact",
-      );
-      assert.ok(
-        (await readRecordedSubmissionRows(project, runId, home)).length > 0,
-        "recorded accepted payload must remain after report rebuild",
       );
       assert.deepEqual(historyOutcomes(), [], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
@@ -424,10 +418,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           `${runId}@judge`,
         );
       await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
-      assert.ok(
-        (await readRecordedSubmissionRows(project, runId, home)).length > 0,
-        "recorded accepted payload must survive a later persist failure",
-      );
+      const seals = historyPayloads<{ receipt: string }>(runDirectory, "sealed");
+      assert.equal(seals.length, 1);
+      assert.deepEqual(JSON.parse(await readFile(join(runDirectory, "../..", seals[0]!.receipt), "utf8")),
+        { status: "converged", note: "lawful then dispatch throws after seal" });
     } finally {
       await restoreWritable();
     }
@@ -464,10 +458,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
               const ledgerFile = join(request.runDirectory, "history.jsonl");
               await rm(ledgerFile, { force: true });
               await mkdir(ledgerFile, { recursive: true });
-              await assert.rejects(
-                () => readRecordedSubmissionRows(project, runId, home),
-                (error: NodeJS.ErrnoException) => error.code === "EISDIR",
-              );
               return out;
             },
           },

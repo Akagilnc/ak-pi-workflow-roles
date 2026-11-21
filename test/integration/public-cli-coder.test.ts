@@ -112,7 +112,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
     // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
     assertRunDirectoryHoldsOnlyDossier(runDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
-    const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
+    const { rows: submissions } = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
@@ -312,7 +312,7 @@ test("Coder submission remains recorded when the later Inspector transport fails
         packageRoot, home, cwd: project, createRunId: () => runId, io,
         roleTurnHost: createMinimalHost(async (request) => {
           if (request.activation.role === "inspector") {
-            const rows = await readRecordedSubmissionRows(project, runId, home);
+            const { rows } = await readRecordedSubmissionRows(project, runId, home);
             assert.equal(rows.at(-1)?.kind, "accepted", "the Coder tool has finished before Inspector dispatch");
             return { code: 1, stderr: "provider unavailable", timedOut: false };
           }
@@ -330,7 +330,7 @@ test("Coder submission remains recorded when the later Inspector transport fails
       },
     );
     assert.equal(result.exitCode, 1);
-    assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
+    assert.equal((await readRecordedSubmissionRows(project, runId, home)).rows.at(-1)?.kind, "accepted");
   });
 });
 

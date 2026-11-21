@@ -16,7 +16,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readReceipt, readRecordedSubmissionRows, ReceiptReadError } from "../submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   latestQueuePayload,
@@ -58,7 +58,7 @@ import {
 import {
   bindDiaristBoardTicket,
   presentControlledFailure,
-  presentResumeFailurePointer,
+  trySettlePublicSeat,
   packageFaultNoteFor,
   prepareSummonsResumeMaterials,
   roleTurnOptions,
@@ -81,14 +81,11 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
-  ledgerReadScope,
   presentStructuralRejection,
   readBoundSessionEntries,
   retainPackageFault,
   preparePublicSeat,
   matchesAuditedSeal,
-  settleFailureTerminalResult,
-  trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -465,13 +462,14 @@ async function loadLedgerPeerBody(
   if (runId === undefined) return undefined;
   // Bind to the already-resolved source directory — never re-discover by runId
   // alone (another book may lawfully share the same id; #637 / #1166).
-  const rows = await readRecordedSubmissionRows(projectRoot, runId, {
+  const { rows, fault } = await readRecordedSubmissionRows(projectRoot, runId, {
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
   // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
   // present the latest row as-is. Never filter current manuscript by accepted /
   // terminal outcome kind (that resurrects a prior sealed draft).
+  if (fault) throw fault.cause;
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
   return readableGateItem(readReceipt(latest));
@@ -549,14 +547,7 @@ async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: Instru
   review?: Pick<SettlementCourtScope, "seal" | "previewOnly">): Promise<TerminalResult | undefined> {
   const binding = review?.seal ? review : await readCurrentCourt(admitted.runDirectory) ?? { seal: "latest" as const };
   const scope = { ...binding, ...review, notePackageFault: packageFaultNoteFor(admitted, env, io) };
-  try {
-    return await trySettlePublicSeat(admitted, env.principalAuthority, scope);
-  } catch (error) {
-    if (!(error instanceof ReceiptReadError)) throw error;
-    // Record the fault on the leg whose file was read; recovery is not a new host attempt.
-    const failure = presentResumeFailurePointer(admitted, io, error);
-    return { ...await settleFailureTerminalResult(admitted, failure, env.principalAuthority, { ...scope, previewOnly: true }), ...error.history };
-  }
+  return trySettlePublicSeat(admitted, env.principalAuthority, scope, io);
 }
 
 function seatAdapters(
@@ -788,7 +779,7 @@ async function pinAuditedLegAtAdmission(
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
   const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory, auditedReceipt);
-  persistAdmittedAuditedLeg(officerRunDirectory, { for: auditedRound, auditedReceipt: auditedRound ? undefined : auditedReceipt, ...source });
+  persistAdmittedAuditedLeg(officerRunDirectory, { for: auditedRound, auditedReceipt, ...source });
   if (fault === undefined) return;
   await retainPackageFault({
     runDirectory: officerRunDirectory,

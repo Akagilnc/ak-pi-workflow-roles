@@ -12,7 +12,7 @@ import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport } from "./sitian-facade.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
-import type { TerminalResult, TerminalRoleName } from "./public-cli/terminal.ts";
+import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
@@ -30,7 +30,8 @@ export type RecordedSubmissionRow = {
   readonly receipt: string;
   readonly round?: string;
   readonly attemptId?: string;
-  readonly latestSeal?: true;
+  /** A skipped journal line could be this arrival's missing disposition. */
+  readonly uncertain?: true;
 };
 export type ClosedSubmission = {
   readonly role: TerminalRoleName;
@@ -43,22 +44,17 @@ export type SubmissionLedgerReadScope = {
   readonly sessionParent?: string;
 };
 
-export class ReceiptReadError extends Error {
-  constructor(readonly receipt: string, cause: unknown, readonly history?: Pick<TerminalResult, "submissions" | "receiptErrors">) {
-    super(`${receipt}: ${errorText(cause)}`, { cause });
-  }
-}
+export type LedgerFault = { diagnostic: string; cause: unknown };
 
 /** File order is arrival order. An original without any subsequent ledger fact is still a draft. */
 export async function readRecordedSubmissionRows(
   cwd: string, runId: string, homeOrScope: string | SubmissionLedgerReadScope = {},
-  onLedgerFault?: (fault: ReceiptReadError) => void,
-): Promise<readonly RecordedSubmissionRow[]> {
+) {
   const scope = typeof homeOrScope === "string" ? { home: homeOrScope } : homeOrScope;
   let parent = scope.sessionParent;
   if (parent === undefined) {
     const run = await findRunDirectoryById(scope.home, runId);
-    if (run === undefined) return [];
+    if (run === undefined) return { rows: [], fault: undefined, malformed: undefined, lastCourt: undefined };
     parent = sessionFileOf(run);
   }
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
@@ -73,33 +69,41 @@ export async function readRecordedSubmissionRows(
     process.stderr.write(`receipt directory listing failed: ${errorText(error)}\n`);
   }
   // Journal order names the last seal; receipt numbering only orders arrivals.
-  let latestSeal: string | undefined;
-  const journal = await readSitianRecords(recordFile).catch(error => {
-    if (!onLedgerFault) throw error;
-    onLedgerFault(new ReceiptReadError(recordFile, error));
-    return { records: [] };
-  });
-  for (const { kind, subject, payload } of journal.records) {
+  let lastCourt: string | LedgerFault | undefined;
+  let journal;
+  let fault: LedgerFault | undefined;
+  try { journal = await readSitianRecords(recordFile); }
+  catch (cause) { fault = { diagnostic: `${recordFile}: ${errorText(cause)}`, cause }; }
+  const gap = journal?.lastGap ?? 0;
+  let lastSealIndex = -1;
+  for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
     if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
     const { receipt } = payload;
-    if (kind === "sealed") latestSeal = receipt;
-    if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string" && payload.round !== "") {
+    if (kind === "sealed") { lastSealIndex = index; lastCourt = subject.attemptId as string; }
+    if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
       rounds.set(receipt, payload.round);
+      if (journal?.lastGap !== undefined && !facts.get(receipt)?.attemptId && typeof subject.attemptId === "string") {
+        facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, uncertain: true });
+      }
     }
     const disposition = kind === "sealed" ? "accepted" : kind === "candidate" ? "candidate" : kind === "outcome" ? payload.outcome : undefined;
     if (disposition !== "accepted" && disposition !== "candidate" && disposition !== "infrastructure" && disposition !== "correctable-rejection") continue;
     facts.set(receipt, { kind: disposition, role: payload.role as TerminalRoleName, toolCallId: payload.toolCallId as string,
-      attemptId: subject.attemptId as string });
+      ...(disposition === "candidate" && index < gap && { uncertain: true as const }), attemptId: subject.attemptId as string });
   }
-  return [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
+  const rows = [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
     const round = rounds.get(receipt);
-    return { ...fact, ...(receipt === latestSeal && { latestSeal: true as const }), receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round === undefined ? {} : { round }) };
+    return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }) };
   });
+  const reasons = journal?.diagnostics.map(d => `line ${d.line}: ${d.error}`).join("; ");
+  const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
+  // A later readable seal proves the latest court despite an earlier gap.
+  if (malformed && gap > lastSealIndex && rows.some(row => row.uncertain)) lastCourt = malformed;
+  return { rows, fault, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {
-  try { return JSON.parse(exactUtf8(readFileSync(path), "receipt")); }
-  catch (error) { throw new ReceiptReadError(path, error); }
+  return JSON.parse(exactUtf8(readFileSync(path), "receipt"));
 }
 
 function runIdentity(context: HostContext): string {

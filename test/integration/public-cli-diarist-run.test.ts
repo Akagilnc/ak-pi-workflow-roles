@@ -939,7 +939,7 @@ test("public diarist accepts unreadable status before routing it back, and escal
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
-    const submissions = await readRecordedSubmissionRows(project, runId, home);
+    const { rows: submissions } = await readRecordedSubmissionRows(project, runId, home);
     assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
@@ -1740,7 +1740,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       assert.equal(result.exitCode, 0);
       assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
-      const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
+      const { rows: submissions } = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
       const admitted = readCurrentSection(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);

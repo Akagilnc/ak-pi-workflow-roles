@@ -83,6 +83,8 @@ export type SitianMalformedDiagnostic = {
 
 /** Canonical Reader result surfacing both valid records and non-destructive diagnostics. */
 export type SitianReadResult = {
+  /** Valid-record offset of the last gap, when traversal skipped a malformed line. */
+  readonly lastGap?: number;
   readonly records: readonly SitianRecord[];
   readonly diagnostics: readonly SitianMalformedDiagnostic[];
 };

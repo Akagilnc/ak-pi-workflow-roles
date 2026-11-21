@@ -147,7 +147,7 @@ test("non-object params stay raw on accepted/submissions — no envelope wrap (#
     );
     await host.start("raw");
     await host.tool().execute("raw", "plain-string-submission", undefined, undefined, host.context);
-    assert.deepEqual((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).map(readReceipt), ["plain-string-submission"]);
+    assert.deepEqual((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.map(readReceipt), ["plain-string-submission"]);
   });
 });
 
@@ -170,7 +170,7 @@ test.each(["unbound", "bound", "inline"] as const)("ledger records raw params an
     const result = await host.tool().execute("p1", params, undefined, undefined, host.context);
     assert.equal(result.terminate, placement !== "unbound");
     assert.deepEqual(result.details, details);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.map(readReceipt), [params]);
   });
 });
@@ -224,7 +224,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       process.stderr.write = previousWrite;
     }
 
-    const all = (await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).map(readReceipt);
+    const all = (await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.map(readReceipt);
     assert.equal(all.length, 2);
     assert.deepEqual(all[0], firstPayload);
     assert.deepEqual(all[1], secondDetails);
@@ -262,7 +262,7 @@ test("continuing gate records candidate without sealing acceptance", async () =>
     const candidate = { status: "continue" };
     const result = await continuing.tool().execute("continue", candidate, undefined, undefined, continuing.context);
     assert.equal(result.terminate, false);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.map(row => [row.kind, readReceipt(row)]), [["candidate", candidate]]);
     assert.deepEqual(continuing.closedSubmissions, []);
   });
@@ -274,7 +274,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
     await f.tool().execute("a", { status: "converged" }, undefined, undefined, f.context);
     await f.start("b", "read");
     await f.close();
-    assert.equal((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).length, 1);
+    assert.equal((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.length, 1);
     assert.equal(f.deliveredRejections.length, 0, "no non-sole rejection");
     const kinds = (await ledgerRecords(f.root)).map((r) => r.kind);
     assert.ok(kinds.includes("sealed"));
@@ -293,7 +293,7 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     const result = await host.tool().execute("review-escalate", params, undefined, undefined, host.context);
     assert.equal(ran, 1);
     assert.deepEqual(result.details, params);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.map(row => [row.kind, readReceipt(row)]), [["accepted", params]]);
     assert.deepEqual(publicNavigatorSettlement("judge", null, {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
@@ -347,7 +347,7 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       receipt: "runs/run-ledger@judge/receipts/1.json",
     });
     // #881: original params stay projectable even when outcome is not sealed.
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(rows.map(readReceipt), [params]);
   });
 });
@@ -365,7 +365,7 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
     assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", label);
     assert.equal((outcome?.payload as { role?: string }).role, "judge", label);
     // #881: correctable-rejection original params project once (candidate+outcome deduped).
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     const projected = rows.find(
       (row) => row.kind === "correctable-rejection" && row.toolCallId === label,
     );
@@ -387,7 +387,7 @@ test("#881 reader projects non-sealed original params once per tool call (correc
     });
     await assert.rejects(infra.tool().execute("call-infra", infraParams, undefined, undefined, infra.context));
 
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(
       rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: readReceipt(row) })),
       [
@@ -438,7 +438,7 @@ test("a recorded append failure never returns accepted", async () => {
         // Unlock to read.
         if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
         // Primer infrastructure params remain; the locked seal must not add an accepted row.
-        const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+        const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
         assert.equal(rows.some((row) => row.kind === "accepted"), false);
         assert.ok(rows.some((row) => row.kind === "infrastructure"));
       },
@@ -453,7 +453,7 @@ test("a recorded append failure never returns accepted", async () => {
 
 test("unknown run read APIs return empty without ownership throw", async () => {
   await withLedgerFixture(async (f) => {
-    const rows = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
+    const { rows } = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
     assert.deepEqual(rows, []);
   });
 });
@@ -469,7 +469,7 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
     {
       await reopened.start(reusedCallId);
       await reopened.tool().execute(reusedCallId, { status: "converged" }, undefined, undefined, reopened.context);
-      const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+      const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
       assert.deepEqual(
         rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: readReceipt(row) })),
         [

@@ -62,7 +62,7 @@ async function acceptThroughTypedRoundClosure(input: {
   const cwd = typeof input.context.cwd === "string" ? input.context.cwd : process.cwd();
   const ledgerHomeOwner = tryHomeFromAkRolesPath(runDirectory);
   assert.ok(ledgerHomeOwner, "institutional run must sit under temp .ak-roles topology");
-  const rows = await readRecordedSubmissionRows(cwd, runId, ledgerHomeOwner);
+  const { rows } = await readRecordedSubmissionRows(cwd, runId, ledgerHomeOwner);
   const sealed = rows.at(-1);
   assert.ok(sealed, "terminating submission must be recorded on the ledger");
   assert.ok(typeof sealed.role === "string" && sealed.role.length > 0, "sealed row must carry role");

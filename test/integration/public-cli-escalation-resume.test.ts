@@ -331,7 +331,7 @@ test("#1057 a notary escalation resumes into the remaining audit without Judge r
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
   });
 });
@@ -365,7 +365,7 @@ test("#1057 an auditor escalation resumes and settles the finished Judge submiss
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
   });
 });
@@ -394,7 +394,7 @@ test("#1057 an auditor continue after escalation resumes the Judge for a revised
     assert.equal(auditorCalls, 3);
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), revised);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 2);
     // #1200: the ruling resumed the auditor directly — still the round it was
     // summoned for; the re-summons after the revised verdict name the new round
@@ -476,7 +476,7 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     // Parent judge original volume remains accepted on the ledger (A5).
     assert.equal(observed.judgeSubmissions.length, 1);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
     // #1214 F1: officer scene remains visible on the structured terminal; public
     // stdout presentation is proven by mutation true-run in the fixer receipt,

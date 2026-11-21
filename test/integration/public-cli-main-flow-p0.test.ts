@@ -108,7 +108,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     assert.equal(first.terminal.ticket, TICKET);
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(first.terminal.roleOutcome), ["escalate"]);
-    const recorded = await readRecordedSubmissionRows(project, runId, home);
+    const { rows: recorded } = await readRecordedSubmissionRows(project, runId, home);
     assert.deepEqual(recorded.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadableDetails },
       { kind: "accepted", accepted: escalateDetails },
