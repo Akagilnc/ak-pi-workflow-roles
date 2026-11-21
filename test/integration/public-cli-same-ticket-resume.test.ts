@@ -178,7 +178,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
   };
 }
 
-test("#637 public notary tracer: first seal → seat switch → second court no-seal → bare resume non-pass → idempotent", async ({ home }) => {
+test("#637 public notary tracer: open court resume and later bare submissions keep their own verdicts", async ({ home }) => {
   const scratch = await openNotaryScratch(home);
   const { project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
   assert.deepEqual(
@@ -191,6 +191,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     0,
   );
 
+  const third = { status: "converged", findings: ["third"] };
   /** Lawful non-pass seal for the open second court (distinct from first pass). */
   const secondCourtSeal = {
     status: "continue" as const,
@@ -234,13 +235,9 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
         submitInPiChild(project, options.env, "notary", [secondCourtSeal]);
         return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
       }
-      // Bare resume after sealed court: pass-through, no re-seal (#833).
-      return scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: secondCourtSeal,
-        seal: false,
-      })(extraArgs, options);
+      submitInPiChild(project, options.env, "notary", [third]);
+      if (turn === 6) await rm(join(options.env.AK_ROLE_RUN_DIR!, "receipts/4.json"));
+      return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
     },
   });
   const host = observingSealHost(inner, seen);
@@ -446,8 +443,10 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     "open-court seal status must be the lawful non-pass, not first-court pass",
   );
 
-  // 6) After open court seals non-pass, further bare resume still reaches the
-  // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
+  // 6) A fresh bare invocation submits again; the closed court's lost original
+  // is a history fault, not evidence against this submission.
+  const lost = join(firstRunDirectory, "receipts/2.json");
+  await rm(lost);
   const turnsBeforeBare = turn;
   const bareAfterSeal = await runAkRole(["resume", "637", "notary"], {
     home,
@@ -464,12 +463,15 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   );
   assert.equal(bareAfterSeal.exitCode, 0);
   assert.deepEqual(
-    bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-      ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
-      : [],
-    ["converged", secondCourtSeal.status],
-    "post-court pass-through presents full history with the current non-pass last",
-  );
+    bareAfterSeal.terminal?.roleOutcome.kind === "accepted" && bareAfterSeal.terminal.roleOutcome.payloads, [third]);
+  assert.deepEqual(bareAfterSeal.terminal?.submissions, [{ status: "converged", findings: [] }, third]);
+  assert.deepEqual(bareAfterSeal.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
+  const missingCurrent = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
+  assert.equal(missingCurrent.exitCode, 1);
+  assert.equal(missingCurrent.terminal?.roleOutcome.kind, "failure");
+  assert.deepEqual(missingCurrent.terminal?.submissions, bareAfterSeal.terminal?.submissions);
+  assert.deepEqual(missingCurrent.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]),
+    [[lost, "ENOENT"], [join(firstRunDirectory, "receipts/4.json"), "ENOENT"]]);
 });
 
 test("#637/#987 public inspector: resume continues open-court settlement without re-delivering attachments", async ({ home }) => {

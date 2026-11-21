@@ -120,12 +120,12 @@ function sessionParentFromHostContext(context: HostContext): string | undefined 
 export function sealAcceptedSubmission(options: {
   readonly runDirectory: string; readonly cwd: string; readonly role: TerminalRoleName;
   readonly accepted: unknown; readonly toolCallId: string; readonly home?: string;
-  readonly courtAttemptId?: string; readonly instruction?: string;
+  readonly courtAttemptId?: string; readonly invocationScopeId?: string; readonly instruction?: string;
 }): void {
   const { runDirectory, role, toolCallId, accepted, cwd } = options;
   const runId = runIdFromRunDirectory(runDirectory);
   if (runId === undefined) throw new Error("提交账需要已受理的 run 身份");
-  const attemptId = options.courtAttemptId ?? `${runId}:initial`;
+  const attemptId = options.courtAttemptId ?? options.invocationScopeId ?? `${runId}:initial`;
   const receipt = writeArrivingReceipt(runDirectory, accepted);
   const sessionParent = sessionFileOf(runDirectory);
   sitianReport({ level: "event", kind: "sealed", subject: { runId, attemptId },
@@ -144,7 +144,7 @@ export function createSubmissionLedgerHost(
 ): RoleHost {
   function source(context: HostContext) {
     const runId = runIdentity(context);
-    const attemptId = courtAttemptIdFromHostContext(context) ?? context.sessionManager.getHeader?.()?.id
+    const attemptId = courtAttemptIdFromHostContext(context) ?? context.invocationScopeId ?? context.sessionManager.getHeader?.()?.id
       ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
     const sessionParent = sessionParentFromHostContext(context);
     const home = options?.home ?? (sessionParent === undefined ? undefined : tryHomeFromAkRolesPath(sessionParent));

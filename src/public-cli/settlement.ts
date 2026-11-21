@@ -74,8 +74,6 @@ import { reportRunRecord } from "../sitian-facade.ts";
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
-  /** Commit this result after the dispatch owner's final cancellation check. */
-  readonly deferPublication?: (publish: () => TerminalArtifactRef[] | Promise<TerminalArtifactRef[]>) => void;
   /** Only the dispatched host turn may record this attempt; later reads are projections. */
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
@@ -232,9 +230,10 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   terminal: T,
   scope?: SettlementCourtScope,
+  rows?: readonly RecordedSubmissionRow[],
 ): Promise<T> {
   try {
-    return { ...terminal, ...projectOriginals(await settlementRows(admitted)).history };
+    return { ...terminal, ...projectOriginals(rows ?? await settlementRows(admitted)).history };
   } catch (error) {
     await noteSettlementFault(
       admitted.runDirectory,
@@ -374,23 +373,7 @@ async function settleNoReceiptTerminal(
         kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
         ...facts, decisiveFacts: facts,
       };
-  const publish = async (): Promise<TerminalArtifactRef[]> => {
-    const attemptHistoryIdentity = scope?.recordAttemptHistory
-      ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinates), roleOutcome)).identity
-      : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
-    // Belonging settlement only (#1161 甲 / R2): never inherit another court's
-    // latest terminal pointer, and never invent a history row on re-projection (N1).
-    writeRunTerminal(admitted.runDirectory, "no_receipt", {
-      role: admitted.role,
-      runId: admitted.runId,
-      outcome: roleOutcome,
-      ...terminalBelongingFields(attemptHistoryIdentity, scope),
-    });
-    return [];
-  };
-  if (scope?.deferPublication) scope.deferPublication(publish);
-  else if (!scope?.previewOnly) await publish();
-  return attachEngineDetourToolUsage({
+  const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: isNavigatorSeat(admitted.role)
       ? NAVIGATOR_SEAT_OWN_FACT
@@ -402,6 +385,7 @@ async function settleNoReceiptTerminal(
     artifacts: [],
     ...filedIdentity(admitted.runDirectory),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
+  return publishSeatSettlement(admitted, authority, scope, { terminal });
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -1315,15 +1299,21 @@ function entriesOf(read: LawfulSessionRead): SessionEntry[] {
 }
 
 /** Sealed seats present the ledger. A session tool error does not invent a host failure. */
-export async function trySettlePublicSeat(
+export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T; report?: Record<string, unknown> };
+
+export async function preparePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-): Promise<TerminalResult | undefined> {
+): Promise<PreparedSeat | { rows: readonly RecordedSubmissionRow[] }> {
   const rows = await settlementRows(admitted);
+  // Bare resume is not a new court. If it submitted, its invocation identifies
+  // those calls; a bare continuation with no submission still re-presents the ledger.
+  const attempt = scope?.courtAttemptId ?? (scope?.invocationScopeId && rows.some(row => row.attemptId === scope.invocationScopeId)
+    ? scope.invocationScopeId : undefined);
   const current = rows.filter(row => row.role === admitted.role && row.kind === "accepted"
-    && (!scope?.courtAttemptId || row.attemptId === scope.courtAttemptId));
-  if (!current.length) return undefined;
+    && (!attempt || row.attemptId === attempt));
+  if (!current.length) return { rows };
   const { payloads, history } = projectOriginals(rows, new Set(current));
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
   const submissionToolCallId = current.at(-1)?.toolCallId;
@@ -1338,18 +1328,38 @@ export async function trySettlePublicSeat(
     );
   }
   const entries = entriesOf(read);
-  const publish = () => publishDeclaredSeatTerminal(admitted, roleOutcome, entries, scope);
-  const artifacts = scope?.deferPublication || scope?.previewOnly ? [] : publish();
-  scope?.deferPublication?.(publish);
-  return attachEngineDetourToolUsage({
+  const terminal = await attachEngineDetourToolUsage({
     ...history, roleOutcome,
     navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
-    artifacts,
+    artifacts: [],
     ...filedIdentity(admitted.runDirectory, filed),
     ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
       ? {}
       : { submissionToolCallId }),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
+  return { terminal, report: declaredSeatReport(admitted, roleOutcome, entries, scope) };
+}
+
+export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority, scope?: SettlementCourtScope): Promise<TerminalResult | undefined> {
+  const prepared = await preparePublicSeat(admitted, authority, scope);
+  return "terminal" in prepared ? publishSeatSettlement(admitted, authority, scope, prepared) : undefined;
+}
+
+/** The cancellation check and previews do not change the already computed verdict. */
+export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined, { terminal, report }: PreparedSeat<T>): Promise<T> {
+  if (scope?.previewOnly) return terminal;
+  if (report !== undefined) {
+    writeRunTerminal(admitted.runDirectory, "report", report);
+    return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
+  }
+  const identity = scope?.recordAttemptHistory
+    ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
+    : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
+  writeRunTerminal(admitted.runDirectory, "no_receipt", {
+    role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
+  });
+  return terminal;
 }
 
 /**
@@ -1400,27 +1410,26 @@ function doctorReportFacts(
   };
 }
 
-function publishDeclaredSeatTerminal(
+function declaredSeatReport(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   entries: readonly SessionEntry[],
   scope: SettlementCourtScope | undefined,
-): TerminalArtifactRef[] {
+): Record<string, unknown> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
   // The seal names the original. The terminal carries verdict facts only.
   const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  writeRunTerminal(admitted.runDirectory, "report", {
+  return {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
     outcome: verdict,
     ...doctorReportFacts(face, roleOutcome, entries),
     ...terminalBelongingFields(undefined, scope),
-  });
-  return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
+  };
 }
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */

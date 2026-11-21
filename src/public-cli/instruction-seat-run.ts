@@ -86,6 +86,7 @@ import {
   presentStructuralRejection,
   readBoundSessionEntries,
   retainPackageFault,
+  preparePublicSeat,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -595,8 +596,7 @@ function seatAdapters(
   const record = roleRecord(admitted.role);
   const present = "presentSettled" in record ? record.presentSettled : "default";
   return {
-    trySettle: (seat, authority, scope) =>
-      trySettlePublicSeat(seat, authority, scope),
+    trySettle: preparePublicSeat,
     ...(present === "always" ? { shouldPresentSettled: () => true } : {}),
     ...(present === "typed"
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }

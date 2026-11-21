@@ -14,6 +14,7 @@ for (const [index, details] of drafts.entries()) {
   runDirectory = await driveLedgerProducer({
     cwd: process.cwd(), home: process.env.HOME!, role, runDirectory, runId,
     toolCallId: `call-${index + 1}`, details,
+    ...(process.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }),
     ...(process.env.AK_ROLE_COURT_ATTEMPT ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT } : {}),
     ...(mode === "bounce" && index === 0 ? { executeError: new WorkerUnfinishedReasonReminderError() } : {}),
     ...(mode === "interrupt" ? { onExecute: () => process.exit(0) } : {}),

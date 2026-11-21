@@ -56,6 +56,7 @@ export async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  readonly invocationScopeId?: string;
   /** #1199 this-turn summons / 催交 from the input seam (HostContext field). */
   readonly summonsInstruction?: string;
   /** #1199: issued session coordinate from the live --session / principal face. */
@@ -105,6 +106,7 @@ export async function driveLedgerProducer(input: {
         get runDirectory() { return runDirectory; },
         set runDirectory(next: string) { runDirectory = next; },
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+        ...(input.invocationScopeId && { invocationScopeId: input.invocationScopeId }),
         ...(input.summonsInstruction === undefined
           ? {}
           : { summonsInstruction: input.summonsInstruction }),

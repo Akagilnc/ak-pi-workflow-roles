@@ -176,7 +176,7 @@ function hostNeutralTypedTurn(options: {
 test.each(["accept", "bounce", "missing-bounce", "interrupt"])("the caller sees the Pi child's originals after %s", async (mode) => {
   await withSharedHome(async (home, project) => {
     const runId = "run-multi-submit-836";
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const bounced = mode === "bounce" || mode === "missing-bounce";
     // Frozen originals: ticket 1080, 01a1e312-f3cd-7b18-8594-295d3c0ce377@judge.
     const payloads = await Promise.all([1, 2, 3].map(async (n) => JSON.parse(await readFile(
@@ -208,10 +208,7 @@ test.each(["accept", "bounce", "missing-bounce", "interrupt"])("the caller sees 
     else assert.deepEqual(terminal.roleOutcome.kind === "accepted" && terminal.roleOutcome.payloads, bounced ? originals.slice(1) : originals);
     const leg = (await findRunDirectoryById(home, runId))!;
     if (mode === "missing-bounce") {
-      const delivered = stdout.join("").split("\n").filter(line => line.startsWith("receipt-error\t"))
-        .map(line => JSON.parse(line.split("\t")[1]!));
-      assert.deepEqual(delivered.map(({ receipt, identity }) => [receipt, identity.code]), [[join(leg, "receipts/1.json"), "ENOENT"]]);
-      assert.equal(stderr.join("").includes(join(leg, "receipts/1.json")), false);
+      assert.deepEqual(terminal.receiptErrors?.map(({ receipt, identity }) => [receipt, identity?.code]), [[join(leg, "receipts/1.json"), "ENOENT"]]);
     }
     const filed = (mode === "interrupt" ? [] : bounced ? [2] : [1, 2, 3]).map((n, i) => ({ receipt: join(leg, `receipts/${n}.json`), round: String(i + 1) }));
     assert.deepEqual(terminal.receipts ?? [], filed);

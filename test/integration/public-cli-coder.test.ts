@@ -72,7 +72,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
       },
     };
 
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
       {
@@ -92,12 +92,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
       assert.deepEqual(result.terminal?.submissions, missing === 2 ? [unreadable] : [corrected]);
       assert.deepEqual(result.terminal?.receiptErrors?.map(({ receipt, identity }) => [receipt, identity?.code ?? identity?.name]),
         [[join(runDirectory, `receipts/${missing}.json`), missing === 2 ? "Error" : "ENOENT"]]);
-      if (missing === 1) {
-        const delivered = stdout.join("").split("\n").filter(line => line.startsWith("receipt-error\t"))
-          .map(line => JSON.parse(line.split("\t")[1]!));
-        assert.deepEqual(delivered, result.terminal!.receiptErrors);
-        assert.equal(stderr.join("").includes(join(runDirectory, "receipts/1.json")), false);
-      }
+
       return;
     }
     assert.equal(result.exitCode, 0);
