@@ -33,12 +33,12 @@ import {
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { readPageSync } from "./run-dossier.ts";
+import { readHistoryRowsSync, readPageSync } from "./run-dossier.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
-import { errorText, isRecord } from "./unknown-value.ts";
+import { errnoCode, errorText, isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
 const RECEIPTS_DIRNAME = "receipts" as const;
@@ -153,18 +153,41 @@ function nextRoundFromLines(
   return want === undefined ? String(base) : `${base}.${want}`;
 }
 
-/** Leg-local receipt ordinal: `receipts/<n>.json` (not seat#round). */
-function nextLegReceiptIndex(runDirectory: string): number {
+function receiptReference(runDirectory: string, file: string): string {
+  return `runs/${basename(runDirectory)}/${RECEIPTS_DIRNAME}/${file}`;
+}
+
+/** Includes originals whose writer stopped before recording even a candidate. */
+export function legReceiptReferences(runDirectory: string): string[] {
   const dir = join(runDirectory, RECEIPTS_DIRNAME);
-  if (!existsSync(dir)) return 1;
-  let max = 0;
-  for (const name of readdirSync(dir)) {
-    const match = /^(\d+)\.json$/.exec(name);
-    if (match === null) continue;
-    const n = Number(match[1]);
-    if (Number.isSafeInteger(n) && n > max) max = n;
+  try {
+    return readdirSync(dir).filter(name => /^[1-9]\d*\.json$/.test(name)).map(name => receiptReference(runDirectory, name));
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return [];
+    throw error;
   }
-  return max + 1;
+}
+
+export function writeArrivingReceipt(runDirectory: string, original: unknown): string {
+  const directory = join(runDirectory, RECEIPTS_DIRNAME);
+  mkdirSync(directory, { recursive: true });
+  const text = `${JSON.stringify(original, null, 2)}\n`;
+  // Start past every recorded number (even a lost file). Exclusive create
+  // steps past concurrent and unjournalled arrivals without replacing them.
+  const last = readHistoryRowsSync(runDirectory).reduce((max, { payload }) => {
+    if (!isRecord(payload) || typeof payload.receipt !== "string") return max;
+    const n = parseInt(basename(payload.receipt));
+    return n > max ? n : max;
+  }, 0);
+  for (let n = last + 1; ; n++) {
+    const file = `${n}.json`;
+    try {
+      writeFileSync(join(directory, file), text, { flag: "wx" });
+      return receiptReference(runDirectory, file);
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") throw error;
+    }
+  }
 }
 
 /**
@@ -325,6 +348,7 @@ function lensFromRunDirectory(runDirectory: string, role: string): string | unde
  */
 export function landTicketProgressForSealedSubmission(input: {
   readonly context: HostContext;
+  readonly receipt: string;
   readonly role: string;
   readonly accepted: unknown;
   readonly sealHead: WorktreeHeadCapture;
@@ -335,6 +359,7 @@ export function landTicketProgressForSealedSubmission(input: {
   if (runDirectory === undefined) return undefined;
   return landTicketProgress({
     runDirectory,
+    receipt: input.receipt,
     role: input.role,
     accepted: input.accepted,
     sealHead: input.sealHead,
@@ -354,6 +379,7 @@ export function landTicketProgressForSealedSubmission(input: {
  */
 export function landTicketProgress(input: {
   readonly runDirectory: string;
+  readonly receipt: string;
   readonly role: string;
   readonly accepted: unknown;
   readonly sealHead: WorktreeHeadCapture;
@@ -373,18 +399,10 @@ export function landTicketProgress(input: {
       : lensFromRunDirectory(runDirectory, input.role)
   );
 
-  const leaf = basename(runDirectory);
   const unbound = basename(subjectDirectory) === "unbound";
   const progressPath = unbound
     ? join(runDirectory, LEG_PROGRESS_FILENAME)
     : join(subjectDirectory, CURRENT_FILENAME);
-  // Original receipt first — independent of derived progress read/append.
-  // Progress I/O failure must not erase an already-accepted payload (#1199 F1).
-  const receiptIndex = nextLegReceiptIndex(runDirectory);
-  const relativePath = `runs/${leaf}/${RECEIPTS_DIRNAME}/${receiptIndex}.json`;
-  const absolutePath = join(subjectDirectory, relativePath);
-  mkdirSync(dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, `${JSON.stringify(input.accepted, null, 2)}\n`, "utf8");
 
   // #1199 R1: bound leg with leftover progress.jsonl must publish before this
   // seal takes the next ticket round — optional ticketNumber must not be required.
@@ -413,7 +431,7 @@ export function landTicketProgress(input: {
     head: input.sealHead.head,
     ...(status === undefined ? {} : { status }),
     ...(summary === undefined ? {} : { summary }),
-    receipt: relativePath,
+    receipt: input.receipt,
     session: sessionRelative,
   };
 

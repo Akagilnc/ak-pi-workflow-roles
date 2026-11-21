@@ -194,7 +194,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
       // #1201: the row carries its progress receipt reference (no round while unbound).
       {
-        role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first",
+        role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first", attemptId: "run-ledger:attempt",
         receipt: "runs/run-ledger@judge/receipts/1.json",
       },
     ]);
@@ -275,7 +275,7 @@ test("continuing gate records candidate without sealing acceptance", async () =>
     const result = await continuing.tool().execute("continue", candidate, undefined, undefined, continuing.context);
     assert.equal(result.terminate, false);
     assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", f.root), [candidate]);
-    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [{ role: "judge", kind: "candidate", accepted: candidate, toolCallId: "continue" }]);
+    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [{ role: "judge", kind: "candidate", accepted: candidate, toolCallId: "continue", attemptId: "run-ledger:attempt", receipt: "runs/run-ledger@judge/receipts/1.json" }]);
     assert.deepEqual(continuing.closedSubmissions, []);
   });
 });
@@ -311,6 +311,7 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
       kind: "accepted",
       accepted: params,
       toolCallId: "review-escalate",
+      attemptId: "run-ledger:attempt",
       receipt: "runs/run-ledger@judge/receipts/1.json",
     });
     assert.deepEqual(publicNavigatorSettlement("judge", null, {
@@ -339,10 +340,9 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     });
     const sealed = (await ledgerRecords(f.root)).filter((record) => record.kind === "sealed");
     assert.ok(sealed.some((record) => {
-      const payload = record.payload as { role?: string; accepted?: unknown; toolCallId?: string };
-      return payload.role === "coder"
-        && payload.toolCallId === "coder-infra"
-        && JSON.stringify(payload.accepted) === JSON.stringify(params);
+      const payload = record.payload as { role?: string; receipt?: string; toolCallId?: string };
+      return payload.role === "coder" && payload.toolCallId === "coder-infra"
+        && payload.receipt === "runs/run-ledger@coder/receipts/1.json";
     }), "coder original payload with infrastructureFailure must seal");
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
     assert.equal(outcomes.length, 0, "declaration alone is not an infrastructure outcome");
@@ -363,11 +363,11 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       outcome: "infrastructure",
       diagnostic: "typed seam unavailable",
       role: "judge",
-      accepted: params,
+      receipt: "runs/run-ledger@judge/receipts/1.json",
     });
     // #881: original params stay projectable even when outcome is not sealed.
     assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
-      { role: "judge", kind: "infrastructure", accepted: params, toolCallId: "failure" },
+      { role: "judge", kind: "infrastructure", accepted: params, toolCallId: "failure", attemptId: "run-ledger:attempt", receipt: "runs/run-ledger@judge/receipts/1.json" },
     ]);
   });
 });
@@ -514,43 +514,5 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
         recorded,
       );
     }
-  });
-});
-
-test("legacy records with priorEventId are readable beside new records", async () => {
-  await withLedgerFixture(async (f) => {
-    await f.start("call-1");
-    await f.tool().execute("call-1", { status: "first-accepted" }, undefined, undefined, f.context);
-
-    // Locate the exact ledger jsonl file
-    const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
-    const ledgerRel = files.find((file) => file.endsWith(".jsonl") && !file.includes("session.jsonl"));
-    assert.ok(ledgerRel);
-    const ledgerFile = `${f.root}/.ak-roles/books/${ledgerRel}`;
-
-    // Append a raw line simulating a legacy record that carried priorEventId
-    const legacyRecord = {
-      level: "event",
-      kind: "candidate",
-      identity: "legacy-evt-2",
-      subject: { runId: "run-ledger", attemptId: "run-ledger:attempt" },
-      priorEventId: "call-1",
-      timestamp: new Date().toISOString(),
-      host: "pi",
-      payload: {
-        type: "candidate",
-        role: "judge",
-        toolCallId: "call-legacy",
-        params: { status: "legacy-accepted" },
-      },
-    };
-    await appendFile(ledgerFile, `${JSON.stringify(legacyRecord)}\n`);
-
-    // Verify readRecordedSubmissions reads both without error
-    const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.deepEqual(recorded, [
-      { status: "first-accepted" },
-      { status: "legacy-accepted" },
-    ]);
   });
 });

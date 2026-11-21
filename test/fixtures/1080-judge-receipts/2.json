@@ -1,0 +1,52 @@
+{
+  "status": "converged",
+  "ticketNumber": 1080,
+  "summary": "署：两处修理都是纯删除、行为不变，上轮一类与台院一类均结清；援引 P3 例外，亲验后不待御史台。",
+  "mechanisms": [],
+  "note": "援引例外署：本轮修内司两次改动（a3e900bd、4a05b57f）各只结清一个 P3 类，没有带进新机制或新行为，本寺亲验后不待御史台。上一轮御史台两镜（HEAD 44ca11d3）无 P2 及以上。\n\n亲验了什么：\n1. a3e900bd（本寺上轮送修的多组改写层）：逐函数读 diff。旧挑选函数在单元素数组下，对非字符串与不匹配值原样返回、对匹配值转调 rewriteRunDirectoryPathValue，与现在 src/role-run-path-rewrite.ts:58-66 直接调用逐值相同。三处调用点（invocation.ts:738、post-admission.ts:179、run-lifecycle.ts:1117）各传一对。RunDirectoryPathRewrite／AgainstRewrites／rewrites／crossRun 四种旧形状全仓 git grep 零命中。\n2. 4a05b57f（台院 inspector#3 封驳的类，本寺同尺复核）：删的是 rewriteAdmittedRoleRunPage 里就地改 page.principal 的三行。\n   - 磁盘页：本机 books 下 43916 份腿内 state.jsonl，含 \"principal\" 的为 0 份（本轮 grep -l 亲数）；runState 行的会话路径是顶层 sessionDirectory／sessionFile（run-lifecycle.ts:284-297），仍在 ADMITTED_PAGE_PATH_FIELDS 内。渲染与续跑读盘两条路上这段从不触发。\n   - 内存两处：invocation.ts:733-743 与 post-admission.ts:172-184，改写后下一句都用 authority.seal 出的新值整体盖掉 admitted.principal。\n   - 别名：请求与 admitted 共用同一个 principal 对象（turn-request.ts:105），删掉就地改写后旧对象不再被顺带改到。本寺逐个打开归位调用处核旧对象有没有读者：派发前请求从现役 admitted 重取（post-admission.ts:1332-1336、:1451-1455）；回合后跟随落点经 applyRefreshedPlacementToTurn 换新值（:203-216，调用于 :246-257、:1373-1379、:1462-1473）；结算后归位经 projectRelocatedTurnIdentity 换新值（:131-132、:1246-1254）；instruction-seat-run.ts:995 归位后随即用新 admitted 重建请求，:1001 之后直接返回，:611 在请求组装之前，:615 的结果回到 post-admission.ts:1254，:1219 与 :1326 都在请求建出之前；回合中报号的工具腿 admitted 由 admittedForLiveTicketReport 从磁盘重建（report-ticket-tool.ts:119），外层请求走 role-envelope.ts:226 的 decode→改写→seal。生产只有 pi 一种 principal authority（git grep）。旧对象无读者。\n   - 法源核过：质量法「重复也按运行时数：同一输入的同一结果，在一次用户操作里算了不止一次……与写了两份同罪」讲的正是这一处（一次归位里 principal 会话路径算两遍、读一遍）；同模块 :83-86 既有注释写明权威路径只有 decode→改写→seal。早于本票不构成越权加戏（全局规则第 11 条）。\n3. 机械验证（HEAD 4a05b57f，工作树干净）：npx tsc --noEmit 退出 0；因 4a05b57f 涉及别名副作用，本寺加跑一次全量作探针：pnpm run test:all 122 文件 638 条全过，27.70 秒。\n4. 整票 d3019d89...HEAD 重扫：22 文件 +54／−4238，四提交均冠 ak-roles:；基点／HEAD 导出引用比对无新增生产孤儿；tsc --noUnusedLocals --noUnusedParameters 在本票改动的非 public-cli 文件上零命中；生产净增 50 行全是改形状后的签名、收窄的 import 与注释，无新函数、依赖、状态、锁、缓存。上轮核过的票面三条验收（正确／边界／错误）所涉文件此后未再改动。\n\norigin/main 已前进到 441d2ee7（#1295 合入），不碰本票任何文件，merge-base 仍为 d3019d89。本 HEAD 不是最终待合并状态，全量以 PR 上的 CI 为准。",
+  "findings": [
+    {
+      "id": "judge#1 送修的一类：迁移器删后只为它存在的多组改写层",
+      "ruling": "已结清",
+      "evidence": "a3e900bd，4 文件 +32／−76，无新函数；等价性与旧形状零命中见 note 第 1 条。"
+    },
+    {
+      "id": "inspector#3 封驳的一类：搬家时 principal 会话路径算两遍、其中一遍无读者",
+      "ruling": "成立（P3），已结清",
+      "evidence": "4a05b57f，1 文件 +2／−5；行为不变的三层核对见 note 第 2 条。"
+    },
+    {
+      "id": "修内司留请裁之一：续跑读 admitted 页（run-lifecycle.ts:1117）整页改写后四个字段在该调用内无人读",
+      "ruling": "驳回：越权加戏",
+      "evidence": "不是同一结果算两遍，是唯一的整页投影算一遍、调用方取其中几样；没有哪句法要求按调用点裁字段，修它须在调用点另列一份字段表，是新增并复制，与质量法「能删除、合并或修改现有机制解决的，不得新增机制」相抵。"
+    },
+    {
+      "id": "修内司留请裁之二：invocation.ts:704、:631 改名前预检 seal 丢弃返回值",
+      "ruling": "驳回：越权加戏",
+      "evidence": "基点原有的改名前预检，不是路径改写，不在本票净增里；票面与所引法条没有一句要求动它，也无人主张它有错。"
+    },
+    {
+      "id": "修内司／台院记作发现：invocation.ts、post-admission.ts、run-lifecycle.ts 共 6 处未用 import",
+      "ruling": "驳回：越权加戏",
+      "evidence": "本轮 tsc --noUnusedLocals 亲数为 6 处（修内司回执写 7）。本票对这三个文件只改了三处调用点（git diff d3019d89...HEAD -- src/public-cli），import 行未动，基点即如此；仓内 tsconfig 不开 noUnusedLocals（tsc --noEmit 退出 0），没有法条要求本票清它们。"
+    },
+    {
+      "id": "修内司 fixer#1 回执一条命令没跑成却写了结论",
+      "ruling": "事实成立，已由修内司在 fixer#2 回执自行更正",
+      "evidence": "台院 inspector#3 指出会话卷 toolu_01JfRAKJt12DysRRaD7J8jPV 输出为 bad substitution；fixer#2 回执写明重跑结果并承认漏报。结论本身本寺已另行核实，不留待办。"
+    }
+  ],
+  "classes": [],
+  "evidence": {
+    "target": "起点 d3019d896103ba5cf676557d08fa1d8ab8ad2305（merge-base），HEAD 4a05b57fe38991603e161a148e30b0b6cb1b39eb；起止 git status 均无输出。",
+    "authority": "票面 #1080 正文与陛下原话（源卷 d634a8d9，owner uuid c5fcff89-969b-4564-93a1-d77634faca57「迁移器可以删。别的再考虑下吧」）上轮已开卷核对；票面此后未改（符宝郎 notary#2 署）。派单文「修内司已交卷，回执在本票下。复判 #1080，被审为本工作树 HEAD。」未缩范围，本轮仍按整票 d3019d89...HEAD 审。",
+    "receiptsRead": "fixer#1、inspector#3、fixer#2、inspector#4 四份回执本轮全文打开；auditor#1、notary#2 对上轮判词均署。",
+    "cleanup": "scratchpad 临时文件已删；本轮三次 npx tsc 在 ~/.npm/_logs 生成的三份调试日志（按 cwd 与 argv 认定）已删；工作树内只有被忽略的 dist、.vitest；未动任何既存路径。"
+  },
+  "violations": [],
+  "conflicts": [],
+  "fix": "null",
+  "decisionGate": "null",
+  "reason": "null",
+  "infrastructureFailure": "null"
+}

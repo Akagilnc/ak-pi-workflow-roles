@@ -18,9 +18,9 @@ import {
 } from "../run-terminal-artifacts.ts";
 
 import {
-  readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
-  readRecordedSubmissions,
+  ReceiptReadError,
+  type RecordedSubmissionRow,
 } from "../submission-ledger.ts";
 
 import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
@@ -69,16 +69,13 @@ import type {
 import { readStateRowsSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
-/** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
-function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
-  return homeFromRunDirectory(admitted.runDirectory);
-}
-
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
+  /** Shared only between projections of one returned host turn. */
+  readonly originals?: { rows?: Promise<readonly RecordedSubmissionRow[]> };
   /** Only the dispatched host turn may record this attempt; later reads are projections. */
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
@@ -175,7 +172,7 @@ export function ledgerReadScope(
   scope?: SettlementCourtScope,
 ): { home: string; sessionParent: string; attemptId?: string } {
   return {
-    home: sealedLedgerHome(admitted),
+    home: homeFromRunDirectory(admitted.runDirectory),
     sessionParent: sessionFileOf(admitted.runDirectory),
     ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
       ? {}
@@ -217,52 +214,23 @@ export function filedIdentity(
 
 function roleOutcomeFromRows(
   role: TerminalRoleName,
-  rows: readonly {
-    readonly role?: TerminalRoleName;
-    readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
-    readonly accepted: unknown;
-    readonly auditReceipt?: unknown;
-    readonly auditOfficer?: unknown;
-    readonly toolCallId?: string;
-    readonly receipt?: string;
-    readonly round?: string;
-  }[],
+  rows: readonly RecordedSubmissionRow[],
 ): SealedLedgerSettle | undefined {
-  const mine = rows.filter((row) => row.role === role);
-  // Terminal acceptance kind still only follows sealed / audit-escalation (#881):
-  // correctable-rejection / infrastructure / candidate stay payloads, not acceptance.
-  const terminal = mine.filter(
-    (row) => row.kind === "accepted" || row.kind === "audit-escalation",
-  );
+  const terminal = rows.filter(row => row.role === role && row.kind === "accepted");
   if (terminal.length === 0) return undefined;
-  // Full sequence stays on payloads. The queue kind follows the latest terminal
-  // row only — an earlier escalation must not outrank a later acceptance or
-  // keep that earlier receipt (#1057).
-  const payloads = mine.map((row) => row.accepted);
+  const payloads = terminal.map(row => row.accepted);
   const latest = terminal[terminal.length - 1]!;
   const submissionToolCallId =
     typeof latest.toolCallId === "string" && latest.toolCallId.length > 0
       ? latest.toolCallId
       : undefined;
-  const filed = mine.flatMap((row): FiledReceipt[] => row.receipt === undefined
+  const filed = terminal.flatMap((row): FiledReceipt[] => row.receipt === undefined
     ? []
     : [{ receipt: row.receipt, ...(row.round === undefined ? {} : { round: row.round }) }]);
   const belonging = {
     ...(submissionToolCallId === undefined ? {} : { submissionToolCallId }),
     filed,
   };
-  if (latest.kind === "audit-escalation") {
-    return {
-      outcome: {
-        kind: "audit_escalation", role, status: "audit_escalation", payloads,
-        ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
-          auditEscalationReceipt: latest.auditReceipt,
-          ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
-        } } : {}),
-      },
-      ...belonging,
-    };
-  }
   return { outcome: { kind: "accepted", role, payloads }, ...belonging };
 }
 
@@ -275,35 +243,16 @@ async function sealedLedgerOutcome(
   // never last-wins over an undivided historical array, and never falls back to
   // full-run history when this court sealed zero rows. #836 presentation of full
   // history stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
-  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
-    const thisCourt = await readAttemptScopedSubmissionRows(
-      admitted.projectRoot,
-      admitted.runId,
-      scope.courtAttemptId,
-      ledgerReadScope(admitted, scope),
-    );
-    // Scope present + zero this-court rows → no this-court outcome (not run history).
-    return roleOutcomeFromRows(role, thisCourt);
-  }
-  // No court scope: keep run-scoped ledger face (#836).
-  const rows = await readRecordedSubmissionRows(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted, scope),
-  );
-  return roleOutcomeFromRows(role, rows);
+  const rows = await settlementRows(admitted, scope);
+  return roleOutcomeFromRows(role, scope?.courtAttemptId ? rows.filter(row => row.attemptId === scope.courtAttemptId) : rows);
 }
 
-/** #836: every raw role payload in settle scope (调几次记几次). */
-export async function recordedSubmissionPayloads(
+export function settlementRows(
   admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   scope?: SettlementCourtScope,
-): Promise<readonly unknown[]> {
-  return readRecordedSubmissions(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted, scope),
-  );
+): Promise<readonly RecordedSubmissionRow[]> {
+  const read = () => readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted));
+  return scope?.originals === undefined ? read() : scope.originals.rows ??= read();
 }
 
 export function withSubmissions<T extends TerminalResult>(
@@ -324,12 +273,19 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   // #836 / #879: submissions presentation is always run-scoped history. Do not
   // pass courtAttemptId here — roleOutcome already carries this-court payloads
   // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
-  void scope;
   try {
-    return withSubmissions(
-      terminal,
-      await recordedSubmissionPayloads(admitted, undefined),
-    );
+    const submissions: unknown[] = [];
+    const receiptErrors: NonNullable<TerminalResult["receiptErrors"]>[number][] = [];
+    for (const row of await settlementRows(admitted, scope)) {
+      try { submissions.push(row.accepted); }
+      catch (error) {
+        if (!(error instanceof ReceiptReadError)) throw error;
+        receiptErrors.push({ receipt: error.receipt, diagnostic: errorText(error.cause),
+          ...(error.cause instanceof Error ? { identity: thrownIdentity(error.cause) } : {}) });
+        await noteSettlementFault(admitted.runDirectory, scope, error.message);
+      }
+    }
+    return withSubmissions(receiptErrors.length ? { ...terminal, receiptErrors } : terminal, submissions);
   } catch (error) {
     await noteSettlementFault(
       admitted.runDirectory,
@@ -1323,44 +1279,6 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-/**
- * Sole success-terminal publisher (#953): replace the leg's terminal in
- * current.json. The report carries the outcome's verdict facts; the role's
- * submitted payloads live in history.jsonl. The terminal names the
- * attempt-history row that belongs to this settlement — from this settle's
- * append when recording, otherwise that court's prior terminal row in
- * state.jsonl (#1161 甲 / R2). Never content-match payloads, never inherit the
- * leg's latest terminal, never invent a history row on re-projection (N1).
- */
-async function publishAcceptedTerminal(
-  admitted: AdmittedRoleInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  scope: SettlementCourtScope | undefined,
-  report: Record<string, unknown>,
-): Promise<TerminalArtifactRef[]> {
-  // #419: a dispatched turn appends before rewriting last-write-wins views;
-  // a later projection may refresh views but must not invent another attempt.
-  let attemptHistoryIdentity: string | undefined;
-  if (scope?.recordAttemptHistory === true) {
-    const pointer = await appendRunAttemptHistory(
-      attemptHistorySource(admitted, coordinates),
-      roleOutcome,
-    );
-    attemptHistoryIdentity = pointer.identity;
-  } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      scope,
-    );
-  }
-  writeRunTerminal(admitted.runDirectory, "report", {
-    ...report,
-    ...terminalBelongingFields(attemptHistoryIdentity, scope),
-  });
-  return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
-}
-
 /** 甲 pointer + court tag carried on the terminal body for later re-projection. */
 function terminalBelongingFields(
   attemptHistoryIdentity: string | undefined,
@@ -1464,6 +1382,7 @@ async function settleSealedSeat(
   },
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
+  scope = { originals: {}, ...scope };
   const settled = await sealedLedgerOutcome(admitted, admitted.role, scope);
   if (settled === undefined || (options.acceptedOnly && settled.outcome.kind !== "accepted")) {
     return undefined;
@@ -1498,7 +1417,7 @@ async function finishLawfulSeat(
 ): Promise<TerminalResult> {
   const artifacts = scope?.previewOnly === true
     ? []
-    : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope);
+    : publishDeclaredSeatTerminal(admitted, roleOutcome, entries, scope);
   const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
@@ -1581,26 +1500,27 @@ function doctorReportFacts(
   };
 }
 
-async function publishDeclaredSeatTerminal(
+function publishDeclaredSeatTerminal(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
   scope: SettlementCourtScope | undefined,
-): Promise<TerminalArtifactRef[]> {
+): TerminalArtifactRef[] {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
-  // Payloads are the role's submitted words: they live in history.jsonl, not here.
+  // The seal names the original. The terminal carries verdict facts only.
   const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  return publishAcceptedTerminal(admitted, roleOutcome, coordinates, scope, {
+  writeRunTerminal(admitted.runDirectory, "report", {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
     outcome: verdict,
     ...doctorReportFacts(face, roleOutcome, entries),
+    ...terminalBelongingFields(undefined, scope),
   });
+  return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
 }
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */

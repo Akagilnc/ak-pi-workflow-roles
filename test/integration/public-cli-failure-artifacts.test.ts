@@ -302,7 +302,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
       ),
       JSON.stringify(result.terminal?.submissions),
     );
-    // One sealed attempt: one accepted attempt-history row, and the accepted terminal stands.
+    // No duplicate settlement event; the accepted terminal stands.
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const sealedRunDirectory =
       (await findRunDirectoryById(home, "run-stderr-log-eisdir-accepted-001"))
@@ -310,10 +310,8 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     const outcomes = readHistoryRows(sealedRunDirectory)
       .filter((row) => row.kind === "attempt-history")
       .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
-    assert.deepEqual(outcomes, ["accepted"]);
-    const sealedTerminal = readRunTerminal(sealedRunDirectory);
-    assert.equal(sealedTerminal.status, "present");
-    if (sealedTerminal.status === "present") assert.equal(sealedTerminal.face, "report");
+    assert.deepEqual(outcomes, []);
+    assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
     const liveSessionFile = sessionFileOf(sealedRunDirectory);
     const noteText = (await readFile(liveSessionFile, "utf8"))
       .trim()
@@ -656,16 +654,9 @@ test("#953 a later success replaces an earlier failure terminal, and a later fai
     // later non-recording re-projection (#1161 N1: do not invent history on re-project).
     const settled = await trySettlePublicSeat(admitted, authority, { recordAttemptHistory: true });
     assert.equal(settled?.roleOutcome.kind, "accepted");
-    const afterSuccess = readRunTerminal(runDirectory);
-    assert.equal(afterSuccess.status, "present");
-    if (afterSuccess.status === "present") {
-      assert.equal(afterSuccess.face, "report");
-      assert.equal(
-        (afterSuccess.body.outcome as { kind?: string } | undefined)?.kind,
-        "accepted",
-      );
-      assert.equal(afterSuccess.body.diagnostic, undefined, "the old failure's body is gone, not merged");
-    }
+    const afterSuccess = terminalBodyAt(join(runDirectory, "current.json"), "report");
+    assert.equal((afterSuccess.outcome as { kind?: string }).kind, "accepted");
+    assert.equal(afterSuccess.diagnostic, undefined, "the old failure's body is gone, not merged");
 
     await publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" }, {
       sessionDirectory,

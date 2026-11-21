@@ -19,6 +19,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -36,7 +37,7 @@ import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 
-test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
+test.each([undefined, 1, 2])("public coder settles the new court after status reask (unreadable receipt %s)", async (missing) => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -60,12 +61,17 @@ test("public coder accepts an unreadable status before routing it back for re-su
     });
     let runDirectory = "";
     const roleTurnHost = {
-      executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
+      async executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
+        const second = runDirectory !== "";
         runDirectory = request.runDirectory;
-        return structuredHost.executeTurn(request);
+        if (second && missing === 1) await unlink(join(runDirectory, "receipts/1.json"));
+        const turn = await structuredHost.executeTurn(request);
+        if (second && missing === 2) await writeFile(join(runDirectory, "receipts/2.json"), "{");
+        return turn;
       },
     };
 
+    const { io, stderr } = captureIo();
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
       {
@@ -74,11 +80,20 @@ test("public coder accepts an unreadable status before routing it back for re-su
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-cli-coder-status-reask",
-        io: captureIo().io,
+        io,
         roleTurnHost,
       },
     );
 
+    if (missing !== undefined) {
+      assert.equal(result.exitCode, missing === 2 ? 1 : 0);
+      assert.equal(result.terminal?.roleOutcome.kind, missing === 2 ? "failure" : "accepted");
+      assert.deepEqual(result.terminal?.submissions, missing === 2 ? [unreadable] : [corrected]);
+      assert.deepEqual(result.terminal?.receiptErrors?.map(({ receipt, identity }) => [receipt, identity?.code ?? identity?.name]),
+        [[join(runDirectory, `receipts/${missing}.json`), missing === 2 ? "SyntaxError" : "ENOENT"]]);
+      assert.ok(stderr.length > 0);
+      return;
+    }
     assert.equal(result.exitCode, 0);
     // Public entry hands the host a schema that declares optional summary (#1198).
     assert.ok(handedSchema !== null && typeof handedSchema === "object");

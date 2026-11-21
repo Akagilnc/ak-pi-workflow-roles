@@ -134,6 +134,8 @@ export type TerminalResult = {
    * (#953 — not copied onto failure.payloads).
    */
   submissions?: readonly unknown[];
+  /** Originals missing from the presentation, with the actual read/parse cause. */
+  receiptErrors?: readonly { receipt: string; diagnostic: string; identity?: { name: string; code?: string | number } }[];
   /**
    * Tool-call identity of the sealed submission this terminal settled from
    * (#1171 F2-R8). Carried from court/settlement so audit consumers bind the
@@ -254,19 +256,17 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
-  // Role-result block: original payloads, newest first for humans (#961).
-  // Typed payloads/submissions stay ledger order; only this presentation reverses.
+  // The current reply stays newest first for humans (#961); leg history is arrival order.
   // Present the current result and the run history on distinct faces (#879 / #836).
   // Neither a prior court's submission nor a failed turn's history is this reply.
   const current = result.roleOutcome.kind === "failure"
     ? result.roleOutcome.payloads ?? []
     : currentReplyRows(result);
   for (const [label, rows] of [
-    ["submission", current],
+    ["submission", [...current].reverse()],
     ["recorded-submission", result.submissions ?? []],
   ] as const) {
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const payload = rows[i]!;
+    for (const payload of rows) {
       const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
       lines.push(`${label}\t${encodeTerminalField(rendered)}`);
     }

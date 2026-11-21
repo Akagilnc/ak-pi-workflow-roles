@@ -286,8 +286,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
         .map((payload) => payload.outcome?.kind);
-      assert.deepEqual(historyOutcomes(), ["accepted"],
-        "the sealed attempt is recorded once; publication failure is not a second attempt");
+      assert.deepEqual(historyOutcomes(), [], "a seal is not copied into settlement history");
 
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
@@ -356,13 +355,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         (await readRecordedSubmissions(project, runId, home)).length > 0,
         "recorded accepted payload must remain after report rebuild",
       );
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
-        "the actual resume adds its own accepted attempt");
+      assert.deepEqual(historyOutcomes(), [], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
-        "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(historyOutcomes(), [], "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }

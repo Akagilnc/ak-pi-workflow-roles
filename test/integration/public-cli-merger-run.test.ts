@@ -6,8 +6,13 @@ import { captureIo } from "../helpers/failure-settlement-kit.ts";
  * Does not substitute createSubmissionLedgerHost unit rows for this seam.
  */
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
+import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
+import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, test } from "vitest";
 
@@ -23,7 +28,7 @@ import {
   receiptAttemptPointer,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
@@ -168,67 +173,21 @@ function hostNeutralTypedTurn(options: {
 }
 
 /** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
-test("host-neutral typed turns record every terminating submission without sole reject (#836)", async () => {
+test.each(["accept", "bounce", "interrupt"])("the caller sees the Pi child's originals after %s", async (mode) => {
   await withSharedHome(async (home, project) => {
     const runId = "run-multi-submit-836";
-    const first = { status: "continue", report: "first-submit" };
-    const second = { status: "converged", report: "second-submit" };
     const { io } = captureIo();
-    const payloads = [first, second];
-    let payloadIndex = 0;
-    const host: RoleTurnHost = {
-      async executeTurn(request) {
-        let registered: HostToolDefinition | undefined;
-        const handlers = new Map<string, (...values: any[]) => unknown>();
-        const fakeHost = {
-          registerTool(tool: HostToolDefinition) { registered = tool; },
-          on(event: string, handler: (...values: any[]) => unknown) { handlers.set(event, handler); },
-        } as RoleHost;
-        const outputTool = packagedRoleOutputTool("judge")!;
-        createSubmissionLedgerHost(fakeHost, new Map([[outputTool, "judge" as const]])).registerTool({
-          name: outputTool,
-          label: "output",
-          description: "",
-          parameters: {},
-          execute: async (_id, params) => ({ content: [], details: params, terminate: true }),
-        });
-        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(join(coordinates.sessionFile, ".."), { recursive: true });
-        await writeFile(coordinates.sessionFile, "", "utf8");
-        const context = {
-          cwd: request.cwd,
-          mode: "json",
-          model: undefined,
-          runDirectory: request.runDirectory,
-          ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
-          sessionManager: {
-            getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
-            getSessionFile: () => coordinates.sessionFile,
-            getSessionDir: () => coordinates.sessionDirectory,
-            appendCustomEntry(customType: string, data: unknown) {
-              appendFileSync(coordinates.sessionFile, `${JSON.stringify({ type: "custom", customType, data })}\n`, "utf8");
-            },
-          },
-          abort() {},
-        } as HostContext;
-        for (const payload of payloads) {
-            const id = `call-${payloadIndex++}`;
-            await registered!.execute(id, payload, undefined, undefined, context);
-            await appendFile(coordinates.sessionFile, `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: id,
-                toolName: outputTool,
-                isError: false,
-                details: payload,
-              },
-            })}\n`, "utf8");
-          }
-        return { code: 0, stderr: "", timedOut: false };
+    // Frozen originals: ticket 1080, 01a1e312-f3cd-7b18-8594-295d3c0ce377@judge.
+    const payloads = await Promise.all([1, 2, 3].map(async (n) => JSON.parse(await readFile(
+      join(packageRoot, `test/fixtures/1080-judge-receipts/${n}.json`), "utf8"))));
+    const originals = payloads.slice(0, mode === "interrupt" ? 1 : mode === "bounce" ? 2 : 3);
+    const host = roleTurnHostFromLegacyPiRunner({ packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        submitInPiChild(project, options.env, "judge", originals, mode);
+        return { args: [...args], code: 0, stderr: "", timedOut: false };
       },
-    };
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "two submissions"],
+    });
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "three submissions"],
       {
         packageRoot,
         home,
@@ -240,15 +199,21 @@ test("host-neutral typed turns record every terminating submission without sole 
       },
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
-    assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], ["continue", "converged"]);
-    const recorded =
-      result.terminal?.roleOutcome.kind === "accepted"
-        ? result.terminal.roleOutcome.payloads
-        : undefined;
-    assert.ok(recorded, "role result block must carry original payloads");
-    assert.equal(recorded.length, 2);
-    assert.deepEqual(recorded[0], first);
-    assert.deepEqual(recorded[1], second);
+    const terminal = result.terminal!;
+    assert.deepEqual(terminal.submissions, originals);
+    if (mode === "interrupt") assert.equal(terminal.roleOutcome.kind, "no_receipt");
+    else assert.deepEqual(terminal.roleOutcome.kind === "accepted" && terminal.roleOutcome.payloads, mode === "bounce" ? originals.slice(1) : originals);
+    const leg = (await findRunDirectoryById(home, runId))!;
+    const filed = (mode === "interrupt" ? [] : mode === "bounce" ? [2] : [1, 2, 3]).map((n, i) => ({ receipt: join(leg, `receipts/${n}.json`), round: String(i + 1) }));
+    assert.deepEqual(terminal.receipts ?? [], filed);
+    const subject = join(leg, "../..");
+    assert.deepEqual(readTicketProgressLines(subject).filter(row => row.seat === "judge").map(({receipt, round}) => ({receipt: join(subject, receipt), round})), filed);
+    assert.deepEqual(await Promise.all(originals.map(async (_, i) => JSON.parse(await readFile(join(leg, `receipts/${i+1}.json`), "utf8")))), originals);
+    // Compare complete JSON values at every depth, regardless of the event's shape.
+    JSON.stringify(readHistoryRows(leg), (_, value) => {
+      if (value && typeof value === "object") assert.ok(!originals.some(original => isDeepStrictEqual(value, original)));
+      return value;
+    });
   });
 });
 

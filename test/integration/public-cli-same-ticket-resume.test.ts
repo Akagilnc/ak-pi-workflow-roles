@@ -13,7 +13,6 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
@@ -27,6 +26,7 @@ import {
 } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -230,12 +230,9 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
         })(extraArgs, options);
       }
       if (turn === 4) {
-        // Bare resume of open court: seal this court turn with lawful non-pass.
-        return scriptedTerminatingToolSession({
-          role: "notary",
-          toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: secondCourtSeal,
-        })(extraArgs, options);
+        // Parent must settle this child seal by the open court in Pi's envelope.
+        submitInPiChild(project, options.env, "notary", [secondCourtSeal]);
+        return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
       }
       // Bare resume after sealed court: pass-through, no re-seal (#833).
       return scriptedTerminatingToolSession({
@@ -775,7 +772,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
   const firstHistory = () => historyPayloads(seen[0]!.runDirectory, "attempt-history");
-  assert.equal(firstHistory().length, 1);
+  assert.deepEqual(firstHistory(), []);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.kind, "initial");
   assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -843,8 +840,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
   });
   assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-  assert.equal(firstHistory().length, 2,
-    "the second real host turn adds exactly one no-receipt attempt");
+  assert.deepEqual(firstHistory().map(row => (row.outcome as { kind: string }).kind), ["no_receipt"]);
   assert.equal(
     (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
     "no_receipt",
@@ -1148,13 +1144,6 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
   assert.deepEqual(
     (await readdir(join(coderRunDirectory, "receipts"))).sort(),
     ["1.json", "2.json"],
-  );
-  // The terminal as the analyst reads it carries the submitted payloads, taken from history.
-  const read = readRunTerminal(coderRunDirectory);
-  assert.equal(read.status, "present");
-  assert.deepEqual(
-    ((read as unknown as { body: { outcome: { payloads: unknown } } }).body.outcome.payloads),
-    [{ status: "completed", report: "work submitted", ticketNumber: 1171 }],
   );
   // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
   assert.deepEqual(

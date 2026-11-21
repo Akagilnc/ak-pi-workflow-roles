@@ -717,22 +717,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // No court scope: the run's recorded sequence is the result face, and the
-    // run-scoped submissions carrier reads the same rows (#836).
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "converged",
-      "continue",
-      "converged",
-    ]);
-    const payloads = objectPayloads(result.terminal.roleOutcome);
-    assert.equal(payloads.length, 3);
-    assert.equal(payloads[1]!.status, "continue");
-    assert.equal(
-      (payloads[1]!.fix as { summary?: string } | undefined)?.summary,
-      "REJECTED-FIRST-findings-visible",
-    );
-    assert.equal(payloads[2]!.status, "converged");
-    assert.equal(payloads[2]!.note, "ACCEPTED-AFTER-CORRECTION");
+    assert.deepEqual(result.terminal.roleOutcome.payloads, [seedAccepted, accepted]);
     // submissions stay run-scoped (#836): prior seed + this turn's bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
 
@@ -833,7 +818,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     }
 
     // 3) Reverse same-turn order (accepted first, bounce later): terminal may
-    // stay accepted, but rejection facts must remain on payloads and gate.
+    // stay accepted, but the rejected manuscript remains in leg history.
     const reverseAccepted = {
       status: "converged" as const,
       note: "ACCEPTED-FIRST-REVERSE",
@@ -902,16 +887,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         "reverse order keeps accepted exit 0",
     );
     assert.equal(reversed.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(reversed.terminal!.roleOutcome), [
-      "converged",
-      "continue",
-    ]);
-    const reversePayloads = objectPayloads(reversed.terminal!.roleOutcome);
-    assert.equal(reversePayloads[0]!.note, "ACCEPTED-FIRST-REVERSE");
-    assert.equal(
-      (reversePayloads[1]!.fix as { summary?: string } | undefined)?.summary,
-      "BOUNCED-AFTER-ACCEPT-VISIBLE",
-    );
+    assert.deepEqual(reversed.terminal!.roleOutcome.payloads, [reverseAccepted]);
+    assert.deepEqual(reversed.terminal!.submissions, [reverseAccepted, reverseBounced]);
   });
 });
 

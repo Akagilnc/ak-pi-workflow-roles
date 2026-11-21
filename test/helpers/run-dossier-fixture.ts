@@ -154,9 +154,10 @@ export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string
   return readRunLogRows(runDirectory, kind).map((row) => row.payload as T);
 }
 
-/** What the role submitted and had accepted, in order: `accepted` of every `sealed` row in history.jsonl. */
+/** The originals named by this leg's seals, in order. */
 export function submittedParams(runDirectory: string): unknown[] {
-  return historyPayloads<{ accepted?: unknown }>(runDirectory, "sealed").map((payload) => payload.accepted);
+  return historyPayloads<{ receipt: string }>(runDirectory, "sealed").map(({ receipt }) =>
+    JSON.parse(readFileSync(join(runDirectory, "../..", receipt), "utf8")));
 }
 
 /**

@@ -4,7 +4,7 @@
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { historyPayloads, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, submittedParams, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1856,16 +1856,14 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     const attemptHistory = historyPayloads<{
       type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
     }>(ticketPlacement.runDirectory, "attempt-history");
-    assert.equal(attemptHistory.length, 2);
+    assert.equal(attemptHistory.length, 1);
     assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
     assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
     assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
     assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
     assert.equal(attemptHistory[0]?.role, "diarist");
     assert.equal(attemptHistory[0]?.runId, runId);
-    assert.equal(attemptHistory[1]?.outcome?.kind, "accepted");
-    assert.equal(attemptHistory[1]?.role, "diarist");
-    assert.equal(attemptHistory[1]?.runId, runId);
+    assert.deepEqual(submittedParams(ticketPlacement.runDirectory), result.terminal!.submissions);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });

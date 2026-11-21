@@ -22,7 +22,7 @@ import {
   bindAdmittedTicketNumber,
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
-import { readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { ReceiptReadError } from "../submission-ledger.ts";
 import { parseTicketNumber, readBoardTicketNumber, readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { readStoredHostSessionId } from "../session-identity.ts";
@@ -89,7 +89,7 @@ import {
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
   formatErrorCauseDetail,
-  ledgerReadScope,
+  settlementRows,
   isLawfulTypedTerminalOutcome,
   presentStructuralRejection,
   settleFailureTerminalResult,
@@ -697,7 +697,7 @@ export async function presentControlledFailure<
         : { invocationScopeId: failureInput.invocationScopeId }),
       onErrorPublished: (path) => { publishedErrorPath = path; },
     });
-    terminal = await attachRecordedSubmissions(admitted, settled);
+    terminal = await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault });
   } catch (error) {
     if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
       writeResumeFailurePointer(io, publishedErrorPath);
@@ -875,6 +875,9 @@ async function settleCompletedHostTurn<
   const finishAfterTurn = input.finishAfterTurn;
 
   const courtScope = input.courtScope;
+  // A delivery turn may have added submissions. Preview and publication of THIS
+  // return share originals, but no cache crosses a dispatch.
+  if (courtScope.originals) delete courtScope.originals.rows;
   // `result.stderr` stays live in memory for host-failure settlement
   // whether or not this mirror write succeeds. A write failure is noted.
   // It does not replace the host terminal or an already-sealed acceptance.
@@ -911,9 +914,8 @@ async function settleCompletedHostTurn<
   }
 
   // Host facts are resolved before trySettle. A host failure skips trySettle
-  // so a later read cannot replace that report. A clean host whose settlement
-  // read throws is noted above and is not turned into a failure terminal.
-  // the stderr log line and run-state writes are notes beside the host terminal.
+  // so a later read cannot replace that report. With a clean host, failure to
+  // open the court's own original prevents settlement; unrelated faults are notes.
   let settled: T | undefined;
   let settledOutcome:
     | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
@@ -947,6 +949,13 @@ async function settleCompletedHostTurn<
       }
     }
   } catch (error) {
+    if (error instanceof ReceiptReadError && processCancelSignalName(env.signal) === undefined) {
+      const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
+        timedOut: false, code: result.code, stderr: result.stderr, thrown: error,
+      }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState,
+      courtScope.notePackageFault, courtScope.courtAttemptId);
+      return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
+    }
     // The host did not fail. A settlement read here is a package fault and
     // must not become the terminal.
     await recordBestEffortPostDispatchDiagnostic(
@@ -1049,18 +1058,14 @@ async function settleCompletedHostTurn<
  * does not adjudicate a ticket change. Runs in the public call's own process
  * (no role leg writes the run's current.json).
  */
-export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
+export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, scope?: SettlementCourtScope): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
-  const rows = await readRecordedSubmissionRows(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted),
-  );
+  const rows = await settlementRows(admitted, scope);
   let ticketNumber: number | undefined;
   for (const row of rows) {
     if (
       row.role !== admitted.role
-      || (row.kind !== "accepted" && row.kind !== "audit-escalation")
+      || row.kind !== "accepted"
     ) {
       continue;
     }
@@ -1082,11 +1087,7 @@ export async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation): 
  */
 export async function bindDiaristAssertedTicketNumber(admitted: AdmittedRoleInvocation): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
-  const rows = await readRecordedSubmissionRows(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted),
-  );
+  const rows = await settlementRows(admitted);
   for (const row of rows) {
     if (row.role !== admitted.role || !isRecord(row.accepted)) continue;
     if (receiptStatus(row.accepted) !== "completed" || !("ticketNumber" in row.accepted)) continue;
@@ -1127,6 +1128,7 @@ export async function dispatchPostAdmissionTurn<
    */
   const courtScope = {
     ...settlementScopeForTurn(request),
+    originals: {},
     notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
       admitted,
       env,
@@ -1240,7 +1242,7 @@ export async function dispatchPostAdmissionTurn<
       // an escalated submission still carries the original role params.
       // Later receipts remain untouched; prose note/report is never consulted;
       // this seam does not adjudicate a ticket change.
-      await bindSealedTicketNumber(admitted);
+      await bindSealedTicketNumber(admitted, courtScope);
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);

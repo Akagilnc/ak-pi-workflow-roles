@@ -2,6 +2,8 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
@@ -31,6 +33,12 @@ async function spawnRunDirectoryFromEnv(env: NodeJS.ProcessEnv): Promise<string 
   return recorded;
 }
 
+export function submitInPiChild(cwd: string, env: NodeJS.ProcessEnv, role: TerminalRoleName, drafts: unknown[], mode?: string): void {
+  execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"),
+    fileURLToPath(new URL("../fixtures/1080-judge-receipts/submit.ts", import.meta.url))],
+  { cwd, env, input: JSON.stringify({ role, drafts, mode }) });
+}
+
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
   if (toolName === undefined) throw new Error(`no output tool for role ${role}`);
@@ -38,7 +46,7 @@ function toolNameForRole(role: TerminalRoleName): string {
 }
 
 /** Shared producer core — one pipeline, callers only supply details + options. */
-async function driveLedgerProducer(input: {
+export async function driveLedgerProducer(input: {
   readonly cwd: string;
   readonly runId: string;
   readonly role: TerminalRoleName;
@@ -54,7 +62,8 @@ async function driveLedgerProducer(input: {
   readonly sessionFile?: string;
   /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
-}): Promise<void> {
+  readonly onExecute?: () => void;
+}): Promise<string> {
   const toolName = toolNameForRole(input.role);
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -78,6 +87,7 @@ async function driveLedgerProducer(input: {
     description: "",
     parameters: Type.Object({}),
     execute: async () => {
+      input.onExecute?.();
       if (Object.hasOwn(input, "executeError")) throw input.executeError;
       return { content: [], details: input.outputDetails ?? input.details, terminate: true };
     },
@@ -128,6 +138,7 @@ async function driveLedgerProducer(input: {
         calls: [{ toolCallId: input.toolCallId, toolName }],
       }, context);
     }
+  return runDirectory;
 }
 
 /**
