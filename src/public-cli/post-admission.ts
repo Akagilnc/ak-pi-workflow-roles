@@ -1066,8 +1066,8 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
     submissions.some(asserted);
   } else {
     // Old manuscripts are optional evidence for placement, not prerequisites to a reask.
-    const { rows, fault, malformed } = await settlementRows(admitted);
-    const issue = fault ?? malformed;
+    const { rows, fault, discoveryFault, malformed } = await settlementRows(admitted);
+    const issue = fault ?? discoveryFault ?? malformed;
     if (issue) await note(issue.diagnostic);
     for (const row of rows) {
       if (row.role !== admitted.role) continue;
@@ -1323,9 +1323,10 @@ export async function dispatchPostAdmissionTurn<
     let result: RoleTurnResult;
     let hostTurnCompleted = false;
     if (input.manualResume && !request.courtAttemptId) {
-      const { lastCourt, rows } = await settlementRows(admitted);
-      courtScope.beforeResume = { lastCourt, unassigned: new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
-      if (typeof lastCourt === "object") await courtScope.notePackageFault(lastCourt.diagnostic);
+      const { lastCourt, discoveryFault, rows } = await settlementRows(admitted);
+      courtScope.beforeResume = discoveryFault ?? { lastCourt, unassigned: new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
+      const issue = discoveryFault ?? (typeof lastCourt === "object" ? lastCourt : undefined);
+      if (issue) await courtScope.notePackageFault(issue.diagnostic);
     }
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the

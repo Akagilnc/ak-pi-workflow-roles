@@ -416,10 +416,8 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    // Caller words ride the host turn; they do not open a court, so the result
-    // face is the run's own recorded sequence (#1032 修订票：裸 resume 只透传).
+    // Bare resume reaches the host; its new seal is the result, not the leg history.
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
-      { status: "converged", note: "FIRST-署" },
       { status: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
     assert.deepEqual(resumed.terminal?.submissions, [
@@ -717,7 +715,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(result.terminal.roleOutcome.payloads, [seedAccepted, accepted]);
+    assert.deepEqual(result.terminal.roleOutcome.payloads, [accepted]);
     // submissions stay run-scoped (#836): prior seed + this turn's bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
 
@@ -805,7 +803,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           caseRun.cap.stderr.join("") ||
           `${caseSpec.label} keeps the lawful ledger`,
       );
-      assert.equal(caseResumed.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "no_receipt");
       const submissions = caseResumed.terminal?.submissions ?? [];
       assert.ok(
         submissions.some((row) =>

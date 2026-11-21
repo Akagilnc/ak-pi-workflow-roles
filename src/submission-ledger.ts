@@ -63,10 +63,11 @@ export async function readRecordedSubmissionRows(
   const rounds = new Map<string, string>();
   // Directory discovery recovers unjournalled arrivals. If listing fails, the
   // named originals can still be opened: diagnose discovery, not a false empty court.
+  let discoveryFault: LedgerFault | undefined;
   try {
     for (const receipt of legReceiptReferences(sessionDir)) facts.set(receipt, { kind: "candidate" });
-  } catch (error) {
-    process.stderr.write(`receipt directory listing failed: ${errorText(error)}\n`);
+  } catch (cause) {
+    discoveryFault = { diagnostic: `${join(sessionDir, "receipts")}: ${errorText(cause)}`, cause };
   }
   // Journal order names the last seal; receipt numbering only orders arrivals.
   let lastCourt: string | LedgerFault | undefined;
@@ -99,7 +100,7 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   // A later readable seal proves the latest court despite an earlier gap.
   if (malformed && gap > lastSealIndex && rows.some(row => row.uncertain)) lastCourt = malformed;
-  return { rows, fault, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, fault, discoveryFault, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

@@ -81,7 +81,7 @@ export type SettlementCourtScope = {
   /** Recover the court of an already sealed submission. */
   readonly seal?: "latest" | { readonly for?: string; readonly receipt?: string };
   /** Before a bare dispatch: the seal to replay and originals already lacking a court. */
-  readonly beforeResume?: { readonly lastCourt: string | LedgerFault | undefined; readonly unassigned: ReadonlySet<string> } | undefined;
+  readonly beforeResume?: LedgerFault | { readonly lastCourt: string | LedgerFault | undefined; readonly unassigned: ReadonlySet<string> } | undefined;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -229,7 +229,7 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   try {
     if (!rows) {
       const ledger = await settlementRows(admitted);
-      const fault = ledger.fault ?? ledger.malformed;
+      const fault = ledger.fault ?? ledger.discoveryFault ?? ledger.malformed;
       if (fault) await noteSettlementFault(admitted.runDirectory, scope, fault.diagnostic);
       rows = ledger.rows;
     }
@@ -1312,14 +1312,15 @@ export async function preparePublicSeat(
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] }> {
-  const { rows, fault, malformed, lastCourt } = await settlementRows(admitted);
+  const { rows, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
   let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
   const before = scope?.beforeResume;
   // An arrival not yet journalled could belong to this call or another one. It proves neither silence nor acceptance.
-  const unassigned = before && rows.filter(row => row.attemptId === undefined && !before.unassigned.has(row.receipt));
+  const unassigned = before && "unassigned" in before ? rows.filter(row => row.attemptId === undefined && !before.unassigned.has(row.receipt)) : undefined;
   if (unassigned?.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${unassigned.map(row => row.path).join(", ")}`);
-  const resumed = before && !unassigned?.length && !rows.some(row => row.attemptId === attempt) ? before.lastCourt : undefined;
+  const resumed = before && !unassigned?.length && !rows.some(row => row.attemptId === attempt)
+    ? discoveryFault ?? ("lastCourt" in before ? before.lastCourt : before) : undefined;
   const binding = scope?.seal;
   const pin = binding === "latest" ? undefined : binding;
   const seal = pin && accepted.find(row => matchesAuditedSeal(pin, admitted.role, row));
@@ -1335,7 +1336,9 @@ export async function preparePublicSeat(
     ? matchesAuditedSeal(pin, admitted.role, row) : row.attemptId === attempt));
   const reopened = binding === "latest" ? lastCourt : resumed;
   const unknownCourt = fault ?? (typeof reopened === "object" ? reopened : undefined) ?? (disputed ? malformed : undefined);
-  if (malformed && !unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, malformed.diagnostic);
+  for (const issue of [discoveryFault, malformed]) {
+    if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
+  }
   if (!current.length && !unknownCourt) return { rows };
   const { payloads, history, requiredFault } = projectOriginals(rows, new Set(current));
   const failed = unknownCourt ?? requiredFault;
