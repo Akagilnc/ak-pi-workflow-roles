@@ -79,7 +79,9 @@ export type SettlementCourtScope = {
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
-  readonly seal?: "latest" | { readonly toolCallId: string };
+  readonly seal?: "latest" | { readonly for?: string; readonly receipt?: string };
+  /** Court already sealed when a bare continuation entered the host. */
+  readonly resumedAttempt?: string | ReceiptReadError | undefined;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -200,10 +202,10 @@ export function filedIdentity(
   };
 }
 
-export function settlementRows(
-  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
-): Promise<readonly RecordedSubmissionRow[]> {
-  return readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted));
+export async function settlementRows(admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">) {
+  let fault: ReceiptReadError | undefined;
+  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted), error => { fault = error; });
+  return { rows, fault };
 }
 
 function projectOriginals(rows: readonly RecordedSubmissionRow[], current?: ReadonlySet<RecordedSubmissionRow>) {
@@ -235,7 +237,12 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   rows?: readonly RecordedSubmissionRow[],
 ): Promise<T> {
   try {
-    return { ...terminal, ...projectOriginals(rows ?? await settlementRows(admitted)).history };
+    if (!rows) {
+      const ledger = await settlementRows(admitted);
+      if (ledger.fault) await noteSettlementFault(admitted.runDirectory, scope, ledger.fault.message);
+      rows = ledger.rows;
+    }
+    return { ...terminal, ...projectOriginals(rows).history };
   } catch (error) {
     await noteSettlementFault(
       admitted.runDirectory,
@@ -1305,29 +1312,35 @@ function entriesOf(read: LawfulSessionRead): SessionEntry[] {
 /** Sealed seats present the ledger. A session tool error does not invent a host failure. */
 export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T; report?: Record<string, unknown> };
 
+export function matchesAuditedSeal(pin: { readonly for?: string; readonly receipt?: string }, role: string, row: FiledReceipt): boolean {
+  return pin.for !== undefined ? row.round !== undefined && pin.for === `${role}#${row.round}` : basename(row.receipt) === pin.receipt;
+}
+
 export async function preparePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | { rows: readonly RecordedSubmissionRow[] }> {
-  const rows = await settlementRows(admitted);
+  const { rows, fault } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
+  let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
+  const resumed = scope?.resumedAttempt && !rows.some(row => row.attemptId === attempt) ? scope.resumedAttempt : undefined;
+  const unknownCourt = fault ?? (resumed instanceof ReceiptReadError ? resumed : undefined);
+  if (unknownCourt) throw new ReceiptReadError(unknownCourt.receipt, unknownCourt.cause, projectOriginals(rows).history);
   const binding = scope?.seal;
   const seal = binding === "latest" ? accepted.find(row => row.latestSeal)
-    : binding && accepted.filter(row => row.toolCallId === binding.toolCallId).at(-1);
+    : binding && accepted.find(row => matchesAuditedSeal(binding, admitted.role, row));
   if (binding) {
-    if (!seal?.attemptId) return { rows };
-    scope = { ...scope, courtAttemptId: seal.attemptId };
+    attempt = seal?.attemptId;
+    if (attempt) scope = { ...scope, courtAttemptId: attempt };
+  } else if (typeof resumed === "string") {
+    attempt = resumed;
   }
-  // Bare resume is not a new court. If it submitted, its invocation identifies
-  // those calls; a bare continuation with no submission still re-presents the ledger.
-  const attempt = scope?.courtAttemptId ?? (scope?.invocationScopeId && rows.some(row => row.attemptId === scope.invocationScopeId)
-    ? scope.invocationScopeId : undefined);
-  const current = attempt ? accepted.filter(row => row.attemptId === attempt) : accepted;
+  const current = binding && binding !== "latest" ? (seal ? [seal] : [])
+    : accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
   if (!current.length) return { rows };
   const { payloads, history } = projectOriginals(rows, new Set(current));
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
-  const submissionToolCallId = seal?.toolCallId ?? current.at(-1)?.toolCallId;
   const filed = current.map(({ receipt, round }) => ({ receipt, ...(round === undefined ? {} : { round }) }));
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const read = await readLawfulSettlementEntries(coordinates.sessionFile);
@@ -1344,14 +1357,13 @@ export async function preparePublicSeat(
     navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
     artifacts: [],
     ...filedIdentity(admitted.runDirectory, filed),
-    ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
-      ? {}
-      : { submissionToolCallId }),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
   return { terminal, report: declaredSeatReport(admitted, roleOutcome, entries, scope) };
 }
 
 export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority, scope?: SettlementCourtScope): Promise<TerminalResult | undefined> {
+  // Recovery without an explicit court reopens the last seal; a new dispatch never does.
+  scope = scope?.courtAttemptId || scope?.invocationScopeId || scope?.seal ? scope : { ...scope, seal: "latest" };
   const prepared = await preparePublicSeat(admitted, authority, scope);
   return "terminal" in prepared ? publishSeatSettlement(admitted, authority, scope, prepared) : undefined;
 }

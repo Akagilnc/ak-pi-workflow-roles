@@ -231,9 +231,8 @@ function parentGateHost(input: {
       role: input.parentRole,
       details: input.details,
       toolCallId: `${input.parentRole}-1166`,
-      ...(request.courtAttemptId === undefined
-        ? {}
-        : { courtAttemptId: request.courtAttemptId }),
+      ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+      ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
     });
     return { code: 0, stderr: "", timedOut: false };
   });
@@ -543,9 +542,8 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
         role: "countersign",
         details: body,
         toolCallId: `countersign-1195-${parentSeals}`,
-        ...(request.courtAttemptId === undefined
-          ? {}
-          : { courtAttemptId: request.courtAttemptId }),
+        ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
       });
       return { code: 0, stderr: "", timedOut: false };
     });

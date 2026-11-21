@@ -52,6 +52,7 @@ export class ReceiptReadError extends Error {
 /** File order is arrival order. An original without any subsequent ledger fact is still a draft. */
 export async function readRecordedSubmissionRows(
   cwd: string, runId: string, homeOrScope: string | SubmissionLedgerReadScope = {},
+  onLedgerFault?: (fault: ReceiptReadError) => void,
 ): Promise<readonly RecordedSubmissionRow[]> {
   const scope = typeof homeOrScope === "string" ? { home: homeOrScope } : homeOrScope;
   let parent = scope.sessionParent;
@@ -73,7 +74,12 @@ export async function readRecordedSubmissionRows(
   }
   // Journal order names the last seal; receipt numbering only orders arrivals.
   let latestSeal: string | undefined;
-  for (const { kind, subject, payload } of (await readSitianRecords(recordFile)).records) {
+  const journal = await readSitianRecords(recordFile).catch(error => {
+    if (!onLedgerFault) throw error;
+    onLedgerFault(new ReceiptReadError(recordFile, error));
+    return { records: [] };
+  });
+  for (const { kind, subject, payload } of journal.records) {
     if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
     const { receipt } = payload;
     if (kind === "sealed") latestSeal = receipt;

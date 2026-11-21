@@ -168,9 +168,8 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
             role: "judge",
             details: convergedDetails,
             toolCallId: "call_judge_ruling",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),

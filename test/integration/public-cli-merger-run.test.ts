@@ -97,6 +97,7 @@ function hostNeutralTypedTurn(options: {
         mode: "json",
         model: undefined,
         runDirectory: request.runDirectory,
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }),

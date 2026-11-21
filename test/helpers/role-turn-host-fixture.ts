@@ -368,9 +368,8 @@ export function withNestedTrueUnboundDiarist(
         toolCallId,
         // Align with real settlement input surface (#637): when courtAttemptId is
         // present, seal that attempt so a prior seal cannot skip this turn.
-        ...(request.courtAttemptId === undefined
-          ? {}
-          : { courtAttemptId: request.courtAttemptId }),
+        ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
       });
       return { code: 0, stderr: "", timedOut: false };
     },

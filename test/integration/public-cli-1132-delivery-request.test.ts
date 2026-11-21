@@ -138,6 +138,7 @@ async function runExternalJudge(
           role: "judge",
           details: options.details ?? { status: "converged" },
           toolCallId: `judge-call-${call}`,
+          ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           home: request.home,
           ...(request.courtAttemptId === undefined
             ? {}
@@ -265,6 +266,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
             role: "countersign",
             details: { status: "converged" },
             toolCallId: "countersign-call-2",
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
             home: request.home,
             ...(request.courtAttemptId === undefined
               ? {}
@@ -639,6 +641,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
               runDirectory: request.runDirectory,
               role: "judge",
               details: { status: "continue" },
+              ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
               toolCallId: "judge-continue",
               home: request.home,
               ...(request.courtAttemptId === undefined
@@ -656,6 +659,7 @@ test("#1132: an audit continue resumes the submitted seat with its delivery budg
             role: "notary",
             details: { status: "continue" },
             toolCallId: "notary-continue",
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
             home: request.home,
             ...(request.courtAttemptId === undefined
               ? {}
@@ -716,6 +720,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
                 runDirectory: request.runDirectory,
                 role: "judge",
                 details: { status: "continue" },
+                ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
                 toolCallId: "judge-continue",
                 home: request.home,
                 ...(request.courtAttemptId === undefined
@@ -734,6 +739,7 @@ test("#1132: an unreadable audit officer stops at the ceiling without resuming t
               role: "notary",
               details: { status: "sideways", revision: notaryCalls },
               toolCallId: `notary-sideways-${notaryCalls}`,
+              ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
               home: request.home,
               ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
             });
@@ -811,6 +817,7 @@ test("#1132: one unreadable countersign conclusion spends one budget", async () 
           details,
           ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
           toolCallId: `${role}-${calls[role]}`,
+          ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           home: request.home,
         });
         return { code: 0, stderr: "", timedOut: false };

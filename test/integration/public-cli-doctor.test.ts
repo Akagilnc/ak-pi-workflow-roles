@@ -518,6 +518,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
           await sealAcceptedSubmission({
             cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
             role: "doctor", details, toolCallId: `doctor-${index}`,
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
             ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
           });
           return { code: 0, stderr: "", timedOut: false };
@@ -575,6 +576,7 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
       await sealAcceptedSubmission({
         cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
         role: "doctor", details, toolCallId: "doctor-only",
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });
       return { code: 0, stderr: "", timedOut: false };
@@ -645,6 +647,7 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
       await sealAcceptedSubmission({
         cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
         role: "doctor", details, toolCallId: `doctor-open-escalate-${doctorCalls}`,
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });
       return { code: 0, stderr: "", timedOut: false };

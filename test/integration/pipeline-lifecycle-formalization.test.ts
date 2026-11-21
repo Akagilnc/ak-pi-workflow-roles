@@ -60,9 +60,8 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
           home: request.home,
           role: "judge",
           details: { status: "converged", note: "faux host settled" },
-          ...(request.courtAttemptId === undefined
-            ? {}
-            : { courtAttemptId: request.courtAttemptId }),
+          ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+          ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         });
         return {
           code: 0,

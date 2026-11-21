@@ -184,9 +184,8 @@ test("#1167 gate-summoned review seat: same startup delivery as worker seats", a
           details: { status: "converged" },
           toolCallId: "judge-1167-seal",
           home: request.home,
-          ...(request.courtAttemptId === undefined
-            ? {}
-            : { courtAttemptId: request.courtAttemptId }),
+          ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+          ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         });
         return { code: 0, stderr: "", timedOut: false };
       },

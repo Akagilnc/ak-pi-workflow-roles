@@ -136,12 +136,6 @@ export type TerminalResult = {
   submissions?: readonly unknown[];
   /** Originals missing from the presentation, with the actual read/parse cause. */
   receiptErrors?: readonly { receipt: string; diagnostic: string; identity?: { name: string; code?: string | number } }[];
-  /**
-   * Tool-call identity of the sealed submission this terminal settled from
-   * (#1171 F2-R8). Carried from court/settlement so audit consumers bind the
-   * object in hand — never re-infer from the whole-leg latest accepted row.
-   */
-  submissionToolCallId?: string;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
   /**

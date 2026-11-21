@@ -24,6 +24,7 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    * content when reviewReask is absent. Binding stays ticket / argv instruction.
    */
   gateReviewInstruction?: string;
+  auditedReceipt?: string;
   /**
    * #969 / #987 gate path: parent run durable board ticket handoff for bind.
    * Same-ticket resume lookup narrows the parent path by this typed number.

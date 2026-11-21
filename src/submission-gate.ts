@@ -17,8 +17,6 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
-import { persistAdmittedAuditedSubmissionToolCallId } from "./public-cli/invocation.ts";
-import { readRunParentPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import {
   officerConclusionReask,
   officerRunIdFromSummoned,
@@ -27,37 +25,10 @@ import {
   type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
-import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { receiptStatus } from "./packaged-role-registry.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
-
-/**
- * Directory of the seat this gate actually summoned — not a nested escalate
- * terminal that public-role-summons may surface on runDirectory (#1195).
- * Walk sourceRunPath upward until role matches the summoned officer.
- */
-async function directoryForSummonedOfficer(
-  officer: GateOfficer,
-  summoned: PublicSummonResult,
-): Promise<string | undefined> {
-  if (summoned.admitted?.role === officer) {
-    return summoned.admitted.runDirectory;
-  }
-  let dir =
-    typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
-      ? summoned.runDirectory
-      : summoned.admitted?.runDirectory;
-  for (let hop = 0; hop < 8 && dir !== undefined; hop += 1) {
-    const identity = await readRoleRunIdentity(dir);
-    if (identity?.role === officer) return dir;
-    const parent = await readRunParentPath(dir);
-    if (parent === undefined || parent === dir) break;
-    dir = parent;
-  }
-  return undefined;
-}
 
 /** Received discriminator of the latest payload, retained verbatim for re-ask. */
 export function latestQueueStatus(terminal: TerminalResult | undefined): unknown {
@@ -82,6 +53,7 @@ export function latestQueuePayload(terminal: TerminalResult | undefined): unknow
  * Role modules must not own this drive seam — only project results.
  */
 export function createDefaultGateOfficerSummon(options: {
+  readonly auditedReceipt?: string;
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
@@ -96,6 +68,7 @@ export function createDefaultGateOfficerSummon(options: {
     return summonGateOfficer({
       officer,
       sourceRunDirectory,
+      ...(options.auditedReceipt && { auditedReceipt: options.auditedReceipt }),
       cwd: options.cwd,
       ...(signal === undefined ? {} : { signal }),
       ...(reask === undefined ? {} : { reask }),
@@ -164,7 +137,6 @@ export async function requireSubmissionGate(options: {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly toolCallId: string;
   /**
    * In-flight parent typed payload for this gate turn (#879). Relayed verbatim
    * as officer dialogue content; binding pointer stays the parent run directory.
@@ -193,28 +165,6 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
-    // #1195 option 1: record parent seal on the summoned seat's admitted-request
-    // (not a nested lower terminal that may ride summoned.runDirectory).
-    if (
-      projected.summoned !== undefined
-      && options.toolCallId.trim() !== ""
-      && (
-        gatekeeper.status === "converged"
-        || gatekeeper.status === "continue"
-        || gatekeeper.status === "escalate"
-        || gatekeeper.status === "needs_reask"
-        || gatekeeper.status === "transport_failure"
-        || gatekeeper.status === "no_receipt"
-      )
-    ) {
-      const officerRunDirectory = await directoryForSummonedOfficer(
-        projected.officer,
-        projected.summoned,
-      );
-      if (officerRunDirectory !== undefined) {
-        persistAdmittedAuditedSubmissionToolCallId(officerRunDirectory, options.toolCallId);
-      }
-    }
     if (gatekeeper.status === "converged") {
       // Keep the officer terminal for escalate / unsettled surfaces; parent
       // finals do not project other-seat tables (#1195).

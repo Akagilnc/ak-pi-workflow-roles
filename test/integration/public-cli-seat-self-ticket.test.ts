@@ -122,9 +122,8 @@ function baseEnv(input: {
             role: input.role,
             details,
             toolCallId: `call_${input.role}_${index + 2}`,
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
         }
       }

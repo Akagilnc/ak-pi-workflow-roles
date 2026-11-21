@@ -3,7 +3,7 @@
  * Seat differences are composition-root fields. An omitted reviewer lens
  * starts two ordinary single-axis runs here.
  */
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { isUnboundRunDirectory, sessionFileOf } from "../role-run-placement.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
@@ -47,8 +47,7 @@ import {
   buildInstructionTransportPrompt,
   materializeCountersignInvocation,
   persistAdmittedAuditedLeg,
-  persistAdmittedAuditedSubmissionToolCallId,
-  readAdmittedAuditedSubmissionToolCallId,
+  readAdmittedAuditedSeal,
   recordAdmittedCorrelation,
   recordChildDiaristRun,
   relocateAdmittedRunToTicket,
@@ -87,6 +86,7 @@ import {
   readBoundSessionEntries,
   retainPackageFault,
   preparePublicSeat,
+  matchesAuditedSeal,
   settleFailureTerminalResult,
   trySettlePublicSeat,
   type SettlementCourtScope,
@@ -114,7 +114,7 @@ import { errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
-  "reviewReask" | "gateReviewInstruction" | "parentRunPath"
+  "reviewReask" | "gateReviewInstruction" | "parentRunPath" | "auditedReceipt"
 >;
 
 type SeatRunResult = {
@@ -322,12 +322,9 @@ async function presentAuditedOriginalOfOfficer(
     auditedSource === undefined ? undefined : { runDirectory: auditedSource },
   );
   if (!AUDITED_ROLES.has(parent.admitted.role)) return;
-  // #1214 R2c: the audited original is the court that sealed the toolCallId this officer
-  // reviews (#1195 binding), not the parent's current court, which may be a later empty
-  // court. Preview only: presenting the original never rewrites the parent's terminal.
-  const sealId = readAdmittedAuditedSubmissionToolCallId(officer.runDirectory);
+  // Preview the court named by the officer, never the parent's latest court.
   const terminal = await recoverSeatTerminal(parent.admitted, env, io, {
-    ...(sealId === undefined ? {} : { seal: { toolCallId: sealId } }),
+    seal: readAdmittedAuditedSeal(officer.runDirectory),
     previewOnly: true,
   });
   if (!terminal) return;
@@ -565,6 +562,7 @@ async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: Instru
 function seatAdapters(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
+  io: CliIo,
 ): PostAdmissionAdapters<AdmittedRoleInvocation> {
   const record = roleRecord(admitted.role);
   const present = "presentSettled" in record ? record.presentSettled : "default";
@@ -580,7 +578,7 @@ function seatAdapters(
           if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
             await recordAdmittedCorrelation(seat, env.correlationId);
           }
-          await bindDiaristBoardTicket(seat);
+          await bindDiaristBoardTicket(seat, undefined, packageFaultNoteFor(seat, env, io));
           await relocateAdmittedRunToTicket(seat, env.principalAuthority, lease);
         },
       }
@@ -632,7 +630,7 @@ async function dispatchAdmitted(
 ): Promise<SeatRunResult> {
   const record = roleRecord(admitted.role);
   await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
-  const adapters = seatAdapters(admitted, env);
+  const adapters = seatAdapters(admitted, env, io);
   const held: string[] = [];
   const turnIo: CliIo = AUDITED_ROLES.has(admitted.role)
     || POST_SUBMISSION_ROUTING[admitted.role] !== undefined
@@ -785,11 +783,12 @@ async function runOmittedLensBatch(
 async function pinAuditedLegAtAdmission(
   officerRunDirectory: string,
   auditedRunDirectory: string,
+  auditedReceipt: string | undefined,
   io: CliIo,
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
-  const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory);
-  persistAdmittedAuditedLeg(officerRunDirectory, { for: auditedRound, ...source });
+  const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory, auditedReceipt);
+  persistAdmittedAuditedLeg(officerRunDirectory, { for: auditedRound, auditedReceipt: auditedRound ? undefined : auditedReceipt, ...source });
   if (fault === undefined) return;
   await retainPackageFault({
     runDirectory: officerRunDirectory,
@@ -941,7 +940,7 @@ async function runCountersignBody(
       );
       await markRunAdmitted(admitted, env.principalAuthority);
       if (gateParentRunPath !== undefined) {
-        await pinAuditedLegAtAdmission(admitted.runDirectory, gateParentRunPath, io, {
+        await pinAuditedLegAtAdmission(admitted.runDirectory, gateParentRunPath, env.auditedReceipt, io, {
           sourceRunPath: gateParentRunPath,
         });
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
@@ -958,7 +957,7 @@ async function runCountersignBody(
         io,
         request: turnRequest,
         adapters: {
-          ...seatAdapters(admitted, env),
+          ...seatAdapters(admitted, env, io),
           beforeDispatch: async (admittedSeat, lease) => {
             if (!packagedAdmitsCountersign(admittedSeat.role)) return;
             await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
@@ -1167,12 +1166,12 @@ export async function runPublicInstructionSeat(
   }
 
   if (instructionSourceRunPath !== undefined) {
-    await pinAuditedLegAtAdmission(admitted.runDirectory, instructionSourceRunPath, io, {
+    await pinAuditedLegAtAdmission(admitted.runDirectory, instructionSourceRunPath, env.auditedReceipt, io, {
       sourceRunPath: instructionSourceRunPath,
     });
     admitted = { ...admitted, sourceRunPath: instructionSourceRunPath } as AdmittedRoleInvocation;
   } else if (record.sameParent === "subject-source" && auditorSource !== undefined) {
-    await pinAuditedLegAtAdmission(admitted.runDirectory, auditorSource, io, {
+    await pinAuditedLegAtAdmission(admitted.runDirectory, auditorSource, env.auditedReceipt, io, {
       sourceRunPath: auditorSource,
       auditorSubject,
     });
@@ -1181,7 +1180,7 @@ export async function runPublicInstructionSeat(
     // The admission itself already recorded the source (source-locator seats).
     const auditedRunDirectory = admittedSourceRunPath(admitted);
     if (auditedRunDirectory !== undefined) {
-      await pinAuditedLegAtAdmission(admitted.runDirectory, auditedRunDirectory, io);
+      await pinAuditedLegAtAdmission(admitted.runDirectory, auditedRunDirectory, env.auditedReceipt, io);
     }
   }
   // #1208 C2: same helper as resume — inherit the audited source's known ticket.
@@ -1202,7 +1201,7 @@ export async function runPublicInstructionSeat(
       } catch (error) {
         return await presentControlledFailure(admitted, {
           timedOut: false, code: null, stderr: "", thrown: error,
-        }, seatAdapters(admitted, env), env.principalAuthority, io, true,
+        }, seatAdapters(admitted, env, io), env.principalAuthority, io, true,
           packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
       if (outcome.admitted !== undefined && isUnboundRunDirectory(outcome.admitted.runDirectory)) {
@@ -1212,7 +1211,7 @@ export async function runPublicInstructionSeat(
         return await presentControlledFailure(admitted, {
           timedOut: false, code: null, stderr: "",
           thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
-        }, seatAdapters(admitted, env), env.principalAuthority, io, true,
+        }, seatAdapters(admitted, env, io), env.principalAuthority, io, true,
           packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
       // The diarist's escalation pauses only the diarist's own run; call order
@@ -1300,7 +1299,7 @@ export async function runPublicInstructionSeatResume(
       // its writer lease wherever the resume holds one — and before the host
       // turn. A summons the lease refuses never gets here and pins nothing.
       if (resummonedFor !== undefined) {
-        await pinAuditedLegAtAdmission(admitted.runDirectory, resummonedFor, io);
+        await pinAuditedLegAtAdmission(admitted.runDirectory, resummonedFor, env.auditedReceipt, io);
       }
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
       const projection = resumeTurnRequestProjectionOptions(
@@ -1338,7 +1337,7 @@ export async function runPublicInstructionSeatResume(
     },
     afterAdmittedLoad: async (admitted) => {
       await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
-      return { kind: "continue" as const, adapters: seatAdapters(admitted, env) };
+      return { kind: "continue" as const, adapters: seatAdapters(admitted, env, io) };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
@@ -1490,8 +1489,7 @@ export async function continueParentAfterChild(
         return { exitCode: 1, admitted, terminal };
       }
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
-      // Live child only when admitted-request.auditedSubmissionToolCallId matches
-      // the parent seal under audit (#1195 option 1 / owner 00644146).
+      // Only the officer for this parent seal can discharge its gate.
       const live = liveChildForCurrentParentSeal(
         terminal,
         resolved.admitted,
@@ -1518,7 +1516,7 @@ export async function continueParentAfterChild(
 
 /**
  * Hand continueParentAfterChild's live child to audit only when the child's own
- * admitted-request records this parent seal's toolCallId (#1195 option 1).
+ * admitted-request identifies this parent seal (#1195 option 1).
  * Read failures propagate — never wash into "no match".
  */
 function liveChildForCurrentParentSeal(
@@ -1527,10 +1525,9 @@ function liveChildForCurrentParentSeal(
   receipt: unknown,
 ): { readonly officer: AdmittedRoleInvocation; readonly receipt: unknown } | undefined {
   if (receipt === undefined) return undefined;
-  const parentSealId = parentTerminal.submissionToolCallId?.trim() ?? "";
-  if (parentSealId === "") return undefined;
-  const childSealId = readAdmittedAuditedSubmissionToolCallId(child.runDirectory);
-  if (childSealId !== parentSealId) return undefined;
+  const parent = parentTerminal.receipts?.at(-1);
+  const pin = readAdmittedAuditedSeal(child.runDirectory);
+  if (!parent || !matchesAuditedSeal(pin, parentTerminal.roleOutcome.role, parent)) return undefined;
   return { officer: child, receipt };
 }
 
@@ -1618,10 +1615,9 @@ async function auditSubmittedRole(
   // #1171 F2-R8: bind audit to the sealed identity carried on this turn's
   // settlement terminal — never the whole-leg latest accepted row (another
   // lawful public call may have sealed and passed台院 meanwhile).
-  const toolCallId = turn.terminal.submissionToolCallId;
-  if (toolCallId === undefined || toolCallId.length === 0) {
-    throw new Error("accepted submission has no tool call identity");
-  }
+  const filed = turn.terminal.receipts?.at(-1);
+  if (!filed) throw new Error("accepted submission has no sealed receipt reference");
+  const receiptName = basename(filed.receipt);
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
   const entries = admitted.role === "doctor"
     ? await readBoundSessionEntries(sessionFile)
@@ -1656,7 +1652,7 @@ async function auditSubmittedRole(
             argv: ["--subject", subject, "--source-run", sourceRunDirectory],
             cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
             principalAuthority: env.principalAuthority,
-            correlationId: admitted.runId,
+            correlationId: admitted.runId, auditedReceipt: receiptName,
             ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
             ...(env.hostAdapters === undefined ? { roleTurnHost: env.roleTurnHost } : { hostAdapters: env.hostAdapters }),
             ...(signal === undefined ? {} : { signal }),
@@ -1664,10 +1660,6 @@ async function auditSubmittedRole(
             ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
           });
           lastSummon = summoned;
-          const officerDir = summoned.runDirectory ?? summoned.admitted?.runDirectory;
-          if (officerDir !== undefined && toolCallId.length > 0) {
-            persistAdmittedAuditedSubmissionToolCallId(officerDir, toolCallId);
-          }
           return summoned;
         },
       });
@@ -1718,6 +1710,7 @@ async function auditSubmittedRole(
     }
   } else {
     const summonOfficer = createDefaultGateOfficerSummon({
+      auditedReceipt: receiptName,
       cwd: admitted.projectRoot,
       home: env.home,
       packageRoot: env.packageRoot,
@@ -1729,7 +1722,6 @@ async function auditSubmittedRole(
       requireSubmissionGate({
         context,
         subject,
-        toolCallId,
         submission: accepted,
         summonOfficer,
         ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),

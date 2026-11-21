@@ -486,13 +486,14 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // mutation (quality-law), not by counting free-text stderr diagnostics.
       const current = readCurrentJson(runDirectory) as { unreadable?: Record<string, string> };
       assert.deepEqual(current.unreadable, { "history.jsonl": "EISDIR" });
-      // Ledger damage is a package note. It does not invent a host failure,
-      // and a lawful no_receipt stops the loop.
+      // An unreadable seal ledger is not proof of an empty court. Keep the original and the actual I/O error.
       assert.equal(dispatches(), 1);
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 1);
       assert.equal(result.terminal!.autoResumeCount, 0);
-      assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(result.terminal!.roleOutcome.kind, "failure");
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.deepEqual(result.terminal!.submissions, [JSON.parse(await readFile(join(runDirectory, "receipts/1.json"), "utf8"))]);
+      assert.deepEqual(result.terminal!.receipts ?? [], []);
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -519,8 +520,10 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         }),
       });
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
-      assert.equal(resumeResult.exitCode, 0);
-      assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
+      assert.equal(resumeResult.exitCode, 1);
+      assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
+      assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
       await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,

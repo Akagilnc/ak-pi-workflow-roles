@@ -87,6 +87,7 @@ export type PublicSummonRequest = {
    * Never folded into argv / parent-run lookup keys (binding pointer stays pure).
    */
   readonly gateReviewInstruction?: string;
+  readonly auditedReceipt?: string;
   /**
    * Pi-adapter inject (tests). Used only as the `pi` row when composing the
    * adapter table — never as an override of the child seat's selected host.
@@ -409,6 +410,7 @@ export async function summonPublicRole(
             : { autoResumeLimit: config.autoResumeLimit }),
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
+          ...(options.auditedReceipt && { auditedReceipt: options.auditedReceipt }),
           ...(options.gateReviewInstruction === undefined
             ? {}
             : { gateReviewInstruction: options.gateReviewInstruction }),
@@ -669,6 +671,7 @@ export async function summonParallelReviewerLenses(options: {
  * packagedGateSummon(officer) — not restated seat-by-seat here.
  */
 export async function summonGateOfficer(options: {
+  readonly auditedReceipt?: string;
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
   readonly cwd: string;
@@ -720,6 +723,7 @@ export async function summonGateOfficer(options: {
   const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
   const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);
   const common = {
+    ...(options.auditedReceipt && { auditedReceipt: options.auditedReceipt }),
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),

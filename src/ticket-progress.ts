@@ -210,13 +210,13 @@ function statusAndSummaryFromPayload(payload: unknown): {
 }
 
 /**
- * #1200「审 谁#轮」as the ticket has it now: the audited leg's latest row. Read
- * at the officer's admission, before the officer runs. An audited leg with no
+ * #1200「审 谁#轮」at officer admission: the gate's sealed reference, or the
+ * latest row for a direct summons naming only the leg. An audited leg with no
  * round yet (unbound, or no accepted receipt) has none. A progress file that
  * cannot be read or has malformed rows has none either and returns the cause
  * for the caller to retain — the officer still runs.
  */
-export function readAuditedRound(auditedRunDirectory: string): {
+export function readAuditedRound(auditedRunDirectory: string, receiptName?: string): {
   readonly for?: string;
   readonly fault?: string;
 } {
@@ -229,7 +229,8 @@ export function readAuditedRound(auditedRunDirectory: string): {
       throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
     }
     const receipts = `runs/${basename(auditedRunDirectory)}/`;
-    const latest = lines.filter((line) => line.receipt.startsWith(receipts)).at(-1);
+    const latest = lines.filter((line) => receiptName === undefined ? line.receipt.startsWith(receipts)
+      : line.receipt === `${receipts}receipts/${receiptName}`).at(-1);
     return latest === undefined ? {} : { for: `${latest.seat}#${latest.round}` };
   } catch (error) {
     return { fault: `audited round unavailable for ${auditedRunDirectory}: ${errorText(error)}` };

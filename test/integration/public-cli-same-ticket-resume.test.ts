@@ -235,8 +235,8 @@ test("#637 public notary tracer: open court resume and later bare submissions ke
         submitInPiChild(project, options.env, "notary", [secondCourtSeal]);
         return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
       }
-      submitInPiChild(project, options.env, "notary", [third]);
-      if (turn === 6) await rm(join(options.env.AK_ROLE_RUN_DIR!, "receipts/4.json"));
+      if (turn !== 5) submitInPiChild(project, options.env, "notary", [third]);
+      if (turn === 7) await rm(join(options.env.AK_ROLE_RUN_DIR!, "receipts/4.json"));
       return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
     },
   });
@@ -445,8 +445,12 @@ test("#637 public notary tracer: open court resume and later bare submissions ke
 
   // 6) A fresh bare invocation submits again; the closed court's lost original
   // is a history fault, not evidence against this submission.
-  const lost = join(firstRunDirectory, "receipts/2.json");
+  const lost = join(firstRunDirectory, "receipts/1.json");
   await rm(lost);
+  const quiet = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
+  assert.equal(quiet.exitCode, 0);
+  assert.deepEqual(quiet.terminal?.roleOutcome.kind === "accepted" && quiet.terminal.roleOutcome.payloads, [secondCourtSeal]);
+  assert.deepEqual(quiet.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
   const turnsBeforeBare = turn;
   const bareAfterSeal = await runAkRole(["resume", "637", "notary"], {
     home,
@@ -464,7 +468,7 @@ test("#637 public notary tracer: open court resume and later bare submissions ke
   assert.equal(bareAfterSeal.exitCode, 0);
   assert.deepEqual(
     bareAfterSeal.terminal?.roleOutcome.kind === "accepted" && bareAfterSeal.terminal.roleOutcome.payloads, [third]);
-  assert.deepEqual(bareAfterSeal.terminal?.submissions, [{ status: "converged", findings: [] }, third]);
+  assert.deepEqual(bareAfterSeal.terminal?.submissions, [secondCourtSeal, third]);
   assert.deepEqual(bareAfterSeal.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
   const missingCurrent = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
   assert.equal(missingCurrent.exitCode, 1);

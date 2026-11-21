@@ -272,9 +272,8 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
             role: "coder",
             details: receipt,
             toolCallId: "alt-1",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
@@ -323,7 +322,8 @@ test("Coder submission remains recorded when the later Inspector transport fails
           await sealAcceptedSubmission({
             cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
             role: "coder", details: receipt, toolCallId: "coder-finished",
-            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
@@ -616,8 +616,10 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
         : [],
-      ["partially_completed", "planned"],
+      ["planned"],
     );
+    assert.deepEqual(resumed.terminal?.submissions, submittedParams(runDirectory));
+    assert.equal(resumed.terminal?.submissions?.length, 2);
   });
 });
 

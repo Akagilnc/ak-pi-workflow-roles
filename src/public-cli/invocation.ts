@@ -488,6 +488,7 @@ export function persistAdmittedAuditedLeg(
   runDirectory: string,
   audited: {
     readonly for: string | undefined;
+    readonly auditedReceipt?: string | undefined;
     readonly sourceRunPath?: string;
     readonly auditorSubject?: "judge" | "doctor" | undefined;
   },
@@ -506,50 +507,26 @@ export function persistAdmittedAuditedLeg(
         `persistAdmittedAuditedLeg refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
       );
     }
-    const unchanged = current.for === audited.for
+    const unchanged = current.auditedReceipt === audited.auditedReceipt && current.for === audited.for
       && (sourceRunPath === undefined || current.sourceRunPath === sourceRunPath)
       && (auditorSubject === undefined || current.auditorSubject === auditorSubject);
     if (unchanged) return undefined;
-    const { for: _replaced, ...rest } = current;
+    const { for: _replaced, auditedReceipt: _priorSeal, ...rest } = current;
     return {
       ...rest,
       ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       ...(auditorSubject === undefined ? {} : { auditorSubject }),
       ...(audited.for === undefined ? {} : { for: audited.for }),
+      ...(audited.auditedReceipt && { auditedReceipt: audited.auditedReceipt }),
     };
   });
 }
 
-/**
- * #1195 option 1: record the parent sealed toolCallId this officer is reviewing
- * on the officer's own admitted-request (one field). Re-summons for a newer seal
- * replace the value; continueParentAfterChild only trusts a child whose field
- * matches the parent seal currently under audit.
- */
-export function persistAdmittedAuditedSubmissionToolCallId(
-  runDirectory: string,
-  auditedSubmissionToolCallId: string,
-): void {
-  const id = auditedSubmissionToolCallId.trim();
-  if (id === "") {
-    throw new Error("persistAdmittedAuditedSubmissionToolCallId requires a non-empty id");
-  }
-  // Offline gate mocks may return a runDirectory without admission — skip, do not invent.
-  if (readPageSync(runDirectory, "admitted") === undefined) return;
-  updateSectionSync(runDirectory, "admitted", (current) => {
-    if (current.auditedSubmissionToolCallId === id) return undefined;
-    return { ...current, auditedSubmissionToolCallId: id };
-  });
-}
-
-/** Read the sealed id this officer admitted-request last recorded (#1195). */
-export function readAdmittedAuditedSubmissionToolCallId(
-  runDirectory: string,
-): string | undefined {
+/** The officer's admission pins the reviewed round; an unfiled seal has only its leg-local reference. */
+export function readAdmittedAuditedSeal(runDirectory: string) {
   const page = readPageSync(runDirectory, "admitted");
-  if (page === undefined) return undefined;
-  const id = page.auditedSubmissionToolCallId;
-  return typeof id === "string" && id.trim() !== "" ? id : undefined;
+  return typeof page?.for === "string" ? { for: page.for }
+    : typeof page?.auditedReceipt === "string" ? { receipt: page.auditedReceipt } : {};
 }
 
 /**

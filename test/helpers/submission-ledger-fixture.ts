@@ -159,6 +159,7 @@ export async function sealAcceptedSubmission(input: {
   readonly home?: string;
   readonly toolCallId?: string;
   readonly runDirectory?: string;
+  readonly invocationScopeId?: string;
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
   /** #1199 this-turn summons / 催交 for seal-time progress. */
@@ -167,19 +168,7 @@ export async function sealAcceptedSubmission(input: {
   readonly sessionFile?: string;
 }): Promise<void> {
   await driveLedgerProducer({
-    cwd: input.cwd,
-    runId: input.runId,
-    role: input.role,
-    details: input.details,
-    ...(input.outputDetails === undefined ? {} : { outputDetails: input.outputDetails }),
-    toolCallId: input.toolCallId ?? "seal-1",
-    ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
-    ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
-    ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
-    ...(input.summonsInstruction === undefined
-      ? {}
-      : { summonsInstruction: input.summonsInstruction }),
+    ...input, toolCallId: input.toolCallId ?? "seal-1",
   });
 }
 
@@ -230,6 +219,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(input.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: input.env.AK_ROLE_INVOCATION_SCOPE }),
     ...(summonsInstruction === undefined ? {} : { summonsInstruction }),
     ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
   });
@@ -252,17 +242,10 @@ export async function recordNonSealedSubmission(input: {
   readonly toolCallId?: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  readonly invocationScopeId?: string;
 }): Promise<void> {
   await driveLedgerProducer({
-    cwd: input.cwd,
-    runId: input.runId,
-    role: input.role,
-    details: input.details,
-    executeError: input.executeError,
-    toolCallId: input.toolCallId ?? "non-sealed-1",
-    ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
-    ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+    ...input, toolCallId: input.toolCallId ?? "non-sealed-1",
   });
 }
 
@@ -300,6 +283,7 @@ export async function recordNonSealedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(input.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: input.env.AK_ROLE_INVOCATION_SCOPE }),
   });
   // Place may have moved during ledger execute — keep the spawn env on the live leaf.
   await spawnRunDirectoryFromEnv(input.env);

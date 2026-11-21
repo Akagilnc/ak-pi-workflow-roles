@@ -118,6 +118,7 @@ async function seedPrincipalSession(request: { principal: unknown }): Promise<st
 }
 
 async function seedTerminalSession(input: {
+  invocationScopeId?: string;
   seat: Seat;
   sessionFile: string;
   cwd: string;
@@ -125,7 +126,7 @@ async function seedTerminalSession(input: {
   runId: string;
   runDirectory: string;
 }): Promise<void> {
-  const { seat, sessionFile, cwd, home, runId, runDirectory } = input;
+  const { seat, sessionFile, runId } = input;
   const { toolName, details: baseDetails } = SEAT_TERMINAL[seat];
   const details =
     seat === "merger" ? { ...baseDetails, attemptId: runId } : baseDetails;
@@ -146,10 +147,7 @@ async function seedTerminalSession(input: {
     "utf8",
   );
   await sealAcceptedSubmission({
-    cwd,
-    home,
-    runId,
-    runDirectory,
+    ...input,
     role: seat as TerminalRoleName,
     details,
     toolCallId: "r1",
@@ -307,12 +305,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
           // Second (auto-resume) dispatch: lawful accepted terminal.
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
           await seedTerminalSession({
-            seat,
-            sessionFile,
-            cwd: request.cwd,
-            home: request.home,
-            runId: `run-engine-auto-${seat}`,
-            runDirectory: request.runDirectory,
+            ...request, seat, sessionFile, runId: `run-engine-auto-${seat}`,
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
@@ -410,12 +403,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
             resumedInvocationEngine = await readInvocationEngine(request.runDirectory);
             const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
             await seedTerminalSession({
-              seat,
-              sessionFile,
-              cwd: request.cwd,
-              home: request.home,
-              runId,
-              runDirectory: request.runDirectory,
+              ...request, seat, sessionFile, runId,
             });
             return { code: 0, stderr: "", timedOut: false };
           }),
@@ -490,14 +478,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
           resumedModel = request.engineModel;
           invocationModel = await readInvocationEngineModel(request.runDirectory);
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-          await seedTerminalSession({
-            seat: "judge",
-            sessionFile,
-            cwd: request.cwd,
-            home: request.home,
-            runId,
-            runDirectory: request.runDirectory,
-          });
+          await seedTerminalSession({ ...request, seat: "judge", sessionFile, runId });
           return { code: 0, stderr: "", timedOut: false };
         }),
       });
@@ -569,14 +550,7 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
           resumedEngine = request.engine;
           resumedInvocationEngine = await readInvocationEngine(request.runDirectory);
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-          await seedTerminalSession({
-            seat: "judge",
-            sessionFile,
-            cwd: request.cwd,
-            home: request.home,
-            runId,
-            runDirectory: request.runDirectory,
-          });
+          await seedTerminalSession({ ...request, seat: "judge", sessionFile, runId });
           return { code: 0, stderr: "", timedOut: false };
         }),
       });

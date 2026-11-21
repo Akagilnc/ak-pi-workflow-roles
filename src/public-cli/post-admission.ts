@@ -1052,7 +1052,8 @@ async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, payloads
  * ticket). Before this ran in the leg's accept hook; the leg now only appends its
  * ledger rows and the public call's own process binds the ticket from them.
  */
-export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, submissions?: readonly unknown[]): Promise<void> {
+export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, submissions: readonly unknown[] | undefined,
+  note: (diagnostic: string) => Promise<void>): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
   let ticket: number | undefined;
   const asserted = (original: unknown) => {
@@ -1064,7 +1065,14 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
     // The host-return refresh already picked up a board declaration; reuse settlement's drafts.
     submissions.some(asserted);
   } else {
-    (await settlementRows(admitted)).some(row => row.role === admitted.role && asserted(readReceipt(row)));
+    // Old manuscripts are optional evidence for placement, not prerequisites to a reask.
+    const { rows, fault } = await settlementRows(admitted);
+    if (fault) await note(fault.message);
+    for (const row of rows) {
+      if (row.role !== admitted.role) continue;
+      try { if (asserted(readReceipt(row))) break; }
+      catch (error) { await note(describeErrorIdentity(error)); }
+    }
     ticket ??= await readBoardTicketNumber(admitted.runDirectory);
   }
   if (ticket !== undefined) await bindAdmittedTicketNumber(admitted, ticket);
@@ -1085,6 +1093,7 @@ export async function dispatchPostAdmissionTurn<
   persistRunState?: boolean;
   /** Call-owned delivery policy survives every failure-recovery dispatch. */
   receiptDelivery?: ReturnType<typeof createReceiptDeliveryPolicy>;
+  manualResume?: true;
 }): Promise<DispatchOutcomeFor<A, T>> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
   const persistRunState = input.persistRunState !== false;
@@ -1099,6 +1108,7 @@ export async function dispatchPostAdmissionTurn<
    */
   const courtScope = {
     ...settlementScopeForTurn(request),
+    resumedAttempt: undefined as SettlementCourtScope["resumedAttempt"],
     recordAttemptHistory: true as const,
     notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
       admitted,
@@ -1198,7 +1208,7 @@ export async function dispatchPostAdmissionTurn<
       // #863: shared post-admission bind must relocate unbound→ticket in-home
       // before lease release (work-seat self-report and any prior board bind).
       if (packagedBindsBoardTicket(admitted.role)) {
-        await bindDiaristBoardTicket(admitted, result.terminal ? result.terminal.submissions ?? [] : undefined);
+        await bindDiaristBoardTicket(admitted, result.terminal ? result.terminal.submissions ?? [] : undefined, courtScope.notePackageFault);
       }
       const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
       if (relocation !== undefined) {
@@ -1311,6 +1321,12 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     let hostTurnCompleted = false;
+    if (input.manualResume && !request.courtAttemptId) {
+      // Freeze the seal being resumed, not one a different invocation might publish during this turn.
+      const { rows, fault } = await settlementRows(admitted);
+      courtScope.resumedAttempt = fault ?? rows.find(row => row.latestSeal)?.attemptId;
+      if (fault) await courtScope.notePackageFault(fault.message);
+    }
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
       // host CLI's native resume. Nothing here may gate, redirect or reshape
@@ -2213,6 +2229,7 @@ export async function runPostAdmissionManualResume<
 
   const result = await dispatchPostAdmissionTurn({
     admitted,
+    manualResume: true,
     env: {
       ...env,
       ...(effectiveModel === undefined ? {} : { model: effectiveModel }),

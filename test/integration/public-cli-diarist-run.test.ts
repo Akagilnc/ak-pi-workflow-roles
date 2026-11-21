@@ -124,6 +124,8 @@ function diaristEnvelopeRunner(
     // #1183: mid-turn ticket relocate (bounds-reask identity) updates HostContext
     // like production report-ticket — session handles and env must follow.
     const ctx = {
+      invocationScopeId: options.env.AK_ROLE_INVOCATION_SCOPE,
+      courtAttemptId: options.env.AK_ROLE_COURT_ATTEMPT,
       get runDirectory() {
         return liveRunDirectory;
       },
