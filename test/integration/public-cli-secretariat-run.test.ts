@@ -512,7 +512,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
 }
 
 
-test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)", async () => {
+test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing parent receipt %i", async missing => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -583,20 +583,25 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     // #1201: the escalating officer is addressed by the ticket and seat its terminal names.
     assert.equal(result.terminal.ticket, 924);
     const lostChild = result.terminal.receipts![0]!.receipt;
-    const lostParent = join(parentDirectory, "receipts/1.json");
-    await Promise.all([rm(lostChild), rm(lostParent)]);
+    const lostParent = join(parentDirectory, `receipts/${missing}.json`);
+    await Promise.all([rm(lostChild), rm(lostParent), rm(join(parentDirectory, "current.json"))]);
     const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
-    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.exitCode, missing === 1 ? 0 : 1);
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
+    assert.deepEqual(resumed.terminal.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lostParent, "ENOENT"]]);
+    if (missing === 2) {
+      assert.equal(resumed.terminal.roleOutcome.kind, "failure");
+      assert.deepEqual(resumed.terminal.submissions, [{ status: "converged", ticketNumber: 924, draft: 1 }]);
+      return;
+    }
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal.roleOutcome.payloads, [{ status: "converged", ticketNumber: 924, draft: 2 }]);
     assert.deepEqual(resumed.terminal.submissions, resumed.terminal.roleOutcome.payloads);
-    assert.deepEqual(resumed.terminal.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lostParent, "ENOENT"]]);
     // #1200: each gate officer's row names the round it was summoned for. The
     // ruling resumed 给事中 directly, so its third row keeps that round; 符宝郎
     // names the 给事中 round the gate handed it.

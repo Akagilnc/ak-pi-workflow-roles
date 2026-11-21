@@ -937,8 +937,8 @@ async function settleCompletedHostTurn<
   } catch (error) {
     if (error instanceof ReceiptReadError && processCancelSignalName(env.signal) === undefined) {
       const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
-        timedOut: false, code: result.code, stderr: result.stderr, thrown: error.cause,
-        knownDiagnostic: error.message, ...(error.history ? { receiptHistory: error.history } : {}),
+        timedOut: false, code: result.code, stderr: result.stderr, thrown: error,
+        ...(error.history ? { receiptHistory: error.history } : {}),
       }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState,
       courtScope.notePackageFault, courtScope.courtAttemptId);
       return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
@@ -1993,16 +1993,7 @@ export async function runPostAdmissionSeatResume<
     return resumed;
   } catch (error) {
     if (error instanceof TurnDispatchedFailure) throw error;
-    await presentResumeFailurePointer(
-      input.io,
-      error,
-      (failure) => writeResumeDiagnostic(
-        loaded.admitted.runDirectory,
-        loaded.admitted.runId,
-        failure,
-        loaded.admitted.role,
-      ),
-    );
+    presentResumeFailurePointer(loaded.admitted, input.io, error);
     return { exitCode: error instanceof CliUsageError ? 2 : 1 };
   }
 }
@@ -2028,15 +2019,11 @@ async function pointExistingRunFailure(
   try {
     record = await readRoleRunState(runDirectory, authority);
   } catch {
-    await presentResumeFailurePointer(io, thrown, (failure) =>
-      writeResumeDiagnostic(runDirectory, runId, failure),
-    );
+    presentResumeFailurePointer({ runDirectory, runId }, io, thrown);
     return true;
   }
   if (record === undefined) return false;
-  await presentResumeFailurePointer(io, thrown, (failure) =>
-    writeResumeDiagnostic(runDirectory, runId, failure, record.role),
-  );
+  presentResumeFailurePointer(record, io, thrown);
   return true;
 }
 
@@ -2065,11 +2052,11 @@ export function showResumeErrorPointer(
   if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
 }
 
-async function presentResumeFailurePointer(
+export function presentResumeFailurePointer(
+  { runDirectory, runId, role }: { runDirectory: string; runId: string; role?: AdmittedRoleInvocation["role"] },
   io: CliIo,
   thrown: unknown,
-  publish: (failure: ControlledFailure) => Promise<string>,
-): Promise<void> {
+): ControlledFailure {
   const failure = classifyPostAdmissionFailure({
     timedOut: false,
     code: null,
@@ -2077,8 +2064,10 @@ async function presentResumeFailurePointer(
     thrown,
   });
   try {
-    writeResumeFailurePointer(io, await publish(failure));
-    if (thrown instanceof ReceiptReadError) io.stderr(formatCliDiagnostic(thrown.message));
+    const { diagnostic, cause, identity, details } = failure;
+    writeResumeFailurePointer(io, reportRunRecord(runDirectory, "resume-diagnostic", {
+      runId, role, diagnostic, cause, identity, details,
+    }, "post-admission").recordFile);
   } catch (publishError) {
     const cause: { thrownCause?: string; publishError: string } = {
       publishError: formatErrorCauseDetail(publishError),
@@ -2091,22 +2080,7 @@ async function presentResumeFailurePointer(
       cause,
     }, io);
   }
-}
-
-async function writeResumeDiagnostic(
-  runDirectory: string,
-  runId: string,
-  failure: ControlledFailure,
-  role?: AdmittedRoleInvocation["role"],
-): Promise<string> {
-  return reportRunRecord(runDirectory, "resume-diagnostic", {
-    runId,
-    ...(role === undefined ? {} : { role }),
-    diagnostic: failure.diagnostic,
-    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-    ...(failure.details === undefined ? {} : { details: failure.details }),
-  }, "post-admission").recordFile;
+  return failure;
 }
 
 /**

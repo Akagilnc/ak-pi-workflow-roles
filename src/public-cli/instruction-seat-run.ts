@@ -16,8 +16,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readSectionSync } from "../run-dossier.ts";
-import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows, ReceiptReadError } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   latestQueuePayload,
@@ -61,6 +60,7 @@ import {
 import {
   bindDiaristAssertedTicketNumber,
   presentControlledFailure,
+  presentResumeFailurePointer,
   packageFaultNoteFor,
   prepareSummonsResumeMaterials,
   roleTurnOptions,
@@ -88,6 +88,7 @@ import {
   readBoundSessionEntries,
   retainPackageFault,
   preparePublicSeat,
+  settleFailureTerminalResult,
   trySettlePublicSeat,
   type SettlementCourtScope,
 } from "./settlement.ts";
@@ -110,7 +111,7 @@ import {
   type CountersignRunEnv,
 } from "./countersign-run.ts";
 import { readAuditedRound } from "../ticket-progress.ts";
-import { errorText, isRecord } from "../unknown-value.ts";
+import { errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
@@ -330,7 +331,7 @@ async function presentAuditedOriginalOfOfficer(
     parent.admitted,
     env.principalAuthority,
     {
-      ...(sealId === undefined ? await readCurrentCourt(parent.admitted.runDirectory) : { sealedToolCallId: sealId }),
+      ...(sealId === undefined ? await readCurrentCourt(parent.admitted.runDirectory) : { seal: { toolCallId: sealId } }),
       previewOnly: true,
       ...packageFaultScope(parent.admitted, env, io),
     },
@@ -1508,12 +1509,19 @@ export async function continueParentAfterChild(
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
       // Recover the parent's own seal, not the seal a possibly stale child reviewed.
       const court = await readCurrentCourt(admitted.runDirectory);
-      const latest = court ? undefined : readSectionSync(admitted.runDirectory, "submission")?.latest;
-      const binding = court ?? (isRecord(latest) && typeof latest.toolCallId === "string"
-        ? { sealedToolCallId: latest.toolCallId } : undefined);
-      const terminal = binding && await trySettlePublicSeat(
-        admitted, env.principalAuthority, { ...binding, ...packageFaultScope(admitted, env, io) },
-      );
+      let terminal: TerminalResult | undefined;
+      try {
+        terminal = await trySettlePublicSeat(admitted, env.principalAuthority, {
+          ...(court ?? { seal: "latest" }), ...packageFaultScope(admitted, env, io),
+        });
+      } catch (error) {
+        if (!(error instanceof ReceiptReadError)) throw error;
+        // No new parent turn: record the resume fault, not another host attempt.
+        const failure = presentResumeFailurePointer(admitted, io, error);
+        terminal = { ...await settleFailureTerminalResult(admitted, failure, env.principalAuthority, { previewOnly: true }), ...error.history };
+        await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
+        return { exitCode: 1, admitted, terminal };
+      }
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       // Live child only when admitted-request.auditedSubmissionToolCallId matches
       // the parent seal under audit (#1195 option 1 / owner 00644146).

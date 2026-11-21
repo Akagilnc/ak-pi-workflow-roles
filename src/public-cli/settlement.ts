@@ -79,7 +79,7 @@ export type SettlementCourtScope = {
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
-  readonly sealedToolCallId?: string;
+  readonly seal?: "latest" | { readonly toolCallId: string };
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -577,6 +577,8 @@ function isTypedActivationError(
  * Aggregate shells and their direct children remain distinct facts.
  */
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
+  // The readable manuscripts belong on the terminal, never in a serialized exception.
+  if (error instanceof ReceiptReadError) return { ...projectThrownFailureLeaf(error.cause), diagnostic: error.message };
   const originalDetails = error !== null && typeof error === "object"
     ? (error as { details?: Readonly<Record<string, unknown>> }).details
     : undefined;
@@ -1310,9 +1312,10 @@ export async function preparePublicSeat(
 ): Promise<PreparedSeat | { rows: readonly RecordedSubmissionRow[] }> {
   const rows = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
-  const sealId = scope?.sealedToolCallId;
-  if (sealId !== undefined) {
-    const seal = accepted.filter(row => row.toolCallId === sealId).at(-1);
+  const binding = scope?.seal;
+  const seal = binding === "latest" ? accepted.find(row => row.latestSeal)
+    : binding && accepted.filter(row => row.toolCallId === binding.toolCallId).at(-1);
+  if (binding) {
     if (!seal?.attemptId) return { rows };
     scope = { ...scope, courtAttemptId: seal.attemptId };
   }
@@ -1324,7 +1327,7 @@ export async function preparePublicSeat(
   if (!current.length) return { rows };
   const { payloads, history } = projectOriginals(rows, new Set(current));
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
-  const submissionToolCallId = sealId ?? current.at(-1)?.toolCallId;
+  const submissionToolCallId = seal?.toolCallId ?? current.at(-1)?.toolCallId;
   const filed = current.map(({ receipt, round }) => ({ receipt, ...(round === undefined ? {} : { round }) }));
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const read = await readLawfulSettlementEntries(coordinates.sessionFile);

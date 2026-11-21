@@ -30,6 +30,7 @@ export type RecordedSubmissionRow = {
   readonly receipt: string;
   readonly round?: string;
   readonly attemptId?: string;
+  readonly latestSeal?: true;
 };
 export type ClosedSubmission = {
   readonly role: TerminalRoleName;
@@ -70,9 +71,12 @@ export async function readRecordedSubmissionRows(
   } catch (error) {
     process.stderr.write(`receipt directory listing failed: ${errorText(error)}\n`);
   }
+  // Journal order names the last seal; receipt numbering only orders arrivals.
+  let latestSeal: string | undefined;
   for (const { kind, subject, payload } of (await readSitianRecords(recordFile)).records) {
     if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
     const { receipt } = payload;
+    if (kind === "sealed") latestSeal = receipt;
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string" && payload.round !== "") {
       rounds.set(receipt, payload.round);
     }
@@ -83,7 +87,7 @@ export async function readRecordedSubmissionRows(
   }
   return [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
     const round = rounds.get(receipt);
-    return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round === undefined ? {} : { round }) };
+    return { ...fact, ...(receipt === latestSeal && { latestSeal: true as const }), receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round === undefined ? {} : { round }) };
   });
 }
 
