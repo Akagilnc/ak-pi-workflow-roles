@@ -327,16 +327,11 @@ async function presentAuditedOriginalOfOfficer(
   // reviews (#1195 binding), not the parent's current court, which may be a later empty
   // court. Preview only: presenting the original never rewrites the parent's terminal.
   const sealId = readAdmittedAuditedSubmissionToolCallId(officer.runDirectory);
-  const terminal = await trySettlePublicSeat(
-    parent.admitted,
-    env.principalAuthority,
-    {
-      ...(sealId === undefined ? await readCurrentCourt(parent.admitted.runDirectory) : { seal: { toolCallId: sealId } }),
-      previewOnly: true,
-      ...packageFaultScope(parent.admitted, env, io),
-    },
-  );
-  if (terminal?.roleOutcome.kind !== "accepted") return;
+  const terminal = await recoverSeatTerminal(parent.admitted, env, io, {
+    ...(sealId === undefined ? {} : { seal: { toolCallId: sealId } }),
+    previewOnly: true,
+  });
+  if (!terminal) return;
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory);
 }
 
@@ -574,12 +569,19 @@ async function bindAndRelocateDiarist(
   return await relocateAdmittedRunToTicket(admitted, authority, lease);
 }
 
-function packageFaultScope(
-  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-): SettlementCourtScope {
-  return { notePackageFault: packageFaultNoteFor(admitted, env, io) };
+/** Restore this leg's volume, including a read failure. The caller decides whose result to return. */
+async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: InstructionSeatRunEnv, io: CliIo,
+  review?: Pick<SettlementCourtScope, "seal" | "previewOnly">): Promise<TerminalResult | undefined> {
+  const binding = review?.seal ? review : await readCurrentCourt(admitted.runDirectory) ?? { seal: "latest" as const };
+  const scope = { ...binding, ...review, notePackageFault: packageFaultNoteFor(admitted, env, io) };
+  try {
+    return await trySettlePublicSeat(admitted, env.principalAuthority, scope);
+  } catch (error) {
+    if (!(error instanceof ReceiptReadError)) throw error;
+    // Record the fault on the leg whose file was read; recovery is not a new host attempt.
+    const failure = presentResumeFailurePointer(admitted, io, error);
+    return { ...await settleFailureTerminalResult(admitted, failure, env.principalAuthority, { ...scope, previewOnly: true }), ...error.history };
+  }
 }
 
 function seatAdapters(
@@ -1508,17 +1510,8 @@ export async function continueParentAfterChild(
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
       // Recover the parent's own seal, not the seal a possibly stale child reviewed.
-      const court = await readCurrentCourt(admitted.runDirectory);
-      let terminal: TerminalResult | undefined;
-      try {
-        terminal = await trySettlePublicSeat(admitted, env.principalAuthority, {
-          ...(court ?? { seal: "latest" }), ...packageFaultScope(admitted, env, io),
-        });
-      } catch (error) {
-        if (!(error instanceof ReceiptReadError)) throw error;
-        // No new parent turn: record the resume fault, not another host attempt.
-        const failure = presentResumeFailurePointer(admitted, io, error);
-        terminal = { ...await settleFailureTerminalResult(admitted, failure, env.principalAuthority, { previewOnly: true }), ...error.history };
+      const terminal = await recoverSeatTerminal(admitted, env, io);
+      if (terminal?.roleOutcome.kind === "failure") {
         await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
         return { exitCode: 1, admitted, terminal };
       }
@@ -1887,14 +1880,7 @@ async function auditSubmittedRole(
       );
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      let terminal = escalation?.terminal;
-      if (terminal === undefined) {
-        terminal = await trySettlePublicSeat(
-          officer.admitted,
-          env.principalAuthority,
-          { ...await readCurrentCourt(officer.admitted.runDirectory), ...packageFaultScope(officer.admitted, env, io) },
-        );
-      }
+      const terminal = escalation?.terminal ?? await recoverSeatTerminal(officer.admitted, env, io);
       if (terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
@@ -1904,7 +1890,7 @@ async function auditSubmittedRole(
         );
       }
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.admitted.runDirectory);
-      return { exitCode: 0, admitted: officer.admitted, terminal };
+      return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer.admitted, terminal };
     }
     if (chain.status === "continue") {
       return runPublicInstructionSeatResume({

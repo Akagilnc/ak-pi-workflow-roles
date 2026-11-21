@@ -435,24 +435,30 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
+test.each(["undecidable", "host failure"])("#1214 R2b: auditor resume keeps its %s result when the audited original is missing", async mode => {
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "notary") return officer("notary", { status: "converged", mark: 2 })(args, options);
     if (role === "auditor") {
       auditorCalls += 1;
+      if (auditorCalls > 1 && mode === "host failure") return { code: 1, stderr: "genuine officer host failure", timedOut: false };
       return officer("auditor", auditorCalls === 1
         ? { status: "escalate", mark: 4 }
         : { status: "undecidable", mark: 6 })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
+    await rm(join(observed.parentRunDirectory, "receipts/2.json"));
     const continued = await observed.resume(RULING);
-    assert.equal(continued.exitCode, 0);
     assert.equal(continued.terminal?.roleOutcome.role, "auditor");
-    assert.equal(continued.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true);
-  });
+    assert.equal(continued.exitCode, mode === "undecidable" ? 0 : 1);
+    if (mode === "undecidable") assert.equal(continued.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
+    else assert.equal(continued.terminal.roleOutcome.kind, "failure");
+    assert.deepEqual(continued.terminal.receiptErrors ?? [], []);
+    assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
+      [["judge", { name: "Error", code: "ENOENT" }]]);
+  }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
 test("#1057/#1214 A5/F1: gate host failure presents parent original and officer scene; does not forge pass", async () => {
