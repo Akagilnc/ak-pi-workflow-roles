@@ -87,15 +87,6 @@ export async function readRecordedSubmissionRows(
   });
 }
 
-export async function readSubmissionAttemptId(cwd: string, runId: string, toolCallId: string, scope?: SubmissionLedgerReadScope): Promise<string | undefined> {
-  const rows = await readRecordedSubmissionRows(cwd, runId, scope);
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i]!;
-    if (row.kind === "accepted" && row.toolCallId === toolCallId) return row.attemptId;
-  }
-  return undefined;
-}
-
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {
   try { return JSON.parse(exactUtf8(readFileSync(path), "receipt")); }
   catch (error) { throw new ReceiptReadError(path, error); }

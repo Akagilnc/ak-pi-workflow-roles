@@ -6,7 +6,7 @@
  */
 import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 
@@ -48,6 +48,7 @@ import {
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
+import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withOutsideTempRoot, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -278,6 +279,11 @@ function nestedCountersignHost(input: {
         toolName: "ak_submission_output",
         details: step.details,
       })(args, options);
+      if (!options.env.AK_ROLE_COURT_ATTEMPT && step.notaryEscalation === undefined) {
+        submitInPiChild(options.cwd, options.env, "countersign", [step.details]);
+        const { sealedAcceptance: _, ...result } = scripted;
+        return result;
+      }
       return step.notaryEscalation === undefined ? scripted : {
         ...scripted,
         sealedAcceptance: { role: "countersign", details: step.details, outputDetails: executed.details },
@@ -520,6 +526,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls,
       submissionGateHost: "codex",
       countersignSequence: [
+        { details: { status: "continue", note: "先补正", ticketNumber: 924 } },
         {
           details: {
             status: "escalate",
@@ -533,10 +540,8 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
         { details: { status: "converged", note: "署", ticketNumber: 924} },
       ],
       steps: [
-        {
-          kind: "output",
-          details: { status: "converged", ticketNumber: 924 },
-        },
+        { kind: "output", details: { status: "converged", ticketNumber: 924, draft: 1 } },
+        { kind: "output", details: { status: "converged", ticketNumber: 924, draft: 2 } },
       ],
     });
     const result = await runAkRole(
@@ -577,16 +582,23 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     );
     // #1201: the escalating officer is addressed by the ticket and seat its terminal names.
     assert.equal(result.terminal.ticket, 924);
+    const lostChild = result.terminal.receipts![0]!.receipt;
+    const lostParent = join(parentDirectory, "receipts/1.json");
+    await Promise.all([rm(lostChild), rm(lostParent)]);
     const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
+    assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(resumed.terminal.roleOutcome.payloads, [{ status: "converged", ticketNumber: 924, draft: 2 }]);
+    assert.deepEqual(resumed.terminal.submissions, resumed.terminal.roleOutcome.payloads);
+    assert.deepEqual(resumed.terminal.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lostParent, "ENOENT"]]);
     // #1200: each gate officer's row names the round it was summoned for. The
-    // ruling resumed 给事中 directly, so its second row keeps that round; 符宝郎
+    // ruling resumed 给事中 directly, so its third row keeps that round; 符宝郎
     // names the 给事中 round the gate handed it.
     assert.deepEqual(
       readTicketProgressLines(join(home, ".ak-roles", "books", "project", "924"))
@@ -595,8 +607,11 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
         ["diarist", "1", undefined],
         ["secretariat", "1", undefined],
         ["countersign", "1", "secretariat#1"],
-        ["countersign", "2", "secretariat#1"],
-        ["notary", "1", "countersign#2"],
+        ["notary", "1", "countersign#1"],
+        ["secretariat", "2", undefined],
+        ["countersign", "2", "secretariat#2"],
+        ["countersign", "3", "secretariat#2"],
+        ["notary", "2", "countersign#3"],
       ],
     );
   });

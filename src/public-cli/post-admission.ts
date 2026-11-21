@@ -2078,6 +2078,7 @@ async function presentResumeFailurePointer(
   });
   try {
     writeResumeFailurePointer(io, await publish(failure));
+    if (thrown instanceof ReceiptReadError) io.stderr(formatCliDiagnostic(thrown.message));
   } catch (publishError) {
     const cause: { thrownCause?: string; publishError: string } = {
       publishError: formatErrorCauseDetail(publishError),

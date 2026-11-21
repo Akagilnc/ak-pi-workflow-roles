@@ -16,7 +16,8 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readReceipt, readRecordedSubmissionRows, readSubmissionAttemptId } from "../submission-ledger.ts";
+import { readSectionSync } from "../run-dossier.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   latestQueuePayload,
@@ -109,7 +110,7 @@ import {
   type CountersignRunEnv,
 } from "./countersign-run.ts";
 import { readAuditedRound } from "../ticket-progress.ts";
-import { errorText } from "../unknown-value.ts";
+import { errorText, isRecord } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
@@ -325,20 +326,11 @@ async function presentAuditedOriginalOfOfficer(
   // reviews (#1195 binding), not the parent's current court, which may be a later empty
   // court. Preview only: presenting the original never rewrites the parent's terminal.
   const sealId = readAdmittedAuditedSubmissionToolCallId(officer.runDirectory);
-  const courtAttemptId = sealId === undefined
-    ? (await readCurrentCourt(parent.admitted.runDirectory))?.courtAttemptId
-    : await readSubmissionAttemptId(
-      parent.admitted.projectRoot,
-      parent.admitted.runId,
-      sealId,
-      ledgerReadScope(parent.admitted),
-    );
-  if (sealId !== undefined && courtAttemptId === undefined) return;
   const terminal = await trySettlePublicSeat(
     parent.admitted,
     env.principalAuthority,
     {
-      ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+      ...(sealId === undefined ? await readCurrentCourt(parent.admitted.runDirectory) : { sealedToolCallId: sealId }),
       previewOnly: true,
       ...packageFaultScope(parent.admitted, env, io),
     },
@@ -1422,6 +1414,7 @@ const GATE_CHILD_ROLES = new Set(["notary", "auditor", "inspector", "countersign
  */
 async function queueConclusionFromChild(
   child: AdmittedRoleInvocation,
+  terminal: TerminalResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<
@@ -1430,17 +1423,6 @@ async function queueConclusionFromChild(
   | undefined
 > {
   if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
-  if (child.role === "countersign") {
-    const terminal = await trySettlePublicSeat(
-      child, env.principalAuthority, { ...await readCurrentCourt(child.runDirectory), ...packageFaultScope(child, env, io) },
-    );
-    const status = latestQueueStatus(terminal);
-    if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
-      return { admitted: child, terminal, status };
-    }
-    return { stop: { exitCode: 0, admitted: child, ...(terminal === undefined ? {} : { terminal }) } };
-  }
-  let current: AdmittedRoleInvocation = child;
   // #1208: review-queue gate children also have seat-local
   // POST_SUBMISSION_ROUTING. This parent-side loop remains the
   // gate/correlation budget; nestedIncomplete from an exhausted seat-local
@@ -1449,20 +1431,14 @@ async function queueConclusionFromChild(
   // stay separate.
   let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
   for (;;) {
-    const terminal = await trySettlePublicSeat(
-      current,
-      env.principalAuthority,
-      { ...await readCurrentCourt(current.runDirectory), ...packageFaultScope(current, env, io) },
-    );
     const status = latestQueueStatus(terminal);
-    if (terminal !== undefined && typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) {
-      return { admitted: current, terminal, status };
-    }
+    if (typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) return { admitted: child, terminal, status };
+    if (child.role === "countersign") return { stop: { exitCode: 0, admitted: child, terminal } };
     const reasked = await reaskUnreadablePostSubmissionStatus(
-      current, terminal, budgetEnv, io, officerConclusionReask(status),
+      child, terminal, budgetEnv, io, officerConclusionReask(status),
     );
     if (reasked === undefined || isUnreadableReaskExhausted(reasked)) {
-      return { stop: { exitCode: 0, admitted: current, ...(terminal === undefined ? {} : { terminal }) } };
+      return { stop: { exitCode: 0, admitted: child, terminal } };
     }
     budgetEnv = withUnreadableReask(budgetEnv)!;
     if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined
@@ -1470,12 +1446,8 @@ async function queueConclusionFromChild(
       || reasked.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true) {
       return { stop: reasked };
     }
-    const reaskedStatus = latestQueueStatus(reasked.terminal);
-    if (typeof reaskedStatus === "string" && REVIEW_QUEUE_STATUSES.has(reaskedStatus)) {
-      return { admitted: reasked.admitted, terminal: reasked.terminal, status: reaskedStatus };
-    }
-    if (latestPayloadEscalated(reasked.terminal.roleOutcome)) return { stop: reasked };
-    current = reasked.admitted;
+    child = reasked.admitted;
+    terminal = reasked.terminal;
   }
 }
 
@@ -1483,6 +1455,7 @@ async function queueConclusionFromChild(
 export async function continueParentAfterChild(
   parentRunId: string,
   child: AdmittedRoleInvocation,
+  childTerminal: TerminalResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
@@ -1504,7 +1477,7 @@ export async function continueParentAfterChild(
     );
   }
   const admitted = loaded.admitted;
-  const resolved = await queueConclusionFromChild(child, env, io);
+  const resolved = await queueConclusionFromChild(child, childTerminal, env, io);
   if (resolved !== undefined && "stop" in resolved) {
     const stopped = resolved.stop;
     // #1214 R2: the child's audited original stays visible when the child leaves the verdict unsettled.
@@ -1533,10 +1506,13 @@ export async function continueParentAfterChild(
   }
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
-      const terminal = await trySettlePublicSeat(
-        admitted,
-        env.principalAuthority,
-        { ...await readCurrentCourt(admitted.runDirectory), ...packageFaultScope(admitted, env, io) },
+      // Recover the parent's own seal, not the seal a possibly stale child reviewed.
+      const court = await readCurrentCourt(admitted.runDirectory);
+      const latest = court ? undefined : readSectionSync(admitted.runDirectory, "submission")?.latest;
+      const binding = court ?? (isRecord(latest) && typeof latest.toolCallId === "string"
+        ? { sealedToolCallId: latest.toolCallId } : undefined);
+      const terminal = binding && await trySettlePublicSeat(
+        admitted, env.principalAuthority, { ...binding, ...packageFaultScope(admitted, env, io) },
       );
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       // Live child only when admitted-request.auditedSubmissionToolCallId matches

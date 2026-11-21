@@ -1284,7 +1284,7 @@ export async function runAkRole(
           seat: parentSeat,
           config: parts.config,
         });
-        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
+        current = await continueParentAfterChild(parentRunId, current.admitted, current.terminal, parentEnv, io);
       }
       return cliResultFromRoleRun(current);
     }

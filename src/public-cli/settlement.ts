@@ -78,6 +78,8 @@ export type SettlementCourtScope = {
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
+  /** Recover the court of an already sealed submission. */
+  readonly sealedToolCallId?: string;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -1307,16 +1309,22 @@ export async function preparePublicSeat(
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | { rows: readonly RecordedSubmissionRow[] }> {
   const rows = await settlementRows(admitted);
+  const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
+  const sealId = scope?.sealedToolCallId;
+  if (sealId !== undefined) {
+    const seal = accepted.filter(row => row.toolCallId === sealId).at(-1);
+    if (!seal?.attemptId) return { rows };
+    scope = { ...scope, courtAttemptId: seal.attemptId };
+  }
   // Bare resume is not a new court. If it submitted, its invocation identifies
   // those calls; a bare continuation with no submission still re-presents the ledger.
   const attempt = scope?.courtAttemptId ?? (scope?.invocationScopeId && rows.some(row => row.attemptId === scope.invocationScopeId)
     ? scope.invocationScopeId : undefined);
-  const current = rows.filter(row => row.role === admitted.role && row.kind === "accepted"
-    && (!attempt || row.attemptId === attempt));
+  const current = attempt ? accepted.filter(row => row.attemptId === attempt) : accepted;
   if (!current.length) return { rows };
   const { payloads, history } = projectOriginals(rows, new Set(current));
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
-  const submissionToolCallId = current.at(-1)?.toolCallId;
+  const submissionToolCallId = sealId ?? current.at(-1)?.toolCallId;
   const filed = current.map(({ receipt, round }) => ({ receipt, ...(round === undefined ? {} : { round }) }));
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const read = await readLawfulSettlementEntries(coordinates.sessionFile);
