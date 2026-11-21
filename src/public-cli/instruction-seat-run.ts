@@ -469,10 +469,11 @@ async function loadLedgerPeerBody(
   // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
   // present the latest row as-is. Never filter current manuscript by accepted /
   // terminal outcome kind (that resurrects a prior sealed draft).
-  if (fault) throw fault.cause;
+  if (fault) throw new Error(fault.diagnostic, { cause: fault.cause });
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
-  return readableGateItem(readReceipt(latest));
+  try { return readableGateItem(readReceipt(latest)); }
+  catch (cause) { throw new Error(latest.path, { cause }); }
 }
 
 /** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */

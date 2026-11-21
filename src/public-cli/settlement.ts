@@ -80,8 +80,8 @@ export type SettlementCourtScope = {
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
   readonly seal?: "latest" | { readonly for?: string; readonly receipt?: string };
-  /** Court already sealed when a bare continuation entered the host. */
-  readonly resumedAttempt?: string | LedgerFault | undefined;
+  /** Before a bare dispatch: the seal to replay and originals already lacking a court. */
+  readonly beforeResume?: { readonly lastCourt: string | LedgerFault | undefined; readonly unassigned: ReadonlySet<string> } | undefined;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -169,15 +169,6 @@ export async function noteSettlementFault(
   await retainPackageFault({ runDirectory, diagnostic });
 }
 
-export function ledgerReadScope(
-  admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
-): { home: string; sessionParent: string } {
-  return {
-    home: homeFromRunDirectory(admitted.runDirectory),
-    sessionParent: sessionFileOf(admitted.runDirectory),
-  };
-}
-
 /** Receipt reference and round as the progress row carries them. */
 type FiledReceipt = { readonly receipt: string; readonly round?: string };
 
@@ -203,7 +194,9 @@ export function filedIdentity(
 }
 
 export function settlementRows(admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">) {
-  return readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted));
+  return readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, {
+    home: homeFromRunDirectory(admitted.runDirectory), sessionParent: sessionFileOf(admitted.runDirectory),
+  });
 }
 
 function projectOriginals(rows: readonly RecordedSubmissionRow[], current?: ReadonlySet<RecordedSubmissionRow>) {
@@ -1322,7 +1315,11 @@ export async function preparePublicSeat(
   const { rows, fault, malformed, lastCourt } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
   let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
-  const resumed = scope?.resumedAttempt && !rows.some(row => row.attemptId === attempt) ? scope.resumedAttempt : undefined;
+  const before = scope?.beforeResume;
+  // An arrival not yet journalled could belong to this call or another one. It proves neither silence nor acceptance.
+  const unassigned = before && rows.filter(row => row.attemptId === undefined && !before.unassigned.has(row.receipt));
+  if (unassigned?.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${unassigned.map(row => row.path).join(", ")}`);
+  const resumed = before && !unassigned?.length && !rows.some(row => row.attemptId === attempt) ? before.lastCourt : undefined;
   const binding = scope?.seal;
   const pin = binding === "latest" ? undefined : binding;
   const seal = pin && accepted.find(row => matchesAuditedSeal(pin, admitted.role, row));

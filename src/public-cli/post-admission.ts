@@ -1109,7 +1109,7 @@ export async function dispatchPostAdmissionTurn<
    */
   const courtScope = {
     ...settlementScopeForTurn(request),
-    resumedAttempt: undefined as SettlementCourtScope["resumedAttempt"],
+    beforeResume: undefined as SettlementCourtScope["beforeResume"],
     recordAttemptHistory: true as const,
     notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
       admitted,
@@ -1323,9 +1323,9 @@ export async function dispatchPostAdmissionTurn<
     let result: RoleTurnResult;
     let hostTurnCompleted = false;
     if (input.manualResume && !request.courtAttemptId) {
-      // Freeze the seal being resumed, not one a different invocation might publish during this turn.
-      courtScope.resumedAttempt = (await settlementRows(admitted)).lastCourt;
-      if (typeof courtScope.resumedAttempt === "object") await courtScope.notePackageFault(courtScope.resumedAttempt.diagnostic);
+      const { lastCourt, rows } = await settlementRows(admitted);
+      courtScope.beforeResume = { lastCourt, unassigned: new Set(rows.filter(row => row.attemptId === undefined).map(row => row.receipt)) };
+      if (typeof lastCourt === "object") await courtScope.notePackageFault(lastCourt.diagnostic);
     }
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
