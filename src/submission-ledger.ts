@@ -61,20 +61,20 @@ export async function readRecordedSubmissionRows(
     subject: { runId }, cwd, sessionParent: parent }, resolveActivationLedgerHome(scope.home));
   const facts = new Map<string, Omit<RecordedSubmissionRow, "path" | "receipt">>();
   const publications = new Map<string, { round: string; index: number }>();
-  // Directory discovery recovers unjournalled arrivals. If listing fails, the
-  // named originals can still be opened: diagnose discovery, not a false empty court.
-  let discoveryFault: LedgerFault | undefined;
-  try {
-    for (const receipt of legReceiptReferences(sessionDir)) facts.set(receipt, { kind: "candidate" });
-  } catch (cause) {
-    discoveryFault = { diagnostic: `${join(sessionDir, "receipts")}: ${errorText(cause)}`, cause };
-  }
   // Choose the replay court by journal order, never by receipt number.
   let lastCourt: string | LedgerFault | undefined;
   let journal;
   let fault: LedgerFault | undefined;
   try { journal = await readSitianRecords(recordFile); }
   catch (cause) { fault = { diagnostic: `${recordFile}: ${errorText(cause)}`, cause }; }
+  // A seal implies its original has arrived. Discover files after reading the
+  // journal, then overlay its dispositions on these unjournalled candidates.
+  let discoveryFault: LedgerFault | undefined;
+  try {
+    for (const receipt of legReceiptReferences(sessionDir)) facts.set(receipt, { kind: "candidate" });
+  } catch (cause) {
+    discoveryFault = { diagnostic: `${join(sessionDir, "receipts")}: ${errorText(cause)}`, cause };
+  }
   const reasons = journal?.diagnostics.map(d => `line ${d.line}: ${d.error}`).join("; ");
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;

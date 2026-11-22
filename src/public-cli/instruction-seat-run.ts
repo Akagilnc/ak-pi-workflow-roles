@@ -1474,7 +1474,7 @@ function liveChildForCurrentParentSeal(
   if (receipt === undefined) return undefined;
   const parent = parentTerminal.receipts?.at(-1);
   const pin = readAdmittedAuditedSeal(child.runDirectory);
-  if (!parent || !matchesAuditedSeal(pin, parentTerminal.roleOutcome.role, parent)) return undefined;
+  if (!parent || !matchesAuditedSeal(pin, parent)) return undefined;
   return { officer: child, receipt };
 }
 

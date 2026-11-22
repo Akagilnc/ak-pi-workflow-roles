@@ -125,7 +125,9 @@ async function legCount(home: string): Promise<number> {
 
 test("#1201 resume <ticket> <seat> continues the seat's session; the terminal names ticket, round and receipt", async () => {
   await withTicketProject(async ({ ticketDirectory, turns, call }) => {
-    const first = await call(["judge", "--model", SEAT_MODEL, "review"], () => ruling({ note: "one" }));
+    const one = ruling({ note: "one" });
+    const two = ruling({ note: "two" });
+    const first = await call(["judge", "--model", SEAT_MODEL, "review"], () => one);
     assert.equal(first.exitCode, 0);
     const firstRow = seatRows(ticketDirectory, "judge").at(-1)!;
     assert.equal(firstRow.round, "1");
@@ -141,15 +143,15 @@ test("#1201 resume <ticket> <seat> continues the seat's session; the terminal na
     }
 
     // Bare number: the same leg; its next accepted receipt is the next round.
-    const second = await call(["resume", String(TICKET), "judge"], () => ruling({ note: "two" }));
+    const second = await call(["resume", String(TICKET), "judge"], () => two);
     assert.equal(second.exitCode, 0);
     assert.equal(turns.at(-1)?.leg, turns[0]?.leg);
-    assert.deepEqual(seatRows(ticketDirectory, "judge").map((row) => row.round), ["1", "2"]);
-    // Each submission the terminal presents reports its own round and receipt.
-    assert.deepEqual(
-      second.terminal?.receipts?.map((filed) => [filed.round, relative(ticketDirectory, filed.receipt)]),
-      seatRows(ticketDirectory, "judge").map((row) => [row.round, row.receipt]),
-    );
+    const rows = seatRows(ticketDirectory, "judge");
+    assert.deepEqual(rows.map((row) => row.round), ["1", "2"]);
+    assert.equal(second.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(second.terminal.roleOutcome.payloads, [two]);
+    assert.deepEqual(second.terminal.receipts, [{ round: "2", receipt: join(ticketDirectory, rows[1]!.receipt) }]);
+    assert.deepEqual(second.terminal.submissions, [one, two]);
 
     // A quoted `#N` is the same ticket.
     const before = turns.length;

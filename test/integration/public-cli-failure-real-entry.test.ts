@@ -598,7 +598,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
     let config = { seats: {} };
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
-    await savePublicCliConfig(config, home);
+    await savePublicCliConfig({ ...config, autoResumeLimit: 0 }, home);
     const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {

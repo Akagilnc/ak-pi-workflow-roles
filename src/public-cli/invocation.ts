@@ -522,11 +522,10 @@ export function persistAdmittedAuditedLeg(
   });
 }
 
-/** Gate admissions name the original directly; direct summons may name only its public round. */
+/** Only an admission for a specific original can attest which submission was audited. */
 export function readAdmittedAuditedSeal(runDirectory: string) {
   const page = readPageSync(runDirectory, "admitted");
-  return typeof page?.auditedReceipt === "string" ? { receipt: page.auditedReceipt }
-    : typeof page?.for === "string" ? { for: page.for } : {};
+  return { receipt: typeof page?.auditedReceipt === "string" ? page.auditedReceipt : undefined };
 }
 
 /**

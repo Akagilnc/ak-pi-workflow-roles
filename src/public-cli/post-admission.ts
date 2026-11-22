@@ -690,8 +690,9 @@ export async function presentControlledFailure<
         : { invocationScopeId: failureInput.invocationScopeId }),
       onErrorPublished: (path) => { publishedErrorPath = path; },
     });
-    terminal = failureInput.receiptHistory
-      ? { ...settled, ...failureInput.receiptHistory }
+    const history = failureInput.receiptHistory;
+    terminal = history
+      ? { ...settled, ...(history.submissions && { submissions: history.submissions }), ...(history.receiptErrors && { receiptErrors: history.receiptErrors }) }
       : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault });
   } catch (error) {
     if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
@@ -911,18 +912,16 @@ async function settleCompletedHostTurn<
   // The host CLI's own report: timeout, declared failure, cancel, or exit.
   // A null code is a signal death (Node close). No session or history read
   // takes part (owner ea321c6d / 4743ade7).
-  const processCancelName = processCancelSignalName(env.signal);
-  const hostSignalFailed =
+  const hostFailed =
     result.timedOut
     || result.knownFailure !== undefined
-    || processCancelName !== undefined
     || result.code === null
     || result.code !== 0;
   const hostReportedFailure = result.knownFailure;
   try {
-    if (!hostSignalFailed) {
+    if (!hostFailed && !processCancelSignalName(env.signal)) {
       const read = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      if (read && (!("terminal" in read) || (shouldPresent(read.terminal) && !processCancelSignalName(env.signal)))) prepared = read;
+      if (read && (!("terminal" in read) || shouldPresent(read.terminal))) prepared = read;
     }
   } catch (error) {
     // The host did not fail. A settlement read here is a package fault and
@@ -934,35 +933,15 @@ async function settleCompletedHostTurn<
       io,
     );
   }
-  if (prepared && "failure" in prepared && !processCancelSignalName(env.signal)) {
+  // Cancellation during the read wins over every read result, including no receipt.
+  const processCancelName = processCancelSignalName(env.signal);
+  if (processCancelName === undefined && prepared && "failure" in prepared) {
     const failed = await settleAfterTurnStarted(admitted, withEngineDetourInvocationScope({
       timedOut: false, code: result.code, stderr: result.stderr, knownFailure: prepared.failure, receiptHistory: prepared.history,
     }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState, courtScope.notePackageFault, courtScope.courtAttemptId);
     return { kind: "settled", outcome: await finishAfterTurn({ ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true }) };
   }
-  if (prepared && "terminal" in prepared) {
-    // #855: final cancel re-read before lawful seal — settlement window may
-    // have received SIGTERM/SIGINT/SIGHUP after the earlier snapshot.
-    const lateCancel = processCancelSignalName(env.signal);
-    if (lateCancel !== undefined) {
-      return { kind: "settled", outcome: await finishAfterTurn(
-        await settleProcessCancelAfterTurn({
-          admitted,
-          cancelName: lateCancel,
-          result,
-          adapters,
-          env,
-          io,
-          persistRunState,
-          deferredPersist,
-          invocationScopeId: request.invocationScopeId,
-          notePackageFault: courtScope.notePackageFault,
-          ...(courtScope.courtAttemptId === undefined
-            ? {}
-            : { courtAttemptId: courtScope.courtAttemptId }),
-        }),
-      ) };
-    }
+  if (processCancelName === undefined && prepared && "terminal" in prepared) {
     if (persistRunState) {
       try {
         await persistReturnedRunState(admitted);
@@ -983,7 +962,7 @@ async function settleCompletedHostTurn<
   }
 
   // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
-  if (hostSignalFailed) {
+  if (hostFailed || processCancelName !== undefined) {
     const stderrLogWriteFact =
       stderrLogWriteFailure === undefined
         ? undefined
@@ -994,6 +973,8 @@ async function settleCompletedHostTurn<
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
+        ...(prepared && "failure" in prepared && { receiptHistory: prepared.history }),
+        ...(prepared && "terminal" in prepared && { receiptHistory: prepared.terminal }),
         // A signal-killed child is a fact of its own. The synthetic line is
         // only a fallback for when the host declared no failure of its own —
         // it must never displace words the host actually reported.
@@ -2068,7 +2049,11 @@ export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, auth
     if (io) presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure);
     return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
   }
-  return "terminal" in prepared ? publishSeatSettlement(admitted, authority, scope, prepared) : undefined;
+  if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);
+  if (typeof scope.seal === "object" && (scope.seal.receipt !== undefined || prepared.rows.length > 0)) {
+    io?.stderr(formatCliDiagnostic(`无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt ?? "未记录受审稿引用"}）`));
+  }
+  return undefined;
 }
 
 export function presentResumeFailurePointer(

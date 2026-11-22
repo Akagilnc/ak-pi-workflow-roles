@@ -79,7 +79,7 @@ export type SettlementCourtScope = {
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
-  readonly seal?: "latest" | { readonly for?: string; readonly receipt?: string };
+  readonly seal?: "latest" | { readonly receipt: string | undefined };
   /** Before a bare dispatch: the replayable court's seals, and receipts already seen (even if their attribution later vanishes). */
   readonly beforeResume?: { readonly lastCourt: string | LedgerFault | undefined; readonly seals: ReadonlySet<string>; readonly seen: ReadonlySet<string> | LedgerFault } | undefined;
   readonly courtAttemptId?: string;
@@ -836,8 +836,8 @@ export function classifyPostAdmissionFailure(input: {
       packageFactsOf(input),
     );
   }
-  if (input.code !== 0) {
-    // A nonzero exit says the run failed, not why. No typed fact confirmed a
+  if (input.code !== 0 || input.cancelName !== undefined) {
+    // A nonzero exit or a cancellation says the run failed, not its class. No typed fact confirmed a
     // class, so `cause` stays absent and the CLI's own diagnostic and exit code
     // are what remains (host contract: omit cause, keep the original). A signal
     // or cancellation the host did report is named, not restated as an exit.
@@ -1303,8 +1303,8 @@ export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal
 
 export type SeatReadFailure = { failure: ControlledFailure; history: Pick<TerminalResult, "submissions" | "receiptErrors"> };
 
-export function matchesAuditedSeal(pin: { readonly for?: string; readonly receipt?: string }, role: string, row: FiledReceipt): boolean {
-  return pin.receipt !== undefined ? basename(row.receipt) === pin.receipt : row.round !== undefined && pin.for === `${role}#${row.round}`;
+export function matchesAuditedSeal(pin: { readonly receipt: string | undefined }, row: FiledReceipt): boolean {
+  return basename(row.receipt) === pin.receipt;
 }
 
 export async function preparePublicSeat(
@@ -1319,7 +1319,7 @@ export async function preparePublicSeat(
   let current: RecordedSubmissionRow[] | undefined;
   const pin = scope?.seal === "latest" ? undefined : scope?.seal;
   if (scope?.seal) {
-    const seal = pin && accepted.find(row => matchesAuditedSeal(pin, admitted.role, row));
+    const seal = pin && accepted.find(row => matchesAuditedSeal(pin, row));
     if (pin) current = seal ? [seal] : [];
     attempt = !pin && typeof lastCourt === "string" ? lastCourt : seal?.attemptId;
     if (!pin && typeof lastCourt === "object") unknownCourt ??= lastCourt;
@@ -1346,7 +1346,7 @@ export async function preparePublicSeat(
   }
   current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
   unknownCourt ??= rows.find(row => row.dispositionFault && (pin
-    ? matchesAuditedSeal(pin, admitted.role, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
+    ? matchesAuditedSeal(pin, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
   for (const issue of [discoveryFault, malformed]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
   }
