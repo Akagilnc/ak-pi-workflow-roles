@@ -64,8 +64,8 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
       async executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
         const second = runDirectory !== "";
         runDirectory = request.runDirectory;
-        if (second && missing === 1) await unlink(join(runDirectory, "receipts/1.json"));
         const turn = await structuredHost.executeTurn(request);
+        if (second && missing === 1) await unlink(join(runDirectory, "receipts/1.json"));
         if (second && missing === 2) await writeFile(join(runDirectory, "receipts/2.json"),
           Buffer.concat([Buffer.from('{"status":"planned","report":"'), Buffer.from([0xff]), Buffer.from('"}') ]));
         return turn;
