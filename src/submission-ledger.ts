@@ -79,8 +79,16 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
   let latestIndex = -1;
+  let unlocatedDraft: LedgerFault | undefined;
   for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
-    if (!isRecord(subject) || subject.runId !== runId || !isRecord(payload) || typeof payload.receipt !== "string") continue;
+    if (!isRecord(subject) || subject.runId !== runId) continue;
+    if (!isRecord(payload) || typeof payload.receipt !== "string" || !payload.receipt) {
+      if (kind === "candidate" || kind === "sealed" || kind === "outcome" || kind === PROGRESS_RECORD_KIND) {
+        const cause = `record ${index + 1} (${kind}) without a receipt reference`;
+        unlocatedDraft = { diagnostic: `${recordFile}: ${cause}`, cause };
+      }
+      continue;
+    }
     const { receipt } = payload;
     if (kind === "sealed") { latestIndex = index; lastCourt = subject.attemptId as string; }
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
@@ -107,7 +115,7 @@ export async function readRecordedSubmissionRows(
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
   if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, unlocatedDraft, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

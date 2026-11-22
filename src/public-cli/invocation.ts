@@ -145,6 +145,8 @@ export type AdmittedRoleInvocationBase = {
    * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
    */
   readonly correlationId?: string;
+  /** Receipt this call was admitted to review, independent of later re-summons. */
+  auditedReceipt?: string | undefined;
   /** Direct callers retained across same-run resumes, in first-observed order. */
   readonly correlationIds?: readonly string[];
   /**
@@ -522,12 +524,6 @@ export function persistAdmittedAuditedLeg(
   });
 }
 
-/** Only an admission for a specific original can attest which submission was audited. */
-export function readAdmittedAuditedSeal(runDirectory: string) {
-  const page = readPageSync(runDirectory, "admitted");
-  return { receipt: typeof page?.auditedReceipt === "string" ? page.auditedReceipt : undefined };
-}
-
 /**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
  * object and both durable sections (invocation + admitted).
@@ -645,6 +641,7 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
+  publishedRounds?: Map<string, string>,
 ): Promise<RunDirectoryRelocation | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
 
@@ -652,9 +649,7 @@ export async function relocateAdmittedRunToTicket(
 
   // Already under the ticket: publish leftover progress.jsonl (self + registered children).
   if (!isUnboundRunDirectory(admitted.runDirectory)) {
-    relocateTicketProgressForLeg({
-      runDirectory: admitted.runDirectory,
-    });
+    relocateTicketProgressForLeg({ runDirectory: admitted.runDirectory }, publishedRounds);
     if (admitted.role !== "diarist") {
       await relocateRegisteredChildDiarists({
         parentRunDirectory: admitted.runDirectory,
@@ -705,23 +700,18 @@ export async function relocateAdmittedRunToTicket(
   // the ticket leaf; final seal uses the post-move existence landing.
   heldLease?.relocate(target.runDirectory);
 
-  const actualSessionDirectory = sessionDirectoryOf(target.runDirectory);
-  const principal = authority.seal({
-    sessionDirectory: actualSessionDirectory,
-    sessionFile: sessionFileIn(actualSessionDirectory),
-  });
-
   rewriteAdmittedRoleRunPage(
     admitted as unknown as Record<string, unknown>,
     oldRunDirectory,
     target.runDirectory,
   );
-  (admitted as { principal: DurablePrincipal }).principal = principal;
+  const actualSessionDirectory = sessionDirectoryOf(target.runDirectory);
+  (admitted as { principal: DurablePrincipal }).principal = authority.seal({
+    sessionDirectory: actualSessionDirectory, sessionFile: sessionFileIn(actualSessionDirectory),
+  });
 
   // After whole-leg rename + live-handle handoff: fill rounds and append ticket current.
-  relocateTicketProgressForLeg({
-    runDirectory: target.runDirectory,
-  });
+  relocateTicketProgressForLeg({ runDirectory: target.runDirectory }, publishedRounds);
 
   // current.json projects host.original from this run directory. Ownership is
   // already transferred; a refuse still carries the true cause to the caller

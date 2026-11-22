@@ -7,6 +7,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
+import { relative, sep } from "node:path";
+import { subjectDirectoryOfRun } from "../role-run-placement.ts";
 
 import {
   findRunDirectoryById,
@@ -104,6 +106,7 @@ import {
   type PreparedSeat,
   type SeatReadFailure,
   publishSeatSettlement,
+  filedIdentity,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -124,7 +127,8 @@ function projectRelocatedTurnIdentity(
   request: RoleTurnRequest,
   result: { readonly terminal?: TerminalResult },
   admitted: AdmittedRoleInvocation,
-  relocation: { readonly oldRunDirectory: string; readonly newRunDirectory: string },
+  relocation: RunDirectoryRelocation,
+  publishedRounds?: ReadonlyMap<string, string>,
 ): void {
   const rewrite = (value: unknown) => rewriteRunDirectoryPathValue(
     value,
@@ -143,6 +147,14 @@ function projectRelocatedTurnIdentity(
     // #1165/#1168: caller file-flag paths are not activation fields to rewrite.
   }
   if (result.terminal !== undefined) {
+    const subject = subjectDirectoryOfRun(relocation.oldRunDirectory)!;
+    const filed = result.terminal.receipts?.map(row => {
+      const receipt = relative(subject, row.receipt).split(sep).join("/");
+      const round = publishedRounds?.get(receipt) ?? row.round;
+      return { receipt, ...(round && { round }) };
+    });
+    Object.assign(result.terminal, filedIdentity(admitted.runDirectory, filed));
+    for (const fault of result.terminal.receiptErrors ?? []) fault.receipt = rewrite(fault.receipt) as string;
     for (const artifact of result.terminal.artifacts) {
       artifact.path = rewrite(artifact.path) as string;
     }
@@ -926,8 +938,8 @@ async function settleCompletedHostTurn<
         // it must never displace words the host actually reported.
         ...(result.signal === undefined ? {} : { signal: result.signal }),
         ...(hostReportedFailure === undefined ? {} : { knownFailure: hostReportedFailure }),
-        // The cancellation is the host's own report of why this call ended;
-        // it supplies the wording only when the host declared nothing else.
+        ...(!hostFailed && processCancelName && { knownDiagnostic: processCancelDiagnostic(processCancelName) }),
+        // Preserve the process signal beside the host's own facts.
         ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
         // Secondary fact only — never the cause, and never merged into the
         // host's own details.
@@ -1139,9 +1151,14 @@ export async function dispatchPostAdmissionTurn<
       if (packagedBindsBoardTicket(admitted.role)) {
         await bindDiaristBoardTicket(admitted, result.terminal ? result.terminal.submissions ?? [] : undefined, courtScope.notePackageFault);
       }
-      const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
-      if (relocation !== undefined) {
-        projectRelocatedTurnIdentity(request, result, admitted, relocation);
+      const oldRunDirectory = admitted.runDirectory;
+      const rounds = result.terminal?.receipts?.some(row => !row.round) ? new Map<string, string>() : undefined;
+      try {
+        await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease, rounds);
+      } finally {
+        if (oldRunDirectory !== admitted.runDirectory || rounds?.size) {
+          projectRelocatedTurnIdentity(request, result, admitted, { oldRunDirectory, newRunDirectory: admitted.runDirectory }, rounds);
+        }
       }
       return result;
     } catch (error) {

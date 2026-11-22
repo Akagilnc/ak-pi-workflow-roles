@@ -1019,6 +1019,7 @@ type LoadedAdmittedRequestFields = {
   readonly issueNumber?: number;
   readonly caseRunsPath?: string;
   readonly caseIdentity?: DoctorCaseIdentity;
+  readonly auditedReceipt?: string;
   /** Notary — admitted source-run locator restored on resume (#633). */
   readonly sourceRunPath?: string;
   readonly sourceRun?: NotarySourceRunLocator;
@@ -1105,6 +1106,7 @@ async function loadResumableRunRecord(
   let caseRunsPath: string | undefined;
   let caseIdentity: DoctorCaseIdentity | undefined;
   let sourceRunPath: string | undefined;
+  let auditedReceipt: string | undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
   try {
     const record = readPageSync(run.runDirectory, "admitted");
@@ -1180,6 +1182,7 @@ async function loadResumableRunRecord(
       }
       // Notary — admitted source-run locator identity (#633 resume).
       sourceRunPath = admittedSourceRunPath(record);
+      if (typeof record.auditedReceipt === "string") auditedReceipt = record.auditedReceipt;
       if (
         isRecord(record.sourceRun)
       ) {
@@ -1317,6 +1320,7 @@ async function loadResumableRunRecord(
       ...(caseRunsPath === undefined ? {} : { caseRunsPath }),
       ...(caseIdentity === undefined ? {} : { caseIdentity }),
       ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
+      ...(auditedReceipt && { auditedReceipt }),
       ...(sourceRun === undefined ? {} : { sourceRun }),
       ...(model === undefined ? {} : { model }),
     },
@@ -1342,6 +1346,7 @@ function resumedBaseAdmitted(loaded: {
     runDirectory: loaded.run.runDirectory,
     principal: loaded.principal,
     ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...(loaded.admittedFields.auditedReceipt && { auditedReceipt: loaded.admittedFields.auditedReceipt }),
     ...restoredTicketFields(loaded.admittedFields),
   };
 }

@@ -455,7 +455,7 @@ export function landTicketProgress(input: {
  */
 export function relocateTicketProgressForLeg(input: {
   readonly runDirectory: string;
-}): void {
+}, publishedRounds?: Map<string, string>): void {
   if (isUnboundRunDirectory(input.runDirectory)) return;
 
   const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
@@ -473,16 +473,8 @@ export function relocateTicketProgressForLeg(input: {
   const ticketLines = [...readTicketProgressLines(subjectDirectory)];
   // Receipt path is the seal identity. Append-then-unlink partial success must
   // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
-  const publishedReceipts = new Set(
-    ticketLines
-      .map((line) => line.receipt)
-      .filter((receipt) => typeof receipt === "string" && receipt !== ""),
-  );
-  const pending = mine.filter((line) => !publishedReceipts.has(line.receipt));
-  if (pending.length === 0) {
-    rmSync(stagedPath, { force: true });
-    return;
-  }
+  const published = new Map(ticketLines.map(line => [line.receipt, line.round]));
+  const pending = mine.filter(line => !published.has(line.receipt));
 
   const movedLines: TicketProgressLine[] = [];
   for (const line of pending) {
@@ -494,17 +486,18 @@ export function relocateTicketProgressForLeg(input: {
       ...line,
       round,
     };
+    published.set(line.receipt, round);
     movedLines.push(moved);
     ticketLines.push(moved);
   }
 
-  const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
-  mkdirSync(dirname(newCurrent), { recursive: true });
-  appendFileSync(
-    newCurrent,
-    `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-    "utf8",
-  );
+  if (movedLines.length) {
+    const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
+    mkdirSync(dirname(newCurrent), { recursive: true });
+    appendFileSync(newCurrent, `${movedLines.map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  }
+  // The ticket row is committed even if later cleanup or rendering fails.
+  if (publishedRounds) for (const { receipt } of mine) publishedRounds.set(receipt, published.get(receipt)!);
   // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
   rmSync(stagedPath, { force: true });
   for (const moved of movedLines) carryProgressRow(input.runDirectory, moved);
