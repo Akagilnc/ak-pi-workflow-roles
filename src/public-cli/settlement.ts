@@ -229,8 +229,9 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   try {
     if (!rows) {
       const ledger = await settlementRows(admitted);
-      const fault = ledger.fault ?? ledger.discoveryFault ?? ledger.malformed;
-      if (fault) await noteSettlementFault(admitted.runDirectory, scope, fault.diagnostic);
+      for (const issue of [ledger.fault, ledger.discoveryFault, ledger.malformed, ...ledger.referenceFaults]) {
+        if (issue) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
+      }
       rows = ledger.rows;
     }
     return { ...terminal, ...projectOriginals(rows).history };
@@ -1312,7 +1313,7 @@ export async function preparePublicSeat(
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] }> {
-  const { rows, recordFile, missing, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
+  const { rows, recordFile, missing, fault, discoveryFault, referenceFaults, malformed, lastCourt } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
   let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
   let unknownCourt = fault;
@@ -1326,7 +1327,8 @@ export async function preparePublicSeat(
     if (attempt) scope = { ...scope, courtAttemptId: attempt };
   } else if (scope?.beforeResume) {
     const { lastCourt: prior, seals, seen } = scope.beforeResume;
-    const own = rows.some(row => attempt !== undefined && row.attemptId === attempt);
+    const own = attempt !== undefined && (rows.some(row => row.attemptId === attempt)
+      || referenceFaults.some(issue => issue.attemptId === attempt));
     const arrivals = "has" in seen ? rows.filter(row => row.attemptId === undefined && !seen.has(row.receipt)) : [];
     if (arrivals.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${arrivals.map(row => row.path).join(", ")}`);
     // Replay only the complete court observed before dispatch, using today's readable seal rows.
@@ -1347,7 +1349,9 @@ export async function preparePublicSeat(
   current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
   unknownCourt ??= rows.find(row => row.dispositionFault && (pin
     ? matchesAuditedSeal(pin, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
-  for (const issue of [discoveryFault, malformed]) {
+  if (!pin || !current.length) unknownCourt ??= referenceFaults.find(issue => !issue.located &&
+    (!issue.attemptId || issue.attemptId === attempt || (pin && attempt === undefined)));
+  for (const issue of [discoveryFault, malformed, ...referenceFaults]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
   }
   if (!current.length && !unknownCourt) return { rows };

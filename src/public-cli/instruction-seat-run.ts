@@ -463,7 +463,7 @@ async function loadLedgerPeerBody(
   if (runId === undefined) return undefined;
   // Bind to the already-resolved source directory — never re-discover by runId
   // alone (another book may lawfully share the same id; #637 / #1166).
-  const { rows, fault, discoveryFault, missingReferences } = await readRecordedSubmissionRows(projectRoot, runId, {
+  const { rows, fault, discoveryFault, referenceFaults } = await readRecordedSubmissionRows(projectRoot, runId, {
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
@@ -472,13 +472,9 @@ async function loadLedgerPeerBody(
   // terminal outcome kind (that resurrects a prior sealed draft).
   const missing = fault ?? discoveryFault;
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
-  for (const gap of missingReferences ?? []) {
-    // A second fact for this same tool call can locate its draft. Without one
-    // we cannot tell whether the last discoverable file is the last arrival.
-    if (!gap.attemptId || !gap.toolCallId || !rows.some(row => row.attemptId === gap.attemptId && row.toolCallId === gap.toolCallId)) {
-      throw new Error(gap.diagnostic);
-    }
-    io.stderr(formatCliDiagnostic(gap.diagnostic));
+  for (const issue of referenceFaults) {
+    if (!issue.located) throw new Error(issue.diagnostic, { cause: issue.cause });
+    io.stderr(formatCliDiagnostic(issue.diagnostic));
   }
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;

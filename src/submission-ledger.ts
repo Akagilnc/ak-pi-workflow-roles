@@ -21,6 +21,8 @@ import { isRecord, errorText } from "./unknown-value.ts";
 
 export const COURT_ATTEMPT_ENV = "AK_ROLE_COURT_ATTEMPT" as const;
 
+const submissionFacts = new Set(["candidate", "outcome", "sealed", PROGRESS_RECORD_KIND]);
+
 type SubmissionKind = "accepted" | "correctable-rejection" | "infrastructure" | "candidate";
 export type RecordedSubmissionRow = {
   readonly role?: TerminalRoleName;
@@ -54,7 +56,7 @@ export async function readRecordedSubmissionRows(
   let parent = scope.sessionParent;
   if (parent === undefined) {
     const run = await findRunDirectoryById(scope.home, runId);
-    if (run === undefined) return { rows: [], fault: undefined, malformed: undefined, lastCourt: undefined };
+    if (run === undefined) return { rows: [], referenceFaults: [], fault: undefined, malformed: undefined, lastCourt: undefined };
     parent = sessionFileOf(run);
   }
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
@@ -79,18 +81,34 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
   let latestIndex = -1;
-  const missingReferences: { diagnostic: string; attemptId: unknown; toolCallId: unknown }[] = [];
-  for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
-    if (!isRecord(subject) || subject.runId !== runId) continue;
-    if (!isRecord(payload) || typeof payload.receipt !== "string" || !payload.receipt) {
-      if (kind === "candidate" || kind === "sealed" || kind === "outcome" || kind === PROGRESS_RECORD_KIND) {
-        const cause = `record ${index + 1} (${kind}) without a receipt reference`;
-        missingReferences.push({ diagnostic: `${recordFile}: ${cause}`, attemptId: subject.attemptId,
-          toolCallId: isRecord(payload) ? payload.toolCallId : undefined });
+  const referenceFaults: (LedgerFault & { attemptId: unknown; located: boolean })[] = [];
+  const records = journal?.records ?? [];
+  // Only a damaged journal needs the companion references. Null means the call is ambiguous.
+  let bindings: Map<string, string | null> | undefined;
+  for (const [index, { kind, subject, payload }] of records.entries()) {
+    if (!submissionFacts.has(kind) || !isRecord(subject) || subject.runId !== runId) continue;
+    let receipt = isRecord(payload) && typeof payload.receipt === "string" ? payload.receipt : undefined;
+    if (!receipt) {
+      if (!bindings) {
+        bindings = new Map();
+        for (const peer of records) {
+          if (!submissionFacts.has(peer.kind) || !isRecord(peer.subject) || peer.subject.runId !== runId || !isRecord(peer.payload)) continue;
+          const { receipt: ref, toolCallId } = peer.payload;
+          const attempt = peer.subject.attemptId;
+          if (typeof attempt !== "string" || !attempt || typeof toolCallId !== "string" || !toolCallId || typeof ref !== "string" || !ref) continue;
+          const key = JSON.stringify([attempt, toolCallId]);
+          bindings.set(key, !bindings.has(key) || bindings.get(key) === ref ? ref : null);
+        }
       }
-      continue;
+      const bound = bindings.get(JSON.stringify([subject.attemptId, isRecord(payload) && payload.toolCallId]));
+      receipt = bound ?? undefined;
+      const cause = `record ${index + 1} (${kind}) without a receipt reference` +
+        (bound === null ? "; conflicting references for the same call" : receipt ? `; located at ${receipt}` : "");
+      const issue = { diagnostic: `${recordFile}: ${cause}`, cause, attemptId: subject.attemptId, located: !!receipt };
+      referenceFaults.push(issue);
+      if (!receipt && (kind === "sealed" || kind === PROGRESS_RECORD_KIND)) { latestIndex = index; lastCourt = issue; }
     }
-    const { receipt } = payload;
+    if (!receipt || !isRecord(payload)) continue;
     if (kind === "sealed") { latestIndex = index; lastCourt = subject.attemptId as string; }
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
       // Binding can fill the round later; it doesn't make the original publication newer.
@@ -116,7 +134,7 @@ export async function readRecordedSubmissionRows(
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
   if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, missingReferences, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, referenceFaults, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

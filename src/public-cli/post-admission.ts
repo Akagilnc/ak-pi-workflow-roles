@@ -990,9 +990,10 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
     submissions.some(asserted);
   } else {
     // Old manuscripts are optional evidence for placement, not prerequisites to a reask.
-    const { rows, fault, discoveryFault, malformed } = await settlementRows(admitted);
-    const issue = fault ?? discoveryFault ?? malformed;
-    if (issue) await note(issue.diagnostic);
+    const { rows, fault, discoveryFault, malformed, referenceFaults } = await settlementRows(admitted);
+    for (const issue of [fault, discoveryFault, malformed, ...referenceFaults]) {
+      if (issue) await note(issue.diagnostic);
+    }
     for (const row of rows) {
       if (row.role !== admitted.role) continue;
       try { if (asserted(readReceipt(row))) break; }
@@ -1011,6 +1012,8 @@ export async function dispatchPostAdmissionTurn<
   env: PostAdmissionEnv;
   io: CliIo;
   request: RoleTurnRequest;
+  /** Auto-resume defers intermediate terminals, not diagnostics about the ledger. */
+  settlementIo?: CliIo;
   /** Absent on public manual resume (#987): no package lease gate before host CLI resume. */
   lease?: RunWriterLease;
   adapters: PostAdmissionAdapters<A, T>;
@@ -1035,12 +1038,7 @@ export async function dispatchPostAdmissionTurn<
     ...settlementScopeForTurn(request),
     beforeResume: undefined as SettlementCourtScope["beforeResume"],
     recordAttemptHistory: true as const,
-    notePackageFault: (diagnostic: string) => recordBestEffortPostDispatchDiagnostic(
-      admitted,
-      env,
-      diagnostic,
-      io,
-    ),
+    notePackageFault: packageFaultNoteFor(admitted, env, input.settlementIo ?? io),
   };
 
   const receiptDelivery = input.receiptDelivery ?? createReceiptDeliveryPolicy(env.autoResumeLimit);
@@ -1633,6 +1631,7 @@ async function runSettledAutoResumeLoop<
             admitted: input.admitted,
             env: dispatchEnv,
             io: attemptIo,
+            settlementIo: input.io,
             request,
             ...(lease === undefined ? {} : { lease }),
             adapters,
