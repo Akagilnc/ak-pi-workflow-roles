@@ -123,16 +123,7 @@ export function readReceipt({ path }: RecordedSubmissionRow): unknown {
   return JSON.parse(exactUtf8(readFileSync(path), "receipt"));
 }
 
-function runIdentity(context: HostContext): string {
-  const directory = runDirectoryFromHostContext(context);
-  const id = directory === undefined ? undefined : runIdFromRunDirectory(directory);
-  const runId = id ?? context.sessionManager.getHeader?.()?.id;
-  if (!runId) throw new Error("提交账需要已受理的 run 身份");
-  return runId;
-}
-
-function sessionParentFromHostContext(context: HostContext): string | undefined {
-  const directory = runDirectoryFromHostContext(context);
+function sessionParentFromHostContext(context: HostContext, directory: string | undefined): string | undefined {
   if (directory !== undefined) return sessionFileOf(directory);
   const dir = context.sessionManager.getSessionDir?.();
   return context.sessionManager.getSessionFile?.() ?? (dir === undefined ? undefined : sessionFileIn(dir));
@@ -164,13 +155,19 @@ export function createSubmissionLedgerHost(
   projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
-  function source(context: HostContext) {
-    const runId = runIdentity(context);
-    const attemptId = courtAttemptIdFromHostContext(context) ?? context.invocationScopeId ?? context.sessionManager.getHeader?.()?.id
-      ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
-    const sessionParent = sessionParentFromHostContext(context);
+  function source(context: HostContext, subject?: { runId: string; attemptId: string }) {
+    const directory = runDirectoryFromHostContext(context);
+    if (!subject) {
+      const id = directory === undefined ? undefined : runIdFromRunDirectory(directory);
+      const runId = id ?? context.sessionManager.getHeader?.()?.id;
+      if (!runId) throw new Error("提交账需要已受理的 run 身份");
+      const attemptId = courtAttemptIdFromHostContext(context) ?? context.invocationScopeId
+        ?? (id === undefined ? runId : context.sessionManager.getHeader?.()?.id) ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
+      subject = { runId, attemptId };
+    }
+    const sessionParent = sessionParentFromHostContext(context, directory);
     const home = options?.home ?? (sessionParent === undefined ? undefined : tryHomeFromAkRolesPath(sessionParent));
-    return { level: "event" as const, subject: { runId, attemptId }, source: "role-runtime", cwd: context.cwd,
+    return { level: "event" as const, subject, source: "role-runtime", cwd: context.cwd,
       ...(sessionParent === undefined ? {} : { sessionParent }), ...(home === undefined ? {} : { home }) };
   }
   host.on("turn_end", async (event, context) => {
@@ -194,18 +191,18 @@ export function createSubmissionLedgerHost(
         const { attemptId } = origin.subject;
         const { sessionDir } = resolveSitianRecordPathInLedger({ ...origin, kind: "candidate" }, resolveActivationLedgerHome(origin.home));
         const receipt = writeArrivingReceipt(sessionDir, params);
-        const append = (type: string, extra: Record<string, unknown> = {}) => sitianReport({ ...source(context), subject: origin.subject, kind: type,
+        const append = (type: string, at: typeof origin, extra: Record<string, unknown> = {}) => sitianReport({ ...at, kind: type,
           payload: { type, attemptId, toolCallId, role, receipt, ...extra } });
-        append("candidate", { toolName: tool.name });
+        append("candidate", origin, { toolName: tool.name });
         if (ticket !== undefined) await reportTicketFromHostContext(context, ticket);
         try { result = await tool.execute(toolCallId, params, signal, update, context); }
         catch (error) {
-          append("outcome", { ...(isCorrectableExecuteError(error) ? { outcome: "correctable-rejection", code: "typed-bounce" } : { outcome: "infrastructure" }), diagnostic: errorText(error) });
+          append("outcome", source(context, origin.subject), { ...(isCorrectableExecuteError(error) ? { outcome: "correctable-rejection", code: "typed-bounce" } : { outcome: "infrastructure" }), diagnostic: errorText(error) });
           toolThrew = true;
           throw error;
         }
         if (result.terminate === false) return result;
-        append("sealed");
+        append("sealed", source(context, origin.subject));
         const lens = host.getFlag?.("ak-review-lens");
         landTicketProgressForSealedSubmission({ context, role, receipt, accepted: params, sealHead: captureWorktreeHead(context.cwd),
           ...(lens === "completeness" || lens === "correctness" ? { lens } : {}), call: { attemptId, toolCallId } });
