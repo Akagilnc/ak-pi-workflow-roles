@@ -43,7 +43,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { seedGitRepository, withOutsideTempRoot, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
-import { readCurrentSection, readHistoryRows } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
@@ -396,11 +396,6 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
       details: previous,
       toolCallId: "direct-peer-previous",
     });
-    // A damaged arrival still has its identity and its seal; it is not an unknown later draft.
-    const history = readHistoryRows(parentRun);
-    const arrival = history.find(row => row.kind === "candidate")!.payload as Record<string, unknown>;
-    delete arrival.receipt;
-    await writeFile(join(parentRun, "history.jsonl"), history.map(row => JSON.stringify(row)).join("\n") + "\n");
     // Latest ledger row may be correctable-rejection — still the current manuscript (J10).
     await recordNonSealedSubmission({
       cwd: project,

@@ -56,7 +56,7 @@ export async function readRecordedSubmissionRows(
   let parent = scope.sessionParent;
   if (parent === undefined) {
     const run = await findRunDirectoryById(scope.home, runId);
-    if (run === undefined) return { rows: [], referenceFaults: [], fault: undefined, malformed: undefined, lastCourt: undefined };
+    if (run === undefined) return { rows: [], fault: undefined, malformed: undefined, lastCourt: undefined };
     parent = sessionFileOf(run);
   }
   const { recordFile, sessionDir } = resolveSitianRecordPathInLedger({ level: "event", kind: "candidate",
@@ -81,41 +81,22 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
   let latestIndex = -1;
-  const referenceFaults: (LedgerFault & { attemptId: unknown; unlocated: "accepted" | "draft" | undefined })[] = [];
-  const records = journal?.records ?? [];
-  // Only a damaged journal needs the companion references. Null means the call is ambiguous.
-  let bindings: Map<string, string | null> | undefined;
-  for (const [index, { kind, subject, payload }] of records.entries()) {
+  let missingReference: LedgerFault | undefined;
+  for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
     if (!submissionFacts.has(kind) || !isRecord(subject) || subject.runId !== runId) continue;
-    let receipt = isRecord(payload) && typeof payload.receipt === "string" ? payload.receipt : undefined;
-    if (!receipt) {
-      if (!bindings) {
-        bindings = new Map();
-        for (const peer of records) {
-          if (!submissionFacts.has(peer.kind) || !isRecord(peer.subject) || peer.subject.runId !== runId || !isRecord(peer.payload)) continue;
-          const { receipt: ref, toolCallId } = peer.payload;
-          const attempt = peer.subject.attemptId;
-          if (typeof attempt !== "string" || !attempt || typeof toolCallId !== "string" || !toolCallId || typeof ref !== "string" || !ref) continue;
-          const key = JSON.stringify([attempt, toolCallId]);
-          bindings.set(key, !bindings.has(key) || bindings.get(key) === ref ? ref : null);
-        }
-      }
-      const bound = bindings.get(JSON.stringify([subject.attemptId, isRecord(payload) && payload.toolCallId]));
-      receipt = bound ?? undefined;
-      const cause = `record ${index + 1} (${kind}) without a receipt reference` +
-        (bound === null ? "; conflicting references for the same call" : receipt ? `; located at ${receipt}` : "");
-      const issue = { diagnostic: `${recordFile}: ${cause}`, cause, attemptId: subject.attemptId,
-        unlocated: receipt ? undefined : kind === "sealed" || kind === PROGRESS_RECORD_KIND ? "accepted" : "draft" } as const;
-      referenceFaults.push(issue);
-      if (issue.unlocated === "accepted") { latestIndex = index; lastCourt = issue; }
+    if (!isRecord(payload) || typeof payload.receipt !== "string" || !payload.receipt) {
+      // Direct review cannot identify the latest manuscript in an unreferenced journal.
+      const cause = `record ${index + 1} (${kind}) without a receipt reference`;
+      missingReference = { diagnostic: `${recordFile}: ${cause}`, cause };
+      continue;
     }
-    if (!receipt || !isRecord(payload)) continue;
+    const { receipt } = payload;
     if (kind === "sealed") { latestIndex = index; lastCourt = subject.attemptId as string; }
     if (kind === PROGRESS_RECORD_KIND && typeof payload.round === "string") {
       // Binding can fill the round later; it doesn't make the original publication newer.
       publications.set(receipt, { round: payload.round, index: publications.get(receipt)?.index ?? index });
       if (!facts.get(receipt)?.attemptId && typeof subject.attemptId === "string") {
-        facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, toolCallId: payload.toolCallId as string, ...(malformed && { dispositionFault: malformed }) });
+        facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, ...(malformed && { dispositionFault: malformed }) });
       }
     }
     const disposition = kind === "sealed" ? "accepted" : kind === "candidate" ? "candidate" : kind === "outcome" ? payload.outcome : undefined;
@@ -135,7 +116,7 @@ export async function readRecordedSubmissionRows(
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
   if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, referenceFaults, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, missingReference, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

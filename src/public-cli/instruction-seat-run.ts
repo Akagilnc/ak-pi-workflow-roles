@@ -80,7 +80,6 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
-  formatCliDiagnostic,
   presentStructuralRejection,
   readBoundSessionEntries,
   retainPackageFault,
@@ -457,25 +456,20 @@ async function loadLedgerPeerBody(
   sourceRunDirectory: string,
   projectRoot: string,
   home: string,
-  io: CliIo,
 ) {
   const runId = runIdFromRunDirectory(sourceRunDirectory);
   if (runId === undefined) return undefined;
   // Bind to the already-resolved source directory — never re-discover by runId
   // alone (another book may lawfully share the same id; #637 / #1166).
-  const { rows, fault, discoveryFault, referenceFaults } = await readRecordedSubmissionRows(projectRoot, runId, {
+  const { rows, fault, discoveryFault, missingReference } = await readRecordedSubmissionRows(projectRoot, runId, {
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
   // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
   // present the latest row as-is. Never filter current manuscript by accepted /
   // terminal outcome kind (that resurrects a prior sealed draft).
-  const missing = fault ?? discoveryFault;
+  const missing = fault ?? discoveryFault ?? missingReference;
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
-  for (const issue of referenceFaults) {
-    if (issue.unlocated) throw new Error(issue.diagnostic, { cause: issue.cause });
-    io.stderr(formatCliDiagnostic(issue.diagnostic));
-  }
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
   try { return { instruction: readableGateItem(readReceipt(latest)), auditedReceipt: basename(latest.receipt) }; }
@@ -836,11 +830,10 @@ async function sameParentDialogue(
   sourceRunPath: string | undefined,
   projectRoot: string,
   role: string,
-  io: CliIo,
 ) {
   const body = resolveReviewSeatDialogueBody({ ...env, role, callerInstruction: instruction ?? "" });
   const peer = body === undefined && sourceRunPath
-    ? await loadLedgerPeerBody(sourceRunPath, projectRoot, env.home, io) : undefined;
+    ? await loadLedgerPeerBody(sourceRunPath, projectRoot, env.home) : undefined;
   return { instruction: body ?? peer?.instruction ?? "", instructionEmpty: body === undefined && !peer,
     auditedReceipt: peer?.auditedReceipt ?? env.auditedReceipt };
 }
@@ -862,7 +855,7 @@ async function runCountersignBody(
   let summons: SameTicketSummonsMaterials | undefined;
   if (gateParentRunPath !== undefined) {
     // #1208 C1: same shared dialogue resolver as every other same-parent seat.
-    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, gateParentRunPath, projectRoot, "countersign", io);
+    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, gateParentRunPath, projectRoot, "countersign");
     if (auditedReceipt) env = { ...env, auditedReceipt };
     summons = {
       sourceRunPath: gateParentRunPath,
@@ -1016,7 +1009,7 @@ export async function runPublicInstructionSeat(
       throw error;
     }
     const parentRunPath = source.runDirectory;
-    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, parentRunPath, projectRoot, role, io);
+    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, parentRunPath, projectRoot, role);
     if (auditedReceipt) env = { ...env, auditedReceipt };
     const materials = {
       ...dialogue,
@@ -1186,7 +1179,7 @@ export async function runPublicInstructionSeatResume(
       }
       const sourceRunPath = admittedSourceRunPath(admitted);
       const { instruction: body, instructionEmpty, auditedReceipt } = await sameParentDialogue(
-        { home: env.home }, summonsPrepared?.instruction, sourceRunPath, admitted.projectRoot, admitted.role, io,
+        { home: env.home }, summonsPrepared?.instruction, sourceRunPath, admitted.projectRoot, admitted.role,
       );
       if (auditedReceipt && sourceRunPath) await pinAuditedLegAtAdmission(admitted, sourceRunPath, auditedReceipt, io);
       if (instructionEmpty) {

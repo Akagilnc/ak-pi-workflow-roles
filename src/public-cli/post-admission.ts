@@ -990,8 +990,8 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
     submissions.some(asserted);
   } else {
     // Old manuscripts are optional evidence for placement, not prerequisites to a reask.
-    const { rows, fault, discoveryFault, malformed, referenceFaults } = await settlementRows(admitted);
-    for (const issue of [fault, discoveryFault, malformed, ...referenceFaults]) {
+    const { rows, fault, discoveryFault, malformed } = await settlementRows(admitted);
+    for (const issue of [fault, discoveryFault, malformed]) {
       if (issue) await note(issue.diagnostic);
     }
     for (const row of rows) {
