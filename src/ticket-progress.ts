@@ -33,7 +33,7 @@ import {
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { readHistoryRowsSync, readPageSync } from "./run-dossier.ts";
+import { readPageSync } from "./run-dossier.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
@@ -172,14 +172,11 @@ export function writeArrivingReceipt(runDirectory: string, original: unknown): s
   const directory = join(runDirectory, RECEIPTS_DIRNAME);
   mkdirSync(directory, { recursive: true });
   const text = `${JSON.stringify(original, null, 2)}\n`;
-  // Start past every recorded number (even a lost file). Exclusive create
-  // steps past concurrent and unjournalled arrivals without replacing them.
-  const last = readHistoryRowsSync(runDirectory).reduce((max, { payload }) => {
-    if (!isRecord(payload) || typeof payload.receipt !== "string") return max;
-    const n = parseInt(basename(payload.receipt));
+  const last = legReceiptReferences(runDirectory).reduce((max, receipt) => {
+    const n = BigInt(basename(receipt, ".json"));
     return n > max ? n : max;
-  }, 0);
-  for (let n = last + 1; ; n++) {
+  }, 0n);
+  for (let n = last + 1n; ; n++) {
     const file = `${n}.json`;
     try {
       writeFileSync(join(directory, file), text, { flag: "wx" });

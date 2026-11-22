@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { test } from "vitest";
 import { withPrimaryAwareCleanup, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
@@ -418,36 +418,21 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
   });
 });
 
-test("a recorded append failure never returns accepted", async () => {
+test("an unreadable ledger prevents acceptance but not saving the arriving draft", async () => {
   await withLedgerFixture(async (f) => {
-    let recordFile: string | undefined;
-    const failing = registerTool(f.root, async () => {
-      // Force first candidate write, then lock the file before sealed append.
-      return { content: [], details: { status: "converged" }, terminate: true };
-    });
-    await withPrimaryAwareCleanup(
-      async () => {
-        // Pre-create by writing a candidate through a throw path, then lock.
-        const primer = registerTool(f.root, async () => {
-          throw new Error("prime");
-        });
-        await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
-        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("history.jsonl"));
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
-        await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context));
-        // Unlock to read.
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
-        // Primer infrastructure params remain; the locked seal must not add an accepted row.
-        const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-        assert.equal(rows.some((row) => row.kind === "accepted"), false);
-        assert.ok(rows.some((row) => row.kind === "infrastructure"));
-      },
-      async () => {
-        if (recordFile !== undefined) {
-          try { await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600); } catch { /* already unlocked */ }
-        }
-      },
-    );
+    const primer = registerTool(f.root, async () => { throw new Error("prime"); });
+    await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
+    const history = join(f.context.runDirectory!, "history.jsonl");
+    await rename(history, `${history}.saved`);
+    await mkdir(history);
+    const draft = { status: "converged", findings: [] };
+    await assert.rejects(f.tool().execute("seal-failure", draft, undefined, undefined, f.context));
+    assert.deepEqual(JSON.parse(await readFile(join(f.context.runDirectory!, "receipts/2.json"), "utf8")), draft);
+    await rm(history, { recursive: true });
+    await rename(`${history}.saved`, history);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.equal(rows.some((row) => row.kind === "accepted"), false);
+    assert.ok(rows.some((row) => row.kind === "infrastructure"));
   });
 });
 
