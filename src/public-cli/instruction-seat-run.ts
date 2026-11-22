@@ -1642,7 +1642,7 @@ async function auditSubmittedRole(
       roleTurnHost: env.roleTurnHost,
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     });
-    let chain: Awaited<ReturnType<typeof runJudgeGates>>;
+    let pass: Awaited<ReturnType<typeof runJudgeGates>>;
     const runGate = (subject: Parameters<typeof requireSubmissionGate>[0]["subject"]) =>
       requireSubmissionGate({
         context,
@@ -1655,8 +1655,8 @@ async function auditSubmittedRole(
     if (admitted.role === "judge") {
       // Same order as runJudgeGates — sole source JUDGE_GATES + gateOfficerForSubject.
       const judgeGateOrder = JUDGE_GATES.map(gateOfficerForSubject);
-      chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) =>
+      pass = await runJudgeGates({
+        gateAlreadyConverged: (subject) =>
           gateSatisfied(gateOfficerForSubject(subject), judgeGateOrder),
         runGate,
       });
@@ -1666,44 +1666,22 @@ async function auditSubmittedRole(
         : admitted.role === "secretariat"
           ? { kind: "secretariat_verdict" as const }
           : { kind: "countersign_verdict" as const };
-      const officer = gateOfficerForSubject(subject);
-      if (gateSatisfied(officer)) {
-        chain = { status: "converged", passes: [] };
-      } else {
-        const pass = await runGate(subject);
-        if (pass === undefined) {
-          // #1214 A12: missing gate conclusion is not a parent-killing throw.
-          chain = {
-            status: "needs_reask",
-            passes: [{
-              subject,
-              status: "needs_reask",
-              receipt: { reason: "audit gate returned no conclusion" },
-            }],
-          };
-        } else {
-          chain = {
-            status: pass.status,
-            passes: [{ ...pass, subject }],
-          };
-        }
-      }
+      if (!gateSatisfied(gateOfficerForSubject(subject))) pass = await runGate(subject);
     }
-    const pass = chain.passes.at(-1);
     const officer = pass?.admitted;
     if (
-      chain.status === "needs_reask"
-      || chain.status === "transport_failure"
-      || chain.status === "no_receipt"
+      pass?.status === "needs_reask"
+      || pass?.status === "transport_failure"
+      || pass?.status === "no_receipt"
     ) {
-      const officerTerminal = pass?.terminal;
+      const officerTerminal = pass.terminal;
       if (officerTerminal !== undefined && officer !== undefined) {
         // #1214 F1: present audited original and officer scene separately.
         await presentAuditedOriginalVolume(turn, io);
         // The terminal and admission belong to the same call, even after a new summons.
         // #1214 R2: a nested audited seat's original (officer's own audited parent) stays visible.
         await presentAuditedOriginalOfOfficer(officer, admitted.runId, env, io);
-        if (chain.status === "needs_reask" || chain.status === "no_receipt") {
+        if (pass.status !== "transport_failure") {
           // Lawful incomplete (unreadable / no_receipt): exit 0, direction unsettled.
           const terminal = await presentUnsettledOfficer(
             officerTerminal,
@@ -1729,15 +1707,15 @@ async function auditSubmittedRole(
         turn,
         admitted,
         io,
-        pass?.reason
-          ?? (chain.status === "transport_failure"
+        pass.reason
+          ?? (pass.status === "transport_failure"
             ? "audit officer transport failure with no presentable volume"
-            : chain.status === "no_receipt"
+            : pass.status === "no_receipt"
               ? "audit officer no_receipt with no presentable volume"
               : "unreadable audit has no terminal result"),
       );
     }
-    if (chain.status === "escalate") {
+    if (pass?.status === "escalate") {
       if (officer === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
@@ -1748,7 +1726,7 @@ async function auditSubmittedRole(
       }
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      const terminal = pass?.terminal ?? await recoverSeatTerminal(officer, env, io);
+      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io);
       if (terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
@@ -1760,11 +1738,11 @@ async function auditSubmittedRole(
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.runDirectory);
       return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer, terminal };
     }
-    if (chain.status === "continue") {
+    if (pass?.status === "continue") {
       return runPublicInstructionSeatResume({
         runId: admitted.runId,
         runDirectory: admitted.runDirectory,
-        summons: { instruction: readableGateItem(pass?.receipt) },
+        summons: { instruction: readableGateItem(pass.receipt) },
       }, envForCourtContinue(env), io);
     }
   }

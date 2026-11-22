@@ -147,7 +147,7 @@ export async function requireSubmissionGate(options: {
   readonly summonOfficer?: GateOfficerSummon;
   /** This loop's ceiling. Absent uses the package default. */
   readonly autoResumeLimit?: number;
-}): Promise<SubmissionGateOutcome | void> {
+}): Promise<SubmissionGateOutcome> {
   let reask: string | undefined;
   let reasksSpent = 0;
   const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
@@ -166,69 +166,32 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
-    if (gatekeeper.status === "converged") {
-      // Keep the officer terminal for escalate / unsettled surfaces; parent
-      // finals do not project other-seat tables (#1195).
-      return presentGateOutcome({
-        ...gatekeeper,
-        summoned: projected.summoned,
-      });
-    }
-    if (gatekeeper.status === "continue") {
-      return presentGateOutcome({
-        status: "continue",
-        officer: projected.officer,
-        receipt: gatekeeper.receipt,
-        runId: gatekeeper.runId,
-      });
-    }
     if (gatekeeper.status === "needs_reask") {
       // Nested incomplete already exhausted the inner seat's own reask. Surface it;
       // do not convert into a reask of this outer officer (ADR 0055 / #1195).
       const nestedIncomplete =
         projected.summoned?.terminal?.roleOutcome.kind === "accepted"
         && projected.summoned.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true;
-      if (nestedIncomplete || reasksSpent >= reaskLimit) {
-        return presentGateOutcome({
-          status: "needs_reask",
-          officer: projected.officer,
-          receipt: gatekeeper.receipt,
-          runId: gatekeeper.runId,
-          summoned: projected.summoned,
-        });
+      if (!nestedIncomplete && reasksSpent < reaskLimit) {
+        reasksSpent += 1;
+        reask = officerConclusionReask(gatekeeper.receivedStatus);
+        continue;
       }
-      reasksSpent += 1;
-      reask = officerConclusionReask(gatekeeper.receivedStatus);
-      continue;
     }
-    if (gatekeeper.status === "transport_failure") {
-      // #1214 A5: officer process/transport failure stays on the officer run.
-      // Present honestly; do not failInfrastructure the parent / audited seat.
+    if (gatekeeper.status === "transport_failure" || gatekeeper.status === "no_receipt") {
+      const evidence = gatekeeper.status === "transport_failure" ? gatekeeper.submission : gatekeeper.facts;
       return presentGateOutcome({
-        status: "transport_failure",
+        status: gatekeeper.status,
         officer: projected.officer,
-        receipt: gatekeeper.submission ?? { reason: gatekeeper.reason },
+        receipt: evidence ?? { reason: gatekeeper.reason },
         reason: gatekeeper.reason,
         runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
         summoned: projected.summoned,
       });
     }
-    if (gatekeeper.status === "escalate") {
-      // Keep the actual officer terminal so callers resume that seat.
-      return presentGateOutcome({
-        ...gatekeeper,
-        summoned: projected.summoned,
-      });
-    }
-    // #1214 F2: lawful officer no_receipt is a typed incomplete outcome, not a
-    // call-killing exception. Present honestly; do not bind/throw as non-pass.
     return presentGateOutcome({
-      status: "no_receipt",
-      officer: projected.officer,
-      receipt: gatekeeper.facts ?? { reason: gatekeeper.reason },
-      reason: gatekeeper.reason,
-      runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
-      summoned: projected.summoned,
+      ...gatekeeper,
+      summoned: gatekeeper.status === "continue" ? undefined : projected.summoned,
     });
   }
 }
