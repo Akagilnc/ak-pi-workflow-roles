@@ -81,7 +81,7 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
   let latestIndex = -1;
-  const referenceFaults: (LedgerFault & { attemptId: unknown; located: boolean })[] = [];
+  const referenceFaults: (LedgerFault & { attemptId: unknown; unlocated: "accepted" | "draft" | undefined })[] = [];
   const records = journal?.records ?? [];
   // Only a damaged journal needs the companion references. Null means the call is ambiguous.
   let bindings: Map<string, string | null> | undefined;
@@ -104,9 +104,10 @@ export async function readRecordedSubmissionRows(
       receipt = bound ?? undefined;
       const cause = `record ${index + 1} (${kind}) without a receipt reference` +
         (bound === null ? "; conflicting references for the same call" : receipt ? `; located at ${receipt}` : "");
-      const issue = { diagnostic: `${recordFile}: ${cause}`, cause, attemptId: subject.attemptId, located: !!receipt };
+      const issue = { diagnostic: `${recordFile}: ${cause}`, cause, attemptId: subject.attemptId,
+        unlocated: receipt ? undefined : kind === "sealed" || kind === PROGRESS_RECORD_KIND ? "accepted" : "draft" } as const;
       referenceFaults.push(issue);
-      if (!receipt && (kind === "sealed" || kind === PROGRESS_RECORD_KIND)) { latestIndex = index; lastCourt = issue; }
+      if (issue.unlocated === "accepted") { latestIndex = index; lastCourt = issue; }
     }
     if (!receipt || !isRecord(payload)) continue;
     if (kind === "sealed") { latestIndex = index; lastCourt = subject.attemptId as string; }

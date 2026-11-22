@@ -1349,7 +1349,7 @@ export async function preparePublicSeat(
   current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
   unknownCourt ??= rows.find(row => row.dispositionFault && (pin
     ? matchesAuditedSeal(pin, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
-  if (!pin || !current.length) unknownCourt ??= referenceFaults.find(issue => !issue.located &&
+  if (!pin || !current.length) unknownCourt ??= referenceFaults.find(issue => issue.unlocated === "accepted" &&
     (!issue.attemptId || issue.attemptId === attempt || (pin && attempt === undefined)));
   for (const issue of [discoveryFault, malformed, ...referenceFaults]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);

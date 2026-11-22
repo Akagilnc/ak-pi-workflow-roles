@@ -473,7 +473,7 @@ async function loadLedgerPeerBody(
   const missing = fault ?? discoveryFault;
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
   for (const issue of referenceFaults) {
-    if (!issue.located) throw new Error(issue.diagnostic, { cause: issue.cause });
+    if (issue.unlocated) throw new Error(issue.diagnostic, { cause: issue.cause });
     io.stderr(formatCliDiagnostic(issue.diagnostic));
   }
   const latest = rows.at(-1);
