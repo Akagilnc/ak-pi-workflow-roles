@@ -15,7 +15,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import type { CliIo } from "./public-cli/cli-io.ts";
+import { discardStdout, type CliIo, type SummonIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
 import type {
@@ -52,7 +52,7 @@ export type PublicSummonRequest = {
   /** Package home; derived from source run when omitted. */
   readonly home?: string;
   readonly packageRoot?: string;
-  readonly io?: CliIo;
+  readonly io?: SummonIo;
   readonly credentials?: CredentialProviders;
   /** Parent turn's effective seat axes for same-seat child legs. */
   readonly model?: RoleTurnModelConfig;
@@ -142,7 +142,7 @@ function createCapturingIo(): { io: CliIo; stderrText(): string } {
   const chunks: string[] = [];
   return {
     io: {
-      stdout() {},
+      stdout: discardStdout,
       stderr(text: string) {
         chunks.push(text);
       },
@@ -361,8 +361,10 @@ export async function summonPublicRole(
       : { engine: options.engine, engineSource: "invocation" as const }),
     ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
   };
-  const captured = options.io === undefined ? createCapturingIo() : undefined;
-  const io = options.io ?? captured!.io;
+  const provided = options.io;
+  const publicIo = provided && "stdout" in provided ? provided : undefined;
+  const captured = publicIo ? undefined : createCapturingIo();
+  const io = publicIo ?? { ...captured!.io, ...provided };
 
   const summonEnvInput = {
     role: options.role,
@@ -677,7 +679,7 @@ export async function summonGateOfficer(options: {
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
-  readonly io?: CliIo;
+  readonly io?: SummonIo;
   /** Parent cancellation for the nested officer activation (#675). */
   readonly signal?: AbortSignal;
   /**

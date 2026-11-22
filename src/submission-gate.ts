@@ -57,7 +57,7 @@ export function createDefaultGateOfficerSummon(options: {
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
-  readonly io?: import("./public-cli/cli-io.ts").CliIo;
+  readonly io?: import("./public-cli/cli-io.ts").SummonIo;
   readonly roleTurnHost?: RoleTurnHost;
   /** Composition-root adapters for nested court stations (tests / #969). */
   readonly hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];

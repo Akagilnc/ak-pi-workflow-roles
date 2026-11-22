@@ -1596,17 +1596,16 @@ export async function settleFailureTerminalResult(
 }
 
 /**
- * Emit one complete failure Terminal on stdout and one concise stderr diagnostic.
+ * Emit the concise stderr diagnostic beside a settled failure volume.
  * Artifacts are already durable on the TerminalResult.
  */
-export function presentFailureTerminal(
+export function presentFailureDiagnostic(
   terminal: TerminalResult,
-  io: { stdout: (text: string) => void; stderr: (text: string) => void; omitFailureStderrDiagnostic?: boolean },
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "omitFailureStderrDiagnostic">,
 ): void {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
-    throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
+    throw new TypeError("presentFailureDiagnostic requires a failure or no-receipt role outcome");
   }
-  io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
     if (io.omitFailureStderrDiagnostic) return;
     const hostStderr = terminal.roleOutcome.decisiveFacts.stderr;

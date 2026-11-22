@@ -26,21 +26,21 @@ import {
 } from "./run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./config.ts";
 import { processCancelSignalName } from "./process-cancel.ts";
-import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
+import { isLawfulTypedTerminalOutcome, formatTerminalResult, receiptErrorRows, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
   filedIdentity,
-  presentFailureTerminal,
+  presentFailureDiagnostic,
   retainPackageFault,
 } from "./settlement.ts";
 
-import type { CliIo } from "./cli-io.ts";
+import { discardStdout, type CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 import { errorText } from "../unknown-value.ts";
 
-const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
+const dummyIo: CliIo = { stdout: discardStdout, stderr: discardStdout };
 
 /**
  * Persist run-state after a host-turn result, outside the retried dispatch try.
@@ -52,14 +52,12 @@ export async function persistReturnedRunState(
   await markRunTerminal(admitted.runDirectory);
 }
 
-export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, held?: readonly string[]): Promise<void> {
+export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string): Promise<void> {
   try {
-    if (held !== undefined) {
-      for (const value of held) io.stdout(value);
-    } else if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-      presentFailureTerminal(terminal, io);
-    } else {
-      io.stdout(formatTerminalResult(terminal));
+    if (io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
+    else for (const row of receiptErrorRows(terminal)) (io.receiptDiagnostic ?? io.stderr)(`${row}\n`);
+    if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+      presentFailureDiagnostic(terminal, io);
     }
   } catch (error) {
     // Presentation consumes a settled report; it never reopens dispatch or
@@ -492,7 +490,8 @@ export async function runWithAutoResumeLoop<
       decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
     } } as TerminalResult
     : terminal;
-  if (complete !== undefined) {
+  // The seat selects its accepted volume after routing; other stops are final here.
+  if (complete !== undefined && complete.roleOutcome.kind !== "accepted") {
     await presentTerminal(complete, options.io, options.admitted.runDirectory);
   }
   return stoppedResult === undefined

@@ -106,7 +106,7 @@ import {
   publishSeatSettlement,
   filedIdentity,
 } from "./settlement.ts";
-import type { CliIo } from "./cli-io.ts";
+import { discardStdout, type CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
 import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
@@ -1396,7 +1396,7 @@ export async function dispatchPostAdmissionTurn<
         admitted,
         env,
         // Only the final Terminal presents; intermediate delivery attempts stay quiet.
-        io: { ...io, stdout: () => {} },
+        io: { ...io, stdout: discardStdout },
         adapters,
         shouldPresent,
         request: deliveryTurnRequest,
@@ -2137,7 +2137,7 @@ export async function runPostAdmissionManualResume<
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
   if (
-    result.terminal !== undefined &&
+    result.terminal !== undefined && result.terminal.roleOutcome.kind !== "accepted" &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
   ) {
     // dispatchPostAdmissionTurn already persisted this lawful outcome inline

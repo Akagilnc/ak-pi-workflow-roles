@@ -9,6 +9,7 @@ import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
 
 export type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -166,6 +167,10 @@ export function adviceNavigatorFact(input: { prose: string }): TerminalNavigator
   return { disposition: "advice", prose: input.prose };
 }
 
+export function receiptErrorRows(result: TerminalResult): string[] {
+  return (result.receiptErrors ?? []).map(fault => `receipt-error\t${JSON.stringify(fault)}`);
+}
+
 /** One leg's public identity rows (#1201): its ticket, then its receipts newest first. */
 function identityRows(leg: TerminalResult): string[] {
   const seat = leg.roleOutcome.role;
@@ -247,7 +252,7 @@ export function formatTerminalResult(result: TerminalResult): string {
     }
   }
   lines.push(...identityRows(result));
-  for (const fault of result.receiptErrors ?? []) lines.push(`receipt-error\t${JSON.stringify(fault)}`);
+  for (const row of receiptErrorRows(result)) lines.push(row);
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
@@ -257,14 +262,14 @@ export function formatTerminalResult(result: TerminalResult): string {
   const current = result.roleOutcome.kind === "failure"
     ? result.roleOutcome.payloads ?? []
     : currentReplyRows(result);
-  for (const [label, rows] of [
-    ["submission", [...current].reverse()],
-    ["recorded-submission", result.submissions ?? []],
-  ] as const) {
-    for (const payload of rows) {
-      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`${label}\t${encodeTerminalField(rendered)}`);
-    }
+  const cell = (payload: unknown) => encodeTerminalField(readableGateItem(payload));
+  const currentCells = new Map<unknown, string>();
+  for (let i = current.length - 1; i >= 0; i--) {
+    const payload = current[i];
+    const encoded = currentCells.get(payload) ?? cell(payload);
+    currentCells.set(payload, encoded);
+    lines.push(`submission\t${encoded}`);
   }
+  for (const payload of result.submissions ?? []) lines.push(`recorded-submission\t${currentCells.get(payload) ?? cell(payload)}`);
   return `${lines.join("\n")}\n`;
 }
