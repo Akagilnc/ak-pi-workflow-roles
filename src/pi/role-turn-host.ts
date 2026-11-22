@@ -452,6 +452,8 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         // Child-process scoped only — not written back onto the parent process.env.
         AK_ROLE_PACKAGE_ROOT: config.packageRoot,
       };
+      if (request.auditedRound === undefined) delete env.AK_ROLE_AUDITED_ROUND;
+      else env.AK_ROLE_AUDITED_ROUND = request.auditedRound;
       if (request.courtAttemptId === undefined) delete env.AK_ROLE_COURT_ATTEMPT;
       else env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
       // Public-invocation scope (#537): omit must not inherit a parent env value.

@@ -773,6 +773,7 @@ async function pinAuditedLegAtAdmission(
   const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory, auditedReceipt);
   persistAdmittedAuditedLeg(officer.runDirectory, { for: auditedRound, auditedReceipt, ...source });
   officer.auditedReceipt = auditedReceipt;
+  officer.auditedRound = auditedRound;
   if (fault === undefined) return;
   await retainPackageFault({
     runDirectory: officer.runDirectory,

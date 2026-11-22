@@ -281,7 +281,7 @@ export function scriptedTerminatingToolSession(input: {
     ...(seal ? [{
       type: "custom",
       customType: "ak-role-submission-closure",
-      data: { toolName: input.toolName, isError: false, details: sessionDetails },
+      data: { toolName: input.toolName, isError: false },
       id: "closure-1",
       parentId: "result-1",
       timestamp: sessionRowTime(3).iso,

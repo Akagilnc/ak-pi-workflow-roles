@@ -677,7 +677,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: accepted },
+              data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false },
               id: "closure-accept",
               parentId: "result-accept",
               timestamp: sessionRowTime(44).iso,
@@ -844,7 +844,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           {
             type: "custom",
             customType: "ak-role-submission-closure",
-            data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: reverseAccepted },
+            data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false },
             id: "closure-rev-accept",
             parentId: "result-rev-accept",
             timestamp: sessionRowTime(122).iso,

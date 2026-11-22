@@ -184,6 +184,7 @@ export async function prepareRoleEnvelope(options: {
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
     ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+    ...(request.auditedRound && { auditedRound: request.auditedRound }),
     ...(request.invocationScopeId === undefined ? {} : { invocationScopeId: request.invocationScopeId }),
     ...(request.host === undefined || request.host.trim() === "" ? {} : { host: request.host.trim() }),
     sessionManager: {

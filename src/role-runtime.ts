@@ -542,11 +542,10 @@ export async function projectClosedSubmissionLifecycle(
   const closure = {
     toolName: navigatorOutputTool(closed.role)!,
     isError: false,
-    details: closed.accepted,
   };
   let navigator: NavigatorEvent | undefined;
   try {
-    navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
+    navigator = await settle(publicNavigatorSettlement(closed.role, phase, { ...closure, details: closed.accepted }));
   } finally {
     // A Navigator failure cannot erase an already accepted role closure.
     // Missing attendance remains a typed unavailable at public settlement.

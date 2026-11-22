@@ -219,7 +219,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: { disposition: "advice", prose: "review next → reviewer" } },
+              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, navigator: { disposition: "advice", prose: "review next → reviewer" } },
             },
             {
               type: "custom_message",

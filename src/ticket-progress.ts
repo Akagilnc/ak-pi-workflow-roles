@@ -238,9 +238,9 @@ export function readAuditedRound(auditedRunDirectory: string, receiptName?: stri
  * The row's `for`: gate officers copy the admission pin; the fixer's receipt
  * reports its own (copied when it is a string, never checked). No other seat has one.
  */
-function forOfSealedRow(runDirectory: string, seat: string, payload: unknown): string | undefined {
+function forOfSealedRow(auditedRound: string | undefined, seat: string, payload: unknown): string | undefined {
   const reported = packagedGateStageLabel(seat) !== undefined
-    ? readPageSync(runDirectory, "admitted")?.for
+    ? auditedRound
     : seat === "fixer" && isRecord(payload) ? payload.for : undefined;
   return typeof reported === "string" ? reported : undefined;
 }
@@ -364,6 +364,7 @@ export function landTicketProgressForSealedSubmission(input: {
     call: input.call,
     ...(input.lens === undefined ? {} : { lens: input.lens }),
     sessionFile: progressSessionAbsolute(runDirectory, input.context),
+    auditedRound: input.context.auditedRound,
     instruction: typeof input.context.summonsInstruction === "string"
       ? input.context.summonsInstruction
       : "",
@@ -383,6 +384,7 @@ export function landTicketProgress(input: {
   readonly sealHead: WorktreeHeadCapture;
   readonly lens?: string;
   readonly sessionFile: string | undefined;
+  readonly auditedRound?: string | undefined;
   readonly instruction: string;
   readonly call: ProgressRowCall;
 }): TicketProgressLine | undefined {
@@ -418,7 +420,7 @@ export function landTicketProgress(input: {
     ? ""
     : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
   const { status, summary } = statusAndSummaryFromPayload(input.accepted);
-  const reviewed = forOfSealedRow(runDirectory, input.role, input.accepted);
+  const reviewed = forOfSealedRow(input.auditedRound, input.role, input.accepted);
   const instruction = input.instruction;
   const line: TicketProgressLine = {
     at: new Date().toISOString(),
@@ -470,35 +472,32 @@ export function relocateTicketProgressForLeg(input: {
     return;
   }
 
-  const ticketLines = [...readTicketProgressLines(subjectDirectory)];
+  const ticketLines = readTicketProgressLines(subjectDirectory);
+  const priorCount = ticketLines.length;
   // Receipt path is the seal identity. Append-then-unlink partial success must
   // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
-  const published = new Map(ticketLines.map(line => [line.receipt, line.round]));
-  const pending = mine.filter(line => !published.has(line.receipt));
-
-  const movedLines: TicketProgressLine[] = [];
-  for (const line of pending) {
+  const published = new Map(ticketLines.map(line => [line.receipt, line]));
+  for (const line of mine) {
+    if (published.has(line.receipt)) continue;
     // Current unbound staging publishes empty rounds; lens comes only from this
     // leg's admitted page. No legacy staged-round mirror-suffix branch.
     const lens = lensFromRunDirectory(input.runDirectory, line.seat);
     const round = nextRoundFromLines(ticketLines, line.seat, lens);
-    const moved: TicketProgressLine = {
-      ...line,
-      round,
-    };
-    published.set(line.receipt, round);
-    movedLines.push(moved);
+    const moved = { ...line, round };
+    published.set(line.receipt, moved);
     ticketLines.push(moved);
   }
 
-  if (movedLines.length) {
+  if (ticketLines.length > priorCount) {
     const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
     mkdirSync(dirname(newCurrent), { recursive: true });
-    appendFileSync(newCurrent, `${movedLines.map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
+    appendFileSync(newCurrent, `${ticketLines.slice(priorCount).map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
   }
   // The ticket row is committed even if later cleanup or rendering fails.
-  if (publishedRounds) for (const { receipt } of mine) publishedRounds.set(join(subjectDirectory, receipt), published.get(receipt)!);
-  // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
+  const filed = mine.map(({ receipt }) => published.get(receipt)!);
+  if (publishedRounds) for (const line of filed) publishedRounds.set(join(subjectDirectory, line.receipt), line.round);
+  // Retire staging only after every exact ticket row (also on retry) has a
+  // durable handoff. Replaying that metadata never creates a new round.
+  for (const line of filed) carryProgressRow(input.runDirectory, line);
   rmSync(stagedPath, { force: true });
-  for (const moved of movedLines) carryProgressRow(input.runDirectory, moved);
 }

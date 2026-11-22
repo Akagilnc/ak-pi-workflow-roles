@@ -147,6 +147,7 @@ export type AdmittedRoleInvocationBase = {
   readonly correlationId?: string;
   /** Receipt this call was admitted to review, independent of later re-summons. */
   auditedReceipt?: string | undefined;
+  auditedRound?: string | undefined;
   /** Direct callers retained across same-run resumes, in first-observed order. */
   readonly correlationIds?: readonly string[];
   /**

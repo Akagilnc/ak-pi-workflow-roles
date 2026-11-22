@@ -57,6 +57,7 @@ export async function driveLedgerProducer(input: {
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
   readonly invocationScopeId?: string;
+  readonly auditedRound?: string;
   /** #1199 this-turn summons / 催交 from the input seam (HostContext field). */
   readonly summonsInstruction?: string;
   /** #1199: issued session coordinate from the live --session / principal face. */
@@ -107,6 +108,7 @@ export async function driveLedgerProducer(input: {
         set runDirectory(next: string) { runDirectory = next; },
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
         ...(input.invocationScopeId && { invocationScopeId: input.invocationScopeId }),
+        ...(input.auditedRound && { auditedRound: input.auditedRound }),
         ...(input.summonsInstruction === undefined
           ? {}
           : { summonsInstruction: input.summonsInstruction }),
@@ -162,6 +164,7 @@ export async function sealAcceptedSubmission(input: {
   readonly invocationScopeId?: string;
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
+  readonly auditedRound?: string;
   /** #1199 this-turn summons / 催交 for seal-time progress. */
   readonly summonsInstruction?: string;
   /** #1199 issued session coordinate from the live host face. */
@@ -220,6 +223,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
     ...(input.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: input.env.AK_ROLE_INVOCATION_SCOPE }),
+    ...(input.env.AK_ROLE_AUDITED_ROUND && { auditedRound: input.env.AK_ROLE_AUDITED_ROUND }),
     ...(summonsInstruction === undefined ? {} : { summonsInstruction }),
     ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
   });
