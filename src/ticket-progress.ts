@@ -497,7 +497,7 @@ export function relocateTicketProgressForLeg(input: {
     appendFileSync(newCurrent, `${movedLines.map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
   }
   // The ticket row is committed even if later cleanup or rendering fails.
-  if (publishedRounds) for (const { receipt } of mine) publishedRounds.set(receipt, published.get(receipt)!);
+  if (publishedRounds) for (const { receipt } of mine) publishedRounds.set(join(subjectDirectory, receipt), published.get(receipt)!);
   // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
   rmSync(stagedPath, { force: true });
   for (const moved of movedLines) carryProgressRow(input.runDirectory, moved);

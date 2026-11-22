@@ -94,7 +94,8 @@ export type SubmissionGateOutcome = {
   readonly receipt: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
-  /** Officer terminal already returned by the summon. Present when the reply was not a queue word. */
+  readonly admitted?: import("./public-cli/invocation.ts").AdmittedRoleInvocation;
+  /** Officer terminal already returned by the summon. */
   readonly terminal?: TerminalResult;
   /** transport_failure / no_receipt reason from the officer summon/process. */
   readonly reason?: string;
@@ -106,8 +107,7 @@ function presentGateOutcome(fields: {
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string | undefined;
-  readonly runDirectory?: string | undefined;
-  readonly terminal?: TerminalResult | undefined;
+  readonly summoned?: Awaited<ReturnType<GateOfficerSummon>> | undefined;
   readonly reason?: string | undefined;
 }): SubmissionGateOutcome {
   return {
@@ -117,10 +117,11 @@ function presentGateOutcome(fields: {
     ...(typeof fields.runId === "string" && fields.runId.trim() !== ""
       ? { runId: fields.runId }
       : {}),
-    ...(typeof fields.runDirectory === "string" && fields.runDirectory.trim() !== ""
-      ? { runDirectory: fields.runDirectory }
+    ...(typeof fields.summoned?.runDirectory === "string" && fields.summoned.runDirectory.trim() !== ""
+      ? { runDirectory: fields.summoned.runDirectory }
       : {}),
-    ...(fields.terminal === undefined ? {} : { terminal: fields.terminal }),
+    ...(fields.summoned?.terminal && { terminal: fields.summoned.terminal }),
+    ...(fields.summoned?.admitted && { admitted: fields.summoned.admitted }),
     ...(fields.reason === undefined ? {} : { reason: fields.reason }),
   };
 }
@@ -169,12 +170,8 @@ export async function requireSubmissionGate(options: {
       // Keep the officer terminal for escalate / unsettled surfaces; parent
       // finals do not project other-seat tables (#1195).
       return presentGateOutcome({
-        status: "converged",
-        officer: projected.officer,
-        receipt: gatekeeper.receipt,
-        runId: gatekeeper.runId,
-        runDirectory: projected.summoned?.runDirectory,
-        terminal: projected.summoned?.terminal,
+        ...gatekeeper,
+        summoned: projected.summoned,
       });
     }
     if (gatekeeper.status === "continue") {
@@ -197,8 +194,7 @@ export async function requireSubmissionGate(options: {
           officer: projected.officer,
           receipt: gatekeeper.receipt,
           runId: gatekeeper.runId,
-          runDirectory: projected.summoned?.runDirectory,
-          terminal: projected.summoned?.terminal,
+          summoned: projected.summoned,
         });
       }
       reasksSpent += 1;
@@ -214,19 +210,14 @@ export async function requireSubmissionGate(options: {
         receipt: gatekeeper.submission ?? { reason: gatekeeper.reason },
         reason: gatekeeper.reason,
         runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
-        runDirectory: projected.summoned?.runDirectory,
-        terminal: projected.summoned?.terminal,
+        summoned: projected.summoned,
       });
     }
     if (gatekeeper.status === "escalate") {
       // Keep the actual officer terminal so callers resume that seat.
       return presentGateOutcome({
-        status: "escalate",
-        officer: projected.officer,
-        receipt: gatekeeper.receipt,
-        runId: gatekeeper.runId,
-        runDirectory: projected.summoned?.runDirectory,
-        terminal: projected.summoned?.terminal,
+        ...gatekeeper,
+        summoned: projected.summoned,
       });
     }
     // #1214 F2: lawful officer no_receipt is a typed incomplete outcome, not a
@@ -237,8 +228,7 @@ export async function requireSubmissionGate(options: {
       receipt: gatekeeper.facts ?? { reason: gatekeeper.reason },
       reason: gatekeeper.reason,
       runId: projected.summoned === undefined ? undefined : officerRunIdFromSummoned(projected.summoned),
-      runDirectory: projected.summoned?.runDirectory,
-      terminal: projected.summoned?.terminal,
+      summoned: projected.summoned,
     });
   }
 }
