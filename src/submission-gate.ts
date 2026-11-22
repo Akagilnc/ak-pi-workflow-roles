@@ -145,6 +145,7 @@ export async function requireSubmissionGate(options: {
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
+  readonly onDiscard?: (seat: Awaited<ReturnType<GateOfficerSummon>> | undefined) => Promise<void>;
   /** This loop's ceiling. Absent uses the package default. */
   readonly autoResumeLimit?: number;
 }): Promise<SubmissionGateOutcome> {
@@ -175,6 +176,7 @@ export async function requireSubmissionGate(options: {
       if (!nestedIncomplete && reasksSpent < reaskLimit) {
         reasksSpent += 1;
         reask = officerConclusionReask(gatekeeper.receivedStatus);
+        await options.onDiscard?.(projected.summoned);
         continue;
       }
     }
@@ -189,6 +191,7 @@ export async function requireSubmissionGate(options: {
         summoned: projected.summoned,
       });
     }
+    if (gatekeeper.status === "converged" || gatekeeper.status === "continue") await options.onDiscard?.(projected.summoned);
     return presentGateOutcome({
       ...gatekeeper,
       summoned: gatekeeper.status === "continue" ? undefined : projected.summoned,

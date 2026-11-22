@@ -52,11 +52,25 @@ export async function persistReturnedRunState(
   await markRunTerminal(admitted.runDirectory);
 }
 
-export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string): Promise<void> {
+// A quiet caller can still deliver a returned volume; only the other two stay here.
+type VolumeDelivery = "returned" | "alongside" | "discarded";
+
+export async function presentSeatVolume(
+  seat: Pick<import("../public-role-summons.ts").PublicSummonResult, "terminal" | "admitted" | "runDirectory"> | undefined,
+  io: CliIo, delivery: VolumeDelivery,
+): Promise<void> {
+  if (!seat?.terminal || (delivery === "discarded" && !seat.terminal.receiptErrors?.length)) return;
+  const dir = seat.admitted?.runDirectory ?? seat.runDirectory;
+  if (dir) await presentTerminal(seat.terminal, { ...io, omitFailureStderrDiagnostic: true }, dir, delivery);
+}
+
+export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, delivery: VolumeDelivery = "returned"): Promise<void> {
   try {
-    if (io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
-    else for (const row of receiptErrorRows(terminal)) (io.receiptDiagnostic ?? io.stderr)(`${row}\n`);
-    if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+    if (delivery !== "discarded" && io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
+    else if (delivery !== "returned") {
+      for (const row of receiptErrorRows(terminal)) (io.receiptDiagnostic ?? io.stderr)(`${row}\n`);
+    }
+    if (delivery !== "discarded" && (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt")) {
       presentFailureDiagnostic(terminal, io);
     }
   } catch (error) {

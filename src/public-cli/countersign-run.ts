@@ -7,6 +7,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
+import { presentSeatVolume } from "./auto-resume.ts";
 import { currentReplyRows, type TerminalResult, type TerminalRoleOutcome } from "./terminal.ts";
 
 import { receiptStatus } from "../packaged-role-registry.ts";
@@ -178,6 +179,7 @@ export async function invokeCourtDiarist(
     };
   }
 
+  await presentSeatVolume(result, io, "discarded");
   if (result.exitCode !== 0) {
     const diagnostic =
       roleOutcome?.kind === "failure"
