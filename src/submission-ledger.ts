@@ -79,13 +79,14 @@ export async function readRecordedSubmissionRows(
   const malformed = reasons ? { diagnostic: `${recordFile}: ${reasons}`, cause: reasons } : undefined;
   const gap = journal?.lastGap ?? 0;
   let latestIndex = -1;
-  let unlocatedDraft: LedgerFault | undefined;
+  const missingReferences: { diagnostic: string; attemptId: unknown; toolCallId: unknown }[] = [];
   for (const [index, { kind, subject, payload }] of (journal?.records ?? []).entries()) {
     if (!isRecord(subject) || subject.runId !== runId) continue;
     if (!isRecord(payload) || typeof payload.receipt !== "string" || !payload.receipt) {
       if (kind === "candidate" || kind === "sealed" || kind === "outcome" || kind === PROGRESS_RECORD_KIND) {
         const cause = `record ${index + 1} (${kind}) without a receipt reference`;
-        unlocatedDraft = { diagnostic: `${recordFile}: ${cause}`, cause };
+        missingReferences.push({ diagnostic: `${recordFile}: ${cause}`, attemptId: subject.attemptId,
+          toolCallId: isRecord(payload) ? payload.toolCallId : undefined });
       }
       continue;
     }
@@ -95,7 +96,7 @@ export async function readRecordedSubmissionRows(
       // Binding can fill the round later; it doesn't make the original publication newer.
       publications.set(receipt, { round: payload.round, index: publications.get(receipt)?.index ?? index });
       if (!facts.get(receipt)?.attemptId && typeof subject.attemptId === "string") {
-        facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, ...(malformed && { dispositionFault: malformed }) });
+        facts.set(receipt, { kind: "candidate", attemptId: subject.attemptId, toolCallId: payload.toolCallId as string, ...(malformed && { dispositionFault: malformed }) });
       }
     }
     const disposition = kind === "sealed" ? "accepted" : kind === "candidate" ? "candidate" : kind === "outcome" ? payload.outcome : undefined;
@@ -115,7 +116,7 @@ export async function readRecordedSubmissionRows(
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
   if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, unlocatedDraft, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, missingReferences, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

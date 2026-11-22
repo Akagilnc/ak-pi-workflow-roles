@@ -43,7 +43,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { seedGitRepository, withOutsideTempRoot, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readCurrentSection, readHistoryRows } from "../helpers/run-dossier-fixture.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
@@ -396,6 +396,11 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
       details: previous,
       toolCallId: "direct-peer-previous",
     });
+    // A damaged arrival still has its identity and its seal; it is not an unknown later draft.
+    const history = readHistoryRows(parentRun);
+    const arrival = history.find(row => row.kind === "candidate")!.payload as Record<string, unknown>;
+    delete arrival.receipt;
+    await writeFile(join(parentRun, "history.jsonl"), history.map(row => JSON.stringify(row)).join("\n") + "\n");
     // Latest ledger row may be correctable-rejection — still the current manuscript (J10).
     await recordNonSealedSubmission({
       cwd: project,
@@ -429,12 +434,13 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
       },
     ]) {
       let inspected: Awaited<ReturnType<typeof inspectLiveRequest>> | undefined;
+      const log = captureIo();
       const result = await runAkRole(seat.argv, {
         packageRoot,
         home,
         cwd: project,
         createRunId: () => seat.runId,
-        io: captureIo().io,
+        io: log.io,
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
           assert.equal(request.activation.role, seat.role);
@@ -443,7 +449,7 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
-      assert.equal(result.exitCode, 0, JSON.stringify(result));
+      assert.equal(result.exitCode, 0, log.stderr.join("\n"));
       assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,

@@ -793,15 +793,13 @@ export async function summonGateOfficer(options: {
     // Terminal "" only when the resolver itself has no body — not a third source.
     const { resolveReviewSeatDialogueBody } = await import("./public-cli/instruction-seat-run.ts");
     const instruction =
-      (await resolveReviewSeatDialogueBody({
+      resolveReviewSeatDialogueBody({
         role: options.officer,
         ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
         ...(gateReviewInstruction === undefined
           ? {}
           : { gateReviewInstruction }),
-        projectRoot: options.cwd,
-        home,
-      })) ?? "";
+      }) ?? "";
     return summonPublicRole({
       role: options.officer,
       argv: ["--project", options.cwd, "--", instruction],

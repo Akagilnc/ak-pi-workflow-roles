@@ -80,6 +80,7 @@ import {
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  formatCliDiagnostic,
   presentStructuralRejection,
   readBoundSessionEntries,
   retainPackageFault,
@@ -456,23 +457,32 @@ async function loadLedgerPeerBody(
   sourceRunDirectory: string,
   projectRoot: string,
   home: string,
-): Promise<string | undefined> {
+  io: CliIo,
+) {
   const runId = runIdFromRunDirectory(sourceRunDirectory);
   if (runId === undefined) return undefined;
   // Bind to the already-resolved source directory — never re-discover by runId
   // alone (another book may lawfully share the same id; #637 / #1166).
-  const { rows, fault, discoveryFault, unlocatedDraft } = await readRecordedSubmissionRows(projectRoot, runId, {
+  const { rows, fault, discoveryFault, missingReferences } = await readRecordedSubmissionRows(projectRoot, runId, {
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
   // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
   // present the latest row as-is. Never filter current manuscript by accepted /
   // terminal outcome kind (that resurrects a prior sealed draft).
-  const missing = fault ?? discoveryFault ?? unlocatedDraft;
+  const missing = fault ?? discoveryFault;
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
+  for (const gap of missingReferences ?? []) {
+    // A second fact for this same tool call can locate its draft. Without one
+    // we cannot tell whether the last discoverable file is the last arrival.
+    if (!gap.attemptId || !gap.toolCallId || !rows.some(row => row.attemptId === gap.attemptId && row.toolCallId === gap.toolCallId)) {
+      throw new Error(gap.diagnostic);
+    }
+    io.stderr(formatCliDiagnostic(gap.diagnostic));
+  }
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
-  try { return readableGateItem(readReceipt(latest)); }
+  try { return { instruction: readableGateItem(readReceipt(latest)), auditedReceipt: basename(latest.receipt) }; }
   catch (cause) { throw new Error(latest.path, { cause }); }
 }
 
@@ -488,15 +498,12 @@ export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职
  * ledger peer. Identity stays in startup materials. Notary never takes
  * gate/parent verdict as dialogue (gateReviewInstruction stays unread for notary).
  */
-export async function resolveReviewSeatDialogueBody(input: {
+export function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
   readonly reviewReask?: string;
   readonly gateReviewInstruction?: string;
   readonly callerInstruction?: string;
-  readonly sourceRunPath?: string;
-  readonly projectRoot: string;
-  readonly home: string;
-}): Promise<string | undefined> {
+}): string | undefined {
   // #1208: fixed sentence is the review function only (owner 37bfe80d /
   // 393daf98). reviewReask is the named operational override; caller/summons
   // body is not a free passthrough (countersign rejected that prescription).
@@ -507,27 +514,26 @@ export async function resolveReviewSeatDialogueBody(input: {
   const preferred = input.reviewReask ?? input.gateReviewInstruction;
   if (preferred !== undefined && preferred.length > 0) return preferred;
   const caller = input.callerInstruction ?? "";
-  if (caller.length > 0) return caller;
-  const sourceRunPath = admittedSourceRunPath(input)?.trim();
-  if (sourceRunPath === undefined) return undefined;
-  return await loadLedgerPeerBody(sourceRunPath, input.projectRoot, input.home);
+  return caller.length > 0 ? caller : undefined;
 }
 
 /**
  * Initial host prompt for this turn (#1199: progress instruction = these bytes).
  */
-async function resolveInitialTurnPrompt(
+function resolveInitialTurnPrompt(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
   summons?: SameTicketSummonsMaterials,
-): Promise<string> {
+): string {
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
-    const dialogue = summons ?? await sameParentDialogue(env, admitted.instruction, admittedSourceRunPath(admitted), admitted.projectRoot, admitted.role);
+    const instruction = summons ? summons.instruction : resolveReviewSeatDialogueBody({
+      ...env, role: admitted.role, callerInstruction: admitted.instruction ?? "",
+    });
     // #1166 J11: merge existing file-flag delivery — never early-return body alone
     // when caller attach paths were admitted. Gate with no file flags stays body-only.
-    if (dialogue.instruction !== undefined && !dialogue.instructionEmpty) {
-      return appendCallerFileFlagPaths(dialogue.instruction, admitted.attachments);
+    if (instruction !== undefined && !summons?.instructionEmpty) {
+      return appendCallerFileFlagPaths(instruction, admitted.attachments);
     }
   }
   return buildInstructionTransportPrompt(admitted);
@@ -623,7 +629,7 @@ async function dispatchAdmitted(
     if (activeEnv.correlationId !== undefined && activeEnv.correlationId.trim() !== "") {
       await recordAdmittedCorrelation(admitted, activeEnv.correlationId);
     }
-    const initialPrompt = await resolveInitialTurnPrompt(admitted, activeEnv, summons);
+    const initialPrompt = resolveInitialTurnPrompt(admitted, activeEnv, summons);
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
       // #1208: auto-resume resends this turn's actual content, never a filler phrase.
@@ -829,24 +835,18 @@ function resumeSameParentInstructionSeat(input: {
  * Shared resolver owns the input choice — callers only pass env fields.
  */
 async function sameParentDialogue(
-  env: InstructionSeatRunEnv,
+  env: Pick<InstructionSeatRunEnv, "home" | "gateReviewInstruction" | "reviewReask" | "auditedReceipt">,
   instruction: string | undefined,
   sourceRunPath: string | undefined,
   projectRoot: string,
   role: string,
-): Promise<{ readonly instruction: string; readonly instructionEmpty: boolean }> {
-  const body = await resolveReviewSeatDialogueBody({
-    role,
-    ...(env.reviewReask === undefined ? {} : { reviewReask: env.reviewReask }),
-    ...(env.gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction: env.gateReviewInstruction }),
-    callerInstruction: instruction ?? "",
-    ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
-    projectRoot,
-    home: env.home,
-  });
-  return { instruction: body ?? "", instructionEmpty: body === undefined };
+  io: CliIo,
+) {
+  const body = resolveReviewSeatDialogueBody({ ...env, role, callerInstruction: instruction ?? "" });
+  const peer = body === undefined && sourceRunPath
+    ? await loadLedgerPeerBody(sourceRunPath, projectRoot, env.home, io) : undefined;
+  return { instruction: body ?? peer?.instruction ?? "", instructionEmpty: body === undefined && !peer,
+    auditedReceipt: peer?.auditedReceipt ?? env.auditedReceipt };
 }
 
 /**
@@ -866,9 +866,11 @@ async function runCountersignBody(
   let summons: SameTicketSummonsMaterials | undefined;
   if (gateParentRunPath !== undefined) {
     // #1208 C1: same shared dialogue resolver as every other same-parent seat.
+    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, gateParentRunPath, projectRoot, "countersign", io);
+    if (auditedReceipt) env = { ...env, auditedReceipt };
     summons = {
       sourceRunPath: gateParentRunPath,
-      ...await sameParentDialogue(env, parsed.instruction, gateParentRunPath, projectRoot, "countersign"),
+      ...dialogue,
       attachmentPaths: parsed.attachmentPaths ?? [],
     };
     const resumed = await resumeSameParentInstructionSeat({
@@ -919,7 +921,7 @@ async function runCountersignBody(
       // #1208 C1 / #1166 J11: one shared initial-prompt seam (incl. file flags).
       const turnProjection = roleTurnOptions(env, admitted, {
         kind: "initial",
-        prompt: await resolveInitialTurnPrompt(admitted, env, summons),
+        prompt: resolveInitialTurnPrompt(admitted, env, summons),
       });
       const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
@@ -984,10 +986,8 @@ export async function runPublicInstructionSeat(
 
   const projectRoot = parsed.project ?? env.cwd;
   let auditorSubject: "judge" | "doctor" | undefined;
-  let auditorSource: string | undefined;
+  let source: NotarySourceRunLocator | undefined;
   let auditorTicket: number | undefined;
-  let resolvedNotarySource: NotarySourceRunLocator | undefined;
-  let instructionSourceRunPath: string | undefined;
   let summons: SameTicketSummonsMaterials | undefined;
   if (record.sameParent === "subject-source") {
     if (parsed.subject === undefined) {
@@ -999,105 +999,45 @@ export async function runPublicInstructionSeat(
       presentStructuralRejection(new CliUsageError("auditor --source-run requires a run locator"), io);
       return { exitCode: 2 };
     }
-    const source = parsed.sourceRun;
-    try {
-      const resolved = await resolveNotarySourceRunLocator({ projectRoot, sourceRun: source, home: env.home });
-      auditorSource = resolved.runDirectory;
-      auditorTicket = await readBoardTicketNumber(resolved.runDirectory);
-    } catch (error) {
-      presentStructuralRejection(new CliUsageError(errorText(error)), io);
-      return { exitCode: 2 };
-    }
-    if (auditorSource === undefined) return { exitCode: 2 };
-    const sourceDirectory = auditorSource;
-    const auditorSummons = {
-      ...await sameParentDialogue(env, parsed.instruction, sourceDirectory, projectRoot, role),
-      attachmentPaths: parsed.attachmentPaths ?? [],
-    };
-    const resumed = await withAuditorSoulEnv({
-      subject: auditorSubject,
-      sourceRunDirectory: auditorSource,
-      run: () => resumeSameParentInstructionSeat({
-        env,
-        io,
-        projectRoot,
-        role,
-        parentRunPath: sourceDirectory,
-        summons: auditorSummons,
-      }),
-    });
-    if (resumed != null) return resumed;
-    summons = auditorSummons;
   }
-
-  if (record.sameParent === "source-run") {
-    // #1166: structured --source-run only. Instruction bytes stay opaque caller/peer text.
-    if (parsed.sourceRun !== undefined) {
-      try {
-        instructionSourceRunPath = (await resolveNotarySourceRunLocator({
-          projectRoot,
-          sourceRun: parsed.sourceRun,
-          home: env.home,
-        })).runDirectory;
-      } catch (error) {
-        if (error instanceof NotarySourceRunError) {
-          presentStructuralRejection(new CliUsageError(error.message, { cause: error }), io);
-          return { exitCode: 2 };
-        }
-        throw error;
-      }
-      const parentRunPath = instructionSourceRunPath;
-      summons = {
-        sourceRunPath: parentRunPath,
-        ...await sameParentDialogue(env, parsed.instruction, parentRunPath, projectRoot, role),
-        attachmentPaths: parsed.attachmentPaths ?? [],
-      };
-      const resumed = await resumeSameParentInstructionSeat({
-        env,
-        io,
-        projectRoot,
-        role,
-        parentRunPath,
-        summons,
-      });
-      if (resumed != null) return resumed;
-    }
-  }
-
-  if (record.sameParent === "source-locator") {
-    let source;
+  if (auditorSubject || record.sameParent === "source-locator" || (record.sameParent === "source-run" && parsed.sourceRun !== undefined)) {
     try {
       source = await resolveNotarySourceRunLocator({
         projectRoot,
         sourceRun: parsed.sourceRun ?? "",
         home: env.home,
       });
+      if (auditorSubject) auditorTicket = await readBoardTicketNumber(source.runDirectory);
     } catch (error) {
+      if (auditorSubject) {
+        presentStructuralRejection(new CliUsageError(errorText(error)), io);
+        return { exitCode: 2 };
+      }
       if (error instanceof NotarySourceRunError) {
         presentStructuralRejection(new CliUsageError(error.message, { cause: error }), io);
         return { exitCode: 2 };
       }
       throw error;
     }
-    summons = {
-      sourceRunPath: source.runDirectory,
-      sourceRun: source,
-      ...await sameParentDialogue(env, undefined, source.runDirectory, projectRoot, role),
+    const parentRunPath = source.runDirectory;
+    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, parentRunPath, projectRoot, role, io);
+    if (auditedReceipt) env = { ...env, auditedReceipt };
+    const materials = {
+      ...dialogue,
+      ...(auditorSubject ? {} : { sourceRunPath: parentRunPath }),
+      ...(record.sameParent === "source-locator" ? { sourceRun: source } : { attachmentPaths: parsed.attachmentPaths ?? [] }),
     };
-    resolvedNotarySource = source;
-    const resumed = await resumeSameParentInstructionSeat({
-      env,
-      io,
-      projectRoot,
-      role,
-      parentRunPath: source.runDirectory,
-      summons,
+    summons = materials;
+    const resumed = await withAuditorSoulEnv({
+      ...(auditorSubject && { subject: auditorSubject, sourceRunDirectory: parentRunPath }),
+      run: () => resumeSameParentInstructionSeat({ env, io, projectRoot, role, parentRunPath, summons: materials }),
     });
     if (resumed != null) return resumed;
   }
 
   let admitted: AdmittedRoleInvocation;
   try {
+    const resolvedNotarySource = record.sameParent === "source-locator" ? source : undefined;
     const admissionOverride = {
       ...(auditorTicket === undefined ? {} : { assertedTicketNumber: auditorTicket }),
       ...(resolvedNotarySource === undefined ? {} : { resolvedSourceRun: resolvedNotarySource }),
@@ -1114,23 +1054,11 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  if (instructionSourceRunPath !== undefined) {
-    await pinAuditedLegAtAdmission(admitted, instructionSourceRunPath, env.auditedReceipt, io, {
-      sourceRunPath: instructionSourceRunPath,
-    });
-    admitted = { ...admitted, sourceRunPath: instructionSourceRunPath } as AdmittedRoleInvocation;
-  } else if (record.sameParent === "subject-source" && auditorSource !== undefined) {
-    await pinAuditedLegAtAdmission(admitted, auditorSource, env.auditedReceipt, io, {
-      sourceRunPath: auditorSource,
-      auditorSubject,
-    });
-    admitted = { ...admitted, sourceRunPath: auditorSource } as AdmittedRoleInvocation;
-  } else {
-    // The admission itself already recorded the source (source-locator seats).
-    const auditedRunDirectory = admittedSourceRunPath(admitted);
-    if (auditedRunDirectory !== undefined) {
-      await pinAuditedLegAtAdmission(admitted, auditedRunDirectory, env.auditedReceipt, io);
-    }
+  if (source) {
+    const sourceRunPath = source.runDirectory;
+    await pinAuditedLegAtAdmission(admitted, sourceRunPath, env.auditedReceipt, io,
+      record.sameParent === "source-locator" ? undefined : { sourceRunPath, auditorSubject });
+    admitted = { ...admitted, sourceRunPath } as AdmittedRoleInvocation;
   }
   // #1208 C2: same helper as resume — inherit the audited source's known ticket.
   admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
@@ -1175,7 +1103,7 @@ export async function runPublicInstructionSeat(
   if (record.sameParent === "subject-source") {
     return withAuditorSoulEnv({
       ...(auditorSubject === undefined ? {} : { subject: auditorSubject }),
-      ...(auditorSource === undefined ? {} : { sourceRunDirectory: auditorSource }),
+      ...(source && { sourceRunDirectory: source.runDirectory }),
       run: runAdmitted,
     });
   }
@@ -1261,14 +1189,11 @@ export async function runPublicInstructionSeatResume(
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const sourceRunPath = admittedSourceRunPath(admitted);
-      const body = await resolveReviewSeatDialogueBody({
-        role: admitted.role,
-        callerInstruction: summonsPrepared?.instruction ?? "",
-        ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-      });
-      if (body === undefined) {
+      const { instruction: body, instructionEmpty, auditedReceipt } = await sameParentDialogue(
+        { home: env.home }, summonsPrepared?.instruction, sourceRunPath, admitted.projectRoot, admitted.role, io,
+      );
+      if (auditedReceipt && sourceRunPath) await pinAuditedLegAtAdmission(admitted, sourceRunPath, auditedReceipt, io);
+      if (instructionEmpty) {
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const fileFlags = summonsPrepared?.attachments ?? [];
