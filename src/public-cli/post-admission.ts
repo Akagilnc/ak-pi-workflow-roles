@@ -303,62 +303,6 @@ function withProcessCancelSkipAutoResume<T extends object>(
   return { ...result, skipAutoResume: true as const };
 }
 
-/**
- * #855: turn already started, then a catchable process signal arrived before
- * lawful seal — settle as named cancel failure and skip auto-resume.
- */
-async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T extends TerminalResult>(input: {
-  admitted: A;
-  cancelName: CatchableProcessSignal;
-  result: RoleTurnResult;
-  adapters: PostAdmissionAdapters<A, T>;
-  env: PostAdmissionEnv;
-  io: CliIo;
-  persistRunState: boolean;
-  deferredPersist: { needsPersist?: true } | Record<string, never>;
-  invocationScopeId: string | undefined;
-  notePackageFault?: (diagnostic: string) => void | Promise<void>;
-  courtAttemptId?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: A;
-  terminal?: T;
-  skipAutoResume?: true;
-  turnDispatched?: true;
-  needsPersist?: true;
-}> {
-  const failed = await settleAfterTurnStarted(
-    input.admitted,
-    withEngineDetourInvocationScope(
-      {
-        timedOut: input.result.timedOut,
-        code: input.result.code,
-        stderr: input.result.stderr,
-        ...(input.result.signal === undefined ? {} : { signal: input.result.signal }),
-        // A host report already on this result stays the report. The cancel
-        // name is wording only when the host gave none.
-        ...(input.result.knownFailure === undefined
-          ? { knownDiagnostic: processCancelDiagnostic(input.cancelName) }
-          : { knownFailure: input.result.knownFailure }),
-        cancelName: input.cancelName,
-      },
-      input.invocationScopeId,
-    ),
-    input.adapters,
-    input.env.principalAuthority,
-    input.io,
-    input.persistRunState,
-    input.notePackageFault,
-    input.courtAttemptId,
-  );
-  return {
-    ...failed,
-    turnDispatched: true as const,
-    skipAutoResume: true as const,
-    ...input.deferredPersist,
-  };
-}
-
 function withOnceSuccessfulBeforeDispatch<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -497,7 +441,8 @@ export type PostAdmissionAdapters<
 };
 
 export type ControlledFailureInput = {
-  receiptHistory?: Pick<TerminalResult, "receiptErrors" | "submissions">;
+  /** History already projected, or rows already discovered but not yet opened. */
+  receiptHistory?: SeatReadFailure["history"] | { rows: readonly RecordedSubmissionRow[] };
   timedOut: boolean;
   code: number | null;
   stderr: string;
@@ -691,9 +636,9 @@ export async function presentControlledFailure<
       onErrorPublished: (path) => { publishedErrorPath = path; },
     });
     const history = failureInput.receiptHistory;
-    terminal = history
+    terminal = history && !("rows" in history)
       ? { ...settled, ...(history.submissions && { submissions: history.submissions }), ...(history.receiptErrors && { receiptErrors: history.receiptErrors }) }
-      : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault });
+      : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault }, history?.rows);
   } catch (error) {
     if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
       writeResumeFailurePointer(io, publishedErrorPath);
@@ -973,8 +918,9 @@ async function settleCompletedHostTurn<
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
-        ...(prepared && "failure" in prepared && { receiptHistory: prepared.history }),
-        ...(prepared && "terminal" in prepared && { receiptHistory: prepared.terminal }),
+        ...(prepared && {
+          receiptHistory: "terminal" in prepared ? prepared.terminal : "failure" in prepared ? prepared.history : prepared,
+        }),
         // A signal-killed child is a fact of its own. The synthetic line is
         // only a fallback for when the host declared no failure of its own —
         // it must never displace words the host actually reported.
@@ -1135,6 +1081,7 @@ export async function dispatchPostAdmissionTurn<
               stderr: "",
               knownDiagnostic: processCancelDiagnostic(cancelBeforeFinish),
               cancelName: cancelBeforeFinish,
+              receiptHistory: result.terminal,
               skipRunStateWrite: true,
             },
             request.invocationScopeId,
@@ -1513,23 +1460,17 @@ export async function dispatchPostAdmissionTurn<
     // #855: cancel during no_receipt settlement window is not lawful success.
     const noReceiptCancel = processCancelSignalName(env.signal);
     if (noReceiptCancel !== undefined) {
-      return await finishAfterTurn(
-        await settleProcessCancelAfterTurn({
-          admitted,
-          cancelName: noReceiptCancel,
-          result,
-          adapters,
-          env,
-          io,
-          persistRunState,
-          deferredPersist,
-          invocationScopeId: request.invocationScopeId,
-          notePackageFault: courtScope.notePackageFault,
-          ...(courtScope.courtAttemptId === undefined
-            ? {}
-            : { courtAttemptId: courtScope.courtAttemptId }),
-        }),
+      const failed = await settleAfterTurnStarted(
+        admitted, withEngineDetourInvocationScope({
+          timedOut: result.timedOut, code: result.code, stderr: result.stderr,
+          ...(result.signal === undefined ? {} : { signal: result.signal }),
+          ...(result.knownFailure === undefined
+            ? { knownDiagnostic: processCancelDiagnostic(noReceiptCancel) } : { knownFailure: result.knownFailure }),
+          cancelName: noReceiptCancel, receiptHistory: noReceipt,
+        }, request.invocationScopeId), adapters, env.principalAuthority, io, persistRunState,
+        courtScope.notePackageFault, courtScope.courtAttemptId,
       );
+      return await finishAfterTurn({ ...failed, turnDispatched: true, skipAutoResume: true, ...deferredPersist });
     }
     if (persistRunState) {
       try {
