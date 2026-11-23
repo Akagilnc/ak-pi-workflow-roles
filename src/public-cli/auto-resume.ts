@@ -438,7 +438,7 @@ export async function runWithAutoResumeLoop<
     // already-settled result) or the original non-lawful result unchanged.
     if (result !== undefined) {
       everyAttemptThrew = false;
-      const terminal = (result as { terminal?: TerminalResult }).terminal;
+      const terminal = result.terminal;
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
         if (terminal.roleOutcome.kind === "failure") {
@@ -457,6 +457,7 @@ export async function runWithAutoResumeLoop<
         stoppedResult = result;
         break;
       }
+      if (terminal) await presentTerminal(terminal, options.io, options.admitted.runDirectory, "discarded");
     } else {
       if (autoResumeAttempts >= limit) {
         endReason = "auto-resume budget exhausted";

@@ -3,12 +3,11 @@
  * the diarist; callers refresh the diary before court when needed (ADR 0081).
  */
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { readableGateItem } from "../readable-gate-item.ts";
 import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import { presentSeatVolume } from "./auto-resume.ts";
-import { currentReplyRows, type TerminalResult, type TerminalRoleOutcome } from "./terminal.ts";
+import type { TerminalRoleOutcome } from "./terminal.ts";
 
 import { receiptStatus } from "../packaged-role-registry.ts";
 
@@ -40,13 +39,7 @@ export type CountersignRunEnv = PostAdmissionEnv & {
 };
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
-export type CourtDiaristIdentity =
-  | { readonly kind: "unbound" }
-  | {
-      readonly kind: "escalate";
-      /** Honest diagnostic from diarist escalate payload (#953) — never invent 认不出. */
-      readonly diagnostic: string;
-    };
+export type CourtDiaristIdentity = { readonly kind: "unbound" | "escalate" };
 
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
@@ -54,39 +47,6 @@ export type CourtDiaristInvocationResult = {
   readonly terminal?: import("./terminal.ts").TerminalResult;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
-
-function isEscalatePayload(payload: unknown): boolean {
-  return receiptStatus(payload) === "escalate";
-}
-
-/**
- * Parent diagnostic for court-diarist escalate (#953 / 失败诚实 / 传话).
- * Relays diarist escalate payload(s) via readableGateItem — never invents
- * "cannot identify court target" when a payload already carries other facts
- * (e.g. ticketNumber present with a different reason).
- *
- * Multiple escalate payloads remain reachable after the run (ADR 0003/0041;
- * no courtAttempt sole-filter on diarist). Same law as secretariat parent face:
- * every escalate receipt as-is, last = currentConclusion.
- */
-function courtDiaristEscalateDiagnostic(
-  terminal: TerminalResult | undefined,
-): string {
-  const payloads = currentReplyRows(terminal);
-  const escalatePayloads: unknown[] = [];
-  for (const payload of payloads) {
-    if (isEscalatePayload(payload)) escalatePayloads.push(payload);
-  }
-  if (escalatePayloads.length === 0) return "court diarist station escalated";
-  // Single escalate: prior carrier (payload body only) — no shape churn.
-  if (escalatePayloads.length === 1) {
-    return `court diarist station escalated: ${readableGateItem(escalatePayloads[0])}`;
-  }
-  return `court diarist station escalated: ${readableGateItem({
-    receipts: escalatePayloads,
-    currentConclusion: escalatePayloads[escalatePayloads.length - 1],
-  })}`;
-}
 
 /** Env slice for the secretariat's pre-ticket diarist summons. */
 export type CourtDiaristSummonEnv = Pick<
@@ -107,8 +67,7 @@ export function latestPayloadEscalated(
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  const payloads = roleOutcome.payloads ?? [];
-  return isEscalatePayload(payloads[payloads.length - 1]);
+  return receiptStatus(roleOutcome.payloads?.at(-1)) === "escalate";
 }
 
 /**
@@ -170,10 +129,7 @@ export async function invokeCourtDiarist(
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
   if (latestPayloadEscalated(roleOutcome)) {
     return {
-      identity: {
-        kind: "escalate",
-        diagnostic: courtDiaristEscalateDiagnostic(result.terminal),
-      },
+      identity: { kind: "escalate" },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
       ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
     };

@@ -1,10 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { readPageSync } from "./run-dossier.ts";
-import { admittedSourceRunPath, type AdmittedRoleInvocation } from "./public-cli/invocation.ts";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 import { parseRunLeaf } from "./role-run-placement.ts";
-import { isRecord } from "./unknown-value.ts";
 
 import {
   joinPackageMaterials,
@@ -122,16 +118,10 @@ function subjectFromSourceDirectory(sourceRunDirectory: string): AuditorSoulRole
  * Resume binding already on the admitted page.
  * Explicit subject wins; otherwise the source-run role is the audited object.
  */
-export async function readAuditorResumeBinding(admitted: AdmittedRoleInvocation): Promise<
-  | { readonly subject: AuditorSoulRole; readonly sourceRunDirectory: string }
-  | undefined
-> {
-  const record = readPageSync(admitted.runDirectory, "admitted");
-  if (record === undefined) return undefined;
-  const sourceRunPath = admittedSourceRunPath(admitted);
+export function auditorResumeBinding(storedSubject: unknown, sourceRunPath: string | undefined) {
   if (sourceRunPath === undefined) return undefined;
-  const subject = isAuditorSoulRole(record.auditorSubject)
-    ? record.auditorSubject
+  const subject = isAuditorSoulRole(storedSubject)
+    ? storedSubject
     : subjectFromSourceDirectory(sourceRunPath);
   if (subject === undefined) return undefined;
   return { subject, sourceRunDirectory: sourceRunPath };

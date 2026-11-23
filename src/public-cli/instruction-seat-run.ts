@@ -37,7 +37,7 @@ import {
   packagedRoleMetadata,
   receiptStatus,
 } from "../packaged-role-registry.ts";
-import { readAuditorResumeBinding } from "../auditor-soul.ts";
+import { auditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -74,6 +74,7 @@ import {
   loadResumablePublicRole,
   markRunAdmitted,
   readCurrentCourt,
+  type LoadedResumablePublicRole,
   type PublicResumeRequest,
   type RunWriterLease,
   type SameTicketSummonsMaterials,
@@ -102,7 +103,6 @@ import {
 } from "./turn-request.ts";
 import {
   invokeCourtDiarist,
-  latestPayloadEscalated,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
 import { readAuditedRound } from "../ticket-progress.ts";
@@ -133,9 +133,9 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   readonly statuses: ReadonlySet<string>;
   readonly reask?: string;
 }>> = {
-  judge: {
-    statuses: REVIEW_QUEUE_STATUSES,
-  },
+  judge: { statuses: REVIEW_QUEUE_STATUSES },
+  countersign: { statuses: REVIEW_QUEUE_STATUSES },
+  secretariat: { statuses: new Set(["converged", "escalate"]), reask: SECRETARIAT_STATUS_REASK },
   // #1208 C1 / ADR 0055: every review-queue seat uses the shared
   // unreadable-status seam (officerConclusionReask). Independent public
   // entry for notary/auditor/inspector was the same miss — route here, do
@@ -170,20 +170,6 @@ const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
   },
 } as const;
 
-function unreadablePostSubmissionStatus(
-  admitted: AdmittedRoleInvocation,
-  terminal: TerminalResult | undefined,
-): string | undefined {
-  if (terminal?.roleOutcome.kind !== "accepted") return undefined;
-  const route = POST_SUBMISSION_ROUTING[admitted.role];
-  if (route === undefined) return undefined;
-  const payload = terminal.roleOutcome.payloads?.at(-1);
-  const status = receiptStatus(payload);
-  return typeof status === "string" && route.statuses.has(status)
-    ? undefined
-    : route.reask ?? officerConclusionReask(status);
-}
-
 /**
  * One more unreadable-status reask. This loop has its own counter and reads
  * the same autoResumeLimit as the other loops. Exhaustion is not a readable
@@ -194,15 +180,6 @@ function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv 
   const spent = env.unreadableReasksSpent ?? 0;
   if (spent >= deliveryLimitFromConfig(env.autoResumeLimit)) return undefined;
   return { ...env, unreadableReasksSpent: spent + 1 };
-}
-
-/** Budget spent on an unreadable status. Distinct from "status is readable". */
-const UNREADABLE_REASK_EXHAUSTED = { unreadableReaskExhausted: true as const };
-
-function isUnreadableReaskExhausted(
-  value: SeatRunResult | typeof UNREADABLE_REASK_EXHAUSTED | undefined,
-): value is typeof UNREADABLE_REASK_EXHAUSTED {
-  return value === UNREADABLE_REASK_EXHAUSTED;
 }
 
 /**
@@ -227,21 +204,19 @@ function withUnsettledDirection(parent: TerminalResult): TerminalResult {
 
 function heldUnreadableTerminal(terminal: TerminalResult | undefined): boolean {
   if (terminal?.roleOutcome.kind !== "accepted") return false;
-  if (latestPayloadEscalated(terminal.roleOutcome)) return false;
   const status = latestQueueStatus(terminal);
   return typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status);
 }
 
 /**
- * Present the actual audit seat's volume for an unreadable conclusion (ADR 0055).
- * Parent is not given a copy of the officer receipt (#1195).
+ * Present the seat's own volume when its direction remains unreadable (ADR 0055).
  */
-async function presentUnsettledOfficer(
-  officer: TerminalResult,
+async function presentUnsettledVolume(
+  volume: TerminalResult,
   io: CliIo,
   runDirectory: string,
 ): Promise<TerminalResult> {
-  const terminal = withUnsettledDirection(officer);
+  const terminal = withUnsettledDirection(volume);
   await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, runDirectory);
   return terminal;
 }
@@ -318,17 +293,12 @@ export async function presentAuditedOriginalOfUnsettledOfficer(
   await presentAuditedOriginalOfOfficer(result.admitted, undefined, env, io);
 }
 
-async function reaskUnreadablePostSubmissionStatus(
+function reaskUnreadablePostSubmissionStatus(
   admitted: AdmittedRoleInvocation,
-  terminal: TerminalResult | undefined,
-  env: InstructionSeatRunEnv,
+  message: string,
+  next: InstructionSeatRunEnv,
   io: CliIo,
-  message = unreadablePostSubmissionStatus(admitted, terminal),
-): Promise<SeatRunResult | typeof UNREADABLE_REASK_EXHAUSTED | undefined> {
-  if (message === undefined) return undefined;
-  const next = withUnreadableReask(env);
-  if (next === undefined) return UNREADABLE_REASK_EXHAUSTED;
-  if (terminal?.receiptErrors?.length) await presentTerminal(terminal, io, admitted.runDirectory, "discarded");
+): Promise<SeatRunResult> {
   // Named status-reask: summons opens a new court; message carries the diagnostic
   // (not arbitrary summons.instruction passthrough through the review resolver).
   return runPublicInstructionSeatResume(
@@ -353,24 +323,26 @@ async function continueAfterPostSubmissionGuards(
   result: SeatRunResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
+  resumedOfficer?: AdmittedRoleInvocation,
 ): Promise<SeatRunResult> {
   const live = result.admitted;
   if (live === undefined || result.terminal?.roleOutcome.kind !== "accepted") return result;
-  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
-    live,
-    result.terminal,
-    env,
-    io,
-  );
-  let continued = result;
-  if (isUnreadableReaskExhausted(unreadableReask)) {
-    continued = { ...result, terminal: withUnsettledDirection(result.terminal) };
-  } else if (unreadableReask !== undefined) {
-    return unreadableReask;
+  const route = POST_SUBMISSION_ROUTING[live.role];
+  if (route) {
+    const status = receiptStatus(result.terminal.roleOutcome.payloads?.at(-1));
+    if (typeof status === "string" && route.statuses.has(status)) {
+      if (AUDITED_ROLES.has(live.role)) return auditSubmittedRole(result, status, env, io, resumedOfficer);
+    } else {
+      // A gate summon of these seats owns the unreadable reply and its budget.
+      if ((live.role === "countersign" || live.role === "secretariat") && env.parentRunPath?.trim()) return result;
+      const next = withUnreadableReask(env);
+      if (!next) return { ...result, terminal: await presentUnsettledVolume(result.terminal, io, live.runDirectory) };
+      await presentSeatVolume(result, io, "discarded");
+      return reaskUnreadablePostSubmissionStatus(live, route.reask ?? officerConclusionReask(status), next, io);
+    }
   }
-  if (AUDITED_ROLES.has(live.role)) return auditSubmittedRole(continued, env, io);
-  await presentSeatVolume(continued, io, "returned");
-  return continued;
+  await presentSeatVolume(result, io, "returned");
+  return result;
 }
 
 function roleRecord(role: PackagedRole) {
@@ -1052,21 +1024,17 @@ export async function runPublicInstructionSeatResume(
   io: CliIo,
   /** #1200: the audited leg a same-parent re-summons names; absent on every other resume. */
   resummonedFor?: string,
+  restored?: LoadedResumablePublicRole,
 ): Promise<SeatRunResult> {
-  let selectedRequest = request;
+  const restoration = restored ?? loadResumablePublicRole(env.home, request.runId, env.principalAuthority, request);
   const resume = async () => {
     const result = await runPostAdmissionSeatResume<AdmittedRoleInvocation>({
 
-    request: selectedRequest,
+    request,
     env,
     io,
     load: async (effective) => {
-      const loaded = await loadResumablePublicRole(
-        env.home,
-        effective.runId,
-        env.principalAuthority,
-        effective.runDirectory === undefined ? undefined : { runDirectory: effective.runDirectory },
-      );
+      const loaded = await restoration;
       let admitted = loaded.admitted;
       if (
         packagedRebindSourceOnResume(admitted.role)
@@ -1081,7 +1049,7 @@ export async function runPublicInstructionSeatResume(
         } as AdmittedRoleInvocation;
       }
       admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
-      return { ...loaded, admitted };
+      return { admitted };
     },
     buildTurnRequest: async (admitted, effective) => {
       // #1200: the turn is built once this leg has taken the summons — inside
@@ -1128,29 +1096,18 @@ export async function runPublicInstructionSeatResume(
     });
     return continueAfterPostSubmissionGuards(result, env, io);
   };
-  let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
+  let loaded: LoadedResumablePublicRole;
   try {
-    const loaded = await loadResumablePublicRole(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-      request.runDirectory === undefined ? undefined : { runDirectory: request.runDirectory },
-    );
-    selectedRequest = { ...request, runDirectory: loaded.admitted.runDirectory };
-    binding = loaded.admitted.role === "auditor"
-      ? await readAuditorResumeBinding(loaded.admitted)
-      : undefined;
+    loaded = await restoration;
   } catch (error) {
     if (!(error instanceof CliUsageError)) throw error;
+    // The seat loader delivers this rejection through its existing resume-failure path.
+    return resume();
   }
-  if (binding !== undefined) {
-    return withAuditorSoulEnv({
-      subject: binding.subject,
-      sourceRunDirectory: binding.sourceRunDirectory,
-      run: resume,
-    });
-  }
-  return resume();
+  const binding = loaded.admitted.role === "auditor"
+    ? auditorResumeBinding(loaded.auditorSubject, admittedSourceRunPath(loaded.admitted))
+    : undefined;
+  return withAuditorSoulEnv({ ...binding, run: resume });
 }
 
 const GATE_CHILD_ROLES = new Set(["notary", "auditor", "inspector", "countersign"]);
@@ -1185,14 +1142,11 @@ async function queueConclusionFromChild(
     const status = latestQueueStatus(terminal);
     if (typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) return { admitted: child, terminal, status };
     if (child.role === "countersign") return { stop: { exitCode: 0, admitted: child, terminal } };
-    const reasked = await reaskUnreadablePostSubmissionStatus(
-      // The public child resume already delivered this volume before following its parent.
-      child, undefined, budgetEnv, io, officerConclusionReask(status),
-    );
-    if (reasked === undefined || isUnreadableReaskExhausted(reasked)) {
-      return { stop: { exitCode: 0, admitted: child, terminal } };
-    }
-    budgetEnv = withUnreadableReask(budgetEnv)!;
+    const next = withUnreadableReask(budgetEnv);
+    if (!next) return { stop: { exitCode: 0, admitted: child, terminal } };
+    budgetEnv = next;
+    // The public child resume already delivered this volume before following its parent.
+    const reasked = await reaskUnreadablePostSubmissionStatus(child, officerConclusionReask(status), next, io);
     if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined
       || reasked.terminal.roleOutcome.kind === "no_receipt"
       || reasked.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true) {
@@ -1224,8 +1178,7 @@ export async function continueParentAfterChild(
         runId: parentRunId,
         runDirectory: loaded.admitted.runDirectory,
       },
-      env,
-      io,
+      env, io, undefined, loaded,
     );
   }
   const admitted = loaded.admitted;
@@ -1233,18 +1186,19 @@ export async function continueParentAfterChild(
   if (resolved !== undefined && "stop" in resolved) {
     const stopped = resolved.stop;
     // #1214 R2: the child's audited original stays visible when the child leaves the verdict unsettled.
+    const unreadable = heldUnreadableTerminal(stopped.terminal);
     if (stopped.admitted !== undefined
-      && (leavesAuditedVerdictUnsettled(stopped) || heldUnreadableTerminal(stopped.terminal))) {
+      && (leavesAuditedVerdictUnsettled(stopped) || unreadable)) {
       await presentAuditedOriginalOfOfficer(stopped.admitted, undefined, env, io);
     }
     // Unreadable child conclusion stays on that seat — resume 审核席本人 (ADR 0055 / #1195).
     if (
       stopped.exitCode === 0
-      && heldUnreadableTerminal(stopped.terminal)
+      && unreadable
       && stopped.terminal !== undefined
       && stopped.admitted !== undefined
     ) {
-      const terminal = await presentUnsettledOfficer(
+      const terminal = await presentUnsettledVolume(
         stopped.terminal,
         io,
         stopped.admitted.runDirectory,
@@ -1269,7 +1223,7 @@ export async function continueParentAfterChild(
       const parent = terminal.receipts?.at(-1);
       const passed = parent && latestQueuePayload(resolved.terminal) !== undefined
         && matchesAuditedSeal({ receipt: resolved.admitted.auditedReceipt }, parent);
-      return auditSubmittedRole(
+      return continueAfterPostSubmissionGuards(
         { exitCode: 0, admitted, terminal },
         env,
         io,
@@ -1280,7 +1234,7 @@ export async function continueParentAfterChild(
       runId: parentRunId,
       runDirectory: admitted.runDirectory,
       summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
-    }, envForCourtContinue(env), io);
+    }, envForCourtContinue(env), io, undefined, loaded);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1310,31 +1264,15 @@ function officerSatisfiedByLiveChild(
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
 async function auditSubmittedRole(
   turn: SeatRunResult,
+  status: string,
   env: InstructionSeatRunEnv,
   io: CliIo,
   resumedOfficer?: AdmittedRoleInvocation,
 ): Promise<SeatRunResult> {
   const admitted = turn.admitted;
-  if (admitted === undefined || !AUDITED_ROLES.has(admitted.role)
-    || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
+  if (admitted === undefined || turn.terminal?.roleOutcome.kind !== "accepted") return turn;
   const accepted = turn.terminal.roleOutcome.payloads?.at(-1);
   if (accepted === undefined) throw new Error("accepted submission has no payload");
-  const status = receiptStatus(accepted);
-  // A gate summon already owns this conclusion's reasks. The seat must not
-  // start another budget on the same run (parentRunPath is that summon).
-  const gateOwnsStatusReask = typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== "";
-  const reask = admitted.role === "secretariat" && status !== "converged" && status !== "escalate"
-    ? SECRETARIAT_STATUS_REASK
-    : admitted.role === "countersign" && (typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status))
-      ? officerConclusionReask(status) : undefined;
-  if (reask !== undefined) {
-    if (gateOwnsStatusReask) return turn;
-    const resumed = await reaskUnreadablePostSubmissionStatus(admitted, turn.terminal, env, io, reask);
-    if (resumed && !isUnreadableReaskExhausted(resumed)) return resumed;
-    const terminal = withUnsettledDirection(turn.terminal);
-    await presentTerminal(terminal, io, admitted.runDirectory);
-    return { ...turn, terminal };
-  }
   // Self-escalation is a valid open routing state for these seats only.
   // Doctor's declared domain is completed|refused — an open "escalate" must
   // not skip its mandatory auditor (#1057 / PR #1075).
@@ -1343,7 +1281,7 @@ async function auditSubmittedRole(
       || admitted.role === "countersign");
   const skipAudit = selfEscalationSkipsAudit
     || ((admitted.role === "fixer" || admitted.role === "coder")
-      && (typeof status !== "string" || !WORKER_DONE_STATUSES.has(status)));
+      && !WORKER_DONE_STATUSES.has(status));
   if (skipAudit) {
     await presentTerminal(turn.terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
     return turn;
@@ -1416,7 +1354,7 @@ async function auditSubmittedRole(
           await presentSeatVolume(turn, io, "alongside");
           const officerAdmitted = lastSummon.admitted;
           const officerDir = officerAdmitted?.runDirectory ?? lastSummon.runDirectory ?? admitted.runDirectory;
-          const terminal = await presentUnsettledOfficer(lastSummon.terminal, io, officerDir);
+          const terminal = await presentUnsettledVolume(lastSummon.terminal, io, officerDir);
           return {
             exitCode: 0,
             ...(officerAdmitted === undefined ? { admitted } : { admitted: officerAdmitted }),
@@ -1500,7 +1438,7 @@ async function auditSubmittedRole(
         await presentAuditedOriginalOfOfficer(officer, admitted.runId, env, io);
         if (pass.status !== "transport_failure") {
           // Lawful incomplete (unreadable / no_receipt): exit 0, direction unsettled.
-          const terminal = await presentUnsettledOfficer(
+          const terminal = await presentUnsettledVolume(
             officerTerminal,
             io,
             officer.runDirectory,

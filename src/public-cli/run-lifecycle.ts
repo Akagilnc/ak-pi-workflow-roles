@@ -1067,6 +1067,7 @@ async function loadResumableRunRecord(
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
   readonly admittedFields: LoadedAdmittedRequestFields;
+  readonly auditorSubject?: unknown;
 }> {
   const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
   // Diagnostics name the leg by its directory; the run id is not a caller-facing identity (#1201).
@@ -1110,6 +1111,7 @@ async function loadResumableRunRecord(
   let auditedReceipt: string | undefined;
   let auditedRound: string | undefined;
   let sourceRun: NotarySourceRunLocator | undefined;
+  let auditorSubject: unknown;
   try {
     const record = readPageSync(run.runDirectory, "admitted");
     if (record === undefined) throw new Error("state.jsonl has no admitted-request row");
@@ -1184,6 +1186,7 @@ async function loadResumableRunRecord(
       }
       // Notary — admitted source-run locator identity (#633 resume).
       sourceRunPath = admittedSourceRunPath(record);
+      if (run.role === "auditor") auditorSubject = record.auditorSubject;
       if (typeof record.auditedReceipt === "string") auditedReceipt = record.auditedReceipt;
       if (typeof record.for === "string") auditedRound = record.for;
       if (
@@ -1301,6 +1304,7 @@ async function loadResumableRunRecord(
   return {
     run,
     principal,
+    ...(auditorSubject !== undefined && { auditorSubject }),
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -1356,19 +1360,6 @@ function resumedBaseAdmitted(loaded: {
   };
 }
 
-/** Loaded-run envelope. */
-function seatLoadedResult<R extends AdmittedRoleInvocation>(
-  loaded: {
-    readonly run: RoleRunRecord;
-  },
-  admitted: R,
-): { admitted: R; run: RoleRunRecord } {
-  return {
-    admitted,
-    run: loaded.run,
-  };
-}
-
 export async function peekRoleRunRole(
   home: string,
   runId: string,
@@ -1383,6 +1374,7 @@ export async function peekRoleRunRole(
 export type LoadedResumablePublicRole = {
   readonly admitted: AdmittedRoleInvocation;
   readonly run: RoleRunRecord;
+  readonly auditorSubject?: unknown;
 };
 
 /**
@@ -1402,7 +1394,7 @@ export async function loadResumablePublicRole(
     authority,
     options?.runDirectory,
   );
-  return seatLoadedResult(loaded, admitResumedRole(loaded));
+  return { admitted: admitResumedRole(loaded), run: loaded.run, auditorSubject: loaded.auditorSubject };
 }
 
 /**
