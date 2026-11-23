@@ -867,7 +867,6 @@ export async function runPublicInstructionSeat(
   const projectRoot = parsed.project ?? env.cwd;
   let auditorSubject: "judge" | "doctor" | undefined;
   let source: NotarySourceRunLocator | undefined;
-  let auditorTicket: number | undefined;
   let summons: SameTicketSummonsMaterials | undefined;
   if (record.sameParent === "subject-source") {
     if (parsed.subject === undefined) {
@@ -887,7 +886,6 @@ export async function runPublicInstructionSeat(
         sourceRun: parsed.sourceRun ?? "",
         home: env.home,
       });
-      if (auditorSubject) auditorTicket = await readBoardTicketNumber(source.runDirectory);
     } catch (error) {
       if (auditorSubject) {
         presentStructuralRejection(new CliUsageError(errorText(error)), io);
@@ -917,17 +915,16 @@ export async function runPublicInstructionSeat(
 
   let admitted: AdmittedRoleInvocation;
   try {
-    const resolvedNotarySource = record.sameParent === "source-locator" ? source : undefined;
-    const admissionOverride = {
-      ...(auditorTicket === undefined ? {} : { assertedTicketNumber: auditorTicket }),
-      ...(resolvedNotarySource === undefined ? {} : { resolvedSourceRun: resolvedNotarySource }),
-    };
-    admitted = await admitPublicRole(
-      role,
-      parsed,
-      env,
-      auditorTicket === undefined && resolvedNotarySource === undefined ? undefined : admissionOverride,
-    );
+    // Only a new auditor needs the source ticket for initial placement.
+    let auditorTicket: number | undefined;
+    if (auditorSubject && source) {
+      try { auditorTicket = await readBoardTicketNumber(source.runDirectory); }
+      catch (cause) { throw new CliUsageError(errorText(cause)); }
+    }
+    admitted = await admitPublicRole(role, parsed, env, {
+      ...(auditorTicket !== undefined && { assertedTicketNumber: auditorTicket }),
+      ...(record.sameParent === "source-locator" && source && { resolvedSourceRun: source }),
+    });
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -939,9 +936,10 @@ export async function runPublicInstructionSeat(
     await pinAuditedLegAtAdmission(admitted, sourceRunPath, env.auditedReceipt, io,
       record.sameParent === "source-locator" ? undefined : { sourceRunPath, auditorSubject });
     admitted = { ...admitted, sourceRunPath } as AdmittedRoleInvocation;
+    // Source-run admission gains its source here. The locator and subject seats
+    // already placed their new leg using that source, including an unbound one.
+    if (record.sameParent === "source-run") admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
   }
-  // #1208 C2: same helper as resume — inherit the audited source's known ticket.
-  admitted = await inheritKnownTicketFromSource(admitted, env.principalAuthority);
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
