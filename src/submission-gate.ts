@@ -26,27 +26,8 @@ import {
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
-import { receiptStatus } from "./packaged-role-registry.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
-
-/** Received discriminator of the latest payload, retained verbatim for re-ask. */
-export function latestQueueStatus(terminal: TerminalResult | undefined): unknown {
-  const outcome = terminal?.roleOutcome;
-  if (outcome === undefined) return undefined;
-  if (outcome.kind === "audit_escalation") return "escalate";
-  if (outcome.kind !== "accepted") return undefined;
-  const received = receiptStatus(outcome.payloads?.[outcome.payloads.length - 1]);
-  return received === undefined ? outcome.status : received;
-}
-
-export function latestQueuePayload(terminal: TerminalResult | undefined): unknown {
-  const outcome = terminal?.roleOutcome;
-  if (outcome === undefined) return undefined;
-  if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return undefined;
-  const payloads = outcome.payloads ?? [];
-  return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
-}
 
 /**
  * Shared-envelope default officer summon (ADR 0018).
@@ -92,6 +73,7 @@ export type SubmissionGateOutcome = {
   readonly status: ReviewQueueWord | "needs_reask" | "transport_failure" | "no_receipt";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
+  readonly receivedStatus?: unknown;
   readonly runId?: string;
   readonly runDirectory?: string;
   readonly admitted?: import("./public-cli/invocation.ts").AdmittedRoleInvocation;
@@ -106,6 +88,7 @@ function presentGateOutcome(fields: {
   readonly status: SubmissionGateOutcome["status"];
   readonly officer: GateOfficer;
   readonly receipt: unknown;
+  readonly receivedStatus?: unknown;
   readonly runId?: string | undefined;
   readonly summoned?: Awaited<ReturnType<GateOfficerSummon>> | undefined;
   readonly reason?: string | undefined;
@@ -114,6 +97,7 @@ function presentGateOutcome(fields: {
     status: fields.status,
     officer: fields.officer,
     receipt: fields.receipt,
+    ...("receivedStatus" in fields && { receivedStatus: fields.receivedStatus }),
     ...(typeof fields.runId === "string" && fields.runId.trim() !== ""
       ? { runId: fields.runId }
       : {}),

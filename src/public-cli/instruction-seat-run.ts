@@ -19,10 +19,6 @@ import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submis
 import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
-  latestQueuePayload,
-  latestQueueStatus,
-} from "../submission-gate.ts";
-import {
   isSafePositiveTicketNumber,
   readBoardTicketNumber,
 } from "../run-ticket-number.ts";
@@ -91,6 +87,7 @@ import {
 import type { CliIo } from "./cli-io.ts";
 import { warnMissingMethodSkills } from "./machine-method-skills.ts";
 import {
+  currentReplyRows,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
@@ -113,11 +110,7 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   "reviewReask" | "gateReviewInstruction" | "parentRunPath" | "auditedReceipt"
 >;
 
-type SeatRunResult = {
-  exitCode: number;
-  admitted?: AdmittedRoleInvocation;
-  terminal?: TerminalResult;
-};
+type SeatRunResult = Pick<PublicSummonResult, "exitCode" | "admitted" | "terminal" | "receivedStatus">;
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
 const SECRETARIAT_STATUS_REASK = "status 不是 converged、escalate 之一。请重新交卷，status 写明其一。";
@@ -200,12 +193,6 @@ function withUnsettledDirection(parent: TerminalResult): TerminalResult {
       },
     },
   };
-}
-
-function heldUnreadableTerminal(terminal: TerminalResult | undefined): boolean {
-  if (terminal?.roleOutcome.kind !== "accepted") return false;
-  const status = latestQueueStatus(terminal);
-  return typeof status !== "string" || !REVIEW_QUEUE_STATUSES.has(status);
 }
 
 /**
@@ -330,13 +317,15 @@ async function continueAfterPostSubmissionGuards(
   const route = POST_SUBMISSION_ROUTING[live.role];
   if (route) {
     const status = receiptStatus(result.terminal.roleOutcome.payloads?.at(-1));
+    const directed = { ...result, receivedStatus: status };
     if (typeof status === "string" && route.statuses.has(status)) {
-      if (AUDITED_ROLES.has(live.role)) return auditSubmittedRole(result, status, env, io, resumedOfficer);
+      if (AUDITED_ROLES.has(live.role)) return auditSubmittedRole(directed, status, env, io, resumedOfficer);
+      result = directed;
     } else {
       // A gate summon of these seats owns the unreadable reply and its budget.
-      if ((live.role === "countersign" || live.role === "secretariat") && env.parentRunPath?.trim()) return result;
+      if ((live.role === "countersign" || live.role === "secretariat") && env.parentRunPath?.trim()) return directed;
       const next = withUnreadableReask(env);
-      if (!next) return { ...result, terminal: await presentUnsettledVolume(result.terminal, io, live.runDirectory) };
+      if (!next) return { ...directed, terminal: await presentUnsettledVolume(result.terminal, io, live.runDirectory) };
       await presentSeatVolume(result, io, "discarded");
       return reaskUnreadablePostSubmissionStatus(live, route.reask ?? officerConclusionReask(status), next, io);
     }
@@ -1111,56 +1100,12 @@ export async function runPublicInstructionSeatResume(
 
 const GATE_CHILD_ROLES = new Set(["notary", "auditor", "inspector", "countersign"]);
 
-/**
- * A gate child's conclusion outside the three states goes back to that child.
- * The words are the existing officer re-ask. Each reask spends this loop's own
- * copy of the configured ceiling; exhaustion keeps the terminal already in hand.
- * A host failure stops here.
- * Countersign already spends that ceiling inside its own seat, or the summoning
- * gate does. This loop does not open a second one for the same conclusion.
- */
-async function queueConclusionFromChild(
-  child: AdmittedRoleInvocation,
-  terminal: TerminalResult,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-): Promise<
-  | { readonly admitted: AdmittedRoleInvocation; readonly terminal: TerminalResult; readonly status: string }
-  | { readonly stop: SeatRunResult }
-  | undefined
-> {
-  if (!GATE_CHILD_ROLES.has(child.role)) return undefined;
-  // #1208: review-queue gate children also have seat-local
-  // POST_SUBMISSION_ROUTING. This parent-side loop remains the
-  // gate/correlation budget; nestedIncomplete from an exhausted seat-local
-  // chain surfaces without a second spend. The child resume keeps the
-  // caller's env so delivery, failure recovery, and other reask loops
-  // stay separate.
-  let budgetEnv: InstructionSeatRunEnv = envForCourtContinue(env);
-  for (;;) {
-    const status = latestQueueStatus(terminal);
-    if (typeof status === "string" && REVIEW_QUEUE_STATUSES.has(status)) return { admitted: child, terminal, status };
-    if (child.role === "countersign") return { stop: { exitCode: 0, admitted: child, terminal } };
-    const next = withUnreadableReask(budgetEnv);
-    if (!next) return { stop: { exitCode: 0, admitted: child, terminal } };
-    budgetEnv = next;
-    // The public child resume already delivered this volume before following its parent.
-    const reasked = await reaskUnreadablePostSubmissionStatus(child, officerConclusionReask(status), next, io);
-    if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined
-      || reasked.terminal.roleOutcome.kind === "no_receipt"
-      || reasked.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true) {
-      return { stop: reasked };
-    }
-    child = reasked.admitted;
-    terminal = reasked.terminal;
-  }
-}
-
 /** Continue the parent once a child has submitted. The child words ride the existing resume. */
 export async function continueParentAfterChild(
   loaded: LoadedResumablePublicRole,
   child: AdmittedRoleInvocation,
   childTerminal: TerminalResult,
+  status: unknown,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
@@ -1174,41 +1119,11 @@ export async function continueParentAfterChild(
       env, io, undefined, loaded,
     );
   }
-  const resolved = await queueConclusionFromChild(child, childTerminal, env, io);
-  if (resolved !== undefined && "stop" in resolved) {
-    const stopped = resolved.stop;
-    // #1214 R2: the child's audited original stays visible when the child leaves the verdict unsettled.
-    const unreadable = heldUnreadableTerminal(stopped.terminal);
-    if (stopped.admitted !== undefined
-      && (leavesAuditedVerdictUnsettled(stopped) || unreadable)) {
-      await presentAuditedOriginalOfOfficer(stopped.admitted, undefined, env, io);
-    }
-    // Unreadable child conclusion stays on that seat — resume 审核席本人 (ADR 0055 / #1195).
-    if (
-      stopped.exitCode === 0
-      && unreadable
-      && stopped.terminal !== undefined
-      && stopped.admitted !== undefined
-    ) {
-      const terminal = await presentUnsettledVolume(
-        stopped.terminal,
-        io,
-        stopped.admitted.runDirectory,
-      );
-      return { exitCode: 0, admitted: stopped.admitted, terminal };
-    }
-    return stopped;
-  }
-  if (resolved !== undefined && resolved.status === "escalate") {
-    return { exitCode: 0, admitted: resolved.admitted, terminal: resolved.terminal };
-  }
-  if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
-    // A child reask is a new host turn; the earlier parent binding is not live evidence after it.
-    const childWasReasked = resolved.terminal !== childTerminal;
-    if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
+  if (GATE_CHILD_ROLES.has(child.role) && (status === "continue" || status === "converged")) {
+    const payload = currentReplyRows(childTerminal).at(-1);
+    if (AUDITED_ROLES.has(admitted.role) && status === "converged") {
       // Recover the parent's own seal, not the seal a possibly stale child reviewed.
-      const court = childWasReasked ? await readCurrentCourt(admitted.runDirectory) : loaded.currentCourt;
-      const terminal = await recoverSeatTerminal(admitted, env, io, court);
+      const terminal = await recoverSeatTerminal(admitted, env, io, loaded.currentCourt);
       if (terminal?.roleOutcome.kind === "failure") {
         await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
         return { exitCode: 1, admitted, terminal };
@@ -1216,20 +1131,19 @@ export async function continueParentAfterChild(
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       // Only the officer for this parent seal can discharge its gate.
       const parent = terminal.receipts?.at(-1);
-      const passed = parent && latestQueuePayload(resolved.terminal) !== undefined
-        && matchesAuditedSeal({ receipt: resolved.admitted.auditedReceipt }, parent);
+      const passed = parent && payload !== undefined && matchesAuditedSeal({ receipt: child.auditedReceipt }, parent);
       return continueAfterPostSubmissionGuards(
         { exitCode: 0, admitted, terminal },
         env,
         io,
-        passed ? resolved.admitted : undefined,
+        passed ? child : undefined,
       );
     }
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       runDirectory: admitted.runDirectory,
-      summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
-    }, envForCourtContinue(env), io, undefined, childWasReasked ? undefined : loaded);
+      summons: { instruction: readableGateItem(payload) },
+    }, envForCourtContinue(env), io, undefined, loaded);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1352,6 +1266,7 @@ async function auditSubmittedRole(
           const terminal = await presentUnsettledVolume(lastSummon.terminal, io, officerDir);
           return {
             exitCode: 0,
+            receivedStatus: decision.receivedStatus,
             ...(officerAdmitted === undefined ? { admitted } : { admitted: officerAdmitted }),
             terminal,
           };
@@ -1369,7 +1284,7 @@ async function auditSubmittedRole(
         if (lastSummon?.terminal !== undefined) {
           await presentSeatVolume(turn, io, "alongside");
           await presentTerminal(lastSummon.terminal, { ...io, omitFailureStderrDiagnostic: true }, lastSummon.admitted?.runDirectory ?? admitted.runDirectory);
-          return { exitCode: lastSummon.exitCode,
+          return { ...lastSummon,
             ...(lastSummon.admitted === undefined ? {} : { admitted: lastSummon.admitted }),
             terminal: lastSummon.terminal };
         }
@@ -1438,7 +1353,8 @@ async function auditSubmittedRole(
             io,
             officer.runDirectory,
           );
-          return { exitCode: 0, admitted: officer, terminal };
+          return { exitCode: 0, admitted: officer, terminal,
+            ...("receivedStatus" in pass && { receivedStatus: pass.receivedStatus }) };
         }
         // #1214 A5: officer failure volume after parent original; honest non-pass identity.
         await presentTerminal(
@@ -1487,7 +1403,8 @@ async function auditSubmittedRole(
       }
       await presentSeatVolume(turn, io, "discarded");
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.runDirectory);
-      return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer, terminal };
+      return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer, terminal,
+        ...(pass.terminal && { receivedStatus: pass.status }) };
     }
     if (pass?.status === "continue") {
       await presentSeatVolume(turn, io, "discarded");

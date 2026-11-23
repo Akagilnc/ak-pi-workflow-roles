@@ -128,6 +128,8 @@ export type PublicSummonRequest = {
 const execFileAsync = promisify(execFile);
 
 export type PublicSummonResult = {
+  /** Present when this returned seat already read its latest receipt (including a missing word). */
+  readonly receivedStatus?: unknown;
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
   /** Independent officer/role run directory (正本). Parent does not book a copy (#1195). */
@@ -461,15 +463,7 @@ export async function summonPublicRole(
     run: (
       env: Record<string, unknown>,
       parseOnce: () => TParsed,
-    ) => Promise<{
-      exitCode: number;
-      terminal?: TerminalResult;
-      admitted?: {
-        readonly runDirectory?: string;
-        readonly runId?: string;
-        readonly role?: string;
-      };
-    }>,
+    ) => Promise<PublicSummonResult>,
   ) {
     let parsedArgv!: TParsed;
     const prepared = await prepareSummonEnv(() => {
@@ -492,15 +486,7 @@ export async function summonPublicRole(
     && options.resumeRunId.trim() !== ""
     ? options.resumeRunId.trim()
     : undefined;
-  let result: {
-    exitCode: number;
-    terminal?: TerminalResult;
-    admitted?: {
-      readonly runDirectory?: string;
-      readonly runId?: string;
-      readonly role?: string;
-    };
-  };
+  let result: PublicSummonResult;
   if (resumeRunId !== undefined) {
     const instruction = options.argv[0] ?? "";
     const stepped = await runPrepared(parse, (env) =>
@@ -530,9 +516,7 @@ export async function summonPublicRole(
   // leg beside it — the run directory in hand is the one that terminal belongs to (#1195).
   const runDirectory = result.admitted?.runDirectory;
   return {
-    exitCode: result.exitCode,
-    ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-    ...(result.admitted === undefined ? {} : { admitted: result.admitted as import("./public-cli/invocation.ts").AdmittedRoleInvocation }),
+    ...result,
     ...(typeof runDirectory === "string" && runDirectory.trim() !== ""
       ? { runDirectory }
       : {}),

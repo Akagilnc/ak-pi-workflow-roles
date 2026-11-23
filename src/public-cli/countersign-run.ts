@@ -7,7 +7,7 @@ import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import { presentSeatVolume } from "./auto-resume.ts";
-import type { TerminalRoleOutcome } from "./terminal.ts";
+import type { PublicSummonResult } from "../public-role-summons.ts";
 
 import { receiptStatus } from "../packaged-role-registry.ts";
 
@@ -62,12 +62,13 @@ export type CourtDiaristSummonEnv = Pick<
 
 /** Latest payload only. An earlier escalate must not block a later non-escalate submission. */
 export function latestPayloadEscalated(
-  roleOutcome: TerminalRoleOutcome | undefined,
+  result: PublicSummonResult,
 ): boolean {
+  const roleOutcome = result.terminal?.roleOutcome;
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  return receiptStatus(roleOutcome.payloads?.at(-1)) === "escalate";
+  return ("receivedStatus" in result ? result.receivedStatus : receiptStatus(roleOutcome.payloads?.at(-1))) === "escalate";
 }
 
 /**
@@ -127,7 +128,7 @@ export async function invokeCourtDiarist(
   const roleOutcome = result.terminal?.roleOutcome;
   // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
-  if (latestPayloadEscalated(roleOutcome)) {
+  if (latestPayloadEscalated(result)) {
     return {
       identity: { kind: "escalate" },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),

@@ -16,7 +16,7 @@ import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { reportTicketFromHostContext } from "./report-ticket-tool.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
-import { captureWorktreeHead, landTicketProgress, landTicketProgressForSealedSubmission, legReceiptReferences, writeArrivingReceipt } from "./ticket-progress.ts";
+import { statusAndSummaryFromPayload, captureWorktreeHead, landTicketProgress, landTicketProgressForSealedSubmission, legReceiptReferences, writeArrivingReceipt } from "./ticket-progress.ts";
 import { isRecord, errorText } from "./unknown-value.ts";
 
 export const COURT_ATTEMPT_ENV = "AK_ROLE_COURT_ATTEMPT" as const;
@@ -144,7 +144,7 @@ export function sealAcceptedSubmission(options: {
   sitianReport({ level: "event", kind: "sealed", subject: { runId, attemptId },
     payload: { type: "sealed", attemptId, toolCallId, role, receipt }, source: "role-runtime", cwd,
     home: options.home ?? tryHomeFromAkRolesPath(sessionParent), sessionParent });
-  landTicketProgress({ runDirectory, role, receipt, accepted, sealHead: captureWorktreeHead(cwd),
+  landTicketProgress({ runDirectory, role, receipt, accepted, fields: statusAndSummaryFromPayload(accepted), sealHead: captureWorktreeHead(cwd),
     sessionFile: undefined, instruction: options.instruction ?? "", call: { attemptId, toolCallId } });
 }
 
@@ -152,7 +152,7 @@ export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: { get(toolName: string): TerminalRoleName | undefined },
   failInfrastructure: (error: unknown, context: HostContext, toolCallId?: string) => never = (error) => { throw error; },
-  projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string) => void | Promise<void> = () => undefined,
+  projectClosure: (closed: ClosedSubmission, context: HostContext, toolCallId: string, fields: ReturnType<typeof statusAndSummaryFromPayload>) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
   function source(context: HostContext, subject?: { runId: string; attemptId: string }) {
@@ -185,6 +185,7 @@ export function createSubmissionLedgerHost(
     host.registerTool({ ...tool, async execute(toolCallId, params, signal, update, context) {
       let toolThrew = false;
       let result: HostToolResult<unknown>;
+      let fields: ReturnType<typeof statusAndSummaryFromPayload>;
       try {
         const ticket = isRecord(params) ? readDeclaredTicketNumber(params.ticketNumber) : undefined;
         const origin = source(context);
@@ -195,7 +196,8 @@ export function createSubmissionLedgerHost(
           payload: { type, attemptId, toolCallId, role, receipt, ...extra } });
         append("candidate", origin, { toolName: tool.name });
         if (ticket !== undefined) await reportTicketFromHostContext(context, ticket);
-        try { result = await tool.execute(toolCallId, params, signal, update, context); }
+        fields = statusAndSummaryFromPayload(params);
+        try { result = await tool.execute(toolCallId, params, signal, update, context, fields); }
         catch (error) {
           append("outcome", source(context, origin.subject), { ...(isCorrectableExecuteError(error) ? { outcome: "correctable-rejection", code: "typed-bounce" } : { outcome: "infrastructure" }), diagnostic: errorText(error) });
           toolThrew = true;
@@ -204,7 +206,7 @@ export function createSubmissionLedgerHost(
         if (result.terminate === false) return result;
         append("sealed", source(context, origin.subject));
         const lens = host.getFlag?.("ak-review-lens");
-        landTicketProgressForSealedSubmission({ context, role, receipt, accepted: params, sealHead: captureWorktreeHead(context.cwd),
+        landTicketProgressForSealedSubmission({ context, role, receipt, accepted: params, fields, sealHead: captureWorktreeHead(context.cwd),
           ...(lens === "completeness" || lens === "correctness" ? { lens } : {}), call: { attemptId, toolCallId } });
         const directory = runDirectoryFromHostContext(context);
         if (context.host !== "claude" && context.host !== "codex" && directory !== undefined && isUnboundRunDirectory(directory)) {
@@ -216,7 +218,7 @@ export function createSubmissionLedgerHost(
         if (toolThrew) throw error;
         return failInfrastructure(error, context, toolCallId);
       }
-      await projectClosure({ role, kind: "accepted", accepted: params }, context, toolCallId);
+      await projectClosure({ role, kind: "accepted", accepted: params }, context, toolCallId, fields);
       return result;
     } });
   } };

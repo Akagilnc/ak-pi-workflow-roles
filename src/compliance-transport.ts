@@ -22,6 +22,7 @@ export type ComplianceNoReceipt = Partial<NoReceiptLifecycleFacts> & { status: "
 export type ComplianceReceived = {
   readonly status: "received";
   readonly reply: unknown;
+  readonly receivedStatus: unknown;
   readonly usage?: Usage;
 };
 /** Host/engine/record failure — not a role three-state, not `received` (#836 A.3). */
@@ -62,13 +63,9 @@ export type AuditorParentAttemptBinding = {
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
-/** Try to project a known three-state compliance decision; undefined when not converged/continue/escalate. */
-export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
-  if (!isRecord(arguments_)) {
-    return undefined;
-  }
-  const args = arguments_ as Record<string, unknown>;
-  const status = receiptStatus(arguments_);
+/** Project this auditor reply without replacing unknown words or the manuscript. */
+function readComplianceCandidate(arguments_: unknown, status: unknown, usage?: Usage): ComplianceDecision {
+  const args = isRecord(arguments_) ? arguments_ : {};
   if (status === "converged") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "continue") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
@@ -80,18 +77,9 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
       ...(usage === undefined ? {} : { usage }),
     };
   }
-  return undefined;
-}
-
-/**
- * Read a compliance candidate. Known three-state projects; anything else is
- * `received` with the raw reply — no unreadable/unusable judgment (#757).
- */
-export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
-  const projected = tryReadComplianceCandidate(arguments_, usage);
-  if (projected !== undefined) return projected;
   return {
     status: "received",
+    receivedStatus: status,
     reply: arguments_,
     ...(usage === undefined ? {} : { usage }),
   };
@@ -175,16 +163,15 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   }
   if (outcome.kind === "accepted") {
     const rows = currentReplyRows(summoned.terminal);
-    if (rows.length === 0) {
-      return readComplianceCandidate({}, usage);
-    }
-    // The terminal retains history; the decision carries only the current reply.
-    return readComplianceCandidate(rows[rows.length - 1], usage);
+    const receipt = rows.length ? rows.at(-1) : {};
+    const status = "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(receipt);
+    return readComplianceCandidate(receipt, status, usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {
     status: "received",
     reply: outcome,
+    receivedStatus: receiptStatus(outcome),
     ...(usage === undefined ? {} : { usage }),
   };
 }
@@ -234,7 +221,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     if (decision.status === "received") {
       if (reasksSpent >= reaskLimit) return decision;
       reasksSpent += 1;
-      reask = officerConclusionReask(receiptStatus(decision.reply));
+      reask = officerConclusionReask(decision.receivedStatus);
       continue;
     }
     return decision;

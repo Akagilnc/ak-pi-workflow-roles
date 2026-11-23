@@ -981,9 +981,11 @@ export async function bindDiaristBoardTicket(admitted: AdmittedRoleInvocation, s
   if (admitted.ticketNumber !== undefined) return;
   let ticket: number | undefined;
   const asserted = (original: unknown) => {
-    if (!isRecord(original) || receiptStatus(original) !== "completed") return false;
-    ticket = parseTicketNumber(original.ticketNumber);
-    return ticket !== undefined;
+    if (!isRecord(original)) return false;
+    const declared = parseTicketNumber(original.ticketNumber);
+    if (declared === undefined || receiptStatus(original) !== "completed") return false;
+    ticket = declared;
+    return true;
   };
   if (submissions !== undefined) {
     // The host-return refresh already picked up a board declaration; reuse settlement's drafts.

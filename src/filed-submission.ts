@@ -1,9 +1,11 @@
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import type { RoleSubmissionDeclaration } from "./role-submission-declarations.ts";
+import { receiptStatus } from "./packaged-role-registry.ts";
 
 export type FiledSubmissionBeforeAccept = (input: {
   readonly toolCallId: string;
   readonly parameters: unknown;
+  readonly status: unknown;
   readonly signal: AbortSignal | undefined;
   readonly ctx: HostContext;
 }) => Promise<unknown>;
@@ -28,12 +30,13 @@ export function registerFiledSubmissionTool(
     description: tool.description,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     parameters: tool.parameters as never,
-    async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
+    async execute(toolCallId, parameters, signal, _onUpdate, ctx, receiptFields): Promise<HostToolResult<unknown>> {
       const blocked = options.readyError();
       if (blocked !== undefined) throw new Error(blocked);
       const projected = options.beforeAccept === undefined
         ? undefined
-        : await options.beforeAccept({ toolCallId, parameters, signal, ctx });
+        : await options.beforeAccept({ toolCallId, parameters, signal, ctx,
+          status: receiptFields === undefined ? receiptStatus(parameters) : receiptFields.status });
       return {
         content: [],
         details: projected === undefined ? parameters : projected,

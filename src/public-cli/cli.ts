@@ -1254,7 +1254,7 @@ export async function runAkRole(
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
         && current.terminal?.roleOutcome.kind === "accepted"
         && current.terminal.roleOutcome.decisiveFacts?.directionUnsettled !== true
-        && !latestPayloadEscalated(current.terminal.roleOutcome)
+        && !latestPayloadEscalated(current)
       ) {
         const parentRunId = current.admitted.correlationId;
         const parentSource = admittedSourceRunPath(current.admitted);
@@ -1284,7 +1284,7 @@ export async function runAkRole(
           seat: parentSeat,
           config: parts.config,
         });
-        current = await continueParentAfterChild(parent, current.admitted, current.terminal, parentEnv, io);
+        current = await continueParentAfterChild(parent, current.admitted, current.terminal, current.receivedStatus, parentEnv, io);
       }
       return cliResultFromRoleRun(current);
     }

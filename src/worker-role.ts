@@ -23,7 +23,6 @@ import {
   matchFixerBashForbiddenLiteral,
 } from "./fixer-bash-seatbelt.ts";
 
-import { receiptStatus } from "./packaged-role-registry.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -67,12 +66,6 @@ export type WorkerRoleRuntime = {
   armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }, invocationScopeId?: string): void;
 };
 
-/** Read only the field that selects the worker's next package-owned path. */
-function workerStatusOf(output: WorkerOutput): string | undefined {
-  const status = receiptStatus(output);
-  return typeof status === "string" ? status : undefined;
-}
-
 function deepFreeze<T>(value: T): T {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreeze(child);
@@ -107,12 +100,11 @@ function registerWorkerSubmission(
 ): void {
   registerFiledSubmissionTool(pi, roleSubmissionDeclaration(role), {
     readyError: () => (options.ready() ? undefined : options.notReady),
-    beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+    beforeAccept: async ({ toolCallId, parameters, status, ctx }) => {
       const phase = options.phase();
       if (phase === undefined) throw new Error(options.notReady);
       const output = options.project(parameters, phase);
-      const status = workerStatusOf(output);
-      if (status !== undefined) {
+      if (typeof status === "string") {
         assertAcceptableThroughHost(
           options.submissionGate,
           status,

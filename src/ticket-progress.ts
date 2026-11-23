@@ -192,7 +192,7 @@ export function writeArrivingReceipt(runDirectory: string, original: unknown): s
  * summary is seat-authored prose on the receipt.
  * Missing fields stay absent — never invent "" or "accepted".
  */
-function statusAndSummaryFromPayload(payload: unknown): {
+export function statusAndSummaryFromPayload(payload: unknown): {
   readonly status?: string;
   readonly summary?: string;
 } {
@@ -346,6 +346,7 @@ function lensFromRunDirectory(runDirectory: string, role: string): string | unde
  */
 export function landTicketProgressForSealedSubmission(input: {
   readonly context: HostContext;
+  readonly fields: ReturnType<typeof statusAndSummaryFromPayload>;
   readonly receipt: string;
   readonly role: string;
   readonly accepted: unknown;
@@ -360,6 +361,7 @@ export function landTicketProgressForSealedSubmission(input: {
     receipt: input.receipt,
     role: input.role,
     accepted: input.accepted,
+    fields: input.fields,
     sealHead: input.sealHead,
     call: input.call,
     ...(input.lens === undefined ? {} : { lens: input.lens }),
@@ -377,6 +379,7 @@ export function landTicketProgressForSealedSubmission(input: {
  * navigator lookup, #1192): the line then names no session.
  */
 export function landTicketProgress(input: {
+  readonly fields: ReturnType<typeof statusAndSummaryFromPayload>;
   readonly runDirectory: string;
   readonly receipt: string;
   readonly role: string;
@@ -419,7 +422,7 @@ export function landTicketProgress(input: {
   const sessionRelative = input.sessionFile === undefined
     ? ""
     : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
-  const { status, summary } = statusAndSummaryFromPayload(input.accepted);
+  const { status, summary } = input.fields;
   const reviewed = forOfSealedRow(input.auditedRound, input.role, input.accepted);
   const instruction = input.instruction;
   const line: TicketProgressLine = {
