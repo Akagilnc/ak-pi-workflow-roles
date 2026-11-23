@@ -101,8 +101,8 @@ export type TerminalNavigatorFact =
     };
 
 /** Even undefined is an observed word. Only an independent receipt still needs reading. */
-export function returnedReceiptStatus(summoned: PublicSummonResult, receipt: unknown): unknown {
-  return "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(receipt);
+export function returnedReceiptStatus(summoned: PublicSummonResult, getReceipt: () => unknown): unknown {
+  return "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(getReceipt());
 }
 
 /**

@@ -164,7 +164,7 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   if (outcome.kind === "accepted") {
     const rows = currentReplyRows(summoned.terminal);
     const receipt = rows.length ? rows.at(-1) : {};
-    return readComplianceCandidate(receipt, returnedReceiptStatus(summoned, receipt), usage);
+    return readComplianceCandidate(receipt, returnedReceiptStatus(summoned, () => receipt), usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {

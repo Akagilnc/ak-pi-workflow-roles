@@ -67,7 +67,7 @@ export function latestPayloadEscalated(
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  return returnedReceiptStatus(result, roleOutcome.payloads?.at(-1)) === "escalate";
+  return returnedReceiptStatus(result, () => roleOutcome.payloads?.at(-1)) === "escalate";
 }
 
 /**

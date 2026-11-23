@@ -237,7 +237,7 @@ function projectOfficerTerminal(
   }
   const unsettled = outcome.decisiveFacts?.directionUnsettled === true;
   const receipt = unsettled && !thisCourt.length ? outcome : thisCourt.at(-1);
-  const received = returnedReceiptStatus(summoned, receipt);
+  const received = returnedReceiptStatus(summoned, () => receipt);
   // Independent fixture terminals may carry the word on outcome instead of the receipt.
   const status = received === undefined && !unsettled ? outcome.status : received;
   return withOfficerRunId(

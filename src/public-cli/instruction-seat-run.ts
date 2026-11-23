@@ -182,6 +182,7 @@ function withUnreadableReask(env: InstructionSeatRunEnv): InstructionSeatRunEnv 
 function withUnsettledDirection(parent: TerminalResult): TerminalResult {
   const outcome = parent.roleOutcome;
   if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return parent;
+  if (outcome.decisiveFacts?.directionUnsettled === true && outcome.decisiveFacts.subsequentAudit === "incomplete") return parent;
   return {
     ...parent,
     roleOutcome: {
