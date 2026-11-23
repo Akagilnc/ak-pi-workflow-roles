@@ -767,12 +767,11 @@ export async function summonGateOfficer(options: {
       );
     }
     const correlationId = parentRunId;
-    const { isSafePositiveTicketNumber, readBoardTicketNumber } = await import("./run-ticket-number.ts");
+    const { readDeclaredTicketNumber, readBoardTicketNumber } = await import("./run-ticket-number.ts");
     const submittedTicket = isRecord(options.submission)
-      ? (options.submission as { ticketNumber?: unknown }).ticketNumber
+      ? readDeclaredTicketNumber(options.submission.ticketNumber)
       : undefined;
-    const courtTicket = isSafePositiveTicketNumber(submittedTicket)
-      ? submittedTicket : await readBoardTicketNumber(options.sourceRunDirectory);
+    const courtTicket = submittedTicket ?? await readBoardTicketNumber(options.sourceRunDirectory);
     // #1208 C1: argv dialogue from the same shared resolver as every other seat
     // (never a parallel reask/gate/empty choice here). Request-field wiring of
     // reviewReask / gateReviewInstruction onto env stays field assembly only.
