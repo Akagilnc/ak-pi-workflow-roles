@@ -4,7 +4,7 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { lockCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -584,7 +584,9 @@ test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing 
     assert.equal(result.terminal.ticket, 924);
     const lostChild = result.terminal.receipts![0]!.receipt;
     const lostParent = join(parentDirectory, `receipts/${missing}.json`);
-    await Promise.all([rm(lostChild), rm(lostParent), rm(join(parentDirectory, "current.json"))]);
+    await Promise.all([rm(lostChild), rm(lostParent)]);
+    if (missing === 1) lockCurrentJson(parentDirectory); // The latest original is readable; only publication fails.
+    else await rm(join(parentDirectory, "current.json"));
     const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
@@ -602,6 +604,7 @@ test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing 
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal.roleOutcome.payloads, [{ status: "converged", ticketNumber: 924, draft: 2 }]);
     assert.deepEqual(resumed.terminal.submissions, resumed.terminal.roleOutcome.payloads);
+    assert.deepEqual(resumed.terminal.artifacts, []);
     // #1200: each gate officer's row names the round it was summoned for. The
     // ruling resumed 给事中 directly, so its third row keeps that round; 符宝郎
     // names the 给事中 round the gate handed it.

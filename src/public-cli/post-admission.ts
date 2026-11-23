@@ -1091,26 +1091,16 @@ export async function dispatchPostAdmissionTurn<
     // never publishes pointers or history; a superseding failure owns this turn —
     // do not publish the superseded verdict over that failure.
     if (prepared && result.terminal === prepared.terminal) {
-      try {
-        const terminal = await publishSeatSettlement(admitted, env.principalAuthority, courtScope, prepared);
-        result = { ...result, terminal };
-        if (terminal.roleOutcome.kind === "accepted"
-          && request.courtAttemptId !== undefined && request.courtAttemptId.length > 0) {
-          try {
-            await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-          } catch (error) {
-            // The accepted attempt is already durable; cleanup is diagnostic only.
-            await recordBestEffortPostDispatchDiagnostic(admitted, env,
-              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`, io);
-          }
+      const terminal = await publishSeatSettlement(admitted, env.principalAuthority, courtScope, prepared);
+      result = { ...result, terminal };
+      // A retained verdict without its published report does not discharge the open court.
+      if (request.courtAttemptId && terminal.artifacts[0]?.kind === "report") {
+        try {
+          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+        } catch (error) {
+          await courtScope.notePackageFault(
+            `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`);
         }
-      } catch (error) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `terminal publication failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
       }
     }
     try {

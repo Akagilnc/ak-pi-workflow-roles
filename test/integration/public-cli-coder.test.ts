@@ -44,7 +44,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
     seedGitProject(project);
 
     // #1198: missing summary stays accepted; overlong summary kept as submitted.
-    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const unreadable = missing === undefined ? null : { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = {
       status: "planned",
       report: { unvalidated: true },
@@ -117,7 +117,7 @@ test.each([undefined, 1, 2])("public coder settles the new court after status re
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
-    assert.equal(Object.hasOwn(unreadable, "summary"), false);
+    assert.deepEqual(result.terminal!.submissions, [unreadable, corrected]);
   });
 });
 

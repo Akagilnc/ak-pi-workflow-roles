@@ -1380,16 +1380,21 @@ export async function preparePublicSeat(
 export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined, { terminal, report }: PreparedSeat<T>): Promise<T> {
   if (scope?.previewOnly) return terminal;
-  if (report !== undefined) {
-    writeRunTerminal(admitted.runDirectory, "report", report);
-    return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
+  try {
+    if (report !== undefined) {
+      writeRunTerminal(admitted.runDirectory, "report", report);
+      return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
+    }
+    const identity = scope?.recordAttemptHistory
+      ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
+      : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
+    writeRunTerminal(admitted.runDirectory, "no_receipt", {
+      role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
+    });
+  } catch (error) {
+    await noteSettlementFault(admitted.runDirectory, scope,
+      `terminal publication failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`);
   }
-  const identity = scope?.recordAttemptHistory
-    ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
-    : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
-  writeRunTerminal(admitted.runDirectory, "no_receipt", {
-    role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
-  });
   return terminal;
 }
 

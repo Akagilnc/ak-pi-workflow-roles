@@ -412,7 +412,7 @@ export async function prepareRoleEnvelope(options: {
    * Shared terminating/support tool path for MCP relay and headless structured_output.
    * Books the call, runs execute, projects tool_result; does not emit turn_end (closeRound).
    */
-  async function invokeAkTool(name: string, args: unknown): Promise<{
+  async function invokeAkTool(name: string, args: unknown = {}): Promise<{
     content: ContentPart[];
     isError: boolean;
     blocked?: true;
@@ -431,13 +431,13 @@ export async function prepareRoleEnvelope(options: {
           type: "toolCall",
           id: toolCallId,
           name,
-          arguments: args ?? {},
+          arguments: args,
         }],
       },
     });
     try {
       await emit("tool_execution_start", { toolCallId, toolName: name });
-      const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: (args ?? {}) as Record<string, unknown> }))
+      const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: args }))
         .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
       if (blocked) {
         // Lawful seatbelt/block stays bare rejection — not infrastructure (#593 r3).
@@ -458,7 +458,7 @@ export async function prepareRoleEnvelope(options: {
       }
     }
     try {
-      const result = await tool.execute(toolCallId, (args ?? {}) as never, undefined, undefined, context);
+      const result = await tool.execute(toolCallId, args as never, undefined, undefined, context);
       // Pass through native isError from the tool result (Pi AgentToolResult).
       // Identified failures must not be projected as tool success (#1213).
       const projected = await projectToolResult(toolCallId, name, {
@@ -558,7 +558,7 @@ export async function prepareRoleEnvelope(options: {
             if (!listTerminatingToolOnMcp && name === earlyTerminatingTool) {
               throw new Error(`terminating tool ${name} is schema-channel only on this host`);
             }
-            const outcome = await invokeAkTool(name, params?.arguments ?? {});
+            const outcome = await invokeAkTool(name, params?.arguments);
             if (outcome.blocked === true) {
               reply(socket, rpc.id, undefined, new Error(outcome.content.map((p) => p.type === "text" ? p.text : "").join("")));
               return;
@@ -645,7 +645,7 @@ export async function prepareRoleEnvelope(options: {
     // MCP path may already have invoked the terminating tool this round; skip the
     // duplicate so structured_output + tool-call does not arm non-sole.
     if (calls.some((call) => call.toolName === terminatingToolName)) return;
-    await invokeAkTool(terminatingToolName, params ?? {});
+    await invokeAkTool(terminatingToolName, params);
   };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
