@@ -1,4 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./role-run-placement.ts";
@@ -119,7 +118,7 @@ export type GateOfficerSummon = (
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
-  readonly context: ExtensionContext | HostContext;
+  readonly context: Pick<HostContext, "cwd"> & Parameters<typeof auditorRunDirectory>[0];
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   /** Run directory of the parent role (binding pointer, ADR 0079 / #879). */

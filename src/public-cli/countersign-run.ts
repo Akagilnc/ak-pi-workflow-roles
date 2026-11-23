@@ -8,7 +8,7 @@ import type { PostAdmissionEnv } from "./post-admission.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import { presentSeatVolume } from "./auto-resume.ts";
 import type { PublicSummonResult } from "../public-role-summons.ts";
-import { returnedReceiptStatus } from "./terminal.ts";
+import { returnedReceiptStatus, type TerminalReceiptRef } from "./terminal.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -23,7 +23,7 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    * content when reviewReask is absent. Binding stays ticket / argv instruction.
    */
   gateReviewInstruction?: string;
-  auditedReceipt?: string;
+  auditedReceipt?: TerminalReceiptRef;
   /**
    * #969 / #987 gate path: parent run durable board ticket handoff for bind.
    * Same-ticket resume lookup narrows the parent path by this typed number.

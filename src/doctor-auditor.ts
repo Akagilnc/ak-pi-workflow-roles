@@ -1,4 +1,3 @@
-import { auditorRunDirectory } from "./role-run-placement.ts";
 import {
   runComplianceAudit,
   type AuditorSummon,
@@ -37,9 +36,7 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
       subject: "doctor",
       context: options.context,
       submission: options.submission,
-      ...(auditorRunDirectory(options.context) === undefined
-        ? {}
-        : { runDirectory: auditorRunDirectory(options.context) }),
+      runDirectory: dossier.runDirectory,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.autoResumeLimit === undefined ? {} : { autoResumeLimit: options.autoResumeLimit }),
       ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),

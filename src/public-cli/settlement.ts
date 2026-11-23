@@ -169,9 +169,6 @@ export async function noteSettlementFault(
   await retainPackageFault({ runDirectory, diagnostic });
 }
 
-/** Receipt reference and round as the progress row carries them. */
-type FiledReceipt = { readonly receipt: string; readonly round?: string };
-
 /**
  * #1201 public identity of a leg's terminal: the ticket it is filed under and
  * the receipts this settle accepted. Row references resolve under the leg's
@@ -180,7 +177,7 @@ type FiledReceipt = { readonly receipt: string; readonly round?: string };
  */
 export function filedIdentity(
   runDirectory: string,
-  filed: readonly FiledReceipt[] = [],
+  filed: readonly TerminalReceiptRef[] = [],
 ): Pick<TerminalResult, "ticket" | "receipts"> {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return {};
@@ -188,7 +185,7 @@ export function filedIdentity(
   return {
     ...(ticket === undefined ? {} : { ticket }),
     ...(filed.length === 0 ? {} : {
-      receipts: filed.map((row) => ({ ...row, receipt: join(subjectDirectory, row.receipt) })),
+      receipts: filed.map(({ receipt, round }) => ({ receipt: join(subjectDirectory, receipt), ...(round && { round }) })),
     }),
   };
 }
@@ -404,6 +401,7 @@ import {
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
+  type TerminalReceiptRef,
   type TerminalResult,
   type TerminalRoleName,
   type TerminalRoleOutcome,
@@ -1274,37 +1272,12 @@ async function belongingAttemptHistoryIdentity(
   return undefined;
 }
 
-type LawfulSessionRead =
-  | { readonly kind: "entries"; readonly entries: SessionEntry[] }
-  | { readonly kind: "absent" }
-  | { readonly kind: "fault"; readonly error: unknown };
-
-/**
- * Read session entries for lawful settlement.
- * Missing path is absence. A present file that cannot be read is a fault,
- * not a host cause and not an empty transcript.
- */
-async function readLawfulSettlementEntries(
-  sessionFile: string,
-): Promise<LawfulSessionRead> {
-  try {
-    return { kind: "entries", entries: await readBoundSessionEntries(sessionFile) };
-  } catch (error) {
-    if (isEnoent(error)) return { kind: "absent" };
-    return { kind: "fault", error };
-  }
-}
-
-function entriesOf(read: LawfulSessionRead): SessionEntry[] {
-  return read.kind === "entries" ? read.entries : [];
-}
-
 /** Sealed seats present the ledger. A session tool error does not invent a host failure. */
 export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T; report?: Record<string, unknown> };
 
 export type SeatReadFailure = { failure: ControlledFailure; history: Pick<TerminalResult, "submissions" | "receiptErrors"> };
 
-export function matchesAuditedSeal(pin: { readonly receipt: string | undefined }, row: FiledReceipt): boolean {
+export function matchesAuditedSeal(pin: { readonly receipt: string | undefined }, row: TerminalReceiptRef): boolean {
   return basename(row.receipt) === pin.receipt;
 }
 
@@ -1356,22 +1329,23 @@ export async function preparePublicSeat(
   const failed = unknownCourt ?? requiredFault;
   if (failed) return { history, failure: { ...projectThrownFailureLeaf(failed.cause), diagnostic: failed.diagnostic } };
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
-  const filed = current.map(({ receipt, round }) => ({ receipt, ...(round === undefined ? {} : { round }) }));
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const read = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (read.kind === "fault") {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
-    );
+  let entries: SessionEntry[] = [];
+  let navigator = NAVIGATOR_SEAT_OWN_FACT;
+  if (!isNavigatorSeat(admitted.role)) {
+    try {
+      entries = await readBoundSessionEntries(coordinates.sessionFile);
+    } catch (error) {
+      if (!isEnoent(error)) await noteSettlementFault(admitted.runDirectory, scope,
+        `session read failed beside lawful terminal: ${describeErrorIdentity(error)}`);
+    }
+    navigator = extractNavigatorFact(entries);
   }
-  const entries = entriesOf(read);
   const terminal = await attachEngineDetourToolUsage({
     ...history, roleOutcome,
-    navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
+    navigator,
     artifacts: [],
-    ...filedIdentity(admitted.runDirectory, filed),
+    ...filedIdentity(admitted.runDirectory, current),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
   return { terminal, report: declaredSeatReport(admitted, roleOutcome, entries, scope) };
 }

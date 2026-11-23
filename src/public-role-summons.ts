@@ -23,7 +23,7 @@ import type {
   RoleTurnHost,
   RoleTurnModelConfig,
 } from "./host-contracts.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import type { TerminalReceiptRef, TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 
 import { isRecord, errorText } from "./unknown-value.ts";
@@ -87,7 +87,7 @@ export type PublicSummonRequest = {
    * Never folded into argv / parent-run lookup keys (binding pointer stays pure).
    */
   readonly gateReviewInstruction?: string;
-  readonly auditedReceipt?: string;
+  readonly auditedReceipt?: TerminalReceiptRef;
   /**
    * Pi-adapter inject (tests). Used only as the `pi` row when composing the
    * adapter table — never as an override of the child seat's selected host.
@@ -657,7 +657,7 @@ export async function summonParallelReviewerLenses(options: {
  * packagedGateSummon(officer) — not restated seat-by-seat here.
  */
 export async function summonGateOfficer(options: {
-  readonly auditedReceipt?: string;
+  readonly auditedReceipt?: TerminalReceiptRef;
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
   readonly cwd: string;

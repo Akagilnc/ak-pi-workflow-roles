@@ -15,8 +15,7 @@
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
+import type { RoleTurnHost } from "./host-contracts.ts";
 import {
   canReaskOfficer,
   officerConclusionReask,
@@ -25,8 +24,9 @@ import {
   type GatekeeperSubject,
   type GateOfficer,
   type GateOfficerSummon,
+  type RunGatekeeperOptions,
 } from "./gatekeeper-role.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import type { TerminalReceiptRef, TerminalResult } from "./public-cli/terminal.ts";
 import type { ReviewQueueWord } from "./review-submission.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 
@@ -35,7 +35,7 @@ import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
  * Role modules must not own this drive seam — only project results.
  */
 export function createDefaultGateOfficerSummon(options: {
-  readonly auditedReceipt?: string;
+  readonly auditedReceipt?: TerminalReceiptRef;
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
@@ -119,8 +119,7 @@ function presentGateOutcome(fields: {
  * Nested incomplete (directionUnsettled) surfaces immediately — resume the
  * actual audit seat, never convert into a reask of the outer officer (ADR 0055).
  */
-export async function requireSubmissionGate(options: {
-  readonly context: ExtensionContext | HostContext;
+export async function requireSubmissionGate(options: Pick<RunGatekeeperOptions, "context" | "runDirectory"> & {
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   /**
@@ -145,6 +144,7 @@ export async function requireSubmissionGate(options: {
   for (;;) {
     const projected = await projectGatekeeperRun({
       context: options.context,
+      ...(options.runDirectory !== undefined && { runDirectory: options.runDirectory }),
       subject: options.subject,
       summonOfficer,
       ...(options.signal === undefined ? {} : { signal: options.signal }),

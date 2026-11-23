@@ -14,7 +14,7 @@ import { JUDGE_GATES, runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
-import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
+import { roleFromRunDirectory, runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
 import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
@@ -90,6 +90,7 @@ import {
   currentReplyRows,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
+  type TerminalReceiptRef,
   type TerminalResult,
 } from "./terminal.ts";
 import {
@@ -380,7 +381,7 @@ async function loadLedgerPeerBody(
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
   const latest = rows.at(-1);
   if (latest === undefined) return undefined;
-  try { return { instruction: readableGateItem(readReceipt(latest)), auditedReceipt: basename(latest.receipt) }; }
+  try { return { instruction: readableGateItem(readReceipt(latest)), auditedReceipt: latest }; }
   catch (cause) { throw new Error(latest.path, { cause }); }
 }
 
@@ -655,11 +656,16 @@ async function runOmittedLensBatch(
 async function pinAuditedLegAtAdmission(
   officer: AdmittedRoleInvocation,
   auditedRunDirectory: string,
-  auditedReceipt: string | undefined,
+  filed: TerminalReceiptRef | undefined,
   io: CliIo,
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
-  const { for: auditedRound, fault } = readAuditedRound(auditedRunDirectory, auditedReceipt);
+  const auditedReceipt = filed && basename(filed.receipt);
+  const round = filed?.round;
+  const seat = round && roleFromRunDirectory(auditedRunDirectory);
+  const { for: auditedRound, fault } = seat
+    ? { for: `${seat}#${round}`, fault: undefined }
+    : readAuditedRound(auditedRunDirectory, auditedReceipt);
   persistAdmittedAuditedLeg(officer.runDirectory, { for: auditedRound, auditedReceipt, ...source });
   officer.auditedReceipt = auditedReceipt;
   officer.auditedRound = auditedRound;
@@ -806,23 +812,19 @@ async function runCountersignBody(
         kind: "initial",
         prompt: resolveInitialTurnPrompt(admitted, env, summons),
       });
-      const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
       const result = await runPostAdmissionOneShot({
         admitted,
         env,
         io,
-        request: turnRequest,
+        request: buildInstructionSeatTurnRequest(admitted, turnProjection),
         adapters: {
           ...seatAdapters(admitted, env, io),
           beforeDispatch: async (admittedSeat, lease) => {
-            if (!packagedAdmitsCountersign(admittedSeat.role)) return;
             await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
-            Object.assign(turnRequest, buildInstructionSeatTurnRequest(admittedSeat, turnProjection));
           },
         },
         ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
       });
-      await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
       return continueAfterPostSubmissionGuards(result, env, io);
     }
   } catch (error) {
@@ -1201,30 +1203,22 @@ async function auditSubmittedRole(
   // lawful public call may have sealed and passed台院 meanwhile).
   const filed = turn.terminal.receipts?.at(-1);
   if (!filed) throw new Error("accepted submission has no sealed receipt reference");
-  const receiptName = basename(filed.receipt);
-  const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-  const entries = admitted.role === "doctor"
-    ? await readBoundSessionEntries(sessionFile)
-    : [];
-  const context: HostContext = {
-    cwd: admitted.projectRoot,
-    mode: "print",
-    model: undefined,
-    runDirectory: admitted.runDirectory,
-    sessionManager: {
-      getSessionFile: () => sessionFile,
-      getSessionDir: () => dirname(sessionFile),
-      getEntries: () => entries as unknown as Iterable<{ type: string }>,
-      getLeafEntry: () => undefined,
-      getLeafId: () => admitted.runId,
-      getHeader: () => ({ type: "session", id: admitted.runId }),
-    },
-    abort() {},
-  };
   const gateSatisfied = (officer: GateOfficer, chainOrder?: readonly GateOfficer[]) =>
     officerSatisfiedByLiveChild(officer, resumedOfficer, chainOrder);
   if (admitted.role === "doctor") {
     if (!gateSatisfied("auditor")) {
+      const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
+      const entries = await readBoundSessionEntries(sessionFile);
+      const context: HostContext = {
+        cwd: admitted.projectRoot, mode: "print", model: undefined, runDirectory: admitted.runDirectory,
+        sessionManager: {
+          getSessionFile: () => sessionFile, getSessionDir: () => dirname(sessionFile),
+          getEntries: () => entries as unknown as Iterable<{ type: string }>,
+          getLeafEntry: () => undefined, getLeafId: () => admitted.runId,
+          getHeader: () => ({ type: "session", id: admitted.runId }),
+        },
+        abort() {},
+      };
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
@@ -1238,7 +1232,7 @@ async function auditSubmittedRole(
             argv: ["--subject", subject, "--source-run", sourceRunDirectory],
             cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
             principalAuthority: env.principalAuthority,
-            correlationId: admitted.runId, auditedReceipt: receiptName,
+            correlationId: admitted.runId, auditedReceipt: filed,
             ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
             ...(env.hostAdapters === undefined ? { roleTurnHost: env.roleTurnHost } : { hostAdapters: env.hostAdapters }),
             ...(signal === undefined ? {} : { signal }),
@@ -1300,7 +1294,7 @@ async function auditSubmittedRole(
   } else {
     const summonOfficer = createDefaultGateOfficerSummon({
       io: { receiptDiagnostic: io.receiptDiagnostic ?? io.stderr },
-      auditedReceipt: receiptName,
+      auditedReceipt: filed,
       cwd: admitted.projectRoot,
       home: env.home,
       packageRoot: env.packageRoot,
@@ -1310,7 +1304,7 @@ async function auditSubmittedRole(
     let pass: Awaited<ReturnType<typeof runJudgeGates>>;
     const runGate = (subject: Parameters<typeof requireSubmissionGate>[0]["subject"]) =>
       requireSubmissionGate({
-        context,
+        context: { cwd: admitted.projectRoot }, runDirectory: admitted.runDirectory,
         subject,
         submission: accepted,
         summonOfficer,
