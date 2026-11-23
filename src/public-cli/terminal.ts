@@ -7,7 +7,8 @@
  */
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
-import type { PackagedRole } from "../packaged-role-registry.ts";
+import { receiptStatus, type PackagedRole } from "../packaged-role-registry.ts";
+import type { PublicSummonResult } from "../public-role-summons.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 
@@ -98,6 +99,11 @@ export type TerminalNavigatorFact =
       source: string;
       reason: string;
     };
+
+/** Even undefined is an observed word. Only an independent receipt still needs reading. */
+export function returnedReceiptStatus(summoned: PublicSummonResult, receipt: unknown): unknown {
+  return "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(receipt);
+}
 
 /**
  * Parent-facing current reply: a court's own accepted/audit payloads only.

@@ -18,6 +18,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
+  canReaskOfficer,
   officerConclusionReask,
   officerRunIdFromSummoned,
   projectGatekeeperRun,
@@ -151,18 +152,11 @@ export async function requireSubmissionGate(options: {
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;
-    if (gatekeeper.status === "needs_reask") {
-      // Nested incomplete already exhausted the inner seat's own reask. Surface it;
-      // do not convert into a reask of this outer officer (ADR 0055 / #1195).
-      const nestedIncomplete =
-        projected.summoned?.terminal?.roleOutcome.kind === "accepted"
-        && projected.summoned.terminal.roleOutcome.decisiveFacts?.directionUnsettled === true;
-      if (!nestedIncomplete && reasksSpent < reaskLimit) {
-        reasksSpent += 1;
-        reask = officerConclusionReask(gatekeeper.receivedStatus);
-        await options.onDiscard?.(projected.summoned);
-        continue;
-      }
+    if (gatekeeper.status === "needs_reask" && canReaskOfficer(projected.summoned, reasksSpent, reaskLimit)) {
+      reasksSpent += 1;
+      reask = officerConclusionReask(gatekeeper.receivedStatus);
+      await options.onDiscard?.(projected.summoned);
+      continue;
     }
     if (gatekeeper.status === "transport_failure" || gatekeeper.status === "no_receipt") {
       const evidence = gatekeeper.status === "transport_failure" ? gatekeeper.submission : gatekeeper.facts;

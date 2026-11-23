@@ -8,8 +8,7 @@ import type { PostAdmissionEnv } from "./post-admission.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import { presentSeatVolume } from "./auto-resume.ts";
 import type { PublicSummonResult } from "../public-role-summons.ts";
-
-import { receiptStatus } from "../packaged-role-registry.ts";
+import { returnedReceiptStatus } from "./terminal.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -68,7 +67,7 @@ export function latestPayloadEscalated(
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  return ("receivedStatus" in result ? result.receivedStatus : receiptStatus(roleOutcome.payloads?.at(-1))) === "escalate";
+  return returnedReceiptStatus(result, roleOutcome.payloads?.at(-1)) === "escalate";
 }
 
 /**

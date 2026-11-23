@@ -4,9 +4,9 @@ import { auditorRunDirectory } from "./role-run-placement.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { officerConclusionReask } from "./gatekeeper-role.ts";
+import { canReaskOfficer, officerConclusionReask } from "./gatekeeper-role.ts";
 import { receiptStatus } from "./packaged-role-registry.ts";
-import { currentReplyRows } from "./public-cli/terminal.ts";
+import { currentReplyRows, returnedReceiptStatus } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isRecord } from "./unknown-value.ts";
@@ -164,8 +164,7 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   if (outcome.kind === "accepted") {
     const rows = currentReplyRows(summoned.terminal);
     const receipt = rows.length ? rows.at(-1) : {};
-    const status = "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(receipt);
-    return readComplianceCandidate(receipt, status, usage);
+    return readComplianceCandidate(receipt, returnedReceiptStatus(summoned, receipt), usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {
@@ -218,8 +217,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   for (;;) {
     const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
     const decision = await projectAuditorTerminal(summoned);
-    if (decision.status === "received") {
-      if (reasksSpent >= reaskLimit) return decision;
+    if (decision.status === "received" && canReaskOfficer(summoned, reasksSpent, reaskLimit)) {
       reasksSpent += 1;
       reask = officerConclusionReask(decision.receivedStatus);
       continue;

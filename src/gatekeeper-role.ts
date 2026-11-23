@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./role-run-placement.ts";
-import { packagedGateStageLabel, receiptStatus } from "./packaged-role-registry.ts";
+import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
@@ -10,7 +10,7 @@ import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
+import { currentReplyRows, returnedReceiptStatus, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
@@ -237,7 +237,7 @@ function projectOfficerTerminal(
   }
   const unsettled = outcome.decisiveFacts?.directionUnsettled === true;
   const receipt = unsettled && !thisCourt.length ? outcome : thisCourt.at(-1);
-  const received = "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(receipt);
+  const received = returnedReceiptStatus(summoned, receipt);
   // Independent fixture terminals may carry the word on outcome instead of the receipt.
   const status = received === undefined && !unsettled ? outcome.status : received;
   return withOfficerRunId(
@@ -255,6 +255,12 @@ export type GatekeeperProjection = {
   /** Present only when a public summon actually returned (not transport pre-summon failure). */
   readonly summoned?: PublicSummonResult;
 };
+
+/** A seat that already exhausted its reasks stops the enclosing audit too. */
+export function canReaskOfficer(summoned: PublicSummonResult | undefined, spent: number, limit: number): boolean {
+  const outcome = summoned?.terminal?.roleOutcome;
+  return spent < limit && !(outcome?.kind === "accepted" && outcome.decisiveFacts?.directionUnsettled === true);
+}
 
 /**
  * Officer conclusion was missing or not a queue word (#1055).
