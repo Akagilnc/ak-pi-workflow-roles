@@ -601,10 +601,7 @@ async function dispatchAdmitted(
       ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
     });
   };
-  const result = await execute(env);
-  // Prefer the live admitted object returned from the turn (may have relocated).
-  const live = result.admitted ?? admitted;
-  return continueAfterPostSubmissionGuards({ ...result, admitted: live }, env, io);
+  return continueAfterPostSubmissionGuards(await execute(env), env, io);
 }
 
 /**
@@ -729,6 +726,7 @@ function resumeSameParentInstructionSeat(input: {
 }): Promise<SeatRunResult | undefined> {
   return tryResumeSameTicketSeatRun({
     home: input.env.home,
+    io: input.io,
     projectRoot: input.projectRoot,
     role: input.role,
     parentRunPath: input.parentRunPath,

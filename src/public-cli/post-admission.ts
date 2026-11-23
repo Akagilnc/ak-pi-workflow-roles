@@ -1395,8 +1395,7 @@ export async function dispatchPostAdmissionTurn<
       settledTurn = await settleCompletedHostTurn({
         admitted,
         env,
-        // Only the final Terminal presents; intermediate delivery attempts stay quiet.
-        io: { ...io, stdout: discardStdout },
+        io,
         adapters,
         shouldPresent,
         request: deliveryTurnRequest,
@@ -1613,7 +1612,7 @@ async function runSettledAutoResumeLoop<
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
   const dispatchEnv = input.dispatchEnv ?? input.env;
   const receiptDelivery = createReceiptDeliveryPolicy(input.env.autoResumeLimit);
-  return runWithAutoResumeLoop({
+  const result = await runWithAutoResumeLoop({
     admitted: input.admitted,
     principalAuthority: input.env.principalAuthority,
     io: input.io,
@@ -1650,6 +1649,8 @@ async function runSettledAutoResumeLoop<
         },
       }),
   });
+  // A loop-owned exception terminal has no dispatch result to carry the leg it settled.
+  return result.admitted ? result : { ...result, admitted: input.admitted };
 }
 
 /**
@@ -2131,24 +2132,15 @@ export async function runPostAdmissionManualResume<
         ? {}
         : { correlationId: admitted.correlationId }),
     },
-    io,
+    io: { ...io, stdout: discardStdout },
     request,
     adapters,
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
-  if (
-    result.terminal !== undefined && result.terminal.roleOutcome.kind !== "accepted" &&
-    isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
-  ) {
-    // dispatchPostAdmissionTurn already persisted this lawful outcome inline
-    // (persistRunState defaults true here — no station-child/loop deferral)
-    // through its own settleAfterTurnStarted-backed branches; a lawful result
-    // only ever reaches this point once that persist has already succeeded
-    // (#836 r12 class 3 dedup — one persist owner, not a second here).
-    await presentTerminal(result.terminal, io, admitted.runDirectory);
-  }
+  // As in auto-resume, only the stopping volume is public; accepted goes on to routing.
   if (result.terminal !== undefined) {
-    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+    result.terminal.autoResumeCount = 0;
+    if (result.terminal.roleOutcome.kind !== "accepted") await presentTerminal(result.terminal, io, admitted.runDirectory);
   }
   return result;
 }
