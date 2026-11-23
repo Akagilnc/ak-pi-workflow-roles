@@ -381,7 +381,7 @@ export async function readRoleRunState(
 
 /**
  * Envelope identity only — no principal payload interpretation.
- * Used by notary locator / role peek that never consume session coordinates.
+ * Used by locators that never consume session coordinates.
  */
 export async function readRoleRunIdentity(
   runDirectory: string,
@@ -1058,26 +1058,13 @@ function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   };
 }
 
-async function loadResumableRunRecord(
+export async function readResumablePublicRole(
   home: string,
-  runId: string,
+  runDirectory: string,
   authority: DurablePrincipalAuthority,
-  knownRunDirectory?: string,
-): Promise<{
-  readonly run: RoleRunRecord;
-  readonly principal: DurablePrincipal;
-  readonly admittedFields: LoadedAdmittedRequestFields;
-  readonly auditorSubject?: unknown;
-}> {
-  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, knownRunDirectory);
-  // Diagnostics name the leg by its directory; the run id is not a caller-facing identity (#1201).
-  if (runDirectory === undefined) {
-    throw new CliUsageError(`unknown role run: no run directory found under ${home}`);
-  }
+): Promise<LoadedResumablePublicRole | undefined> {
   const disk = await readRoleRunStateDisk(runDirectory);
-  if (disk === undefined) {
-    throw new CliUsageError(`role run has no readable state: ${runDirectory}`);
-  }
+  if (disk === undefined) return undefined;
   // #416 / #1091: removed terminal/resumable and local session-file gates.
   // The load seam locates the run and recovers identity; host CLI answers continuation.
   // One authority.decode of the uninterpreted wire yields both principal and record.
@@ -1301,10 +1288,9 @@ async function loadResumableRunRecord(
       }
     }
   }
-  return {
+  const admitted = admitResumedRole({
     run,
     principal,
-    ...(auditorSubject !== undefined && { auditorSubject }),
     admittedFields: {
       instruction,
       instructionEmpty,
@@ -1332,7 +1318,8 @@ async function loadResumableRunRecord(
       ...(sourceRun === undefined ? {} : { sourceRun }),
       ...(model === undefined ? {} : { model }),
     },
-  };
+  });
+  return { admitted, run, auditorSubject, currentCourt: disk.currentCourt };
 }
 
 /**
@@ -1360,21 +1347,11 @@ function resumedBaseAdmitted(loaded: {
   };
 }
 
-export async function peekRoleRunRole(
-  home: string,
-  runId: string,
-  options?: { readonly runDirectory?: string },
-): Promise<PackagedRole | undefined> {
-  const runDirectory = await findRunDirectoryById(home, runId, undefined, undefined, options?.runDirectory);
-  if (runDirectory === undefined) return undefined;
-  const run = await readRoleRunIdentity(runDirectory);
-  return run?.role;
-}
-
 export type LoadedResumablePublicRole = {
   readonly admitted: AdmittedRoleInvocation;
   readonly run: RoleRunRecord;
   readonly auditorSubject?: unknown;
+  readonly currentCourt: CurrentCourtState | undefined;
 };
 
 /**
@@ -1388,13 +1365,11 @@ export async function loadResumablePublicRole(
   authority: DurablePrincipalAuthority,
   options?: { readonly runDirectory?: string },
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(
-    home,
-    runId,
-    authority,
-    options?.runDirectory,
-  );
-  return { admitted: admitResumedRole(loaded), run: loaded.run, auditorSubject: loaded.auditorSubject };
+  const directory = await findRunDirectoryById(home, runId, undefined, undefined, options?.runDirectory);
+  if (directory === undefined) throw new CliUsageError(`unknown role run: no run directory found under ${home}`);
+  const loaded = await readResumablePublicRole(home, directory, authority);
+  if (!loaded) throw new CliUsageError(`role run has no readable state: ${directory}`);
+  return loaded;
 }
 
 /**

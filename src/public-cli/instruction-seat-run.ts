@@ -449,9 +449,8 @@ function resolveInitialTurnPrompt(
 
 /** Restore this leg's volume, including a read failure. The caller decides whose result to return. */
 async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: InstructionSeatRunEnv, io: CliIo,
-  review?: Pick<SettlementCourtScope, "seal" | "previewOnly">): Promise<TerminalResult | undefined> {
-  const binding = review?.seal ? review : await readCurrentCourt(admitted.runDirectory) ?? { seal: "latest" as const };
-  const scope = { ...binding, ...review, notePackageFault: packageFaultNoteFor(admitted, env, io) };
+  binding: Pick<SettlementCourtScope, "courtAttemptId" | "seal" | "previewOnly"> | undefined): Promise<TerminalResult | undefined> {
+  const scope = { ...(binding ?? { seal: "latest" as const }), notePackageFault: packageFaultNoteFor(admitted, env, io) };
   return trySettlePublicSeat(admitted, env.principalAuthority, scope, io);
 }
 
@@ -1159,29 +1158,22 @@ async function queueConclusionFromChild(
 
 /** Continue the parent once a child has submitted. The child words ride the existing resume. */
 export async function continueParentAfterChild(
-  parentRunId: string,
+  loaded: LoadedResumablePublicRole,
   child: AdmittedRoleInvocation,
   childTerminal: TerminalResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  const knownParentDirectory = admittedSourceRunPath(child);
-  const loaded = await loadResumablePublicRole(
-    env.home,
-    parentRunId,
-    env.principalAuthority,
-    knownParentDirectory === undefined ? undefined : { runDirectory: knownParentDirectory },
-  );
+  const admitted = loaded.admitted;
   if (loaded.run.state !== "admitted" && !AUDITED_ROLES.has(loaded.admitted.role)) {
     return runPublicInstructionSeatResume(
       {
-        runId: parentRunId,
-        runDirectory: loaded.admitted.runDirectory,
+        runId: admitted.runId,
+        runDirectory: admitted.runDirectory,
       },
       env, io, undefined, loaded,
     );
   }
-  const admitted = loaded.admitted;
   const resolved = await queueConclusionFromChild(child, childTerminal, env, io);
   if (resolved !== undefined && "stop" in resolved) {
     const stopped = resolved.stop;
@@ -1211,9 +1203,12 @@ export async function continueParentAfterChild(
     return { exitCode: 0, admitted: resolved.admitted, terminal: resolved.terminal };
   }
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
+    // A child reask is a new host turn; the earlier parent binding is not live evidence after it.
+    const childWasReasked = resolved.terminal !== childTerminal;
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
       // Recover the parent's own seal, not the seal a possibly stale child reviewed.
-      const terminal = await recoverSeatTerminal(admitted, env, io);
+      const court = childWasReasked ? await readCurrentCourt(admitted.runDirectory) : loaded.currentCourt;
+      const terminal = await recoverSeatTerminal(admitted, env, io, court);
       if (terminal?.roleOutcome.kind === "failure") {
         await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, admitted.runDirectory);
         return { exitCode: 1, admitted, terminal };
@@ -1231,10 +1226,10 @@ export async function continueParentAfterChild(
       );
     }
     return runPublicInstructionSeatResume({
-      runId: parentRunId,
+      runId: admitted.runId,
       runDirectory: admitted.runDirectory,
       summons: { instruction: readableGateItem(latestQueuePayload(resolved.terminal)) },
-    }, envForCourtContinue(env), io, undefined, loaded);
+    }, envForCourtContinue(env), io, undefined, childWasReasked ? undefined : loaded);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
   showResumeErrorPointer(io, result.exitCode, result.terminal);
@@ -1481,7 +1476,7 @@ async function auditSubmittedRole(
       }
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io);
+      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory));
       if (terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
