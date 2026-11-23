@@ -70,7 +70,7 @@ export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDi
     else if (delivery !== "returned") {
       for (const row of receiptErrorRows(terminal)) (io.receiptDiagnostic ?? io.stderr)(`${row}\n`);
     }
-    if (delivery !== "discarded" && (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt")) {
+    if (delivery !== "discarded" && io.stderr !== discardStdout && (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt")) {
       presentFailureDiagnostic(terminal, io);
     }
   } catch (error) {
