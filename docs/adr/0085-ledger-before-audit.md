@@ -2,7 +2,7 @@
 
 Status: accepted（审核席自己读被审稿 2026-11-24，源卷 d634a8d9，uuid `a1119106-f8be-488f-b96b-578639370a15`、`61cda71b-e113-4a6c-bef9-46182cb5549a`）
 
-被审对象必先落账，账上记的是 LLM 原话。审核席得到被审腿的身份和所审的是哪一份，自己去读那份回执原件；包不读出正文递给它。闸传召时没有派单文，包在首句给出身份和第几份；调用者自己写了派单文时，审哪一份由调用者在派单文里说，包照 [ADR 0087](0087-package-routes-and-passes-through-code-hands-no-paths.md) 原样透传、不加字。审核席读到的就是席位交卷的原件，合 [CLAUDE.md「LLM 之间传话」](../../CLAUDE.md#llm-之间传话)。理由：每份交卷有自己的编号文件之后（[ADR 0088](0088-ticket-current-replaces-run-dossiers.md)），「本轮是哪一份」由编号定死，包再读一遍、递一遍只多出一层会坏的转手。
+被审对象必先落账，账上记的是 LLM 原话。审核席得到被审腿的身份和所审的是哪一份，自己去读那份回执原件；包不读出正文递给它。闸传召时没有派单文，包在首句给出身份和第几份，符宝郎不收派单文、一律如此；别的审核席由调用者自己写了派单文时，审哪一份由调用者在派单文里说，包照 [ADR 0087](0087-package-routes-and-passes-through-code-hands-no-paths.md) 原样透传、不加字。审核席读到的就是席位交卷的原件，合 [CLAUDE.md「LLM 之间传话」](../../CLAUDE.md#llm-之间传话)。理由：每份交卷有自己的编号文件之后（[ADR 0088](0088-ticket-current-replaces-run-dossiers.md)），「本轮是哪一份」由编号定死，包再读一遍、递一遍只多出一层会坏的转手。
 
 ## Considered Options
 
