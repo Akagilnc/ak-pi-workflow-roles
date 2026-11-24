@@ -6,6 +6,8 @@
 import { basename, dirname, resolve } from "node:path";
 import { isUnboundRunDirectory, sessionFileOf } from "../role-run-placement.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
+import type { ComplianceDecision } from "../compliance-transport.ts";
+import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
 import { officerConclusionReask, gateOfficerForSubject, type GateOfficer } from "../gatekeeper-role.ts";
@@ -54,7 +56,6 @@ import {
   bindDiaristBoardTicket,
   presentControlledFailure,
   trySettlePublicSeat,
-  packageFaultNoteFor,
   prepareSummonsResumeMaterials,
   roleTurnOptions,
   runPostAdmissionOneShot,
@@ -83,6 +84,8 @@ import {
   preparePublicSeat,
   matchesAuditedSeal,
   type SettlementCourtScope,
+  besideConclusion,
+  packageFaultNoteFor,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import { warnMissingMethodSkills } from "./machine-method-skills.ts";
@@ -231,6 +234,8 @@ async function incompleteAuditWithoutOfficerVolume(
  * The officer keeps its own identity and exit; the audited seat is not re-run and its
  * volume is read from its own run through the settlement seam (#1195: not copied into
  * the officer's book). `presentedRunId` skips the seat the caller already presented.
+ * The officer's own conclusion is in hand: a failed read of the audited seat is
+ * noted beside it (ADR 0080) and never loses it.
  */
 async function presentAuditedOriginalOfOfficer(
   officer: AdmittedRoleInvocation,
@@ -242,20 +247,22 @@ async function presentAuditedOriginalOfOfficer(
   const audited = officer.correlationId;
   if (audited === undefined || audited === presentedRunId) return;
   const auditedSource = admittedSourceRunPath(officer);
-  const parent = await loadResumablePublicRole(
-    env.home,
-    audited,
-    env.principalAuthority,
-    auditedSource === undefined ? undefined : { runDirectory: auditedSource },
-  );
-  if (!AUDITED_ROLES.has(parent.admitted.role)) return;
-  // Preview the court named by the officer, never the parent's latest court.
-  const terminal = await recoverSeatTerminal(parent.admitted, env, io, {
-    seal: { receipt: officer.auditedReceipt },
-    previewOnly: true,
+  await besideConclusion(packageFaultNoteFor(officer, env, io), "audited original presentation", async () => {
+    const parent = await loadResumablePublicRole(
+      env.home,
+      audited,
+      env.principalAuthority,
+      auditedSource === undefined ? undefined : { runDirectory: auditedSource },
+    );
+    if (!AUDITED_ROLES.has(parent.admitted.role)) return;
+    // Preview the court named by the officer, never the parent's latest court.
+    const terminal = await recoverSeatTerminal(parent.admitted, env, io, {
+      seal: { receipt: officer.auditedReceipt },
+      previewOnly: true,
+    });
+    if (!terminal) return;
+    await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory, "alongside");
   });
-  if (!terminal) return;
-  await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory, "alongside");
 }
 
 /**
@@ -947,7 +954,8 @@ export async function runPublicInstructionSeat(
           packageFaultNoteFor(admitted, env, io)) as SeatRunResult;
       }
       if (outcome.admitted !== undefined && isUnboundRunDirectory(outcome.admitted.runDirectory)) {
-        await recordChildDiaristRun(admitted, outcome.admitted.runId);
+        const diaristRunId = outcome.admitted.runId;
+        await besideConclusion(packageFaultNoteFor(admitted, env, io), "diarist run record", () => recordChildDiaristRun(admitted, diaristRunId));
       }
       if (outcome.failedWithoutEscalate !== undefined) {
         return await presentControlledFailure(admitted, {
@@ -1190,41 +1198,49 @@ async function auditSubmittedRole(
     officerSatisfiedByLiveChild(officer, resumedOfficer, chainOrder);
   if (admitted.role === "doctor") {
     if (!gateSatisfied("auditor")) {
-      const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-      const entries = await readBoundSessionEntries(sessionFile);
-      const context: HostContext = {
-        cwd: admitted.projectRoot, mode: "print", model: undefined, runDirectory: admitted.runDirectory,
-        sessionManager: {
-          getSessionFile: () => sessionFile, getSessionDir: () => dirname(sessionFile),
-          getEntries: () => entries as unknown as Iterable<{ type: string }>,
-          getLeafEntry: () => undefined, getLeafId: () => admitted.runId,
-          getHeader: () => ({ type: "session", id: admitted.runId }),
-        },
-        abort() {},
-      };
       let lastSummon: PublicSummonResult | undefined;
-      const decision = await createPiDoctorAuditor()({
-        context,
-        ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-        summonAuditor: async (subject, sourceRunDirectory, signal, reask) => {
-          await presentSeatVolume(lastSummon, io, "discarded");
-          const summoned = await summonPublicRole({
-            role: "auditor",
-            io: { receiptDiagnostic: io.receiptDiagnostic ?? io.stderr },
-            argv: ["--subject", subject, "--source-run", sourceRunDirectory],
-            cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
-            principalAuthority: env.principalAuthority,
-            correlationId: admitted.runId, auditedReceipt: filed,
-            ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
-            ...(env.hostAdapters === undefined ? { roleTurnHost: env.roleTurnHost } : { hostAdapters: env.hostAdapters }),
-            ...(signal === undefined ? {} : { signal }),
-            ...(reask === undefined ? {} : { reviewReask: reask }),
-          });
-          lastSummon = summoned;
-          return summoned;
-        },
-      });
+      let decision: ComplianceDecision;
+      try {
+        const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
+        const entries = await readBoundSessionEntries(sessionFile);
+        const context: HostContext = {
+          cwd: admitted.projectRoot, mode: "print", model: undefined, runDirectory: admitted.runDirectory,
+          sessionManager: {
+            getSessionFile: () => sessionFile, getSessionDir: () => dirname(sessionFile),
+            getEntries: () => entries as unknown as Iterable<{ type: string }>,
+            getLeafEntry: () => undefined, getLeafId: () => admitted.runId,
+            getHeader: () => ({ type: "session", id: admitted.runId }),
+          },
+          abort() {},
+        };
+        decision = await createPiDoctorAuditor()({
+          context,
+          ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
+          ...(env.signal === undefined ? {} : { signal: env.signal }),
+          summonAuditor: async (subject, sourceRunDirectory, signal, reask) => {
+            await presentSeatVolume(lastSummon, io, "discarded");
+            const summoned = await summonPublicRole({
+              role: "auditor",
+              io: { receiptDiagnostic: io.receiptDiagnostic ?? io.stderr },
+              argv: ["--subject", subject, "--source-run", sourceRunDirectory],
+              cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
+              principalAuthority: env.principalAuthority,
+              correlationId: admitted.runId, auditedReceipt: filed,
+              ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+              ...(env.hostAdapters === undefined ? { roleTurnHost: env.roleTurnHost } : { hostAdapters: env.hostAdapters }),
+              ...(signal === undefined ? {} : { signal }),
+              ...(reask === undefined ? {} : { reviewReask: reask }),
+            });
+            lastSummon = summoned;
+            return summoned;
+          },
+        });
+      } catch (error) {
+        // The doctor's submission is in hand. An audit that throws is a transport
+        // failure, as on every other gate (gatekeeper-role summon).
+        lastSummon = undefined;
+        decision = { status: "transport_failure", diagnostic: serializeThrownValue(error) };
+      }
       if (decision.status === "continue" || decision.status === "converged") await presentSeatVolume(lastSummon, io, "discarded");
       if (decision.status === "continue") {
         await presentSeatVolume(turn, io, "discarded");
@@ -1369,7 +1385,8 @@ async function auditSubmittedRole(
       }
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory));
+      const terminal = pass.terminal ?? await besideConclusion(packageFaultNoteFor(admitted, env, io), "escalated audit recovery",
+        async () => recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory)));
       if (terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,

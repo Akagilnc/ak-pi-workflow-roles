@@ -29,7 +29,9 @@ import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, receiptErrorRows, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
+  besideConclusion,
   filedIdentity,
+  packageFaultNoteFor,
   presentFailureDiagnostic,
   retainPackageFault,
 } from "./settlement.ts";
@@ -82,22 +84,6 @@ export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDi
       error,
       stderr: (text) => io.stderr(text),
     });
-  }
-}
-
-/**
- * Best-effort finalization of the durable run state before an exception-path
- * synthetic failure terminal is returned (#426 review: analyst-ledger classifies
- * running runs as live — an exhausted invocation must not remain live
- * indefinitely). Finalization failure must not mask the real cause.
- */
-async function finalizeExceptionRunBestEffort(runDirectory: string, io: CliIo): Promise<void> {
-  try {
-    await markRunTerminal(runDirectory);
-  } catch (error) {
-    io.stderr(
-      `run terminal-state finalization failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
-    );
   }
 }
 
@@ -226,33 +212,6 @@ function unwrapTurnDispatchedFailure(error: unknown): unknown {
     current = current.cause;
   }
   return current;
-}
-
-async function attachDispatchExceptionTerminal(
-  admitted: {
-    readonly runDirectory: string;
-    readonly runId: string;
-    readonly projectRoot: string;
-  },
-  terminal: TerminalResult,
-  io: CliIo,
-): Promise<TerminalResult> {
-  try {
-    return await attachRecordedSubmissions(
-      {
-        projectRoot: admitted.projectRoot,
-        runId: admitted.runId,
-        runDirectory: admitted.runDirectory,
-      },
-      terminal,
-    );
-  } catch (error) {
-    // Existing diagnostic seam: attach true cause on stderr, original Terminal stays.
-    io.stderr(
-      `dispatch exception ledger attach failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
-    );
-    return terminal;
-  }
 }
 
 /**
@@ -481,23 +440,23 @@ export async function runWithAutoResumeLoop<
     }
   }
 
-  const terminal = stoppedResult === undefined
-    ? await attachDispatchExceptionTerminal(
-        options.admitted,
-        dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runDirectory: options.admitted.runDirectory,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: endReason!,
-          everyAttemptThrew,
-        }),
-        options.io,
-      )
-    : stoppedResult.terminal;
+  // The loop's own terminal is in hand: finishing steps keep it (ADR 0080).
+  const note = packageFaultNoteFor(options.admitted, options, options.io);
+  let terminal = stoppedResult?.terminal;
   if (stoppedResult === undefined) {
-    await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+    const exception = dispatchExceptionFailureTerminal({
+      role: options.admitted.role,
+      runDirectory: options.admitted.runDirectory,
+      causeError: lastThrownError,
+      errorFiles: retainedErrorFiles,
+      autoResumeAttempts,
+      endReason: endReason!,
+      everyAttemptThrew,
+    });
+    terminal = await besideConclusion(note, "dispatch exception ledger attach",
+      () => attachRecordedSubmissions(options.admitted, exception)) ?? exception;
+    // An exhausted invocation must not stay live (#426); finalization never masks the cause.
+    await besideConclusion(note, "run terminal-state finalization", () => markRunTerminal(options.admitted.runDirectory));
   }
   const complete: TerminalResult | undefined = terminal !== undefined && failedAttempts.length > 0
     ? { ...terminal, roleOutcome: {

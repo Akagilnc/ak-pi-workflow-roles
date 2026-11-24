@@ -19,7 +19,8 @@ import { test } from "vitest";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE, trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import {
   publishFailureTerminal,
   settleHostEndedNoReceipt,

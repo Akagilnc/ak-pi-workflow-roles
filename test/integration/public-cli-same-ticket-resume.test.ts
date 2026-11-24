@@ -43,7 +43,8 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE, trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,

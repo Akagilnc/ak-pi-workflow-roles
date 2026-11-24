@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -441,7 +441,7 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test.each(["undecidable", "host failure"])("#1214 R2b: auditor resume keeps its %s result when the audited original is missing", async mode => {
+test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b: auditor resume keeps its %s result when the audited original is missing", async mode => {
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -455,13 +455,17 @@ test.each(["undecidable", "host failure"])("#1214 R2b: auditor resume keeps its 
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
-    await rm(join(observed.parentRunDirectory, "receipts/2.json"));
-    const continued = await observed.resume(RULING);
+    // ADR 0080: the officer's conclusion is in hand; reading the audited leg is a later step.
+    const parentState = join(observed.parentRunDirectory, "state.jsonl");
+    if (mode === "unreadable audited leg") await chmod(parentState, 0o000);
+    else await rm(join(observed.parentRunDirectory, "receipts/2.json"));
+    const continued = await observed.resume(RULING).finally(() => chmod(parentState, 0o600));
     assert.equal(continued.terminal?.roleOutcome.role, "auditor");
-    assert.equal(continued.exitCode, mode === "undecidable" ? 0 : 1);
-    if (mode === "undecidable") assert.equal(continued.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
+    assert.equal(continued.exitCode, mode === "host failure" ? 1 : 0);
+    if (mode !== "host failure") assert.equal(continued.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
     else assert.equal(continued.terminal.roleOutcome.kind, "failure");
     assert.deepEqual(continued.terminal.receiptErrors ?? [], []);
+    if (mode === "unreadable audited leg") return;
     assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
       [["judge", { name: "Error", code: "ENOENT" }]]);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);

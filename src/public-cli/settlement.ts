@@ -65,6 +65,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { readStateRowsSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
@@ -153,6 +154,63 @@ export async function retainPackageFault(input: {
     if (retentionFailure !== undefined) stderr(formatCliDiagnostic(retentionFailure));
   } catch {
     // Presentation is best-effort beside an already-formed host terminal.
+  }
+}
+
+/**
+ * Session custom-entry type for a best-effort post-dispatch cleanup
+ * diagnostic (#840 r9 判词 class 1). Every auto-resume attempt dispatches
+ * with dummyIo (src/public-cli/auto-resume.ts), so an io.stderr-only
+ * diagnostic never reaches a real caller — the dossier is the durable
+ * channel that does (失败诚实宪法 真因必须落痕).
+ */
+export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
+  "ak_post_admission_cleanup_diagnostic" as const;
+
+/**
+ * Best-effort post-dispatch diagnostic that must still leave a real trace
+ * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
+ * Single authoritative durable channel — a dossier custom entry via
+ * sessionAppender — not a standing duplicate. Only when that one write
+ * itself fails does this fall back to a plain run-artifacts file (reusing
+ * auto-resume.ts's existing dispatch-error retention helper — no new
+ * mechanism), so an unhealthy session never leaves this diagnostic with
+ * zero durable trace (#840 bounce class 2); a healthy session never gets a
+ * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
+ */
+export function packageFaultNoteFor(
+  admitted: { readonly runDirectory: string; readonly principal: DurablePrincipal },
+  env: { readonly sessionAppender: SessionCustomEntryAppender; readonly principalAuthority: DurablePrincipalAuthority },
+  io: { readonly stderr: (text: string) => void },
+): (diagnostic: string) => Promise<void> {
+  return (diagnostic) => retainPackageFault({
+    runDirectory: admitted.runDirectory,
+    diagnostic,
+    appendSession: (payload) => env.sessionAppender(
+      env.principalAuthority,
+      admitted.principal,
+      POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
+      payload,
+    ),
+    stderr: (text) => io.stderr(text),
+  });
+}
+
+/**
+ * ADR 0080: the one disposition for a finishing step that throws once a
+ * conclusion is in hand — the true cause is noted beside it and the conclusion
+ * stays. Every entry that reaches a submission finishes through this.
+ */
+export async function besideConclusion<T>(
+  note: (diagnostic: string) => Promise<void>,
+  step: string,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (error) {
+    await note(`${step} failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`);
+    return undefined;
   }
 }
 
@@ -1354,7 +1412,7 @@ export async function preparePublicSeat(
 export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined, { terminal, report }: PreparedSeat<T>): Promise<T> {
   if (scope?.previewOnly) return terminal;
-  try {
+  const published = await besideConclusion((diagnostic) => noteSettlementFault(admitted.runDirectory, scope, diagnostic), "terminal publication", async () => {
     if (report !== undefined) {
       writeRunTerminal(admitted.runDirectory, "report", report);
       return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
@@ -1365,11 +1423,9 @@ export async function publishSeatSettlement<T extends TerminalResult>(admitted: 
     writeRunTerminal(admitted.runDirectory, "no_receipt", {
       role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
     });
-  } catch (error) {
-    await noteSettlementFault(admitted.runDirectory, scope,
-      `terminal publication failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`);
-  }
-  return terminal;
+    return terminal;
+  });
+  return published ?? terminal;
 }
 
 /**
@@ -1529,18 +1585,9 @@ export async function settleFailureTerminalResult(
       admitted.runDirectory,
       options,
     );
-  let artifacts: TerminalArtifactRef[] = [];
-  if (options.previewOnly !== true) {
-    try {
-      artifacts = await publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options);
-    } catch (error) {
-      await noteSettlementFault(
-        admitted.runDirectory,
-        options,
-        `failure artifact publication failed beside host terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
-  }
+  const artifacts: TerminalArtifactRef[] = options.previewOnly === true ? [] : await besideConclusion(
+    (diagnostic) => noteSettlementFault(admitted.runDirectory, options, diagnostic), "failure artifact publication",
+    () => publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options)) ?? [];
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,

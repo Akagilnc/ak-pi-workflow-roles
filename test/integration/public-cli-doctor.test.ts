@@ -30,7 +30,7 @@ import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 

@@ -105,6 +105,8 @@ import {
   type SeatReadFailure,
   publishSeatSettlement,
   filedIdentity,
+  besideConclusion,
+  packageFaultNoteFor,
 } from "./settlement.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
@@ -328,54 +330,6 @@ function withOnceSuccessfulBeforeDispatch<
   };
 }
 
-/**
- * Session custom-entry type for a best-effort post-dispatch cleanup
- * diagnostic (#840 r9 判词 class 1). Every auto-resume attempt dispatches
- * with dummyIo (src/public-cli/auto-resume.ts), so an io.stderr-only
- * diagnostic never reaches a real caller — the dossier is the durable
- * channel that does (失败诚实宪法 真因必须落痕).
- */
-export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
-  "ak_post_admission_cleanup_diagnostic" as const;
-
-/**
- * Best-effort post-dispatch diagnostic that must still leave a real trace
- * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
- * Single authoritative durable channel — a dossier custom entry via
- * sessionAppender — not a standing duplicate. Only when that one write
- * itself fails does this fall back to a plain run-artifacts file (reusing
- * auto-resume.ts's existing dispatch-error retention helper — no new
- * mechanism), so an unhealthy session never leaves this diagnostic with
- * zero durable trace (#840 bounce class 2); a healthy session never gets a
- * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
- */
-async function recordBestEffortPostDispatchDiagnostic(
-  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
-  env: Pick<PostAdmissionEnv, "sessionAppender" | "principalAuthority">,
-  diagnostic: string,
-  io: Pick<CliIo, "stderr">,
-): Promise<void> {
-  await retainPackageFault({
-    runDirectory: admitted.runDirectory,
-    diagnostic,
-    appendSession: (payload) => env.sessionAppender(
-      env.principalAuthority,
-      admitted.principal,
-      POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-      payload,
-    ),
-    stderr: (text) => io.stderr(text),
-  });
-}
-
-/** The one package-fault receiver, bound to this admitted run's session and io. */
-export function packageFaultNoteFor(
-  admitted: Pick<AdmittedRoleInvocation, "runDirectory" | "principal">,
-  env: Pick<PostAdmissionEnv, "sessionAppender" | "principalAuthority">,
-  io: Pick<CliIo, "stderr">,
-): (diagnostic: string) => Promise<void> {
-  return (diagnostic) => recordBestEffortPostDispatchDiagnostic(admitted, env, diagnostic, io);
-}
 
 export type PostAdmissionEnv = {
   home: string;
@@ -619,16 +573,10 @@ export async function presentControlledFailure<
     : { ...classified, stderr: failureInput.stderr };
 
   if (persistRunState && !failureInput.skipRunStateWrite) {
-    try {
-      await persistReturnedRunState(admitted);
-    } catch (error) {
-      // The host failure is already classified. A run-state write stays beside it.
-      await noteSettlementFault(
-        admitted.runDirectory,
-        notePackageFault === undefined ? undefined : { notePackageFault },
-        `run-state persistence failed beside host terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
+    // The host failure is already classified. A run-state write stays beside it.
+    await besideConclusion((diagnostic) => noteSettlementFault(admitted.runDirectory,
+      notePackageFault === undefined ? undefined : { notePackageFault }, diagnostic),
+    "run-state persistence", () => persistReturnedRunState(admitted));
   }
 
   let publishedErrorPath: string | undefined;
@@ -723,18 +671,8 @@ async function settleDeferredPersist<
 ): Promise<DispatchOutcomeFor<A, T>> {
   if (result.needsPersist !== true || result.terminal === undefined) return result;
   const { needsPersist: _needsPersist, ...settledResult } = result;
-  try {
-    await persistReturnedRunState(admitted);
-    return settledResult;
-  } catch (error) {
-    await recordBestEffortPostDispatchDiagnostic(
-      admitted,
-      env,
-      `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-      io,
-    );
-    return settledResult;
-  }
+  await besideConclusion(packageFaultNoteFor(admitted, env, io), "run-state persistence", () => persistReturnedRunState(admitted));
+  return settledResult;
 }
 
 /**
@@ -851,11 +789,8 @@ async function settleCompletedHostTurn<
     // Best-effort: the stderr log line is secondary to the host terminal. A write
     // failure leaves a durable note and, on a host failure, rides in
     // packageFact. It does not become the cause.
-    await recordBestEffortPostDispatchDiagnostic(
-      admitted,
-      env,
+    await packageFaultNoteFor(admitted, env, io)(
       `stderr log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
-      io,
     );
   }
 
@@ -871,20 +806,12 @@ async function settleCompletedHostTurn<
     || result.knownFailure !== undefined
     || result.code === null
     || result.code !== 0;
-  try {
-    if (!hostFailed && !processCancelSignalName(env.signal)) {
-      const read = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      if (read && (!("terminal" in read) || shouldPresent(read.terminal))) prepared = read;
-    }
-  } catch (error) {
-    // The host did not fail. A settlement read here is a package fault and
-    // must not become the terminal.
-    await recordBestEffortPostDispatchDiagnostic(
-      admitted,
-      env,
-      `settlement read failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-      io,
-    );
+  const note = packageFaultNoteFor(admitted, env, io);
+  // The host did not fail. A settlement read here is a package fault and
+  // must not become the terminal.
+  if (!hostFailed && !processCancelSignalName(env.signal)) {
+    const read = await besideConclusion(note, "settlement read", () => adapters.trySettle(admitted, env.principalAuthority, courtScope));
+    if (read && (!("terminal" in read) || shouldPresent(read.terminal))) prepared = read;
   }
   // Cancellation during the read wins over every read result, including no receipt.
   const processCancelName = processCancelSignalName(env.signal);
@@ -895,18 +822,7 @@ async function settleCompletedHostTurn<
     return { kind: "settled", outcome: { ...failed, ...deferredPersist, turnDispatched: true, skipAutoResume: true } };
   }
   if (processCancelName === undefined && prepared && "terminal" in prepared) {
-    if (persistRunState) {
-      try {
-        await persistReturnedRunState(admitted);
-      } catch (error) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
-      }
-    }
+    if (persistRunState) await besideConclusion(note, "run-state persistence", () => persistReturnedRunState(admitted));
     // Persist + present is the caller's stop seam (auto-resume loop /
     // manual resume), not this retried host-turn function.
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
@@ -1096,16 +1012,13 @@ export async function dispatchPostAdmissionTurn<
       const terminal = await publishSeatSettlement(admitted, env.principalAuthority, courtScope, prepared);
       result = { ...result, terminal };
       // A retained verdict without its published report does not discharge the open court.
-      if (request.courtAttemptId && terminal.artifacts[0]?.kind === "report") {
-        try {
-          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-        } catch (error) {
-          await courtScope.notePackageFault(
-            `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`);
-        }
+      const courtAttemptId = request.courtAttemptId;
+      if (courtAttemptId && terminal.artifacts[0]?.kind === "report") {
+        await besideConclusion(courtScope.notePackageFault, "current-court cleanup", () => clearCurrentCourt(admitted.runDirectory, courtAttemptId));
       }
     }
-    try {
+    const terminalInHand = result.terminal;
+    const bindAndRelocate = async (): Promise<void> => {
       // #858 / #1071: the first identifiable ticketNumber field declaration
       // files an unbound run (integer, digit string, or leading #N token).
       // Terminal rows match settlement (#881): accepted and audit-escalation —
@@ -1129,17 +1042,15 @@ export async function dispatchPostAdmissionTurn<
           projectRelocatedTurnIdentity(request, result, admitted, { oldRunDirectory, newRunDirectory: admitted.runDirectory }, rounds);
         }
       }
+    };
+    if (terminalInHand !== undefined) {
+      await besideConclusion(packageFaultNoteFor(admitted, env, io), "afterDispatch", bindAndRelocate);
+      return result;
+    }
+    try {
+      await bindAndRelocate();
       return result;
     } catch (error) {
-      if (result.terminal !== undefined) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `afterDispatch failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
-        return result;
-      }
       return {
         ...(await presentControlledFailure(
           admitted,
@@ -1421,16 +1332,7 @@ export async function dispatchPostAdmissionTurn<
       return await finishAfterTurn({ ...failed, turnDispatched: true, skipAutoResume: true, ...deferredPersist });
     }
     if (persistRunState) {
-      try {
-        await persistReturnedRunState(admitted);
-      } catch (error) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
-      }
+      await besideConclusion(packageFaultNoteFor(admitted, env, io), "run-state persistence", () => persistReturnedRunState(admitted));
     }
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
     return await finishAfterTurn({
