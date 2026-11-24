@@ -454,7 +454,6 @@ import {
   type TerminalNavigatorFact,
   type TerminalReceiptRef,
   type TerminalResult,
-  type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 

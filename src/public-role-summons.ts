@@ -573,7 +573,6 @@ export async function summonParallelReviewerLenses(options: {
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   readonly principalAuthority?: DurablePrincipalAuthority;
   readonly timeoutMs?: number;
-  readonly io?: SummonIo;
 }): Promise<{
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
@@ -614,7 +613,6 @@ export async function summonParallelReviewerLenses(options: {
       cwd: options.cwd,
       // Ordinary single-axis public semantics — not a nested court station.
       stationChild: false,
-      ...(options.io === undefined ? {} : { io: options.io }),
       home: options.home,
       ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
       ...(options.credentials === undefined ? {} : { credentials: options.credentials }),

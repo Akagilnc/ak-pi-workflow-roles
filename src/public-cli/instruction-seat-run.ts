@@ -241,21 +241,32 @@ async function presentAlongside(turn: SeatRunResult, carried: SeatRunResult["alo
 }
 
 /**
- * #1214 R2: a gate officer's non-pass volume (failure, unreadable, no_receipt) keeps
- * its audited seat's already-filed original on the public call (被审席已交原卷照常呈出).
- * The officer keeps its own identity and exit; the audited seat is not re-run and its
- * volume is read from its own run through the settlement seam (#1195: not copied into
- * the officer's book). Only an officer resumed on its own reads it here; within one
- * call the nested volume is carried up instead (presentAlongside).
- * The officer's own conclusion is in hand: a failed read of the audited seat is
- * noted beside it (ADR 0080) and never loses it.
+ * Officer result that leaves the audited verdict unsettled: non-zero exit, no receipt,
+ * or undecidable / unreadable-exhausted (direction unsettled). Escalation is not unsettled.
  */
-async function presentAuditedOriginalOfOfficer(
-  officer: AdmittedRoleInvocation,
+function leavesAuditedVerdictUnsettled(result: SeatRunResult): boolean {
+  const outcome = result.terminal?.roleOutcome;
+  return result.exitCode !== 0
+    || outcome?.kind === "no_receipt"
+    || outcome?.decisiveFacts?.directionUnsettled === true;
+}
+
+/**
+ * #1214 R2: a resumed gate officer that leaves the audited verdict unsettled keeps the
+ * audited seat's already-filed original on the public call (被审席已交原卷照常呈出).
+ * Officer identity and exit stay; the audited seat is not re-run and its volume is
+ * read from its own run through the settlement seam (#1195: not copied into the
+ * officer's book). Within one call the nested volume is carried up instead
+ * (presentAlongside). The officer's conclusion is in hand: a failed read of the
+ * audited seat is noted beside it (ADR 0080) and never loses it.
+ */
+export async function presentAuditedOriginalOfUnsettledOfficer(
+  result: SeatRunResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<void> {
-  if (!GATE_CHILD_ROLES.has(officer.role)) return;
+  const officer = result.admitted;
+  if (officer === undefined || !leavesAuditedVerdictUnsettled(result) || !GATE_CHILD_ROLES.has(officer.role)) return;
   const audited = officer.correlationId;
   if (audited === undefined) return;
   const auditedSource = admittedSourceRunPath(officer);
@@ -275,30 +286,6 @@ async function presentAuditedOriginalOfOfficer(
     if (!terminal) return;
     await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, parent.admitted.runDirectory, "alongside");
   });
-}
-
-/**
- * Officer result that leaves the audited verdict unsettled: non-zero exit, no receipt,
- * or undecidable / unreadable-exhausted (direction unsettled). Escalation is not unsettled.
- */
-function leavesAuditedVerdictUnsettled(result: SeatRunResult): boolean {
-  const outcome = result.terminal?.roleOutcome;
-  return result.exitCode !== 0
-    || outcome?.kind === "no_receipt"
-    || outcome?.decisiveFacts?.directionUnsettled === true;
-}
-
-/**
- * #1214 R2: a resumed gate officer that leaves the audited verdict unsettled keeps the
- * audited seat's already-filed original on the public call. Officer identity and exit stay.
- */
-export async function presentAuditedOriginalOfUnsettledOfficer(
-  result: SeatRunResult,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-): Promise<void> {
-  if (result.admitted === undefined || !leavesAuditedVerdictUnsettled(result)) return;
-  await presentAuditedOriginalOfOfficer(result.admitted, env, io);
 }
 
 function reaskUnreadablePostSubmissionStatus(
@@ -612,7 +599,6 @@ async function runOmittedLensBatch(
     ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     principalAuthority: env.principalAuthority,
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    io: { callerDiagnostic: io.callerDiagnostic ?? io.stderr },
   });
   const childResults = [children.completeness, children.correctness] as const;
   const terminals = childResults

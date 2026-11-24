@@ -937,7 +937,6 @@ export async function dispatchPostAdmissionTurn<
   persistRunState?: boolean;
   /** Call-owned delivery policy survives every failure-recovery dispatch. */
   receiptDelivery?: ReturnType<typeof createReceiptDeliveryPolicy>;
-  manualResume?: true;
 }): Promise<DispatchOutcomeFor<A, T>> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
   const persistRunState = input.persistRunState !== false;
@@ -2005,7 +2004,6 @@ export async function runPostAdmissionManualResume<
 
   const result = await dispatchPostAdmissionTurn({
     admitted,
-    manualResume: true,
     env: {
       ...env,
       ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
