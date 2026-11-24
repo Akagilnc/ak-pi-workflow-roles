@@ -26,7 +26,6 @@ import type {
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
@@ -332,15 +331,14 @@ test("#1166 public gate: four seats share identity and this court's receipt; no 
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        assert.notEqual(inspected.prompt, readableGateItem(gate.details));
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
-        assert.equal(inspected.identities[0]!.auditedReceipt, "1.json");
+        // The first sentence is the address of this court's receipt, never its body.
+        assert.equal(inspected.prompt, `请审 ${inspected.identities[0]!.auditedRun} 的第 1 份回执。`);
         if (gate.expectedIdentity !== undefined) {
           assert.deepEqual(inspected.identities[0], {
             kind: AUDITED_RUN_IDENTITY_KIND,
             auditedRun: gate.expectedIdentity,
-            auditedReceipt: "1.json",
           });
         } else {
           assert.match(inspected.identities[0]!.auditedRun, gate.identitySuffix!);
@@ -444,13 +442,12 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
       });
       assert.equal(result.exitCode, 0, log.stderr.join("\n"));
       assert.ok(inspected);
-      // The rejected latest draft is the current manuscript (J10), not the earlier seal.
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
         auditedRun: expectedIdentity,
-        auditedReceipt: "2.json",
       });
-      assert.notEqual(inspected.prompt, readableGateItem(current));
+      // No dispatch: the address of the latest arrived draft (J10), not the earlier seal.
+      assert.equal(inspected.prompt, `请审 ${expectedIdentity} 的第 2 份回执。`);
     }
   });
 });
@@ -476,7 +473,6 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     const runId = "01a0119500007000800000000000c001";
     const notaryPrompts: string[] = [];
     const notaryIdentities: string[] = [];
-    const notaryReceipts: Array<string | undefined> = [];
     let parentSeals = 0;
     let countersignRequired: string[] | undefined;
 
@@ -484,7 +480,6 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
         notaryPrompts.push(request.continuation.prompt);
-        assert.notEqual(request.continuation.prompt, readableGateItem(parentSeals === 1 ? first : second));
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
@@ -497,7 +492,6 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
           assert.equal(Value.Check(inspected.jsonSchema as never, { ...face, clauses: [{ ...row, sealed: "不知道" }] }), false);
         }
         notaryIdentities.push(inspected.identities[0]!.auditedRun);
-        notaryReceipts.push(inspected.identities[0]!.auditedReceipt);
         const details = notaryPrompts.length <= 1
           ? {
             status: "continue",
@@ -584,10 +578,10 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
     assert.notDeepEqual(first, second);
-    assert.equal(notaryPrompts[0], notaryPrompts.at(-1));
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
-    // The re-summoned officer is pointed at this round's receipt, not the earlier seal.
-    assert.deepEqual([notaryReceipts[0], notaryReceipts.at(-1)], ["1.json", "2.json"]);
+    // The re-summoned officer's first sentence names this round's receipt, not the earlier seal.
+    const audited = formatRunLeaf(runId, "countersign");
+    assert.deepEqual([notaryPrompts[0], notaryPrompts.at(-1)], [`请审 ${audited} 的第 1 份回执。`, `请审 ${audited} 的第 2 份回执。`]);
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");

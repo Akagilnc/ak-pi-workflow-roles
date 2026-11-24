@@ -310,7 +310,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
-    /** Dialogue via shared resolveReviewSeatDialogueBody (review = fixed dispatch). */
+    /** Dialogue via shared resolveReviewSeatDialogueBody (review = receipt address). */
     reaskPrompt: true,
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */

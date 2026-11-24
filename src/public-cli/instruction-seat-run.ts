@@ -4,6 +4,7 @@
  * starts two ordinary single-axis runs here.
  */
 import { basename, dirname, resolve } from "node:path";
+import { auditedRunIdentityFromDirectory } from "../audited-run-identity.ts";
 import { isUnboundRunDirectory, sessionFileOf } from "../role-run-placement.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import type { ComplianceDecision } from "../compliance-transport.ts";
@@ -387,32 +388,36 @@ async function latestAuditedReceipt(
   return rows.at(-1);
 }
 
-/** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */
-export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职掌交卷。";
+/**
+ * The address of the receipt under review (owner d634a8d9 a1119106 / 61cda71b):
+ * a review seat's first sentence when no reask or caller dispatch takes its place,
+ * gate and direct calls alike. It rides the dialogue, not startup material, so a
+ * re-summoned officer's resumed session still receives this round's receipt.
+ */
+function reviewAddress(officer: AdmittedRoleInvocation): string | undefined {
+  const source = admittedSourceRunPath(officer);
+  const identity = source === undefined ? undefined : auditedRunIdentityFromDirectory(source);
+  if (identity === undefined || officer.auditedReceipt === undefined) return undefined;
+  return `请审 ${identity} 的第 ${basename(officer.auditedReceipt, ".json")} 份回执。`;
+}
 
 /**
  * One delivery rule for review-seat dialogue on new turns and same-parent resume
- * (#1166 / ADR 0085 / ADR 0087 / #1208): notary review uses fixed dispatch;
- * named operational reasks ride reviewReask (first-mint / gate) or the resume
- * request message seam — never arbitrary non-empty caller/summons passthrough.
- * Other seats prefer format reask, then caller dispatch. The audited leg and
- * receipt stay in startup materials; the officer reads the receipt itself.
+ * (#1166 / ADR 0085 / ADR 0087 / #1208): named operational reasks ride
+ * reviewReask (first-mint / gate) or the resume request message seam. Notary
+ * takes no caller review prompt; other seats keep caller dispatch as-is. Otherwise
+ * the dialogue is the address of the receipt under review, once it is pinned.
  */
 export function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
   readonly reviewReask?: string;
   readonly callerInstruction?: string;
+  readonly address?: string | undefined;
 }): string | undefined {
-  // #1208: fixed sentence is the review function only (owner 37bfe80d /
-  // 393daf98). reviewReask is the named operational override; caller/summons
-  // body is not a free passthrough (countersign rejected that prescription).
-  if (input.role === "notary") {
-    if (input.reviewReask !== undefined) return input.reviewReask;
-    return NOTARY_FIXED_DISPATCH;
-  }
+  if (input.role === "notary") return input.reviewReask ?? input.address;
   if (input.reviewReask !== undefined && input.reviewReask.length > 0) return input.reviewReask;
   const caller = input.callerInstruction ?? "";
-  return caller.length > 0 ? caller : undefined;
+  return caller.length > 0 ? caller : input.address;
 }
 
 /**
@@ -425,12 +430,12 @@ function resolveInitialTurnPrompt(
 ): string {
   const record = roleRecord(admitted.role);
   if ("reaskPrompt" in record && record.reaskPrompt === true) {
-    const instruction = summons ? summons.instruction : resolveReviewSeatDialogueBody({
-      ...env, role: admitted.role, callerInstruction: admitted.instruction ?? "",
+    const instruction = summons && !summons.instructionEmpty ? summons.instruction : resolveReviewSeatDialogueBody({
+      ...env, role: admitted.role, callerInstruction: summons ? "" : admitted.instruction ?? "", address: reviewAddress(admitted),
     });
     // #1166 J11: merge existing file-flag delivery — never early-return body alone
     // when caller attach paths were admitted. Gate with no file flags stays body-only.
-    if (instruction !== undefined && !summons?.instructionEmpty) {
+    if (instruction !== undefined) {
       return appendCallerFileFlagPaths(instruction, admitted.attachments);
     }
   }
@@ -1047,24 +1052,22 @@ export async function runPublicInstructionSeatResume(
         admitted, effective, env, summonsPrepared,
       );
       // #1208: internal summons only — shared resolver owns review dialogue.
-      // Same-parent summons already carry the selected dialogue. Bare resume and
-      // explicit messages likewise need no new selection (#1208 R1).
-      if (resummonedFor !== undefined || effective.summons === undefined || effective.message !== undefined) {
+      // Bare resume and explicit messages need no selection (#1208 R1).
+      if (effective.summons === undefined || effective.message !== undefined) {
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const sourceRunPath = admittedSourceRunPath(admitted);
       const { instruction: body, instructionEmpty } = sameParentDialogue({}, summonsPrepared?.instruction, admitted.role);
-      if (instructionEmpty) {
-        if (sourceRunPath) await pinAuditedLegAtAdmission(admitted, sourceRunPath, undefined, io, env.home);
-        return buildInstructionSeatTurnRequest(admitted, { ...projection });
+      // An empty dialogue is the address of the receipt under review, pinned for this court.
+      if (instructionEmpty && resummonedFor === undefined && sourceRunPath) {
+        await pinAuditedLegAtAdmission(admitted, sourceRunPath, undefined, io, env.home);
       }
+      const dialogue = instructionEmpty ? reviewAddress(admitted) : body;
+      if (dialogue === undefined) return buildInstructionSeatTurnRequest(admitted, { ...projection });
       const fileFlags = summonsPrepared?.attachments ?? [];
-      const prompt = fileFlags.length === 0
-        ? body
-        : appendCallerFileFlagPaths(body, fileFlags);
       return buildInstructionSeatTurnRequest(admitted, {
         ...projection,
-        continuation: { kind: "resume", prompt },
+        continuation: { kind: "resume", prompt: fileFlags.length === 0 ? dialogue : appendCallerFileFlagPaths(dialogue, fileFlags) },
       });
     },
     adapters: {

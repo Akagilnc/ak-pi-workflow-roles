@@ -12,8 +12,6 @@ export const AUDITED_RUN_IDENTITY_KIND = "audited-run" as const;
 export type AuditedRunIdentityMaterial = {
   readonly kind: typeof AUDITED_RUN_IDENTITY_KIND;
   readonly auditedRun: string;
-  /** The receipt under review in that leg's receipt folder (ADR 0085). */
-  readonly auditedReceipt?: string;
 };
 
 /** Identity leaf from a run directory basename; undefined when the leaf is not `runId@role`. */
@@ -23,6 +21,6 @@ export function auditedRunIdentityFromDirectory(runDirectory: string): string | 
   return formatRunLeaf(parsed.runId, parsed.role);
 }
 
-export function auditedRunIdentityMaterial(identity: string, receipt?: string): AuditedRunIdentityMaterial {
-  return { kind: AUDITED_RUN_IDENTITY_KIND, auditedRun: identity, ...(receipt && { auditedReceipt: receipt }) };
+export function auditedRunIdentityMaterial(identity: string): AuditedRunIdentityMaterial {
+  return { kind: AUDITED_RUN_IDENTITY_KIND, auditedRun: identity };
 }

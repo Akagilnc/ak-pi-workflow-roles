@@ -1143,8 +1143,9 @@ export function createRoleRuntimeExtension(
       if (reading === undefined) return;
       return { readingMaterial: reading };
     });
-    // #1166 / ADR 0087 / ADR 0085: four audit seats share one material naming the
-    // audited leg and the receipt under review; the officer reads that receipt itself.
+    // #1166 / ADR 0087: four audit seats share one audited-run identity material.
+    // Which receipt is under review rides the first sentence only (resumed hosts keep
+    // their recorded system prompt), never this material.
     roleHost.on("before_agent_start", (_event, ctx) => {
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
       if (typeof role !== "string" || !isAuditedIdentitySeat(role)) return;
@@ -1154,8 +1155,7 @@ export function createRoleRuntimeExtension(
       if (sourceDirectory === undefined) return;
       const identity = auditedRunIdentityFromDirectory(sourceDirectory);
       if (identity === undefined) return;
-      const receipt = isRecord(admitted) && typeof admitted.auditedReceipt === "string" ? admitted.auditedReceipt : undefined;
-      return { readingMaterial: auditedRunIdentityMaterial(identity, receipt) };
+      return { readingMaterial: auditedRunIdentityMaterial(identity) };
     });
     roleHost.on("tool_result", async (event, ctx) => {
       const role = selectedRole;
