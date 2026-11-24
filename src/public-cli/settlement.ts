@@ -213,6 +213,17 @@ export async function besideConclusion<T>(
   }
 }
 
+/** Presenting to this caller beside a conclusion in hand: a failed write is retained on the run and told here, never replacing it. */
+export function besidePresentation(
+  runDirectory: string,
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">,
+  step: string,
+  present: () => void,
+): Promise<void> {
+  return besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory, diagnostic, error, io }), step,
+    async () => present());
+}
+
 /** Record a package fault without letting the note replace the terminal. */
 export async function noteSettlementFault(
   runDirectory: string,

@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -289,26 +289,37 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
     // The audited leg cannot be read at admission: the officer still runs and
-    // seals, and each cause stays on the officer run. Unlisted receipts: the leg's
-    // own ledger still locates its latest arrival and that arrival's round. With
-    // neither able to locate one, no round is recorded, though the leg's progress
-    // row is readable.
+    // seals, and each cause stays on the officer run. Unreadable ledger: the leg's
+    // files locate its latest arrival, whose round its name finds in the progress
+    // file; an unreadable progress file gives none. With neither the ledger nor the
+    // files locating one, no round is recorded, though the progress file is readable.
+    // Unlisted receipts: the ledger still locates the arrival and its round.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
-    await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
-    await writeFile(join(observed.parentRunDirectory, "receipts"), "not a folder", "utf8");
-    assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
+    const diagnostics = () => runLogPayloads(notaryRun, "post-admission-diagnostic").length;
+    assert.equal(diagnostics(), 0);
     const history = join(observed.parentRunDirectory, "history.jsonl");
     await chmod(history, 0o000);
     try {
       assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
+      assert.equal(diagnostics(), 1);
+      const progress = join(observed.ticketDirectory, "current.jsonl");
+      await appendFile(progress, "{malformed\n", "utf8");
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
+      assert.equal(diagnostics(), 3);
+      await writeFile(progress, (await readFile(progress, "utf8")).replace("{malformed\n", ""), "utf8");
+      await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
+      await writeFile(join(observed.parentRunDirectory, "receipts"), "not a folder", "utf8");
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["5", undefined]);
+      assert.equal(diagnostics(), 5);
     } finally {
       await chmod(history, 0o600);
     }
-    assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 3);
+    assert.equal((await observed.summonNotary()).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["6", "judge#2"]);
+    assert.equal(diagnostics(), 6);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 

@@ -106,6 +106,7 @@ import {
   publishSeatSettlement,
   filedIdentity,
   besideConclusion,
+  besidePresentation,
   packageFaultNoteFor,
 } from "./settlement.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
@@ -599,11 +600,8 @@ export async function presentControlledFailure<
       ? { ...settled, ...(history.submissions && { submissions: history.submissions }), ...(history.receiptErrors && { receiptErrors: history.receiptErrors }) }
       : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault }, history?.rows);
   } catch (error) {
-    const errorPath = publishedErrorPath;
-    if (io.omitFailureStderrDiagnostic && errorPath !== undefined) {
-      // The pointer never replaces the error it points at.
-      await besideConclusion((diagnostic, cause) => retainPackageFault({ runDirectory: admitted.runDirectory, diagnostic, error: cause, io }),
-        "resume error pointer", async () => writeResumeFailurePointer(io, errorPath));
+    if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
+      await writeResumeFailurePointer(io, publishedErrorPath, admitted.runDirectory);
     }
     throw error;
   }
@@ -1766,7 +1764,7 @@ export async function runPostAdmissionSeatResume<
     return resumed;
   } catch (error) {
     if (error instanceof TurnDispatchedFailure) throw error;
-    presentResumeFailurePointer(loaded.admitted, input.io, error);
+    await presentResumeFailurePointer(loaded.admitted, input.io, error);
     return { exitCode: error instanceof CliUsageError ? 2 : 1 };
   }
 }
@@ -1792,11 +1790,11 @@ async function pointExistingRunFailure(
   try {
     record = await readRoleRunState(runDirectory, authority);
   } catch {
-    presentResumeFailurePointer({ runDirectory, runId }, io, thrown);
+    await presentResumeFailurePointer({ runDirectory, runId }, io, thrown);
     return true;
   }
   if (record === undefined) return false;
-  presentResumeFailurePointer(record, io, thrown);
+  await presentResumeFailurePointer(record, io, thrown);
   return true;
 }
 
@@ -1811,11 +1809,12 @@ export async function presentLocatedResumeFailure(
   return await pointExistingRunFailure(home, runId, authority, io, thrown, knownRunDirectory);
 }
 
-function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
-  io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
+/** The pointer never replaces the result or error it points at (ADR 0080). */
+function writeResumeFailurePointer(io: CliIo, errorPath: string, runDirectory: string): Promise<void> {
+  return besidePresentation(runDirectory, io, "resume error pointer",
+    () => io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`)));
 }
 
-/** The pointer presents a terminal already in hand; its own failure is noted beside it (ADR 0080). */
 export async function showResumeErrorPointer(
   io: CliIo,
   exitCode: number,
@@ -1825,16 +1824,14 @@ export async function showResumeErrorPointer(
   if (exitCode === 0 || terminal === undefined) return;
   const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path;
   if (publishedError === undefined) return;
-  await besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory, diagnostic, error, io }),
-    "resume error pointer", async () => writeResumeFailurePointer(io, publishedError));
+  await writeResumeFailurePointer(io, publishedError, runDirectory);
 }
 
 export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority, scope?: SettlementCourtScope, io?: CliIo): Promise<TerminalResult | undefined> {
   scope = scope?.courtAttemptId || scope?.invocationScopeId || scope?.seal ? scope : { ...scope, seal: "latest" };
   const prepared = await preparePublicSeat(admitted, authority, scope);
   if ("failure" in prepared) {
-    if (io) await besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory: admitted.runDirectory, diagnostic, error, io }),
-      "resume failure pointer", async () => presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure));
+    if (io) await presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure);
     return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
   }
   if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);
@@ -1844,17 +1841,18 @@ export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, auth
   return undefined;
 }
 
-export function presentResumeFailurePointer(
+export async function presentResumeFailurePointer(
   { runDirectory, runId, role }: { runDirectory: string; runId: string; role?: AdmittedRoleInvocation["role"] },
   io: CliIo,
   thrown: unknown,
   failure = classifyPostAdmissionFailure({ timedOut: false, code: null, stderr: "", thrown }),
-): ControlledFailure {
+): Promise<ControlledFailure> {
+  let recordFile: string;
   try {
     const { diagnostic, cause, identity, details } = failure;
-    writeResumeFailurePointer(io, reportRunRecord(runDirectory, "resume-diagnostic", {
+    recordFile = reportRunRecord(runDirectory, "resume-diagnostic", {
       runId, role, diagnostic, cause, identity, details,
-    }, "post-admission").recordFile);
+    }, "post-admission").recordFile;
   } catch (publishError) {
     const cause: { thrownCause?: string; publishError: string } = {
       publishError: formatErrorCauseDetail(publishError),
@@ -1866,7 +1864,9 @@ export function presentResumeFailurePointer(
       message: errorText(thrown),
       cause,
     }, io);
+    return failure;
   }
+  await writeResumeFailurePointer(io, recordFile, runDirectory);
   return failure;
 }
 

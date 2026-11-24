@@ -30,10 +30,10 @@ import { isLawfulTypedTerminalOutcome, formatTerminalResult, receiptErrorRows, t
 import {
   attachRecordedSubmissions,
   besideConclusion,
+  besidePresentation,
   filedIdentity,
   packageFaultNoteFor,
   presentFailureDiagnostic,
-  retainPackageFault,
 } from "./settlement.ts";
 
 import { discardStdout, type CliIo } from "./cli-io.ts";
@@ -69,8 +69,7 @@ export async function presentSeatVolume(
 export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, delivery: VolumeDelivery = "returned"): Promise<void> {
   // Presentation consumes a settled report; it never reopens dispatch or
   // replaces the host's cause, identity or open details.
-  const note = (diagnostic: string, error: unknown) => retainPackageFault({ runDirectory, diagnostic, error, io });
-  await besideConclusion(note, "terminal presentation", async () => {
+  await besidePresentation(runDirectory, io, "terminal presentation", () => {
     if (delivery !== "discarded" && io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
     else if (delivery !== "returned") {
       for (const row of receiptErrorRows(terminal)) (io.callerDiagnostic ?? io.stderr)(`${row}\n`);
