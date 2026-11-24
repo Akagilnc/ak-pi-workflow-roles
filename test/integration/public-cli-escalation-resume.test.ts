@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -289,8 +289,10 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
     // The audited leg cannot be read at admission: the officer still runs and
-    // seals, and the cause stays on the officer run. Unlisted receipts: the leg's
-    // own ledger still locates its latest arrival and that arrival's round.
+    // seals, and each cause stays on the officer run. Unlisted receipts: the leg's
+    // own ledger still locates its latest arrival and that arrival's round. With
+    // neither able to locate one, the leg's progress row names the round, and an
+    // unreadable progress file leaves no round.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
     await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
@@ -298,6 +300,18 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
+    const history = join(observed.parentRunDirectory, "history.jsonl");
+    await chmod(history, 0o000);
+    try {
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["4", "judge#2"]);
+      await appendFile(join(observed.ticketDirectory, "current.jsonl"), "{malformed\n", "utf8");
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+    } finally {
+      await chmod(history, 0o600);
+    }
+    assert.deepEqual(observed.rounds("notary").at(-1), ["5", undefined]);
+    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 6);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
