@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { PublicSummonResult } from "../public-role-summons.ts";
 import { presentSeatVolume } from "./auto-resume.ts";
-import { besideConclusion, retainPackageFault } from "./settlement.ts";
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import {
   autopsyWriterLock,
@@ -68,13 +67,8 @@ export async function tryResumeSameTicketSeatRun(input: {
   const outcome = resumed.terminal?.roleOutcome;
   if (resumed.admitted?.runId !== previous.runId || outcome?.kind !== "failure"
     || outcome.decisiveFacts.errorCode !== SESSION_ID_MISSING) return resumed;
-  // The resumed volume is in hand: a failed lock check keeps it (ADR 0080).
-  const note = (diagnostic: string) => retainPackageFault({ runDirectory: resumed.admitted!.runDirectory, diagnostic, stderr: (text) => input.io.stderr(text) });
-  const blocked = await besideConclusion(note, "fresh-summons lock check", async () => {
-    const live = await resolveLiveRunDirectoryPath(previous.runDirectory, input.home, bookKey);
-    return live !== undefined && await writerLockBlocksFreshSummons(live);
-  });
-  if (blocked !== false) return resumed;
+  const live = await resolveLiveRunDirectoryPath(previous.runDirectory, input.home, bookKey);
+  if (live !== undefined && await writerLockBlocksFreshSummons(live)) return resumed;
   // Direct resume already presented this volume; a quiet summon never will.
   if (input.io.stdout === discardStdout) await presentSeatVolume(resumed, input.io, "discarded");
   return undefined;

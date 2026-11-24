@@ -781,18 +781,17 @@ async function settleCompletedHostTurn<
   // turn genuinely started, so the next retry sends a resume payload — the
   // true cause settles through the loop's own existing dispatch-exception
   // machinery once the retry budget is exhausted.
+  // Best-effort: the stderr log line is secondary to the host terminal. A write
+  // failure leaves a durable note and, on a host failure, rides in
+  // packageFact. It does not become the cause.
   let stderrLogWriteFailure: unknown;
-  try {
-    reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
-  } catch (error) {
+  const note = packageFaultNoteFor(admitted, env, io);
+  await besideConclusion((diagnostic, error) => {
     stderrLogWriteFailure = error;
-    // Best-effort: the stderr log line is secondary to the host terminal. A write
-    // failure leaves a durable note and, on a host failure, rides in
-    // packageFact. It does not become the cause.
-    await packageFaultNoteFor(admitted, env, io)(
-      `stderr log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
-    );
-  }
+    return note(diagnostic);
+  }, "stderr log write", async () => {
+    reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
+  });
 
   // Host facts are resolved before trySettle. A host failure skips trySettle
   // so a later read cannot replace that report. With a clean host, failure to
@@ -806,7 +805,6 @@ async function settleCompletedHostTurn<
     || result.knownFailure !== undefined
     || result.code === null
     || result.code !== 0;
-  const note = packageFaultNoteFor(admitted, env, io);
   // The host did not fail. A settlement read here is a package fault and
   // must not become the terminal.
   if (!hostFailed && !processCancelSignalName(env.signal)) {

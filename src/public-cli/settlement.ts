@@ -202,14 +202,14 @@ export function packageFaultNoteFor(
  * stays. Every entry that reaches a submission finishes through this.
  */
 export async function besideConclusion<T>(
-  note: (diagnostic: string) => Promise<void>,
+  note: (diagnostic: string, error: unknown) => Promise<void>,
   step: string,
   run: () => Promise<T>,
 ): Promise<T | undefined> {
   try {
     return await run();
   } catch (error) {
-    await note(`${step} failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`);
+    await note(`${step} failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`, error);
     return undefined;
   }
 }
@@ -281,23 +281,17 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   scope?: SettlementCourtScope,
   rows?: readonly RecordedSubmissionRow[],
 ): Promise<T> {
-  try {
+  const note = (diagnostic: string) => noteSettlementFault(admitted.runDirectory, scope, diagnostic);
+  return await besideConclusion(note, "submission history read", async () => {
     if (!rows) {
       const ledger = await settlementRows(admitted);
       for (const issue of [ledger.fault, ledger.discoveryFault, ledger.malformed]) {
-        if (issue) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
+        if (issue) await note(issue.diagnostic);
       }
       rows = ledger.rows;
     }
     return { ...terminal, ...projectOriginals(rows).history };
-  } catch (error) {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `submission history read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return terminal;
-  }
+  }) ?? terminal;
 }
 
 /**
@@ -1129,20 +1123,9 @@ async function attachEngineDetourToolUsage<
     typeof detourContext.runDirectory === "string" && detourContext.runDirectory.length > 0
       ? detourContext.runDirectory
       : runDirectoryFromSessionDirectory(sessionDirectory);
-  let engineMounted = false;
-  try {
-    engineMounted = await readInvocationEngineMounted(runDirectory);
-  } catch (error) {
-    await noteSettlementFault(
-      runDirectory,
-      detourContext.notePackageFault === undefined
-        ? undefined
-        : { notePackageFault: detourContext.notePackageFault },
-      `engine mount read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return base;
-  }
-  if (!engineMounted) return base;
+  const note = (diagnostic: string) => noteSettlementFault(runDirectory,
+    detourContext.notePackageFault === undefined ? undefined : { notePackageFault: detourContext.notePackageFault }, diagnostic);
+  if (!await besideConclusion(note, "engine mount read", () => readInvocationEngineMounted(runDirectory))) return base;
 
   // Public-invocation scope from the shared Host envelope (settlement scope), never
   // courtAttemptId and never a detour sidecar file.
@@ -1153,27 +1136,16 @@ async function attachEngineDetourToolUsage<
       : undefined;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
-  let usage: Awaited<ReturnType<typeof readEngineDetourToolUsage>>;
-  try {
-    usage = await readEngineDetourToolUsage({
-      sessionParent: sessionFile,
-      engineMounted: true,
-      ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
-      cwd: runDirectory,
-    });
-  } catch (error) {
-    await noteSettlementFault(
-      runDirectory,
-      detourContext.notePackageFault === undefined
-        ? undefined
-        : { notePackageFault: detourContext.notePackageFault },
-      `engine detour read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return base;
-  }
+  const read = await besideConclusion(note, "engine detour read", async () => ({ usage: await readEngineDetourToolUsage({
+    sessionParent: sessionFile,
+    engineMounted: true,
+    ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
+    cwd: runDirectory,
+  }) }));
+  if (read === undefined) return base;
   return {
     ...base,
-    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, usage),
+    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, read.usage),
   };
 }
 

@@ -67,7 +67,10 @@ export async function presentSeatVolume(
 }
 
 export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, delivery: VolumeDelivery = "returned"): Promise<void> {
-  try {
+  // Presentation consumes a settled report; it never reopens dispatch or
+  // replaces the host's cause, identity or open details.
+  const note = (diagnostic: string, error: unknown) => retainPackageFault({ runDirectory, diagnostic, error, stderr: (text) => io.stderr(text) });
+  await besideConclusion(note, "terminal presentation", async () => {
     if (delivery !== "discarded" && io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
     else if (delivery !== "returned") {
       for (const row of receiptErrorRows(terminal)) (io.receiptDiagnostic ?? io.stderr)(`${row}\n`);
@@ -75,16 +78,7 @@ export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDi
     if (delivery !== "discarded" && io.stderr !== discardStdout && (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt")) {
       presentFailureDiagnostic(terminal, io);
     }
-  } catch (error) {
-    // Presentation consumes a settled report; it never reopens dispatch or
-    // replaces the host's cause, identity or open details.
-    await retainPackageFault({
-      runDirectory,
-      diagnostic: `terminal presentation failed beside host terminal: ${describeErrorIdentity(error)}`,
-      error,
-      stderr: (text) => io.stderr(text),
-    });
-  }
+  });
 }
 
 export type AutoResumeDispatchResult = {
@@ -453,8 +447,7 @@ export async function runWithAutoResumeLoop<
       endReason: endReason!,
       everyAttemptThrew,
     });
-    terminal = await besideConclusion(note, "dispatch exception ledger attach",
-      () => attachRecordedSubmissions(options.admitted, exception)) ?? exception;
+    terminal = await attachRecordedSubmissions(options.admitted, exception);
     // An exhausted invocation must not stay live (#426); finalization never masks the cause.
     await besideConclusion(note, "run terminal-state finalization", () => markRunTerminal(options.admitted.runDirectory));
   }

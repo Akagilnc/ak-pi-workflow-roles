@@ -1385,8 +1385,7 @@ async function auditSubmittedRole(
       }
       // Prefer the officer terminal already returned. Re-settle only when absent.
       // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      const terminal = pass.terminal ?? await besideConclusion(packageFaultNoteFor(admitted, env, io), "escalated audit recovery",
-        async () => recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory)));
+      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory));
       if (terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
