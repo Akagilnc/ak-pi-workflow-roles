@@ -366,7 +366,7 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    await configureOfficerSeats(home, ["notary", "auditor"]);
+    await configureOfficerSeats(home, ["notary", "auditor", "inspector"]);
     const parentRun = await seedCanonicalSourceRun(home, project);
     const expectedIdentity = identityFromParent(parentRun);
     assert.equal(
@@ -404,11 +404,19 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
       executeError: new WorkerUnfinishedReasonReminderError(),
     });
 
+    const DISPATCH = "审：本 run 是否合规。";
     for (const seat of [
       {
         role: "notary" as const,
         argv: ["notary", "--model", "test/caller-seat:high", "--source-run", parentRun],
         runId: "01a0116600007000800000000000dn01",
+      },
+      // A caller's own dispatch names the receipt itself and passes through as-is (ADR 0085 / 0087).
+      {
+        role: "inspector" as const,
+        argv: ["inspector", "--model", "test/caller-seat:high", "--source-run", parentRun, DISPATCH],
+        runId: "01a0116600007000800000000000di01",
+        dispatch: DISPATCH,
       },
       {
         role: "auditor" as const,
@@ -423,7 +431,14 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
         ],
         runId: "01a0116600007000800000000000da01",
       },
-    ]) {
+      // Same-parent re-summons of that auditor leg, now with a dispatch.
+      {
+        role: "auditor" as const,
+        argv: ["auditor", "--model", "test/caller-seat:high", "--subject", "judge", "--source-run", parentRun, DISPATCH],
+        runId: "01a0116600007000800000000000da02",
+        dispatch: DISPATCH,
+      },
+    ] as Array<{ role: "notary" | "inspector" | "auditor"; argv: string[]; runId: string; dispatch?: string }>) {
       let inspected: Awaited<ReturnType<typeof inspectLiveRequest>> | undefined;
       const log = captureIo();
       const result = await runAkRole(seat.argv, {
@@ -447,7 +462,7 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
         auditedRun: expectedIdentity,
       });
       // No dispatch: the address of the latest arrived draft (J10), not the earlier seal.
-      assert.equal(inspected.prompt, `请审 ${expectedIdentity} 的第 2 份回执。`);
+      assert.equal(inspected.prompt, seat.dispatch ?? `请审 ${expectedIdentity} 的第 2 份回执。`);
     }
   });
 });
