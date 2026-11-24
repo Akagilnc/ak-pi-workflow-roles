@@ -16,7 +16,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "../receipt-delivery-policy.ts";
 import { roleFromRunDirectory, runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
-import { readReceipt, readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
 import {
   isSafePositiveTicketNumber,
@@ -108,7 +108,7 @@ import { errorText } from "../unknown-value.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
-  "reviewReask" | "gateReviewInstruction" | "parentRunPath" | "auditedReceipt"
+  "reviewReask" | "parentRunPath" | "auditedReceipt"
 >;
 
 type SeatRunResult = Pick<PublicSummonResult, "exitCode" | "admitted" | "terminal" | "receivedStatus">;
@@ -357,11 +357,10 @@ export function buildInstructionSeatTurnRequest(
 }
 
 /**
- * Direct review-seat call: reconnect ledger peer-body delivery (ADR 0085 / #1166).
- * Gate summons already ride gateReviewInstruction; direct --source-run falls
- * through the shared dialogue resolver (notary: fixed dispatch).
+ * Without a gate's sealed receipt, the latest arrived draft of the source leg is
+ * the one under review (ADR 0085). The officer reads it itself.
  */
-async function loadLedgerPeerBody(
+async function latestAuditedReceipt(
   sourceRunDirectory: string,
   projectRoot: string,
   home: string,
@@ -374,15 +373,11 @@ async function loadLedgerPeerBody(
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
-  // ADR 0085 / #1166 J10: ledger already keeps original words for every class —
-  // present the latest row as-is. Never filter current manuscript by accepted /
-  // terminal outcome kind (that resurrects a prior sealed draft).
+  // #1166 J10: the latest arrived draft is the current manuscript. Never filter by
+  // accepted / terminal outcome kind (that resurrects a prior sealed draft).
   const missing = fault ?? discoveryFault ?? missingReference;
   if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
-  const latest = rows.at(-1);
-  if (latest === undefined) return undefined;
-  try { return { instruction: readableGateItem(readReceipt(latest)), auditedReceipt: latest }; }
-  catch (cause) { throw new Error(latest.path, { cause }); }
+  return rows.at(-1);
 }
 
 /** Owner-approved fixed Notary review dispatch (2026-10-09 #1208); never the parent verdict. */
@@ -393,14 +388,12 @@ export const NOTARY_FIXED_DISPATCH = "请审本轮受审对象，按符宝郎职
  * (#1166 / ADR 0085 / ADR 0087 / #1208): notary review uses fixed dispatch;
  * named operational reasks ride reviewReask (first-mint / gate) or the resume
  * request message seam — never arbitrary non-empty caller/summons passthrough.
- * Other seats prefer format reask, then gate body, then caller dispatch, then
- * ledger peer. Identity stays in startup materials. Notary never takes
- * gate/parent verdict as dialogue (gateReviewInstruction stays unread for notary).
+ * Other seats prefer format reask, then caller dispatch. The audited leg and
+ * receipt stay in startup materials; the officer reads the receipt itself.
  */
 export function resolveReviewSeatDialogueBody(input: {
   readonly role?: string;
   readonly reviewReask?: string;
-  readonly gateReviewInstruction?: string;
   readonly callerInstruction?: string;
 }): string | undefined {
   // #1208: fixed sentence is the review function only (owner 37bfe80d /
@@ -410,8 +403,7 @@ export function resolveReviewSeatDialogueBody(input: {
     if (input.reviewReask !== undefined) return input.reviewReask;
     return NOTARY_FIXED_DISPATCH;
   }
-  const preferred = input.reviewReask ?? input.gateReviewInstruction;
-  if (preferred !== undefined && preferred.length > 0) return preferred;
+  if (input.reviewReask !== undefined && input.reviewReask.length > 0) return input.reviewReask;
   const caller = input.callerInstruction ?? "";
   return caller.length > 0 ? caller : undefined;
 }
@@ -649,23 +641,27 @@ async function runOmittedLensBatch(
  * #1200: every officer admission that names an audited leg — gate summons and
  * a caller's own `--source-run`, first mint and re-summons alike — pins
  *「审 谁#轮」before the officer runs, in the same page write as the source
- * path when this admission is the one that records it. A row that cannot be
- * read keeps its cause on the officer run; the officer still runs and its rows
- * carry no `for`.
+ * path when this admission is the one that records it. A receipt or row that
+ * cannot be read keeps its cause on the officer run; the officer still runs and
+ * its rows carry no `for`.
  */
 async function pinAuditedLegAtAdmission(
   officer: AdmittedRoleInvocation,
   auditedRunDirectory: string,
-  filed: TerminalReceiptRef | undefined,
+  gateFiled: TerminalReceiptRef | undefined,
   io: CliIo,
+  home: string,
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
+  let lookupFault: string | undefined;
+  const filed = gateFiled ?? await latestAuditedReceipt(auditedRunDirectory, officer.projectRoot, home)
+    .catch((error: unknown) => { lookupFault = `audited receipt unavailable for ${auditedRunDirectory}: ${errorText(error)}`; return undefined; });
   const auditedReceipt = filed && basename(filed.receipt);
   const round = filed?.round;
   const seat = round && roleFromRunDirectory(auditedRunDirectory);
-  const { for: auditedRound, fault } = seat
-    ? { for: `${seat}#${round}`, fault: undefined }
-    : readAuditedRound(auditedRunDirectory, auditedReceipt);
+  const { for: auditedRound, fault = lookupFault } = seat
+    ? { for: `${seat}#${round}` }
+    : lookupFault ? {} : readAuditedRound(auditedRunDirectory, auditedReceipt);
   persistAdmittedAuditedLeg(officer.runDirectory, { for: auditedRound, auditedReceipt, ...source });
   officer.auditedReceipt = auditedReceipt;
   officer.auditedRound = auditedRound;
@@ -724,18 +720,13 @@ function resumeSameParentInstructionSeat(input: {
  * Same delivery rule as resolveInitialTurnPrompt for same-parent resume summons.
  * Shared resolver owns the input choice — callers only pass env fields.
  */
-async function sameParentDialogue(
-  env: Pick<InstructionSeatRunEnv, "home" | "gateReviewInstruction" | "reviewReask" | "auditedReceipt">,
+function sameParentDialogue(
+  env: Pick<InstructionSeatRunEnv, "reviewReask">,
   instruction: string | undefined,
-  sourceRunPath: string | undefined,
-  projectRoot: string,
   role: string,
 ) {
   const body = resolveReviewSeatDialogueBody({ ...env, role, callerInstruction: instruction ?? "" });
-  const peer = body === undefined && sourceRunPath
-    ? await loadLedgerPeerBody(sourceRunPath, projectRoot, env.home) : undefined;
-  return { instruction: body ?? peer?.instruction ?? "", instructionEmpty: body === undefined && !peer,
-    auditedReceipt: peer?.auditedReceipt ?? env.auditedReceipt };
+  return { instruction: body ?? "", instructionEmpty: body === undefined };
 }
 
 /**
@@ -755,8 +746,7 @@ async function runCountersignBody(
   let summons: SameTicketSummonsMaterials | undefined;
   if (gateParentRunPath !== undefined) {
     // #1208 C1: same shared dialogue resolver as every other same-parent seat.
-    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, gateParentRunPath, projectRoot, "countersign");
-    if (auditedReceipt) env = { ...env, auditedReceipt };
+    const dialogue = sameParentDialogue(env, parsed.instruction, "countersign");
     summons = {
       sourceRunPath: gateParentRunPath,
       ...dialogue,
@@ -802,7 +792,7 @@ async function runCountersignBody(
       );
       await markRunAdmitted(admitted, env.principalAuthority);
       if (gateParentRunPath !== undefined) {
-        await pinAuditedLegAtAdmission(admitted, gateParentRunPath, env.auditedReceipt, io, {
+        await pinAuditedLegAtAdmission(admitted, gateParentRunPath, env.auditedReceipt, io, env.home, {
           sourceRunPath: gateParentRunPath,
         });
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
@@ -898,8 +888,7 @@ export async function runPublicInstructionSeat(
       throw error;
     }
     const parentRunPath = source.runDirectory;
-    const { auditedReceipt, ...dialogue } = await sameParentDialogue(env, parsed.instruction, parentRunPath, projectRoot, role);
-    if (auditedReceipt) env = { ...env, auditedReceipt };
+    const dialogue = sameParentDialogue(env, parsed.instruction, role);
     const materials = {
       ...dialogue,
       ...(auditorSubject ? {} : { sourceRunPath: parentRunPath }),
@@ -933,7 +922,7 @@ export async function runPublicInstructionSeat(
 
   if (source) {
     const sourceRunPath = source.runDirectory;
-    await pinAuditedLegAtAdmission(admitted, sourceRunPath, env.auditedReceipt, io,
+    await pinAuditedLegAtAdmission(admitted, sourceRunPath, env.auditedReceipt, io, env.home,
       record.sameParent === "source-locator" ? undefined : { sourceRunPath, auditorSubject });
     admitted = { ...admitted, sourceRunPath } as AdmittedRoleInvocation;
     // Source-run admission gains its source here. The locator and subject seats
@@ -1045,7 +1034,7 @@ export async function runPublicInstructionSeatResume(
       // its writer lease wherever the resume holds one — and before the host
       // turn. A summons the lease refuses never gets here and pins nothing.
       if (resummonedFor !== undefined) {
-        await pinAuditedLegAtAdmission(admitted, resummonedFor, env.auditedReceipt, io);
+        await pinAuditedLegAtAdmission(admitted, resummonedFor, env.auditedReceipt, io, env.home);
       }
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
       const projection = resumeTurnRequestProjectionOptions(
@@ -1058,11 +1047,9 @@ export async function runPublicInstructionSeatResume(
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const sourceRunPath = admittedSourceRunPath(admitted);
-      const { instruction: body, instructionEmpty, auditedReceipt } = await sameParentDialogue(
-        { home: env.home }, summonsPrepared?.instruction, sourceRunPath, admitted.projectRoot, admitted.role,
-      );
-      if (auditedReceipt && sourceRunPath) await pinAuditedLegAtAdmission(admitted, sourceRunPath, auditedReceipt, io);
+      const { instruction: body, instructionEmpty } = sameParentDialogue({}, summonsPrepared?.instruction, admitted.role);
       if (instructionEmpty) {
+        if (sourceRunPath) await pinAuditedLegAtAdmission(admitted, sourceRunPath, undefined, io, env.home);
         return buildInstructionSeatTurnRequest(admitted, { ...projection });
       }
       const fileFlags = summonsPrepared?.attachments ?? [];
@@ -1219,10 +1206,10 @@ async function auditSubmittedRole(
       };
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
-        context, submission: accepted,
+        context,
         ...(env.autoResumeLimit === undefined ? {} : { autoResumeLimit: env.autoResumeLimit }),
         ...(env.signal === undefined ? {} : { signal: env.signal }),
-        summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
+        summonAuditor: async (subject, sourceRunDirectory, signal, reask) => {
           await presentSeatVolume(lastSummon, io, "discarded");
           const summoned = await summonPublicRole({
             role: "auditor",
@@ -1235,7 +1222,6 @@ async function auditSubmittedRole(
             ...(env.hostAdapters === undefined ? { roleTurnHost: env.roleTurnHost } : { hostAdapters: env.hostAdapters }),
             ...(signal === undefined ? {} : { signal }),
             ...(reask === undefined ? {} : { reviewReask: reask }),
-            ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
           });
           lastSummon = summoned;
           return summoned;

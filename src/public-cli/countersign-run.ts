@@ -15,14 +15,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
   /**
    * #969 gate path: plain-language re-ask when prior 给事中 reply was not three-state.
-   * Wins over gateReviewInstruction when both present (notary/inspector precedent).
    */
   reviewReask?: string;
-  /**
-   * #969/#879 Secretariat submission-gate body: verbatim parent payload as dialogue
-   * content when reviewReask is absent. Binding stays ticket / argv instruction.
-   */
-  gateReviewInstruction?: string;
   auditedReceipt?: TerminalReceiptRef;
   /**
    * #969 / #987 gate path: parent run durable board ticket handoff for bind.

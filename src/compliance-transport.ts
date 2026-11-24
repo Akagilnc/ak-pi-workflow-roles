@@ -7,7 +7,6 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import { canReaskOfficer, officerConclusionReask } from "./gatekeeper-role.ts";
 import { receiptStatus } from "./packaged-role-registry.ts";
 import { currentReplyRows, returnedReceiptStatus } from "./public-cli/terminal.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -97,15 +96,12 @@ export type AuditorSummon = (
   signal?: AbortSignal,
   /** Plain-language re-ask when the prior reply was not a three-state conclusion. */
   reask?: string,
-  /** Parent's verbatim current submission, serialized when structured. */
-  submission?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
   /** Who is being audited — selects judge-auditor.md / doctor-auditor.md. */
   readonly subject: AuditorSoulRole;
   context: HostContext;
-  submission?: unknown;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
   /** This loop's ceiling. Absent uses the package default. */
@@ -181,7 +177,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
   const subject = options.subject;
-  const submission = options.submission === undefined ? undefined : readableGateItem(options.submission);
   const summon =
     options.summonAuditor
     ?? (async (
@@ -208,14 +203,13 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         home,
         ...(auditSignal === undefined ? {} : { signal: auditSignal }),
         ...(reask === undefined ? {} : { reviewReask: reask }),
-        ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
       });
     });
   let reask: string | undefined;
   let reasksSpent = 0;
   const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   for (;;) {
-    const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
+    const summoned = await summon(subject, runDirectory, options.signal, reask);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received" && canReaskOfficer(summoned, reasksSpent, reaskLimit)) {
       reasksSpent += 1;

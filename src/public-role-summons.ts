@@ -81,12 +81,6 @@ export type PublicSummonRequest = {
    * summons.instruction. Never folded into argv / parent-run lookup keys.
    */
   readonly reviewReask?: string;
-  /**
-   * #879 same-parent (and first-mint) gate summons: verbatim parent-submission body.
-   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
-   * Never folded into argv / parent-run lookup keys (binding pointer stays pure).
-   */
-  readonly gateReviewInstruction?: string;
   readonly auditedReceipt?: TerminalReceiptRef;
   /**
    * Pi-adapter inject (tests). Used only as the `pi` row when composing the
@@ -415,9 +409,6 @@ export async function summonPublicRole(
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
           ...(options.auditedReceipt && { auditedReceipt: options.auditedReceipt }),
-          ...(options.gateReviewInstruction === undefined
-            ? {}
-            : { gateReviewInstruction: options.gateReviewInstruction }),
           ...(options.boundTicketNumber === undefined
             ? {}
             : { boundTicketNumber: options.boundTicketNumber }),
@@ -672,11 +663,7 @@ export async function summonGateOfficer(options: {
    * Never concatenated into argv (binding stays on --source-run / parentRunPath).
    */
   readonly reask?: string;
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim as officer
-   * dialogue content when reask is absent (#879). Binding pointer stays on
-   * --source-run / parentRunPath — never a content substitute.
-   */
+  /** In-flight parent 交卷; only its declared ticket is read, for countersign binding. */
   readonly submission?: unknown;
   /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
   readonly roleTurnHost?: RoleTurnHost;
@@ -691,21 +678,7 @@ export async function summonGateOfficer(options: {
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
   // Officer host is seat-owned only (#821), not a parent override channel.
-  // #879: binding pointer = parent run directory; dialogue content = submission body.
-  // Conclusion re-ask owns reviewReask when present (no parallel gate body).
-  // #1208: notary never preloads parent body; review dialogue is the fixed
-  // dispatch from resolveReviewSeatDialogueBody. Named operational reasks
-  // ride reviewReask here (or the resume message seam elsewhere). Other
-  // officers still receive the parent submission body when reask is absent.
-  let gateReviewInstruction: string | undefined;
-  if (
-    options.reask === undefined
-    && options.submission !== undefined
-    && options.officer !== "notary"
-  ) {
-    const { readableGateItem } = await import("./readable-gate-item.ts");
-    gateReviewInstruction = readableGateItem(options.submission);
-  }
+  // ADR 0085: the officer gets the audited leg and receipt, and reads it itself.
   const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
   const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);
   const common = {
@@ -716,9 +689,6 @@ export async function summonGateOfficer(options: {
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
-    ...(gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -729,8 +699,7 @@ export async function summonGateOfficer(options: {
   const { packagedGateSummon } = await import("./packaged-role-registry.ts");
   const gateSummon = packagedGateSummon(options.officer);
   if (gateSummon === "source-run") {
-    // #753/#879: reask or verbatim body rides summons.instruction / first-mint prompt.
-    // Binding stays --source-run (never folded into content).
+    // #753: reask rides summons.instruction / first-mint prompt; binding stays --source-run.
     return summonPublicRole({
       role: options.officer,
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
@@ -739,7 +708,6 @@ export async function summonGateOfficer(options: {
   }
   if (gateSummon === "subject-source") {
     // #756: judge compliance path — same queue law as notary/inspector.
-    // Binding pointer on argv; dialogue content rides gateReviewInstruction.
     // #1166: no code-authored 卷宗指针 instruction — identity is startup material.
     return summonPublicRole({
       role: options.officer,
@@ -756,8 +724,7 @@ export async function summonGateOfficer(options: {
   }
   if (gateSummon === "parent-instruction") {
     // #969 / #987: Secretariat submission gate → 给事中.
-    // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
-    // no code-authored summons prose (#924). Gate resume key = parentRunPath
+    // Dialogue is the reask only; no code-authored summons prose (#924). Gate resume key = parentRunPath
     // (sourceRunDirectory); board ticket handoff is bind-only, never a resume
     // lookup (#987 Result 7). Receipt ticketNumber stays payload content.
     // Gate resume key is the parent run directory. The board ticket only binds.
@@ -772,18 +739,12 @@ export async function summonGateOfficer(options: {
       ? readDeclaredTicketNumber(options.submission.ticketNumber)
       : undefined;
     const courtTicket = submittedTicket ?? await readBoardTicketNumber(options.sourceRunDirectory);
-    // #1208 C1: argv dialogue from the same shared resolver as every other seat
-    // (never a parallel reask/gate/empty choice here). Request-field wiring of
-    // reviewReask / gateReviewInstruction onto env stays field assembly only.
-    // Terminal "" only when the resolver itself has no body — not a third source.
+    // #1208 C1: argv dialogue from the same shared resolver as every other seat.
     const { resolveReviewSeatDialogueBody } = await import("./public-cli/instruction-seat-run.ts");
     const instruction =
       resolveReviewSeatDialogueBody({
         role: options.officer,
         ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
-        ...(gateReviewInstruction === undefined
-          ? {}
-          : { gateReviewInstruction }),
       }) ?? "";
     return summonPublicRole({
       role: options.officer,

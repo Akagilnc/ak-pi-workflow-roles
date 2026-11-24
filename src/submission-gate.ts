@@ -122,10 +122,7 @@ function presentGateOutcome(fields: {
 export async function requireSubmissionGate(options: Pick<RunGatekeeperOptions, "context" | "runDirectory"> & {
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  /**
-   * In-flight parent typed payload for this gate turn (#879). Relayed verbatim
-   * as officer dialogue content; binding pointer stays the parent run directory.
-   */
+  /** In-flight parent 交卷 for this gate turn; see GateOfficerSummon. */
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;

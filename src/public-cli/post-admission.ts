@@ -1476,7 +1476,7 @@ export async function dispatchPostAdmissionTurn<
  *   paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
  * Caller message wins as prompt base when supplied (bytes unchanged, including
- * blank/whitespace); else summons instruction (parent payload or reask).
+ * blank/whitespace); else summons instruction (reask, or an officer verdict handed back).
  * Binding pointer stays on summons.sourceRunPath / activation — not dialogue content.
  * Seats add only their activation projection. Call prepareSummonsResumeMaterials
  * first when request.summons carries instruction or attachment paths.
@@ -1492,7 +1492,7 @@ export function resumeTurnRequestProjectionOptions(
   },
 ): RoleTurnRequestProjectionOptions {
   // #879: officer dialogue is caller/peer words; #1166 J11 merges caller file-flag
-  // paths when present. Gate with no file flags stays body-only (ADR 0085).
+  // paths when present.
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
   const fileFlags = summonsPrepared?.attachments ?? [];
   let prompt: string;

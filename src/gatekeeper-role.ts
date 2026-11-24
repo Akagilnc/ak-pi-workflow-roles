@@ -19,9 +19,8 @@ export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
 
 /**
- * Officer routing only. Ordinary audit dialogue is the parent submission body
- * (or ticket-court blind materials for notary); code does not open a second
- * run-dossier content channel here.
+ * Officer routing only. The officer reads the audited receipt itself (ADR 0085);
+ * code does not open a content channel here.
  */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
@@ -109,11 +108,7 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Production default relays
-   * it verbatim on the officer dialogue content channel (#786 / #879).
-   * Identity-bound at the submit site — never recovered as latest toolCall.
-   */
+  /** In-flight parent 交卷; only its declared ticket is read (countersign binding). */
   submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
@@ -127,11 +122,7 @@ export type RunGatekeeperOptions = {
    * Plain-language re-ask for this summon (resume speaker after non-three-state).
    */
   readonly reask?: string;
-  /**
-   * In-flight parent typed payload for this gate turn. Relayed verbatim as
-   * officer dialogue content (#879). Call site passes the current tool args —
-   * code must not scan session latest/mtime to recover it.
-   */
+  /** In-flight parent 交卷 for this gate turn; see GateOfficerSummon. */
   readonly submission?: unknown;
   /**
    * Officer summon seam. Production default lives on the shared envelope
@@ -289,8 +280,7 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // #879: binding pointer = parent run directory; dialogue content = this-turn
-  // typed payload passed explicitly (never latest-toolCall recovery, A7.1–A7.3).
+  // #879: binding pointer = parent run directory.
   let summoned: PublicSummonResult;
   try {
     summoned = await options.summonOfficer(

@@ -687,7 +687,7 @@ function isAuditedIdentitySeat(role: string): boolean {
 /** Resolve audited-run directory for identity material — this-leg flags / admitted page first. */
 function resolveAuditedSourceRunDirectory(
   roleHost: RoleHost,
-  ctx: HostContext,
+  admitted: unknown,
   role: string,
 ): string | undefined {
   const notary = roleHost.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
@@ -695,12 +695,8 @@ function resolveAuditedSourceRunDirectory(
   const inspector = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
   if (typeof inspector === "string" && inspector.trim() !== "") return inspector.trim();
   // This-leg admitted binding wins over shared auditor env (#1166 J3).
-  const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory !== undefined) {
-    const admitted = readPageSync(runDirectory, "admitted");
-    const sourceRunPath = admittedSourceRunPath(admitted);
-    if (sourceRunPath !== undefined) return sourceRunPath.trim();
-  }
+  const sourceRunPath = admittedSourceRunPath(admitted);
+  if (sourceRunPath !== undefined) return sourceRunPath.trim();
   // Auditor env is request-scoped soul binding for the auditor seat only.
   if (role === "auditor") {
     const auditor =
@@ -1147,16 +1143,19 @@ export function createRoleRuntimeExtension(
       if (reading === undefined) return;
       return { readingMaterial: reading };
     });
-    // #1166 / ADR 0087: four audit seats share one audited-run identity material.
-    // Notary also emits identity from its own before_agent_start; skip double fold.
+    // #1166 / ADR 0087 / ADR 0085: four audit seats share one material naming the
+    // audited leg and the receipt under review; the officer reads that receipt itself.
     roleHost.on("before_agent_start", (_event, ctx) => {
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      if (typeof role !== "string" || !isAuditedIdentitySeat(role) || role === "notary") return;
-      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, ctx, role);
+      if (typeof role !== "string" || !isAuditedIdentitySeat(role)) return;
+      const runDirectory = runDirectoryFromHostContext(ctx);
+      const admitted = runDirectory === undefined ? undefined : readPageSync(runDirectory, "admitted");
+      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, admitted, role);
       if (sourceDirectory === undefined) return;
       const identity = auditedRunIdentityFromDirectory(sourceDirectory);
       if (identity === undefined) return;
-      return { readingMaterial: auditedRunIdentityMaterial(identity) };
+      const receipt = isRecord(admitted) && typeof admitted.auditedReceipt === "string" ? admitted.auditedReceipt : undefined;
+      return { readingMaterial: auditedRunIdentityMaterial(identity, receipt) };
     });
     roleHost.on("tool_result", async (event, ctx) => {
       const role = selectedRole;
