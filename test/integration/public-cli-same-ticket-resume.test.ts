@@ -449,7 +449,9 @@ test("#637 public notary tracer: open court resume and later bare submissions ke
   await rm(lost);
   const quiet = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
   assert.equal(quiet.exitCode, 0);
-  assert.deepEqual(quiet.terminal?.roleOutcome.kind === "accepted" && quiet.terminal.roleOutcome.payloads, [secondCourtSeal]);
+  // This court received nothing: the leg's history is shown, the prior court's verdict is not this answer.
+  assert.equal(quiet.terminal?.roleOutcome.kind, "no_receipt");
+  assert.deepEqual(quiet.terminal?.submissions, [secondCourtSeal]);
   assert.deepEqual(quiet.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
   const turnsBeforeBare = turn;
   const bareAfterSeal = await runAkRole(["resume", "637", "notary"], {

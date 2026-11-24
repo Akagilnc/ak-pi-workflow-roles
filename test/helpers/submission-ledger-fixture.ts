@@ -33,7 +33,8 @@ async function spawnRunDirectoryFromEnv(env: NodeJS.ProcessEnv): Promise<string 
   return recorded;
 }
 
-export function submitInPiChild(cwd: string, env: NodeJS.ProcessEnv, role: TerminalRoleName, drafts: unknown[], mode?: string): void {
+/** A real Pi child process submits; only for proofs that need the process boundary (child seals, parent settles; a death after the write). */
+export function submitInPiChild(cwd: string, env: NodeJS.ProcessEnv, role: TerminalRoleName, drafts: unknown[], mode?: "interrupt"): void {
   execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"),
     fileURLToPath(new URL("../fixtures/1080-judge-receipts/submit.ts", import.meta.url))],
   { cwd, env, input: JSON.stringify({ role, drafts, mode }) });

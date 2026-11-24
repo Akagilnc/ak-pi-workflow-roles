@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { chmod, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
@@ -22,6 +22,7 @@ import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { withHermeticHome, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { seedPublicSeat } from "../helpers/passing-review-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -303,8 +304,9 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     // wrote none. A caller's dispatch passes as-is (ADR 0085).
     await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
     const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
+    const pinned = () => readCurrentSection(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted").auditedReceipt;
     await boundTo(`${TICKET}:judge#1`);
-    assert.equal(turns.at(-1)!.prompt, `请审 ${basename(legA)} 的第 1 份回执。`);
+    assert.equal(pinned(), "1.json");
     assert.equal(forOf("notary"), "judge#1");
     const dispatch = "审 judge#1 那份。";
     const inspected = await call(["new", "inspector", "--model", SEAT_MODEL, "--source-run", `${TICKET}:judge#1`, dispatch],
@@ -312,6 +314,18 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     assert.equal(inspected.exitCode, 0);
     assert.equal(turns.at(-1)!.prompt, dispatch);
     assert.equal(forOf("inspector"), "judge#1");
+
+    // Unnamed round, unreadable ledger: the leg's files still locate its latest arrival,
+    // an original never accepted, so it is the one under review and borrows no round.
+    await writeFile(join(legA, "receipts", "3.json"), JSON.stringify(ruling({ arrivedOnly: true })));
+    await chmod(join(legA, "history.jsonl"), 0o000);
+    try {
+      await call(["new", "notary", "--model", SEAT_MODEL, "--source-run", legA], () => ({ status: "converged" }));
+    } finally {
+      await chmod(join(legA, "history.jsonl"), 0o644);
+    }
+    assert.equal(pinned(), "3.json");
+    assert.equal(forOf("notary"), undefined);
 
     const turnsBefore = turns.length;
     const legsBefore = await legCount(home);

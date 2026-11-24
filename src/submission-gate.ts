@@ -80,6 +80,8 @@ export type SubmissionGateOutcome = {
   readonly admitted?: import("./public-cli/invocation.ts").AdmittedRoleInvocation;
   /** Officer terminal already returned by the summon. */
   readonly terminal?: TerminalResult;
+  /** Volumes a nested officer call already chose to show beside its own (PublicSummonResult.alongside). */
+  readonly alongside?: import("./public-role-summons.ts").PublicSummonResult["alongside"];
   /** transport_failure / no_receipt reason from the officer summon/process. */
   readonly reason?: string;
 };
@@ -107,6 +109,7 @@ function presentGateOutcome(fields: {
       : {}),
     ...(fields.summoned?.terminal && { terminal: fields.summoned.terminal }),
     ...(fields.summoned?.admitted && { admitted: fields.summoned.admitted }),
+    ...(fields.summoned?.alongside && { alongside: fields.summoned.alongside }),
     ...(fields.reason === undefined ? {} : { reason: fields.reason }),
   };
 }

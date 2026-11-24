@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { appendFile, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -289,8 +289,8 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
     // The audited leg cannot be read at admission: the officer still runs and
-    // seals, and each cause stays on the officer run. Unlisted receipts fall back
-    // to the leg's progress row; an unreadable progress file leaves no round.
+    // seals, and the cause stays on the officer run. Unlisted receipts: the leg's
+    // own ledger still locates its latest arrival and that arrival's round.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
     await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
@@ -298,10 +298,6 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
-    await appendFile(join(observed.ticketDirectory, "current.jsonl"), "{malformed\n", "utf8");
-    assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 3);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 

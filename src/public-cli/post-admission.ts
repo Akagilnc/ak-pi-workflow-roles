@@ -495,7 +495,7 @@ export async function resolveResumeMethodMaterialAdapters<
       (diagnostic) => retainPackageFault({
         runDirectory: input.admitted.runDirectory,
         diagnostic,
-        stderr: (text) => input.io.stderr(text),
+        io: input.io,
       }),
     );
     return { kind: "terminal", ...terminal };
@@ -657,8 +657,8 @@ async function settleAfterTurnStarted<
  * (needsPersist — station-child / resumable auto-resume loop, #416/#840):
  * that write must land outside the loop's own retried-dispatch try, but its
  * failure is a package note beside the terminal already settled. It does
- * not replace that terminal or open another attempt. The note is durable
- * because the caller's io may be a no-op.
+ * not replace that terminal or open another attempt. The note reaches the
+ * public caller, not the attempt's quiet io.
  */
 async function settleDeferredPersist<
   A extends AdmittedRoleInvocation,
@@ -785,10 +785,10 @@ async function settleCompletedHostTurn<
   // failure leaves a durable note and, on a host failure, rides in
   // packageFact. It does not become the cause.
   let stderrLogWriteFailure: unknown;
-  const note = packageFaultNoteFor(admitted, env, io);
-  await besideConclusion((diagnostic, error) => {
+  const note = courtScope.notePackageFault;
+  await besideConclusion(async (diagnostic, error) => {
     stderrLogWriteFailure = error;
-    return note(diagnostic);
+    await note(diagnostic);
   }, "stderr log write", async () => {
     reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
   });
@@ -952,7 +952,6 @@ export async function dispatchPostAdmissionTurn<
    */
   const courtScope = {
     ...settlementScopeForTurn(request),
-    beforeResume: undefined as SettlementCourtScope["beforeResume"],
     recordAttemptHistory: true as const,
     notePackageFault: packageFaultNoteFor(admitted, env, input.settlementIo ?? io),
   };
@@ -1042,7 +1041,7 @@ export async function dispatchPostAdmissionTurn<
       }
     };
     if (terminalInHand !== undefined) {
-      await besideConclusion(packageFaultNoteFor(admitted, env, io), "afterDispatch", bindAndRelocate);
+      await besideConclusion(courtScope.notePackageFault, "afterDispatch", bindAndRelocate);
       return result;
     }
     try {
@@ -1144,16 +1143,6 @@ export async function dispatchPostAdmissionTurn<
     // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult | undefined;
-    if (input.manualResume && !request.courtAttemptId) {
-      const { lastCourt, discoveryFault, rows } = await settlementRows(admitted);
-      courtScope.beforeResume = {
-        lastCourt,
-        seals: new Set(typeof lastCourt === "string" ? rows.filter(row => row.kind === "accepted" && row.role === admitted.role && row.attemptId === lastCourt).map(row => row.receipt) : []),
-        seen: discoveryFault ?? new Set(rows.map(row => row.receipt)),
-      };
-      const issue = discoveryFault ?? (typeof lastCourt === "object" ? lastCourt : undefined);
-      if (issue) await courtScope.notePackageFault(issue.diagnostic);
-    }
     try {
       // A bare `ak-role resume` only forwards the caller's instruction to the
       // host CLI's native resume. Nothing here may gate, redirect or reshape
@@ -1330,7 +1319,7 @@ export async function dispatchPostAdmissionTurn<
       return await finishAfterTurn({ ...failed, turnDispatched: true, skipAutoResume: true, ...deferredPersist });
     }
     if (persistRunState) {
-      await besideConclusion(packageFaultNoteFor(admitted, env, io), "run-state persistence", () => persistReturnedRunState(admitted));
+      await besideConclusion(courtScope.notePackageFault, "run-state persistence", () => persistReturnedRunState(admitted));
     }
     // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
     return await finishAfterTurn({
@@ -1535,7 +1524,7 @@ async function runSettledAutoResumeLoop<
           return settleDeferredPersist(
             input.admitted,
             input.env,
-            attemptIo,
+            input.io,
             result,
           );
         },

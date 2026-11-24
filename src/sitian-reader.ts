@@ -85,7 +85,7 @@ export async function readSitianRecords(recordFile: string): Promise<SitianReadR
   try {
     return parseSitianRecordText(await readFile(recordFile, "utf8"));
   } catch (error) {
-    if (isEnoent(error)) return { records: [], diagnostics: [], missing: error };
+    if (isEnoent(error)) return { records: [], diagnostics: [] };
     throw error;
   }
 }

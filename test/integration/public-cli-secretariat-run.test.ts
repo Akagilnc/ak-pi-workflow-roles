@@ -48,7 +48,6 @@ import {
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withOutsideTempRoot, withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -279,11 +278,6 @@ function nestedCountersignHost(input: {
         toolName: "ak_submission_output",
         details: step.details,
       })(args, options);
-      if (!options.env.AK_ROLE_COURT_ATTEMPT && step.notaryEscalation === undefined) {
-        submitInPiChild(options.cwd, options.env, "countersign", [step.details]);
-        const { sealedAcceptance: _, ...result } = scripted;
-        return result;
-      }
       return step.notaryEscalation === undefined ? scripted : {
         ...scripted,
         sealedAcceptance: { role: "countersign", details: step.details, outputDetails: executed.details },

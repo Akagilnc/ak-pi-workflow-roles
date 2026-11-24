@@ -81,8 +81,6 @@ export type SettlementCourtScope = {
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
   readonly seal?: "latest" | { readonly receipt: string | undefined };
-  /** Before a bare dispatch: the replayable court's seals, and receipts already seen (even if their attribution later vanishes). */
-  readonly beforeResume?: { readonly lastCourt: string | LedgerFault | undefined; readonly seals: ReadonlySet<string>; readonly seen: ReadonlySet<string> | LedgerFault } | undefined;
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -108,7 +106,8 @@ export async function retainPackageFault(input: {
     readonly diagnostic: string;
     readonly recordedAt: string;
   }) => Promise<void>;
-  readonly stderr?: (text: string) => void;
+  /** The caller this fault belongs to; a quiet nested seat passes it on (callerDiagnostic). */
+  readonly io?: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">;
 }): Promise<void> {
   const payload = {
     diagnostic: input.diagnostic,
@@ -146,9 +145,9 @@ export async function retainPackageFault(input: {
         `post-dispatch diagnostic durable retention failed (best-effort continue): log=${describeErrorIdentity(logError)}`;
     }
   }
-  const stderr = input.stderr ?? ((text: string) => {
-    process.stderr.write(text);
-  });
+  const stderr = input.io === undefined
+    ? (text: string) => { process.stderr.write(text); }
+    : input.io.callerDiagnostic ?? input.io.stderr;
   try {
     stderr(formatCliDiagnostic(input.diagnostic));
     if (retentionFailure !== undefined) stderr(formatCliDiagnostic(retentionFailure));
@@ -181,7 +180,7 @@ export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
 export function packageFaultNoteFor(
   admitted: { readonly runDirectory: string; readonly principal: DurablePrincipal },
   env: { readonly sessionAppender: SessionCustomEntryAppender; readonly principalAuthority: DurablePrincipalAuthority },
-  io: { readonly stderr: (text: string) => void },
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">,
 ): (diagnostic: string) => Promise<void> {
   return (diagnostic) => retainPackageFault({
     runDirectory: admitted.runDirectory,
@@ -192,7 +191,7 @@ export function packageFaultNoteFor(
       POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
       payload,
     ),
-    stderr: (text) => io.stderr(text),
+    io,
   });
 }
 
@@ -1316,7 +1315,7 @@ export async function preparePublicSeat(
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
 ): Promise<PreparedSeat | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] }> {
-  const { rows, recordFile, missing, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
+  const { rows, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
   const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
   let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
   let unknownCourt = fault;
@@ -1328,25 +1327,6 @@ export async function preparePublicSeat(
     attempt = !pin && typeof lastCourt === "string" ? lastCourt : seal?.attemptId;
     if (!pin && typeof lastCourt === "object") unknownCourt ??= lastCourt;
     if (attempt) scope = { ...scope, courtAttemptId: attempt };
-  } else if (scope?.beforeResume) {
-    const { lastCourt: prior, seals, seen } = scope.beforeResume;
-    const own = attempt !== undefined && rows.some(row => row.attemptId === attempt);
-    const arrivals = "has" in seen ? rows.filter(row => row.attemptId === undefined && !seen.has(row.receipt)) : [];
-    if (arrivals.length) await noteSettlementFault(admitted.runDirectory, scope, `Arrivals without a recorded court: ${arrivals.map(row => row.path).join(", ")}`);
-    // Replay only the complete court observed before dispatch, using today's readable seal rows.
-    const witnessed = accepted.filter(row => row.attemptId === prior && seals.has(row.receipt));
-    if (witnessed.length !== seals.size && !fault) {
-      const verified = new Set(witnessed.map(row => row.receipt));
-      const absent = [...seals].filter(ref => !verified.has(ref));
-      const cause = missing ?? `previously observed seals for ${prior} no longer recorded: ${absent.join(", ")}`;
-      const diagnostic = `${recordFile}: ${errorText(cause)}`;
-      if (own) await noteSettlementFault(admitted.runDirectory, scope, diagnostic);
-      else unknownCourt = { cause, diagnostic };
-    }
-    if (!own && !arrivals.length) {
-      unknownCourt ??= discoveryFault ?? ("cause" in seen ? seen : typeof prior === "object" ? prior : undefined);
-      if (typeof prior === "string") { attempt = prior; current = witnessed; }
-    }
   }
   current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
   unknownCourt ??= rows.find(row => row.dispositionFault && (pin

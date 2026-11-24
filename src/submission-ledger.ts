@@ -116,7 +116,7 @@ export async function readRecordedSubmissionRows(
     return { ...fact, receipt, path: join(sessionDir, "receipts", basename(receipt)), ...(round && { round }), ...(dispositionFault && { dispositionFault }) };
   });
   if (malformed && gap > latestIndex && [...facts.values()].some(fact => fact.dispositionFault)) lastCourt = malformed;
-  return { rows, recordFile, missing: journal?.missing, fault, discoveryFault, missingReference, malformed, lastCourt: fault ?? lastCourt };
+  return { rows, fault, discoveryFault, missingReference, malformed, lastCourt: fault ?? lastCourt };
 }
 
 export function readReceipt({ path }: RecordedSubmissionRow): unknown {

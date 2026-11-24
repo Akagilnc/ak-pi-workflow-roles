@@ -71,7 +71,6 @@ import { presentSeatVolume, presentTerminal } from "./auto-resume.ts";
 import {
   loadResumablePublicRole,
   markRunAdmitted,
-  readCurrentCourt,
   type LoadedResumablePublicRole,
   type PublicResumeRequest,
   type RunWriterLease,
@@ -115,7 +114,7 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   "reviewReask" | "parentRunPath" | "auditedReceipt"
 >;
 
-type SeatRunResult = Pick<PublicSummonResult, "exitCode" | "admitted" | "terminal" | "receivedStatus">;
+type SeatRunResult = Pick<PublicSummonResult, "exitCode" | "admitted" | "terminal" | "receivedStatus" | "alongside">;
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
 const SECRETARIAT_STATUS_REASK = "status 不是 converged、escalate 之一。请重新交卷，status 写明其一。";
@@ -223,10 +222,22 @@ async function incompleteAuditWithoutOfficerVolume(
   admitted: AdmittedRoleInvocation,
   io: CliIo,
   diagnostic: string,
+  carried?: SeatRunResult["alongside"],
 ): Promise<SeatRunResult> {
-  await presentSeatVolume(turn, io, "alongside");
+  const alongside = await presentAlongside(turn, carried, io);
   io.stderr(diagnostic);
-  return { exitCode: 1, admitted };
+  return { exitCode: 1, admitted, alongside };
+}
+
+/**
+ * This leg's volume beside its officer's, then the ones a nested officer call
+ * already chose and carried up (#1214 R2); all are handed on, so a quiet nested
+ * call's choice reaches the public presenter without reading those legs again.
+ */
+async function presentAlongside(turn: SeatRunResult, carried: SeatRunResult["alongside"], io: CliIo) {
+  const alongside = [turn, ...(carried ?? [])];
+  for (const volume of alongside) await presentSeatVolume(volume, io, "alongside");
+  return alongside;
 }
 
 /**
@@ -234,19 +245,19 @@ async function incompleteAuditWithoutOfficerVolume(
  * its audited seat's already-filed original on the public call (被审席已交原卷照常呈出).
  * The officer keeps its own identity and exit; the audited seat is not re-run and its
  * volume is read from its own run through the settlement seam (#1195: not copied into
- * the officer's book). `presentedRunId` skips the seat the caller already presented.
+ * the officer's book). Only an officer resumed on its own reads it here; within one
+ * call the nested volume is carried up instead (presentAlongside).
  * The officer's own conclusion is in hand: a failed read of the audited seat is
  * noted beside it (ADR 0080) and never loses it.
  */
 async function presentAuditedOriginalOfOfficer(
   officer: AdmittedRoleInvocation,
-  presentedRunId: string | undefined,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<void> {
   if (!GATE_CHILD_ROLES.has(officer.role)) return;
   const audited = officer.correlationId;
-  if (audited === undefined || audited === presentedRunId) return;
+  if (audited === undefined) return;
   const auditedSource = admittedSourceRunPath(officer);
   await besideConclusion(packageFaultNoteFor(officer, env, io), "audited original presentation", async () => {
     const parent = await loadResumablePublicRole(
@@ -287,7 +298,7 @@ export async function presentAuditedOriginalOfUnsettledOfficer(
   io: CliIo,
 ): Promise<void> {
   if (result.admitted === undefined || !leavesAuditedVerdictUnsettled(result)) return;
-  await presentAuditedOriginalOfOfficer(result.admitted, undefined, env, io);
+  await presentAuditedOriginalOfOfficer(result.admitted, env, io);
 }
 
 function reaskUnreadablePostSubmissionStatus(
@@ -366,12 +377,14 @@ export function buildInstructionSeatTurnRequest(
 
 /**
  * Without a gate's sealed receipt, the latest arrived draft of the source leg is
- * the one under review (ADR 0085). The officer reads it itself.
+ * the one under review (ADR 0085). The officer reads it itself. A ledger fault is
+ * reported on its own; it does not discard a draft the leg's files still locate.
  */
 async function latestAuditedReceipt(
   sourceRunDirectory: string,
   projectRoot: string,
   home: string,
+  faults: string[],
 ) {
   const runId = runIdFromRunDirectory(sourceRunDirectory);
   if (runId === undefined) return undefined;
@@ -381,10 +394,9 @@ async function latestAuditedReceipt(
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
+  for (const issue of [fault, discoveryFault, missingReference]) if (issue) faults.push(issue.diagnostic);
   // #1166 J10: the latest arrived draft is the current manuscript. Never filter by
   // accepted / terminal outcome kind (that resurrects a prior sealed draft).
-  const missing = fault ?? discoveryFault ?? missingReference;
-  if (missing) throw new Error(missing.diagnostic, { cause: missing.cause });
   return rows.at(-1);
 }
 
@@ -600,6 +612,7 @@ async function runOmittedLensBatch(
     ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     principalAuthority: env.principalAuthority,
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    io: { callerDiagnostic: io.callerDiagnostic ?? io.stderr },
   });
   const childResults = [children.completeness, children.correctness] as const;
   const terminals = childResults
@@ -655,7 +668,8 @@ async function runOmittedLensBatch(
  *「审 谁#轮」before the officer runs, in the same page write as the source
  * path when this admission is the one that records it. A receipt or row that
  * cannot be read keeps its cause on the officer run; the officer still runs.
- * An unreadable receipt list falls back to the leg's latest progress row.
+ * A located arrival keeps only its own round; when none can be located at all,
+ * the leg's latest progress row names the round.
  */
 async function pinAuditedLegAtAdmission(
   officer: AdmittedRoleInvocation,
@@ -666,7 +680,7 @@ async function pinAuditedLegAtAdmission(
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
   const faults: string[] = [];
-  const filed = gateFiled ?? await latestAuditedReceipt(auditedRunDirectory, officer.projectRoot, home)
+  const filed = gateFiled ?? await latestAuditedReceipt(auditedRunDirectory, officer.projectRoot, home, faults)
     .catch((error: unknown) => { faults.push(`audited receipt unavailable for ${auditedRunDirectory}: ${errorText(error)}`); return undefined; });
   const auditedReceipt = filed && basename(filed.receipt);
   const round = filed?.round;
@@ -679,7 +693,7 @@ async function pinAuditedLegAtAdmission(
   officer.auditedReceipt = auditedReceipt;
   officer.auditedRound = auditedRound;
   for (const diagnostic of faults) {
-    await retainPackageFault({ runDirectory: officer.runDirectory, diagnostic, stderr: (text) => io.stderr(text) });
+    await retainPackageFault({ runDirectory: officer.runDirectory, diagnostic, io });
   }
 }
 
@@ -1227,7 +1241,7 @@ async function auditSubmittedRole(
             await presentSeatVolume(lastSummon, io, "discarded");
             const summoned = await summonPublicRole({
               role: "auditor",
-              io: { receiptDiagnostic: io.receiptDiagnostic ?? io.stderr },
+              io: { callerDiagnostic: io.callerDiagnostic ?? io.stderr },
               argv: ["--subject", subject, "--source-run", sourceRunDirectory],
               cwd: admitted.projectRoot, home: env.home, packageRoot: env.packageRoot,
               principalAuthority: env.principalAuthority,
@@ -1297,7 +1311,7 @@ async function auditSubmittedRole(
     }
   } else {
     const summonOfficer = createDefaultGateOfficerSummon({
-      io: { receiptDiagnostic: io.receiptDiagnostic ?? io.stderr },
+      io: { callerDiagnostic: io.callerDiagnostic ?? io.stderr },
       auditedReceipt: filed,
       cwd: admitted.projectRoot,
       home: env.home,
@@ -1341,10 +1355,8 @@ async function auditSubmittedRole(
       const officerTerminal = pass.terminal;
       if (officerTerminal !== undefined && officer !== undefined) {
         // #1214 F1: present audited original and officer scene separately.
-        await presentSeatVolume(turn, io, "alongside");
         // The terminal and admission belong to the same call, even after a new summons.
-        // #1214 R2: a nested audited seat's original (officer's own audited parent) stays visible.
-        await presentAuditedOriginalOfOfficer(officer, admitted.runId, env, io);
+        const alongside = await presentAlongside(turn, pass.alongside, io);
         if (pass.status !== "transport_failure") {
           // Lawful incomplete (unreadable / no_receipt): exit 0, direction unsettled.
           const terminal = await presentUnsettledVolume(
@@ -1352,7 +1364,7 @@ async function auditSubmittedRole(
             io,
             officer.runDirectory,
           );
-          return { exitCode: 0, admitted: officer, terminal,
+          return { exitCode: 0, admitted: officer, terminal, alongside,
             ...("receivedStatus" in pass && { receivedStatus: pass.receivedStatus }) };
         }
         // #1214 A5: officer failure volume after parent original; honest non-pass identity.
@@ -1365,6 +1377,7 @@ async function auditSubmittedRole(
           exitCode: officerTerminal.roleOutcome.kind === "failure" ? 1 : 0,
           admitted: officer,
           terminal: officerTerminal,
+          alongside,
         };
       }
       // No officer volume. Present parent original; diagnostic; do not forge success.
@@ -1378,10 +1391,14 @@ async function auditSubmittedRole(
             : pass.status === "no_receipt"
               ? "audit officer no_receipt with no presentable volume"
               : "unreadable audit has no terminal result"),
+        pass.alongside,
       );
     }
     if (pass?.status === "escalate") {
-      if (officer === undefined) {
+      // An escalation always carries the officer's own terminal (gatekeeper-role); it is presented as returned.
+      // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
+      const terminal = pass.terminal;
+      if (officer === undefined || terminal === undefined) {
         return incompleteAuditWithoutOfficerVolume(
           turn,
           admitted,
@@ -1389,21 +1406,9 @@ async function auditSubmittedRole(
           "escalated audit has no resumable run identity",
         );
       }
-      // Prefer the officer terminal already returned. Re-settle only when absent.
-      // Other-seat tables stay on the officer run — parent does not attach copies (#1195).
-      const terminal = pass.terminal ?? await recoverSeatTerminal(officer, env, io, await readCurrentCourt(officer.runDirectory));
-      if (terminal === undefined) {
-        return incompleteAuditWithoutOfficerVolume(
-          turn,
-          officer,
-          io,
-          "escalated audit has no terminal result",
-        );
-      }
       await presentSeatVolume(turn, io, "discarded");
       await presentTerminal(terminal, { ...io, omitFailureStderrDiagnostic: true }, officer.runDirectory);
-      return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer, terminal,
-        ...(pass.terminal && { receivedStatus: pass.status }) };
+      return { exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0, admitted: officer, terminal, receivedStatus: pass.status };
     }
     if (pass?.status === "continue") {
       await presentSeatVolume(turn, io, "discarded");

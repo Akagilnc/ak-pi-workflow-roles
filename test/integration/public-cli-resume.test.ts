@@ -1,8 +1,7 @@
-import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
-import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * Public manual resume passthrough and host-failure settlement.
  * Seams: run-lifecycle / runAkRole(judge|resume) with injectable Pi runner.
@@ -240,7 +239,7 @@ async function assertCleanupDiagnosticNoted(
   assert.equal(typeof diagnostic?.data?.diagnostic, "string");
 }
 
-test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
+test("lawful settlement keeps the accepted terminal when publication fails; a bare resume that receives nothing does not re-present it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -288,14 +287,13 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
 
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
-      const reportPath = join(runDirectory, "current.json");
       const recordedTerminals = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
 
-      // Unlock so bare resume can rebuild the public report from sealed facts.
       await restoreWritable();
 
-      // #833 / #672 US6: bare resume reaches host; settlement rebuilds public report.
+      // #833: bare resume reaches host. It received nothing, so the earlier verdict is
+      // history, not this answer (#1298: 本庭零收卷也不能拿上庭顶替).
       let resumeDispatches = 0;
       const passthroughHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -321,39 +319,13 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       });
       assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
       assert.equal(rebuilt.exitCode, 0);
-      assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
-      if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
-        assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-        assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
-        assert.equal(
-          (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
-          "lawful despite later publication failure",
-        );
-      }
-      // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
-      const reportBody = terminalBodyAt(reportPath, "report") as {
-        role?: string;
-        runId?: string;
-        outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
-      };
-      assert.equal(reportBody.role, "judge");
-      assert.equal(reportBody.runId, runId);
-      assert.equal(reportBody.outcome?.kind, "accepted");
-      assert.equal(reportBody.outcome?.role, "judge");
-      assert.equal("payloads" in (reportBody.outcome ?? {}), false);
-      assert.equal(
-        (submittedParams(runDirectory).at(-1) as { note?: string } | undefined)?.note,
-        "lawful despite later publication failure",
-      );
-      assert.ok(
-        rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
-        "rebuilt terminal must reference the public report artifact",
-      );
-      assert.deepEqual(historyOutcomes(), [], "bare resume does not record a duplicate seal");
+      assert.equal(rebuilt.terminal!.roleOutcome.kind, "no_receipt");
+      assert.deepEqual(rebuilt.terminal!.submissions, [{ status: "converged", note: "lawful despite later publication failure" }]);
+      assert.deepEqual(historyOutcomes(), ["no_receipt"], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), [], "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(historyOutcomes(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }

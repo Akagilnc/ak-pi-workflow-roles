@@ -84,7 +84,7 @@ export async function invokeCourtDiarist(
   // Quiet face: the secretariat caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout: discardStdout,
-    receiptDiagnostic: io.receiptDiagnostic ?? io.stderr,
+    callerDiagnostic: io.callerDiagnostic ?? io.stderr,
     stderr(text: string) {
       // Surface nested failures onto the parent stderr only; no success noise.
       if (text.trim() !== "") io.stderr(text);
