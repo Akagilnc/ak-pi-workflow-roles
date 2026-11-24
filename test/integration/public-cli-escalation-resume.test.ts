@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { appendFile, chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -14,6 +14,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { runAkRole, type CliResult, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
@@ -465,7 +466,15 @@ test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b:
     if (mode !== "host failure") assert.equal(continued.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
     else assert.equal(continued.terminal.roleOutcome.kind, "failure");
     assert.deepEqual(continued.terminal.receiptErrors ?? [], []);
-    if (mode === "unreadable audited leg") return;
+    if (mode === "unreadable audited leg") {
+      // The true cause is noted on the officer's own session beside its kept conclusion.
+      const officerSession = observed.officerSessions.filter((item) => item.role === "auditor").at(-1)!.sessionFile;
+      const notes = (await readFile(officerSession, "utf8")).split("\n").filter(Boolean)
+        .map((line) => JSON.parse(line) as { customType?: unknown })
+        .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
+      assert.equal(notes.length, 1);
+      return;
+    }
     assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
       [["judge", { name: "Error", code: "ENOENT" }]]);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);

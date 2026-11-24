@@ -69,7 +69,7 @@ export async function tryResumeSameTicketSeatRun(input: {
   if (resumed.admitted?.runId !== previous.runId || outcome?.kind !== "failure"
     || outcome.decisiveFacts.errorCode !== SESSION_ID_MISSING) return resumed;
   // The resumed volume is in hand: a failed lock check keeps it (ADR 0080).
-  const note = (diagnostic: string) => retainPackageFault({ runDirectory: previous.runDirectory, diagnostic, stderr: (text) => input.io.stderr(text) });
+  const note = (diagnostic: string) => retainPackageFault({ runDirectory: resumed.admitted!.runDirectory, diagnostic, stderr: (text) => input.io.stderr(text) });
   const blocked = await besideConclusion(note, "fresh-summons lock check", async () => {
     const live = await resolveLiveRunDirectoryPath(previous.runDirectory, input.home, bookKey);
     return live !== undefined && await writerLockBlocksFreshSummons(live);
