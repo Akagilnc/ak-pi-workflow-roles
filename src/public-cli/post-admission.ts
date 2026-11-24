@@ -599,8 +599,11 @@ export async function presentControlledFailure<
       ? { ...settled, ...(history.submissions && { submissions: history.submissions }), ...(history.receiptErrors && { receiptErrors: history.receiptErrors }) }
       : await attachRecordedSubmissions(admitted, settled, notePackageFault && { notePackageFault }, history?.rows);
   } catch (error) {
-    if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
-      writeResumeFailurePointer(io, publishedErrorPath);
+    const errorPath = publishedErrorPath;
+    if (io.omitFailureStderrDiagnostic && errorPath !== undefined) {
+      // The pointer never replaces the error it points at.
+      await besideConclusion((diagnostic, cause) => retainPackageFault({ runDirectory: admitted.runDirectory, diagnostic, error: cause, io }),
+        "resume error pointer", async () => writeResumeFailurePointer(io, errorPath));
     }
     throw error;
   }
