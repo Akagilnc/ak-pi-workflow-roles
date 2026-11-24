@@ -32,6 +32,8 @@ export type RecordedSubmissionRow = {
   readonly receipt: string;
   readonly round?: string;
   readonly attemptId?: string;
+  /** Journal position of this receipt's seal: one court's results follow it, not the file number. */
+  readonly sealedAt?: number;
   /** Missing or unreadable disposition evidence for this receipt, not a whole-leg failure. */
   readonly dispositionFault?: LedgerFault;
 };
@@ -102,7 +104,8 @@ export async function readRecordedSubmissionRows(
     const disposition = kind === "sealed" ? "accepted" : kind === "candidate" ? "candidate" : kind === "outcome" ? payload.outcome : undefined;
     if (disposition !== "accepted" && disposition !== "candidate" && disposition !== "infrastructure" && disposition !== "correctable-rejection") continue;
     facts.set(receipt, { kind: disposition, role: payload.role as TerminalRoleName, toolCallId: payload.toolCallId as string,
-      ...(disposition === "candidate" && index < gap && malformed && { dispositionFault: malformed }), attemptId: subject.attemptId as string });
+      ...(disposition === "candidate" && index < gap && malformed && { dispositionFault: malformed }),
+      ...(kind === "sealed" && { sealedAt: index }), attemptId: subject.attemptId as string });
   }
   const rows = [...facts].sort(([a], [b]) => parseInt(basename(a)) - parseInt(basename(b))).map(([receipt, fact]) => {
     const published = publications.get(receipt);

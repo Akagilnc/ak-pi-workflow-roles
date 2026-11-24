@@ -253,24 +253,25 @@ export function settlementRows(admitted: Pick<AdmittedRoleInvocation, "projectRo
   });
 }
 
-function projectOriginals(rows: readonly RecordedSubmissionRow[], current?: ReadonlySet<RecordedSubmissionRow>) {
-  const submissions: unknown[] = [], payloads: unknown[] = [];
+/** The whole leg in arrival order; this court's payloads in the order `current` gives. */
+function projectOriginals(rows: readonly RecordedSubmissionRow[], current: readonly RecordedSubmissionRow[] = []) {
+  const submissions: unknown[] = [], originals = new Map<RecordedSubmissionRow, unknown>();
   const receiptErrors: NonNullable<TerminalResult["receiptErrors"]>[number][] = [];
   let requiredFault: LedgerFault | undefined;
   for (const row of rows) {
     try {
       const original = readReceipt(row);
       submissions.push(original);
-      if (current?.has(row)) payloads.push(original);
+      originals.set(row, original);
     } catch (error) {
       const diagnostic = errorText(error);
-      if (current?.has(row)) requiredFault ??= { diagnostic: `${row.path}: ${diagnostic}`, cause: error };
+      if (current.includes(row)) requiredFault ??= { diagnostic: `${row.path}: ${diagnostic}`, cause: error };
       receiptErrors.push({ receipt: row.path, diagnostic,
         ...(error instanceof Error ? { identity: thrownIdentity(error) } : {}) });
     }
   }
   const history = { ...(submissions.length && { submissions }), ...(receiptErrors.length && { receiptErrors }) };
-  return { payloads, history, requiredFault };
+  return { payloads: current.flatMap(row => originals.has(row) ? [originals.get(row)] : []), history, requiredFault };
 }
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
@@ -1327,14 +1328,16 @@ export async function preparePublicSeat(
     if (!pin && typeof lastCourt === "object") unknownCourt ??= lastCourt;
     if (attempt) scope = { ...scope, courtAttemptId: attempt };
   }
-  current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt);
+  // This court's result, route and filed reference follow its seals, not file numbers.
+  current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt)
+    .sort((a, b) => (a.sealedAt ?? 0) - (b.sealedAt ?? 0));
   unknownCourt ??= rows.find(row => row.dispositionFault && (pin
     ? matchesAuditedSeal(pin, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
   for (const issue of [discoveryFault, malformed]) {
     if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
   }
   if (!current.length && !unknownCourt) return { rows };
-  const { payloads, history, requiredFault } = projectOriginals(rows, new Set(current));
+  const { payloads, history, requiredFault } = projectOriginals(rows, current);
   const failed = unknownCourt ?? requiredFault;
   if (failed) return { history, failure: { ...projectThrownFailureLeaf(failed.cause), diagnostic: failed.diagnostic } };
   const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };

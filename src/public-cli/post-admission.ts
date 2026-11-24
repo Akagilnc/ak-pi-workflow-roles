@@ -1629,7 +1629,7 @@ export async function runPostAdmissionSeatResume<
   if (input.afterAdmittedLoad !== undefined) {
     const prepared = await input.afterAdmittedLoad(loaded.admitted);
     if (prepared.kind === "terminal") {
-      showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal);
+      await showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal, prepared.admitted.runDirectory);
       return {
         exitCode: prepared.exitCode,
         admitted: prepared.admitted,
@@ -1759,7 +1759,7 @@ export async function runPostAdmissionSeatResume<
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
-    showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal);
+    await showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal, loaded.admitted.runDirectory);
     return resumed;
   } catch (error) {
     if (error instanceof TurnDispatchedFailure) throw error;
@@ -1812,21 +1812,26 @@ function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
   io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
 }
 
-export function showResumeErrorPointer(
+/** The pointer presents a terminal already in hand; its own failure is noted beside it (ADR 0080). */
+export async function showResumeErrorPointer(
   io: CliIo,
   exitCode: number,
   terminal: TerminalResult | undefined,
-): void {
+  runDirectory: string,
+): Promise<void> {
   if (exitCode === 0 || terminal === undefined) return;
   const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path;
-  if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
+  if (publishedError === undefined) return;
+  await besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory, diagnostic, error, io }),
+    "resume error pointer", async () => writeResumeFailurePointer(io, publishedError));
 }
 
 export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority, scope?: SettlementCourtScope, io?: CliIo): Promise<TerminalResult | undefined> {
   scope = scope?.courtAttemptId || scope?.invocationScopeId || scope?.seal ? scope : { ...scope, seal: "latest" };
   const prepared = await preparePublicSeat(admitted, authority, scope);
   if ("failure" in prepared) {
-    if (io) presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure);
+    if (io) await besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory: admitted.runDirectory, diagnostic, error, io }),
+      "resume failure pointer", async () => presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure));
     return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
   }
   if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);

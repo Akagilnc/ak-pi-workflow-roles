@@ -236,7 +236,8 @@ async function incompleteAuditWithoutOfficerVolume(
  */
 async function presentAlongside(turn: SeatRunResult, carried: SeatRunResult["alongside"], io: CliIo) {
   const alongside = [turn, ...(carried ?? [])];
-  for (const volume of alongside) await presentSeatVolume(volume, io, "alongside");
+  // Returned with the result: a quiet layer leaves them, receipt errors included, to the caller.
+  for (const volume of alongside) await presentSeatVolume(volume, io, "returned");
   return alongside;
 }
 
@@ -444,7 +445,7 @@ function resolveInitialTurnPrompt(
 /** Restore this leg's volume, including a read failure. The caller decides whose result to return. */
 async function recoverSeatTerminal(admitted: AdmittedRoleInvocation, env: InstructionSeatRunEnv, io: CliIo,
   binding: Pick<SettlementCourtScope, "courtAttemptId" | "seal" | "previewOnly"> | undefined): Promise<TerminalResult | undefined> {
-  const scope = { ...(binding ?? { seal: "latest" as const }), notePackageFault: packageFaultNoteFor(admitted, env, io) };
+  const scope = { ...binding, notePackageFault: packageFaultNoteFor(admitted, env, io) };
   return trySettlePublicSeat(admitted, env.principalAuthority, scope, io);
 }
 
@@ -654,8 +655,8 @@ async function runOmittedLensBatch(
  *「审 谁#轮」before the officer runs, in the same page write as the source
  * path when this admission is the one that records it. A receipt or row that
  * cannot be read keeps its cause on the officer run; the officer still runs.
- * A located arrival keeps only its own round; when none can be located at all,
- * the leg's latest progress row names the round.
+ * A located arrival keeps only its own round; when none can be located, no
+ * round is recorded for it.
  */
 async function pinAuditedLegAtAdmission(
   officer: AdmittedRoleInvocation,
@@ -673,7 +674,7 @@ async function pinAuditedLegAtAdmission(
   const seat = round && roleFromRunDirectory(auditedRunDirectory);
   const { for: auditedRound, fault } = seat
     ? { for: `${seat}#${round}`, fault: undefined }
-    : readAuditedRound(auditedRunDirectory, auditedReceipt);
+    : auditedReceipt === undefined ? {} : readAuditedRound(auditedRunDirectory, auditedReceipt);
   if (fault !== undefined) faults.push(fault);
   persistAdmittedAuditedLeg(officer.runDirectory, { for: auditedRound, auditedReceipt, ...source });
   officer.auditedReceipt = auditedReceipt;
@@ -1146,7 +1147,7 @@ export async function continueParentAfterChild(
     }, envForCourtContinue(env), io, undefined, loaded);
   }
   const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
-  showResumeErrorPointer(io, result.exitCode, result.terminal);
+  await showResumeErrorPointer(io, result.exitCode, result.terminal, admitted.runDirectory);
   return result;
 }
 
