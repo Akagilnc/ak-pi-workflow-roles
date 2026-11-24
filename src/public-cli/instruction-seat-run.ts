@@ -642,8 +642,8 @@ async function runOmittedLensBatch(
  * a caller's own `--source-run`, first mint and re-summons alike — pins
  *「审 谁#轮」before the officer runs, in the same page write as the source
  * path when this admission is the one that records it. A receipt or row that
- * cannot be read keeps its cause on the officer run; the officer still runs and
- * its rows carry no `for`.
+ * cannot be read keeps its cause on the officer run; the officer still runs.
+ * An unreadable receipt list falls back to the leg's latest progress row.
  */
 async function pinAuditedLegAtAdmission(
   officer: AdmittedRoleInvocation,
@@ -653,24 +653,22 @@ async function pinAuditedLegAtAdmission(
   home: string,
   source?: { readonly sourceRunPath: string; readonly auditorSubject?: "judge" | "doctor" | undefined },
 ): Promise<void> {
-  let lookupFault: string | undefined;
+  const faults: string[] = [];
   const filed = gateFiled ?? await latestAuditedReceipt(auditedRunDirectory, officer.projectRoot, home)
-    .catch((error: unknown) => { lookupFault = `audited receipt unavailable for ${auditedRunDirectory}: ${errorText(error)}`; return undefined; });
+    .catch((error: unknown) => { faults.push(`audited receipt unavailable for ${auditedRunDirectory}: ${errorText(error)}`); return undefined; });
   const auditedReceipt = filed && basename(filed.receipt);
   const round = filed?.round;
   const seat = round && roleFromRunDirectory(auditedRunDirectory);
-  const { for: auditedRound, fault = lookupFault } = seat
-    ? { for: `${seat}#${round}` }
-    : lookupFault ? {} : readAuditedRound(auditedRunDirectory, auditedReceipt);
+  const { for: auditedRound, fault } = seat
+    ? { for: `${seat}#${round}`, fault: undefined }
+    : readAuditedRound(auditedRunDirectory, auditedReceipt);
+  if (fault !== undefined) faults.push(fault);
   persistAdmittedAuditedLeg(officer.runDirectory, { for: auditedRound, auditedReceipt, ...source });
   officer.auditedReceipt = auditedReceipt;
   officer.auditedRound = auditedRound;
-  if (fault === undefined) return;
-  await retainPackageFault({
-    runDirectory: officer.runDirectory,
-    diagnostic: fault,
-    stderr: (text) => io.stderr(text),
-  });
+  for (const diagnostic of faults) {
+    await retainPackageFault({ runDirectory: officer.runDirectory, diagnostic, stderr: (text) => io.stderr(text) });
+  }
 }
 
 /**

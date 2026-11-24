@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -287,15 +287,20 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     // A caller's own --source-run pins through the same admission.
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
-    // The audited leg's receipts cannot be listed at admission: the officer still
-    // runs and seals, its row names no round, and the cause stays on the officer run.
+    // The audited leg cannot be read at admission: the officer still runs and
+    // seals, and each cause stays on the officer run. Unlisted receipts fall back
+    // to the leg's progress row; an unreadable progress file leaves no round.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
     await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
     await writeFile(join(observed.parentRunDirectory, "receipts"), "not a folder", "utf8");
     assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["3", undefined]);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
     assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
+    await appendFile(join(observed.ticketDirectory, "current.jsonl"), "{malformed\n", "utf8");
+    assert.equal((await observed.summonNotary()).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
+    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 3);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
