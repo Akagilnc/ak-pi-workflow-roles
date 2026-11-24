@@ -881,11 +881,14 @@ export async function runPublicInstructionSeat(
   }
   if (auditorSubject || record.sameParent === "source-locator" || (record.sameParent === "source-run" && parsed.sourceRun !== undefined)) {
     try {
-      source = await resolveNotarySourceRunLocator({
+      const { filed, ...located } = await resolveNotarySourceRunLocator({
         projectRoot,
         sourceRun: parsed.sourceRun ?? "",
         home: env.home,
       });
+      source = located;
+      // A round the caller named pins that receipt; a gate's own seal stays first.
+      if (filed && env.auditedReceipt === undefined) env = { ...env, auditedReceipt: filed };
     } catch (error) {
       if (auditorSubject) {
         presentStructuralRejection(new CliUsageError(errorText(error)), io);

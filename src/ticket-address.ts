@@ -13,6 +13,7 @@ import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
 import { parseTicketNumber } from "./run-ticket-number.ts";
 import { readTicketProgressLines } from "./ticket-progress.ts";
+import type { TerminalReceiptRef } from "./public-cli/terminal.ts";
 
 export type TicketLegAddress = {
   readonly ticketNumber: number;
@@ -53,9 +54,13 @@ export function parseTicketLegLocator(token: string): Required<TicketLegAddress>
  * ticket, read off the leg directories themselves — rows exist only for accepted
  * receipts, so a leg that has not submitted yet is still found. Activity is the
  * leg directory's mtime: every turn takes and releases the leg's writer lease
- * there. One `runs/` listing and one stat per leg of the seat.
+ * there. One `runs/` listing and one stat per leg of the seat. A named round
+ * also returns that row's receipt: the one the caller named.
  */
-export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress): string {
+export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress): {
+  readonly runDirectory: string;
+  readonly filed?: TerminalReceiptRef;
+} {
   const ticketDirectory = join(bookDirectory, String(input.ticketNumber));
   if (!existsSync(ticketDirectory)) {
     throw new CliUsageError(`ticket ${input.ticketNumber} has no records in this project's book: ${ticketDirectory}`);
@@ -69,7 +74,10 @@ export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress):
       );
     }
     // `runs/<leg>/receipts/<n>.json`
-    return join(ticketDirectory, ...row.receipt.split("/").slice(0, 2));
+    return {
+      runDirectory: join(ticketDirectory, ...row.receipt.split("/").slice(0, 2)),
+      filed: { round: row.round, receipt: join(ticketDirectory, row.receipt) },
+    };
   }
   const runsDirectory = join(ticketDirectory, "runs");
   let latest: { readonly leaf: string; readonly mtimeMs: number } | undefined;
@@ -87,5 +95,5 @@ export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress):
   if (latest === undefined) {
     throw new CliUsageError(`ticket ${input.ticketNumber} has no ${input.seat} leg`);
   }
-  return join(runsDirectory, latest.leaf);
+  return { runDirectory: join(runsDirectory, latest.leaf) };
 }

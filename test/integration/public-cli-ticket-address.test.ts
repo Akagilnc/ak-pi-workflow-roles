@@ -13,7 +13,9 @@ import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { tryParseUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type CliResult } from "../../src/public-cli/cli.ts";
 import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
@@ -37,6 +39,8 @@ type Turn = {
   readonly leg: string;
   readonly sessionFile: string;
   readonly args: readonly string[];
+  /** The first sentence the seat received. */
+  readonly prompt?: string | undefined;
 };
 
 /** What a scripted turn does: submit these details, or end with no receipt. */
@@ -60,7 +64,7 @@ async function withTicketProject(
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    for (const seat of ["judge", "notary", "fixer", "diarist"]) await seedPublicSeat(home, seat);
+    for (const seat of ["judge", "notary", "fixer", "diarist", "inspector"]) await seedPublicSeat(home, seat);
     const turns: Turn[] = [];
     const captured = captureIo();
     const ticketDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET));
@@ -88,14 +92,16 @@ async function withTicketProject(
               leg: basename(runDirectoryOfSessionFile(argvFlagValue(args, "--session")!)),
               sessionFile: argvFlagValue(args, "--session")!,
               args: [...args],
+              ...(options.stdin === undefined ? {} : { prompt: tryParseUserDialogueStdin(options.stdin)?.body }),
             };
             turns.push(turn);
             const details = script(turn);
             if (details === undefined) return { code: 0, stderr: "", timedOut: false, args: [...args] };
             seals += 1;
             return scriptedTerminatingToolSession({
-              role: turn.role as "judge" | "notary",
-              toolName: turn.role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : JUDGE_OUTPUT_TOOL_NAME,
+              role: turn.role as "judge" | "notary" | "inspector",
+              toolName: turn.role === "notary" ? NOTARY_OUTPUT_TOOL_NAME
+                : turn.role === "inspector" ? INSPECTOR_OUTPUT_TOOL_NAME : JUDGE_OUTPUT_TOOL_NAME,
               details,
               toolCallId: `call-${seals}`,
               sessionWriteMode: existsSync(turn.sessionFile) ? "append" : "replace",
@@ -291,6 +297,21 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     await call(["resume", String(TICKET), "judge#2"]);
     assert.equal(turns.at(-1)?.role, "judge");
     assert.equal(join(ticketDirectory, "runs", turns.at(-1)!.leg), legB);
+
+    // Leg A files a later receipt; a named round still means that round's receipt —
+    // the pin and the officer's progress row, and the first sentence when the caller
+    // wrote none. A caller's dispatch passes as-is (ADR 0085).
+    await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
+    const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
+    await boundTo(`${TICKET}:judge#1`);
+    assert.equal(turns.at(-1)!.prompt, `请审 ${basename(legA)} 的第 1 份回执。`);
+    assert.equal(forOf("notary"), "judge#1");
+    const dispatch = "审 judge#1 那份。";
+    const inspected = await call(["new", "inspector", "--model", SEAT_MODEL, "--source-run", `${TICKET}:judge#1`, dispatch],
+      () => ({ status: "converged" }));
+    assert.equal(inspected.exitCode, 0);
+    assert.equal(turns.at(-1)!.prompt, dispatch);
+    assert.equal(forOf("inspector"), "judge#1");
 
     const turnsBefore = turns.length;
     const legsBefore = await legCount(home);
