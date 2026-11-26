@@ -1,11 +1,11 @@
-import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
 import { mkdirSync, statSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -22,7 +22,6 @@ import {
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -125,13 +124,7 @@ test.each([
       assert.equal(result.terminal?.roleOutcome.role, seat);
       assert.equal(result.terminal?.ticket, 1171);
       const runDirectory = failingRun!;
-      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-        ?.data?.diagnostic;
+      const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.equal(typeof noteText, "string");
       assert.ok(stderr.join("").includes(noteText as string), "the caller is told the retained cause");
       if (step === "afterDispatch") return;

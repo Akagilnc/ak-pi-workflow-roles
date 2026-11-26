@@ -22,6 +22,7 @@ import {
   lockCurrentJson,
   unlockCurrentJson,
   runLogPayloads,
+  sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
@@ -44,7 +45,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,
@@ -1388,14 +1388,11 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // customType key, and that a diagnostic string landed — never its exact
     // wording, which stays observation-only (#840 bounce class 2).
     const sessionFile = sessionFileOf(runDirectory);
-    const sessionLines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
-    const dossierEntries = sessionLines
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
+    const dossierEntries = sessionFaultNotes(sessionFile);
     // One entry per refused dossier write (the run-state persist and the terminal
     // publish), none duplicated.
     assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
-    for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    for (const entry of dossierEntries) assert.equal(typeof entry.diagnostic, "string");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
     const progressRows = readTicketProgressLines(subject!);

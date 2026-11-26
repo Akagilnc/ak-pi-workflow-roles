@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, sessionFaultNotes, seedCurrentSection, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
@@ -26,7 +26,6 @@ import { createMinimalHost, roleTurnHostFromLegacyPiRunner as rawRoleTurnHostFro
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import {
   acquireRunWriterLease,
   describeErrorIdentity,
@@ -225,20 +224,6 @@ test("quota-like prose does not replace the host's unclassified failure", async 
     assert.equal(durable?.state, "terminal");
   });
 });
-async function assertCleanupDiagnosticNoted(
-  sessionFile: string,
-): Promise<void> {
-  const entries = (await readFile(sessionFile, "utf8"))
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-  const diagnostic = entries.find(
-    (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-  );
-  assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-}
-
 test("lawful settlement keeps the accepted terminal when publication fails; a bare resume that receives nothing does not re-present it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -279,7 +264,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
       // #1199 leg-local session/ via placement helpers.
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
         .map((payload) => payload.outcome?.kind);
@@ -389,7 +374,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
           "unbound", "runs",
           `${runId}@judge`,
         );
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
       const seals = historyPayloads<{ receipt: string }>(runDirectory, "sealed");
       assert.equal(seals.length, 1);
       assert.deepEqual(JSON.parse(await readFile(join(runDirectory, "../..", seals[0]!.receipt), "utf8")),
@@ -486,7 +471,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
       assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
       assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
         { "history.jsonl": "EISDIR" },
@@ -1091,15 +1076,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
         const liveRunDirectory =
           (await findRunDirectoryById(home, runId)) ?? runDirectory;
-        const entries = (await readFile(sessionFileOf(liveRunDirectory), "utf8"))
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-        const text = entries.find(
-          (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-        )?.data?.diagnostic;
-        assert.equal(typeof text, "string");
+        assert.equal(typeof sessionFaultNotes(sessionFileOf(liveRunDirectory))[0]?.diagnostic, "string");
       },
       async () => {
         await lease.release();
