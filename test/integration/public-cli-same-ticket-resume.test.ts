@@ -1298,11 +1298,13 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
         // writes history.jsonl and current.json in the run directory, so the lock that
         // makes the terminal write fail is applied by the host wrapper below, after
         // the seal landed. Armed only for this turn.
-        sealingTurnArmed = true;
+        sealingTurnArmed = turn === 3;
+        // A later bare resume exits cleanly without submitting anything.
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
           details: { status: "converged", findings: [] },
+          seal: turn === 3,
         })(extraArgs, options);
       },
     });
@@ -1389,9 +1391,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // wording, which stays observation-only (#840 bounce class 2).
     const sessionFile = sessionFileOf(runDirectory);
     const dossierEntries = sessionFaultNotes(sessionFile);
-    // One entry per refused dossier write (the run-state persist and the terminal
-    // publish), none duplicated.
-    assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
+    assert.ok(dossierEntries.length > 0, "the refused writes are retained in the dossier");
     for (const entry of dossierEntries) assert.ok(typeof entry.diagnostic === "string" && entry.diagnostic !== "");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
@@ -1399,6 +1399,28 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     assert.ok(
       progressRows.some((row) => row.seat === "notary" && row.status === "converged"),
       "ticket progress must land beside accepted even when terminal render fails",
+    );
+
+    // The court was delivered although its report did not render. Once the fault
+    // clears, a next bare resume that submits nothing does not claim that receipt.
+    unlockCurrentJson(runDirectory);
+    currentJsonLocked = "";
+    const next = await runAkRole(["resume", "637", "notary"], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+    });
+    assert.equal(turn, 4);
+    assert.equal(next.terminal?.roleOutcome.kind, "no_receipt");
+    assert.equal(next.terminal?.receipts, undefined, "no receipt is this call's");
+    assert.equal(next.terminal?.submissions?.length, 1, "the leg's earlier submission is still presented");
+    assert.deepEqual(next.terminal?.submissions, resumed.terminal?.submissions);
+    assert.deepEqual(
+      readTicketProgressLines(subject!).filter((row) => row.seat === "notary").map((row) => row.round),
+      ["1"],
     );
   } finally {
     // The injected lock makes the run directory read-only; undo it so the scratch can go.

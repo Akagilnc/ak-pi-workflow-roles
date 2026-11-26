@@ -1007,9 +1007,9 @@ export async function dispatchPostAdmissionTurn<
     if (prepared && result.terminal === prepared.terminal) {
       const terminal = await publishSeatSettlement(admitted, env.principalAuthority, courtScope, prepared);
       result = { ...result, terminal };
-      // A retained verdict without its published report does not discharge the open court.
+      // An accepted court is settled whether or not its report rendered; an unsealed one stays open.
       const courtAttemptId = request.courtAttemptId;
-      if (courtAttemptId && terminal.artifacts[0]?.kind === "report") {
+      if (courtAttemptId && terminal.roleOutcome.kind === "accepted") {
         await besideConclusion(courtScope.notePackageFault, "current-court cleanup", () => clearCurrentCourt(admitted.runDirectory, courtAttemptId));
       }
     }
