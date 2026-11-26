@@ -88,7 +88,6 @@ import {
   exitCodeForTerminalOutcome,
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
-  formatErrorCauseDetail,
   settlementRows,
   isLawfulTypedTerminalOutcome,
   presentStructuralRejection,
@@ -122,7 +121,7 @@ import {
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
 
-import { isRecord, errorText } from "../unknown-value.ts";
+import { isRecord } from "../unknown-value.ts";
 
 function projectRelocatedTurnIdentity(
   request: RoleTurnRequest,
@@ -1835,8 +1834,8 @@ export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, auth
     return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
   }
   if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);
-  if (typeof scope.seal === "object" && (scope.seal.receipt !== undefined || prepared.rows.length > 0)) {
-    await noteSettlementFault(admitted.runDirectory, scope, `无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt ?? "未记录受审稿引用"}）`);
+  if (typeof scope.seal === "object") {
+    await noteSettlementFault(admitted.runDirectory, scope, `无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt}）`);
   }
   return undefined;
 }
@@ -1854,16 +1853,13 @@ export async function presentResumeFailurePointer(
       runId, role, diagnostic, cause, identity, details,
     }, "post-admission").recordFile;
   } catch (publishError) {
-    const cause: { thrownCause?: string; publishError: string } = {
-      publishError: formatErrorCauseDetail(publishError),
-    };
-    if (thrown instanceof Error && thrown.cause !== undefined) {
-      cause.thrownCause = formatErrorCauseDetail(thrown.cause);
-    }
-    presentStructuralRejection({
-      message: errorText(thrown),
-      cause,
-    }, io);
+    // The failure in hand stays the result; both causes go to the one best-effort outlet.
+    await retainPackageFault({
+      runDirectory,
+      diagnostic: `${failure.diagnostic}; resume diagnostic record failed: ${describeErrorIdentity(publishError)}`,
+      error: publishError,
+      io,
+    });
     return failure;
   }
   await writeResumeFailurePointer(io, recordFile, runDirectory);

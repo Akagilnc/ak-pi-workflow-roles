@@ -433,6 +433,22 @@ test("an unreadable ledger prevents acceptance but not saving the arriving draft
     const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.equal(rows.some((row) => row.kind === "accepted"), false);
     assert.ok(rows.some((row) => row.kind === "infrastructure"));
+    // The ledger breaks while the tool turns the draft back: recording that fails,
+    // and the failure still carries the tool's own reason (bounce or fault alike).
+    for (const toolError of [new WorkerUnfinishedReasonReminderError(), new Error("typed seam unavailable")]) {
+      const breaking = registerTool(f.root, async () => {
+        await rename(history, `${history}.saved`);
+        await mkdir(history);
+        throw toolError;
+      });
+      const rejected = await breaking.tool().execute("bounce-unrecorded", draft, undefined, undefined, breaking.context)
+        .then(() => undefined, (error: unknown) => error);
+      await rm(history, { recursive: true });
+      await rename(`${history}.saved`, history);
+      assert.ok(rejected instanceof AggregateError);
+      assert.equal(rejected.errors[1], toolError);
+      assert.equal((rejected.cause as NodeJS.ErrnoException).code, "EISDIR");
+    }
   });
 });
 

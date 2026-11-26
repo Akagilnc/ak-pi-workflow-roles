@@ -202,7 +202,12 @@ export function createSubmissionLedgerHost(
         fields = statusAndSummaryFromPayload(params);
         try { result = await tool.execute(toolCallId, params, signal, update, context, fields); }
         catch (error) {
-          append("outcome", source(context, origin.subject), { ...(isCorrectableExecuteError(error) ? { outcome: "correctable-rejection", code: "typed-bounce" } : { outcome: "infrastructure" }), diagnostic: errorText(error) });
+          try {
+            append("outcome", source(context, origin.subject), { ...(isCorrectableExecuteError(error) ? { outcome: "correctable-rejection", code: "typed-bounce" } : { outcome: "infrastructure" }), diagnostic: errorText(error) });
+          } catch (ledgerError) {
+            // Unrecorded, so still an infrastructure failure; it carries the tool's own reason.
+            throw new AggregateError([ledgerError, error], `${errorText(ledgerError)}; tool: ${errorText(error)}`, { cause: ledgerError });
+          }
           toolThrew = true;
           throw error;
         }

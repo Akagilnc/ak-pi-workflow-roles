@@ -80,7 +80,7 @@ export type SettlementCourtScope = {
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
-  readonly seal?: "latest" | { readonly receipt: string | undefined };
+  readonly seal?: "latest" | { readonly receipt: string };
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;

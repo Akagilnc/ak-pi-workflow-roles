@@ -272,7 +272,9 @@ export async function presentAuditedOriginalOfUnsettledOfficer(
   const officer = result.admitted;
   if (officer === undefined || !leavesAuditedVerdictUnsettled(result) || !GATE_CHILD_ROLES.has(officer.role)) return;
   const audited = officer.correlationId;
-  if (audited === undefined) return;
+  // No receipt was named for review: there is no audited original to ask after.
+  const receipt = officer.auditedReceipt;
+  if (audited === undefined || receipt === undefined) return;
   const auditedSource = admittedSourceRunPath(officer);
   await besideConclusion(packageFaultNoteFor(officer, env, io), "audited original presentation", async () => {
     const parent = await loadResumablePublicRole(
@@ -284,7 +286,7 @@ export async function presentAuditedOriginalOfUnsettledOfficer(
     if (!AUDITED_ROLES.has(parent.admitted.role)) return;
     // Preview the court named by the officer, never the parent's latest court.
     const terminal = await recoverSeatTerminal(parent.admitted, env, io, {
-      seal: { receipt: officer.auditedReceipt },
+      seal: { receipt },
       previewOnly: true,
     });
     if (!terminal) return;
@@ -383,11 +385,11 @@ async function latestAuditedReceipt(
   if (runId === undefined) return undefined;
   // Bind to the already-resolved source directory — never re-discover by runId
   // alone (another book may lawfully share the same id; #637 / #1166).
-  const { rows, fault, discoveryFault, missingReference } = await readRecordedSubmissionRows(projectRoot, runId, {
+  const { rows, fault, discoveryFault, missingReference, malformed } = await readRecordedSubmissionRows(projectRoot, runId, {
     home,
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
-  for (const issue of [fault, discoveryFault, missingReference]) if (issue) faults.push(issue.diagnostic);
+  for (const issue of [fault, discoveryFault, missingReference, malformed]) if (issue) faults.push(issue.diagnostic);
   if (discoveryFault) return undefined;
   // #1166 J10: the latest arrived draft is the current manuscript. Never filter by
   // accepted / terminal outcome kind (that resurrects a prior sealed draft).
