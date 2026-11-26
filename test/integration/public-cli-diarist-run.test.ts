@@ -1949,6 +1949,6 @@ test("an in-call resume persists an after-dispatch diarist relocation at the tic
     };
     assert.equal(error.kind, "error");
     assert.equal(error.runId, runId);
-    assert.equal(typeof error.diagnostic, "string");
+    assert.ok(typeof error.diagnostic === "string" && error.diagnostic !== "");
   });
 });

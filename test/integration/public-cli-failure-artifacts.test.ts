@@ -77,8 +77,9 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
     const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
-      .some((body) => typeof body.diagnostic === "string");
-    const sessionNote = sessionFaultNotes(sessionFileOf(runDirectory)).some((note) => typeof note.diagnostic === "string");
+      .some((body) => typeof body.diagnostic === "string" && body.diagnostic !== "");
+    const sessionNote = sessionFaultNotes(sessionFileOf(runDirectory))
+      .some((note) => typeof note.diagnostic === "string" && note.diagnostic !== "");
     assert.equal(artifactNote || sessionNote, true);
   });
 });
@@ -156,7 +157,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
       // The refused write is a note beside the host terminal, in the run's session.
       const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
-      assert.equal(typeof noteText, "string");
+      assert.ok(typeof noteText === "string" && noteText !== "");
     } finally {
       if (currentJson !== undefined) {
         try {
@@ -301,7 +302,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
     const liveSessionFile = sessionFileOf(sealedRunDirectory);
     const noteText = sessionFaultNotes(liveSessionFile)[0]?.diagnostic;
-    assert.equal(typeof noteText, "string");
+    assert.ok(typeof noteText === "string" && noteText !== "");
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity", async () => {

@@ -1385,14 +1385,14 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // session it appends to is healthy, so no run-artifacts fallback file is
     // expected — #840 bounce class 1: a healthy channel must not also get a
     // standing duplicate). Assert only the typed shape: a structured
-    // customType key, and that a diagnostic string landed — never its exact
+    // customType key, and that a non-empty diagnostic landed — never its exact
     // wording, which stays observation-only (#840 bounce class 2).
     const sessionFile = sessionFileOf(runDirectory);
     const dossierEntries = sessionFaultNotes(sessionFile);
     // One entry per refused dossier write (the run-state persist and the terminal
     // publish), none duplicated.
     assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
-    for (const entry of dossierEntries) assert.equal(typeof entry.diagnostic, "string");
+    for (const entry of dossierEntries) assert.ok(typeof entry.diagnostic === "string" && entry.diagnostic !== "");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
     const progressRows = readTicketProgressLines(subject!);

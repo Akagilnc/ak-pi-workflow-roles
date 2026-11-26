@@ -785,7 +785,7 @@ test(mode === "rows"
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
     }
     const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
-    assert.equal(typeof noteText, "string");
+    assert.ok(typeof noteText === "string" && noteText !== "");
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
 });

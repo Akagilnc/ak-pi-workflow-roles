@@ -264,7 +264,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
       // #1199 leg-local session/ via placement helpers.
-      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
         .map((payload) => payload.outcome?.kind);
@@ -374,7 +375,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
           "unbound", "runs",
           `${runId}@judge`,
         );
-      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
       const seals = historyPayloads<{ receipt: string }>(runDirectory, "sealed");
       assert.equal(seals.length, 1);
       assert.deepEqual(JSON.parse(await readFile(join(runDirectory, "../..", seals[0]!.receipt), "utf8")),
@@ -471,7 +473,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
       assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
       assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
-      assert.equal(typeof sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic, "string");
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
         { "history.jsonl": "EISDIR" },
@@ -1076,7 +1079,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
         const liveRunDirectory =
           (await findRunDirectoryById(home, runId)) ?? runDirectory;
-        assert.equal(typeof sessionFaultNotes(sessionFileOf(liveRunDirectory))[0]?.diagnostic, "string");
+        const note = sessionFaultNotes(sessionFileOf(liveRunDirectory))[0]?.diagnostic;
+        assert.ok(typeof note === "string" && note !== "");
       },
       async () => {
         await lease.release();
@@ -1789,7 +1793,7 @@ test("public resume failures persist structured diagnostics", async () => {
         );
         const record = diagnostics[diagnosticsBefore.length]!;
         assert.equal(record.runId, runId);
-        assert.equal(typeof record.diagnostic, "string");
+        assert.ok(typeof record.diagnostic === "string" && record.diagnostic !== "");
         assert.equal(
           record.details !== null && typeof record.details === "object" && !Array.isArray(record.details),
           true,
@@ -1939,7 +1943,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.equal(parentDiagnostics.length, parentDiagnosticsBefore.length + 1);
       const parentDiagnostic = parentDiagnostics[parentDiagnosticsBefore.length]!;
       assert.equal(parentDiagnostic.runId, "1058-parent-preload-failure");
-      assert.equal(typeof parentDiagnostic.diagnostic, "string");
+      assert.ok(typeof parentDiagnostic.diagnostic === "string" && parentDiagnostic.diagnostic !== "");
       assert.equal(
         parentDiagnostic.details !== null
           && typeof parentDiagnostic.details === "object"

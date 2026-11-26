@@ -298,7 +298,11 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     // may miss a later arrival, so none is pinned and no round is recorded, though
     // the progress file is readable.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
-    const diagnostics = () => runLogPayloads(notaryRun, "post-admission-diagnostic").length;
+    const diagnostics = () => {
+      const notes = runLogPayloads<{ diagnostic?: unknown }>(notaryRun, "post-admission-diagnostic");
+      assert.ok(notes.every((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""));
+      return notes.length;
+    };
     assert.equal(diagnostics(), 0);
     const history = join(observed.parentRunDirectory, "history.jsonl");
     await chmod(history, 0o000);
@@ -519,7 +523,7 @@ test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b:
     if (mode === "unreadable audited leg") {
       // The true cause is noted on the officer's own session beside its kept conclusion.
       const officerSession = observed.officerSessions.filter((item) => item.role === "auditor").at(-1)!.sessionFile;
-      assert.equal(sessionFaultNotes(officerSession).length, 1);
+      assert.deepEqual(sessionFaultNotes(officerSession).map((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""), [true]);
       return;
     }
     assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
