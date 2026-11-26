@@ -21,6 +21,7 @@ import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencie
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
 import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { readSectionSync } from "../../src/run-dossier.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -291,9 +292,9 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     // The audited leg cannot be read at admission: the officer still runs and
     // seals, and each cause stays on the officer run. Unreadable ledger: the leg's
     // files locate its latest arrival, whose round its name finds in the progress
-    // file; an unreadable progress file gives none. With neither the ledger nor the
-    // files locating one, no round is recorded, though the progress file is readable.
-    // Unlisted receipts: the ledger still locates the arrival and its round.
+    // file; an unreadable progress file gives none. Unlisted receipts: the ledger
+    // may miss a later arrival, so none is pinned and no round is recorded, though
+    // the progress file is readable.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
     const diagnostics = () => runLogPayloads(notaryRun, "post-admission-diagnostic").length;
     assert.equal(diagnostics(), 0);
@@ -309,17 +310,15 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
       assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
       assert.equal(diagnostics(), 3);
       await writeFile(progress, (await readFile(progress, "utf8")).replace("{malformed\n", ""), "utf8");
-      await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
-      await writeFile(join(observed.parentRunDirectory, "receipts"), "not a folder", "utf8");
-      assert.equal((await observed.summonNotary()).exitCode, 0);
-      assert.deepEqual(observed.rounds("notary").at(-1), ["5", undefined]);
-      assert.equal(diagnostics(), 5);
     } finally {
       await chmod(history, 0o600);
     }
+    await rm(join(observed.parentRunDirectory, "receipts"), { recursive: true });
+    await writeFile(join(observed.parentRunDirectory, "receipts"), "not a folder", "utf8");
     assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["6", "judge#2"]);
-    assert.equal(diagnostics(), 6);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["5", undefined]);
+    assert.equal(readSectionSync(notaryRun, "admitted")?.auditedReceipt, undefined);
+    assert.equal(diagnostics(), 4);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 

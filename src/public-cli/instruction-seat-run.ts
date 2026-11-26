@@ -370,6 +370,8 @@ export function buildInstructionSeatTurnRequest(
  * Without a gate's sealed receipt, the latest arrived draft of the source leg is
  * the one under review (ADR 0085). The officer reads it itself. A ledger fault is
  * reported on its own; it does not discard a draft the leg's files still locate.
+ * When the leg's files cannot be listed, the ledger's rows may miss a later
+ * arrival: none is named, and the cause is reported.
  */
 async function latestAuditedReceipt(
   sourceRunDirectory: string,
@@ -386,6 +388,7 @@ async function latestAuditedReceipt(
     sessionParent: sessionFileOf(sourceRunDirectory),
   });
   for (const issue of [fault, discoveryFault, missingReference]) if (issue) faults.push(issue.diagnostic);
+  if (discoveryFault) return undefined;
   // #1166 J10: the latest arrived draft is the current manuscript. Never filter by
   // accepted / terminal outcome kind (that resurrects a prior sealed draft).
   return rows.at(-1);
